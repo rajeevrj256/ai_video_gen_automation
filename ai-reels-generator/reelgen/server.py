@@ -144,6 +144,15 @@ class GenerateRequest(BaseModel):
     count: int = 1
 
 
+class PostEdit(BaseModel):
+    caption: str = ""
+    hashtags: list[str] = []
+    youtube_title: str = ""
+    youtube_description: str = ""
+    youtube_hashtags: list[str] = []
+    youtube_tags: list[str] = []
+
+
 class LoginRequest(BaseModel):
     pin: str
 
@@ -205,6 +214,26 @@ def create_app(cfg: Config) -> FastAPI:
             apply_post_copy(report, script, load_settings(Config()), folder)
         except Exception as exc:
             raise HTTPException(502, f"Couldn't write the post text: {exc}")
+        (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return report
+
+    @app.put("/api/videos/{video_id}/post-text")
+    def edit_post_text(video_id: str, body: PostEdit):
+        """Save the user's edits to the caption, title, description, hashtags and tags."""
+        from .post_copy import clean_tags, save_post_text
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        report.update({
+            "caption": body.caption.strip(),
+            "hashtags": clean_tags(body.hashtags),
+            "youtube_title": body.youtube_title.strip(),
+            "youtube_description": body.youtube_description.strip(),
+            "youtube_hashtags": clean_tags(body.youtube_hashtags),
+            "youtube_tags": [t.strip() for t in body.youtube_tags if t.strip()],
+            "post_edited": True,
+        })
+        save_post_text(report, folder)
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         return report
 

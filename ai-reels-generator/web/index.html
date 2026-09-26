@@ -114,6 +114,18 @@
   .verdict { border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
   .verdict.ok { background: rgba(61,220,132,.12); color: var(--ok); } .verdict.warn { background: rgba(255,159,10,.12); color: var(--warn); }
   .section { margin: 20px 0 4px; font-size: 15px; color: var(--accent); }
+  textarea.edit, input.edit { width: 100%; font: inherit; font-size: 15px; line-height: 1.45; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; resize: vertical; }
+  textarea.edit:focus, input.edit:focus { border-color: var(--accent); outline: none; }
+  #savePost { margin-top: 14px; }
+  .card .postbadge { position: absolute; top: 36px; left: 8px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
+  /* PC screens: video on the left, the post text on the right, both visible at once. */
+  @media (min-width: 900px) {
+    .player.open { display: grid; grid-template-columns: minmax(0, 1fr) 520px; overflow: hidden; }
+    .player .stage { height: 100vh; }
+    .player .scroll-hint { display: none; }
+    .details { max-width: none; height: 100vh; overflow-y: auto; margin: 0; padding: 24px 28px 40px; border-left: 1px solid var(--line); }
+  }
   .copyhead { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
   .copyhead label { margin: 0; }
   button.mini { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
@@ -272,6 +284,7 @@ async function loadVideos() {
       <img loading="lazy" src="/media/${encodeURIComponent(v.id)}/thumbnail.jpg" alt="">
       <span class="badge ${v.verified ? "ok-bg" : "warn-bg"}">${v.verified ? "✓ " + (v.score ?? "") : "Check"}</span>
       <span class="dur">${Math.round(v.duration_seconds || 0)}s</span>
+      ${v.youtube_description && !v.post_text_error ? '<span class="postbadge">📝 Post text</span>' : ""}
       <div class="meta">${esc(v.title)}</div>
     </div>`).join("");
   document.querySelectorAll(".card").forEach((c) => c.onclick = () => openVideo(c.dataset.id));
@@ -283,9 +296,6 @@ async function openVideo(id) {
   $("#video").poster = "/media/" + encodeURIComponent(id) + "/thumbnail.jpg";
   $("#video").src = src;
   const tags = (v.hashtags || []).map((h) => "#" + h).join(" ");
-  const igText = `${v.caption}\n\n${tags}`;
-  const ytDesc = `${v.youtube_description || v.caption}\n\n${(v.youtube_hashtags || ["shorts"]).map((h) => "#" + h).join(" ")}`;
-  const ytTags = (v.youtube_tags || []).join(", ");
   const verdict = v.verified
     ? `<div class="verdict ok">✅ Verified automatically — score ${esc(v.score)}/10</div>`
     : `<div class="verdict warn">⚠️ Didn't pass every check. Watch it before posting.<br>${(v.issues || []).map(esc).join("<br>")}</div>`;
@@ -297,25 +307,56 @@ async function openVideo(id) {
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
     </div>
-    ${v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
+    ${v.post_text_error ? `<div class="errbox">⚠️ Writing the post text failed, so this is only the rough draft: ${esc(v.post_text_error)}</div>`
+      : v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
     <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px">
       ${v.youtube_description ? "↻ Rewrite title, description &amp; hashtags" : "✍️ Write title, description &amp; hashtags"}</button>
     <h4 class="section">Instagram Reels</h4>
-    <div class="copyhead"><label>Caption + hashtags</label><button class="mini" data-copy="ig">Copy</button></div>
-    <div class="copybox">${esc(igText)}</div>
+    <div class="copyhead"><label for="f-caption">Caption</label><button class="mini" data-copy="ig">Copy caption + hashtags</button></div>
+    <textarea class="edit" id="f-caption" rows="5">${esc(v.caption)}</textarea>
+    <label for="f-hashtags">Hashtags</label>
+    <textarea class="edit" id="f-hashtags" rows="3">${esc(tags)}</textarea>
     <h4 class="section">YouTube Shorts</h4>
-    <div class="copyhead"><label>Title</label><button class="mini" data-copy="ytTitle">Copy</button></div>
-    <div class="copybox">${esc(v.youtube_title)}</div>
-    <div class="copyhead"><label>Description + hashtags</label><button class="mini" data-copy="ytDesc">Copy</button></div>
-    <div class="copybox">${esc(ytDesc)}</div>
-    ${ytTags ? `<div class="copyhead"><label>Tags (YouTube Tags field)</label><button class="mini" data-copy="ytTags">Copy</button></div>
-    <div class="copybox">${esc(ytTags)}</div>` : ""}
+    <div class="copyhead"><label for="f-yttitle">Title</label><button class="mini" data-copy="ytTitle">Copy</button></div>
+    <input class="edit" id="f-yttitle" maxlength="100" value="${esc(v.youtube_title)}">
+    <div class="copyhead"><label for="f-ytdesc">Description</label><button class="mini" data-copy="ytDesc">Copy description + hashtags</button></div>
+    <textarea class="edit" id="f-ytdesc" rows="5">${esc(v.youtube_description || v.caption)}</textarea>
+    <label for="f-ythash">Description hashtags (first 3 show above the title)</label>
+    <input class="edit" id="f-ythash" value="${esc((v.youtube_hashtags || ["shorts"]).map((h) => "#" + h).join(" "))}">
+    <div class="copyhead"><label for="f-yttags">Tags (YouTube Tags field, comma separated)</label><button class="mini" data-copy="ytTags">Copy</button></div>
+    <textarea class="edit" id="f-yttags" rows="3">${esc((v.youtube_tags || []).join(", "))}</textarea>
+    <button class="primary" id="savePost" disabled>💾 Save changes</button>
     ${v.hashtag_notes ? `<div class="hint">Hashtags: ${esc(v.hashtag_notes)}</div>` : ""}
+    ${v.post_edited ? `<div class="hint">You edited this text.</div>` : ""}
     <label>Why this topic</label>
     <div class="copybox">${esc(v.why_chosen)}</div>
     <label>Facts used</label>
     <div class="copybox">${esc(v.facts_checked)}</div>`;
-  const texts = {ig: igText, ytTitle: v.youtube_title, ytDesc, ytTags};
+  const val = (sel) => $(sel).value.trim();
+  const tagList = (text) => text.split(/[\s,]+/).map((t) => t.replace(/^#/, "")).filter(Boolean);
+  // Copy buttons always copy what's in the boxes now, including unsaved edits.
+  const texts = {
+    get ig() { return `${val("#f-caption")}\n\n${val("#f-hashtags")}`; },
+    get ytTitle() { return val("#f-yttitle"); },
+    get ytDesc() { return `${val("#f-ytdesc")}\n\n${val("#f-ythash")}`; },
+    get ytTags() { return val("#f-yttags"); },
+  };
+  document.querySelectorAll("#details .edit").forEach((el) => el.oninput = () => {
+    $("#savePost").disabled = false; $("#savePost").textContent = "💾 Save changes";
+  });
+  $("#savePost").onclick = async () => {
+    const body = {
+      caption: val("#f-caption"), hashtags: tagList(val("#f-hashtags")),
+      youtube_title: val("#f-yttitle"), youtube_description: val("#f-ytdesc"),
+      youtube_hashtags: tagList(val("#f-ythash")),
+      youtube_tags: val("#f-yttags").split(",").map((t) => t.trim()).filter(Boolean),
+    };
+    try {
+      await api("/api/videos/" + encodeURIComponent(id) + "/post-text", { method: "PUT", body: JSON.stringify(body) });
+      $("#savePost").disabled = true; $("#savePost").textContent = "✓ Saved";
+      toast("Saved");
+    } catch (e) { toast(e.message); }
+  };
   $("#postText").onclick = async () => {
     const btn = $("#postText");
     btn.disabled = true;

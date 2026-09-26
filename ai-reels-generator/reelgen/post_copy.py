@@ -80,6 +80,7 @@ def apply_post_copy(report: dict, script: ReelScript, cfg: Config, folder: Path)
         "youtube_tags": [t.strip().lstrip("#") for t in post.youtube_tags if t.strip()],
         "hashtag_notes": post.hashtag_notes,
     })
+    report.pop("post_text_error", None)
     save_post_text(report, folder)
     return report
 

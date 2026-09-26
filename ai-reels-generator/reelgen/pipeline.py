@@ -163,7 +163,8 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
         apply_post_copy(report, script, cfg, final_dir)
     except Exception as exc:  # keep the script's draft text rather than lose the video
         log.warning("Post text step failed, keeping the draft caption: %s", exc)
-        report.update({"youtube_description": script.caption, "youtube_hashtags": ["shorts"], "youtube_tags": []})
+        report.update({"youtube_description": script.caption, "youtube_hashtags": ["shorts"], "youtube_tags": [],
+                       "post_text_error": str(exc)[:300]})
         save_post_text(report, final_dir)
     (final_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     save_history(history_path, script.topic)
