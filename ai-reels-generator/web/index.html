@@ -82,6 +82,8 @@
   .step.now .dot { border-color: var(--accent); }
   .step.now { color: var(--text); font-weight: 600; }
   .now-line { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .timer { font-size: 13px; color: var(--text); margin: 4px 0 8px; font-variant-numeric: tabular-nums; }
+  .timer .live { font-weight: 700; color: var(--accent); }
   .errbox { background: rgba(255,90,95,.1); color: #ffb3b5; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
   .okbox { background: rgba(61,220,132,.1); color: var(--ok); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin: 8px 0; }
   .thumbs { display: flex; gap: 8px; margin-top: 10px; }
@@ -412,7 +414,22 @@ const STEPS = [
 ];
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed" };
 
+// Timers: elapsed times come from the server's clock (j.now), then tick locally each second.
+let clockOffset = 0; // server time minus this device's time, in seconds
+const mmss = (sec) => {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return (h ? `${h}:${String(m).padStart(2, "0")}` : `${m}`) + `:${String(s).padStart(2, "0")}`;
+};
+const liveSince = (t) => `<span class="live" data-since="${t}">${mmss(Date.now() / 1000 + clockOffset - t)}</span>`;
+setInterval(() => document.querySelectorAll(".live").forEach((el) => {
+  el.textContent = mmss(Date.now() / 1000 + clockOffset - +el.dataset.since);
+}), 1000);
+
 function jobCard(j) {
+  if (j.now) clockOffset = j.now - Date.now() / 1000;
+  const starts = j.log.filter((l) => /^=== Video \d+\//.test(l.msg)).map((l) => l.t);
+  const jobStart = j.log.length ? j.log[0].t : j.created;
   const msgs = j.log.map((l) => l.msg);
   const made = (j.results || []).length;
   let video = 1, attempt = "", step = -1;
@@ -433,7 +450,14 @@ function jobCard(j) {
       const dot = i < step ? "✓" : i === step ? '<span class="spinner"></span>' : "";
       return `<div class="step ${cls}"><div class="dot">${dot}</div>${name}</div>`;
     }).join("")}</div>
-    <div class="now-line">${esc(last.replace(/^\[attempt \d+\/\d+\] /, ""))}</div>` : "";
+    <div class="now-line">${esc(last.replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
+    <div class="timer">⏱ This video ${liveSince(starts.length ? starts[starts.length - 1] : jobStart)}
+      ${j.count > 1 ? ` · Total ${liveSince(jobStart)}` : ""}</div>` : "";
+  const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
+  const perVideo = starts.map((t, i) => mmss((starts[i + 1] || end) - t));
+  const took = !running && j.status !== "queued" && j.log.length
+    ? `<div class="timer">⏱ Took ${mmss(end - jobStart)}${perVideo.length > 1 ? ` in total · per video ${perVideo.join(", ")}` : ""}</div>`
+    : "";
   const summary = !running && j.status !== "queued"
     ? (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
     : "";
@@ -444,7 +468,7 @@ function jobCard(j) {
   return `<div class="panel job ${j.status}">
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
-    ${stepper}${summary}${errBox}${thumbs}
+    ${stepper}${summary}${took}${errBox}${thumbs}
     <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
   </div>`;
 }

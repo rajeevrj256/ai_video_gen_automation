@@ -258,7 +258,8 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/jobs")
     def list_jobs():
-        return list(jobs.jobs)
+        now = time.time()  # lets the page run its timers on this computer's clock
+        return [{**j, "now": now} for j in jobs.jobs]
 
     @app.get("/api/settings")
     def get_settings():
