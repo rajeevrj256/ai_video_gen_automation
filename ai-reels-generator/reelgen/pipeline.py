@@ -35,12 +35,12 @@ def slugify(text: str, max_len: int = 40) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len] or "reel"
 
 
-def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.info) -> dict:
+def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.info, angle_note: str = "") -> dict:
     history_path = cfg.output_dir / "history.json"
 
     progress("Finding trending topics")
     if topic:
-        candidates = [Trend(title=topic, source="manual")]
+        candidates = [Trend(title=topic, source="manual", context=angle_note)]
     else:
         candidates = collect_trends(cfg.geo, load_history(history_path))
 
@@ -204,8 +204,15 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
     reports = []
     for i in range(count):
         progress(f"=== Video {i + 1}/{count} ===")
+        # Trending batches get a new topic each time (used topics are skipped). A batch on
+        # one fixed topic needs a different angle per video, or they'd all come out alike.
+        angle = ""
+        if topic and count > 1:
+            made = "; ".join(f"'{r['title']}' ({r['topic']})" for r in reports) or "none yet"
+            angle = (f"Video {i + 1} of {count} on this topic. Already made: {made}. Pick a clearly "
+                     "different angle, facts and hook from those, still on this topic.")
         try:
-            reports.append(run_once(cfg, topic, progress))
+            reports.append(run_once(cfg, topic, progress, angle))
         except Exception as exc:
             log.exception("Video %d failed", i + 1)
             progress(f"Video {i + 1} failed: {exc}")

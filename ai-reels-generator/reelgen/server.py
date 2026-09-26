@@ -32,6 +32,7 @@ from .script_writer import ReelScript
 
 log = logging.getLogger(__name__)
 WEB_DIR = PROJECT_ROOT / "web"
+MAX_BATCH = 15  # videos per Generate click
 MEDIA_FILES = {"reel.mp4", "thumbnail.jpg", "review_frames.jpg"}
 
 
@@ -95,7 +96,7 @@ def scheduler(jobs: JobManager) -> None:
         now = datetime.now()
         if cfg.schedule_time and now.strftime("%H:%M") == cfg.schedule_time and last_run_day != now.date():
             last_run_day = now.date()
-            jobs.submit(None, 1, "schedule")
+            jobs.submit(None, max(1, min(cfg.schedule_count, MAX_BATCH)), "schedule")
         time.sleep(20)
 
 
@@ -253,7 +254,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/generate")
     def generate(body: GenerateRequest):
-        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, 5)), "manual")
+        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH)), "manual")
 
     @app.get("/api/jobs")
     def list_jobs():

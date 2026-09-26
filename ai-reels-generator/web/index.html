@@ -178,7 +178,7 @@
       </div>
       <label>How many videos</label>
       <div class="segmented" id="count">
-        <button data-n="1" class="on">1</button><button data-n="2">2</button><button data-n="3">3</button>
+        <button data-n="1" class="on">1</button><button data-n="3">3</button><button data-n="5">5</button><button data-n="10">10</button><button data-n="15">15</button>
       </div>
       <button class="primary" id="genBtn">✨ Generate</button>
       <p class="hint" id="eta">About 8–15 minutes. You can close this page; it keeps running on your computer.</p>
@@ -217,8 +217,17 @@
     </div>
     <div class="panel">
       <h2>Automation</h2>
-      <label for="s-schedule_time">Make one video every day at (leave empty for off)</label>
-      <input id="s-schedule_time" type="time">
+      <label>Daily automatic videos (leave the time empty to turn off)</label>
+      <div class="row">
+        <div><label for="s-schedule_time">Every day at</label><input id="s-schedule_time" type="time"></div>
+        <div><label for="s-schedule_count">Make</label>
+          <select id="s-schedule_count">
+            <option value="1">1 video</option><option value="3">3 videos</option><option value="5">5 videos</option>
+            <option value="10">10 videos</option><option value="15">15 videos</option>
+          </select></div>
+      </div>
+      <p class="hint">Picks a different trending topic for each video. Keep the computer on and awake at that time;
+        15 videos take about 2–4 hours.</p>
       <label for="s-ai_backend">AI</label>
       <select id="s-ai_backend">
         <option value="auto">Auto</option>
@@ -484,7 +493,11 @@ let countValue = 1;
 document.querySelectorAll("#count button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#count button").forEach((x) => x.classList.toggle("on", x === b));
   countValue = +b.dataset.n;
-  $("#eta").textContent = `About ${8 * countValue}–${15 * countValue} minutes. You can close this page; it keeps running on your computer.`;
+  const lo = 8 * countValue, hi = 15 * countValue;
+  const fmt = (m) => m < 90 ? `${m} minutes` : `${(m / 60).toFixed(1).replace(".0", "")} hours`;
+  $("#eta").textContent = `About ${fmt(lo)}–${fmt(hi)}, one video after another. You can close this page and ` +
+    `lock your phone; it keeps running on your computer (keep the computer on and awake).` +
+    (countValue > 1 && $("#topic").value.trim() ? " Each video takes a different angle on your topic." : "");
 });
 document.querySelectorAll("#ideas .chip").forEach((c) => c.onclick = () => {
   $("#topic").value = c.dataset.topic;
