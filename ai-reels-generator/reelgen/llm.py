@@ -92,15 +92,33 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
     if allow_web:
         tools += ["WebSearch", "WebFetch"]
 
-    # The prompt goes in on stdin and the system prompt from a file: Windows caps a
-    # command line at ~32k characters, and long fact-check prompts come close.
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as fh:
-        fh.write(system)
-        system_file = fh.name
+    # How the prompt travels matters on Windows:
+    # - Command-line arguments are Unicode-safe (Hindi, ₹, emoji arrive intact), but the
+    #   whole command line is capped at about 32,000 characters.
+    # - Piped stdin is NOT safe there: Claude Code decodes it with the legacy code page and
+    #   Hindi turns into "à¤Ÿà¤¾…".
+    # So short prompts go as an argument; a prompt too long for that goes into a UTF-8 file
+    # that Claude reads with its Read tool. The system prompt always goes in a file.
+    schema_json = json.dumps(schema.model_json_schema())
+    temp_files = []
+
+    def temp_file(text: str) -> str:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as fh:
+            fh.write(text)
+        temp_files.append(fh.name)
+        return fh.name
+
+    system_file = temp_file(system)
+    if len(prompt) + len(schema_json) + 2000 > 30000:
+        prompt_file = temp_file(prompt)
+        prompt = (f"Your full task is in the UTF-8 text file {prompt_file}. Read the whole file with the "
+                  "Read tool first, then do exactly what it asks.")
+        if "Read" not in tools:
+            tools.append("Read")
     cmd = [
-        claude, "-p",
+        claude, "-p", prompt,
         "--output-format", "json",
-        "--json-schema", json.dumps(schema.model_json_schema()),
+        "--json-schema", schema_json,
         "--append-system-prompt-file", system_file,
     ]
     if model:
@@ -113,12 +131,13 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
 
     log.info("Asking Claude Code (%s)%s", model or "default model", " with web search" if allow_web else "")
     try:
-        # Always UTF-8: Windows would otherwise decode with its legacy code page, fail on
-        # characters like ₹ or emoji, and hand back no output at all.
-        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=900, cwd=cwd)
+        # Output is always read as UTF-8: Windows would otherwise decode it with its legacy
+        # code page, fail on characters like ₹ or emoji, and hand back no output at all.
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=900, cwd=cwd, stdin=subprocess.DEVNULL)
     finally:
-        Path(system_file).unlink(missing_ok=True)
+        for name in temp_files:
+            Path(name).unlink(missing_ok=True)
     stdout, stderr = proc.stdout or "", proc.stderr or ""
     if proc.returncode != 0 and not stdout.strip():
         raise LLMError(f"claude CLI failed ({proc.returncode}): {stderr.strip()[:500]}")

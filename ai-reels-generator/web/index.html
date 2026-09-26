@@ -119,12 +119,14 @@
   textarea.edit:focus, input.edit:focus { border-color: var(--accent); outline: none; }
   #savePost { margin-top: 14px; }
   .card .postbadge { position: absolute; top: 36px; left: 8px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
-  /* PC screens: video on the left, the post text on the right, both visible at once. */
+  /* PC screens: full screen, all the details on the left, the video playing on the right. */
   @media (min-width: 900px) {
-    .player.open { display: grid; grid-template-columns: minmax(0, 1fr) 520px; overflow: hidden; }
-    .player .stage { height: 100vh; }
+    .player.open { display: grid; grid-template-columns: minmax(460px, 1fr) minmax(0, 1.1fr); overflow: hidden; }
+    .player .details { order: 1; max-width: none; height: 100vh; overflow-y: auto; margin: 0;
+      padding: 28px 36px 48px; border-right: 1px solid var(--line); }
+    .player .stage { order: 2; height: 100vh; }
     .player .scroll-hint { display: none; }
-    .details { max-width: none; height: 100vh; overflow-y: auto; margin: 0; padding: 24px 28px 40px; border-left: 1px solid var(--line); }
+    .player .close { left: 20px; }
   }
   .copyhead { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
   .copyhead label { margin: 0; }
