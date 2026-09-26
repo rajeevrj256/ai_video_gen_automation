@@ -58,11 +58,37 @@
   button.danger { color: var(--bad); }
   .hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
 
-  .job { border-left: 3px solid var(--accent); }
-  .job.done { border-left-color: var(--ok); } .job.failed { border-left-color: var(--bad); }
-  .job .head { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 8px; gap: 8px; }
-  .job ol { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
-  .job ol li:last-child { color: var(--text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { padding: 8px 12px; font-size: 13px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .segmented { display: flex; gap: 6px; background: var(--panel-2); padding: 4px; border-radius: 12px; }
+  .segmented button { flex: 1; padding: 10px 0; background: none; border-radius: 9px; }
+  .segmented button.on { background: var(--accent); color: #111; }
+
+  .job { border-left: 4px solid var(--accent); }
+  .job.done { border-left-color: var(--ok); } .job.partial { border-left-color: var(--warn); } .job.failed { border-left-color: var(--bad); }
+  .job .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .job .title { font-weight: 700; } .job .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .pill { font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+  .pill.running, .pill.queued { background: rgba(255,214,10,.15); color: var(--accent); }
+  .pill.done { background: rgba(61,220,132,.15); color: var(--ok); }
+  .pill.partial { background: rgba(255,159,10,.15); color: var(--warn); }
+  .pill.failed { background: rgba(255,90,95,.15); color: var(--bad); }
+  .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 4px 0 10px; }
+  .step { text-align: center; font-size: 11px; color: var(--muted); }
+  .step .dot { width: 30px; height: 30px; margin: 0 auto 5px; border-radius: 50%; display: grid; place-items: center;
+               background: var(--panel-2); border: 2px solid var(--line); font-size: 14px; }
+  .step.done .dot { background: var(--ok); border-color: var(--ok); color: #062; }
+  .step.now .dot { border-color: var(--accent); }
+  .step.now { color: var(--text); font-weight: 600; }
+  .now-line { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .errbox { background: rgba(255,90,95,.1); color: #ffb3b5; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
+  .okbox { background: rgba(61,220,132,.1); color: var(--ok); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin: 8px 0; }
+  .thumbs { display: flex; gap: 8px; margin-top: 10px; }
+  .thumbs img { width: 72px; aspect-ratio: 9/16; object-fit: cover; border-radius: 10px; cursor: pointer; border: 1px solid var(--line); }
+  details.log { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  details.log summary { cursor: pointer; }
+  details.log ol { margin: 6px 0 0; padding-left: 18px; max-height: 220px; overflow: auto; }
   .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--accent); border-right-color: transparent;
              border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -125,12 +151,23 @@
   <section class="view" id="view-create">
     <div class="panel">
       <h2>New video</h2>
-      <label for="topic">Topic (optional)</label>
-      <input id="topic" placeholder="Leave empty to use what's trending now">
-      <label for="count">How many</label>
-      <select id="count"><option>1</option><option>2</option><option>3</option></select>
-      <button class="primary" id="genBtn">Generate</button>
-      <p class="hint">Claude picks a trend, writes and checks the script, the video is edited and then verified automatically. About 3–8 minutes per video. You can close this page; it keeps running on your computer.</p>
+      <label for="topic">Topic</label>
+      <input id="topic" placeholder="Leave empty for what's trending now">
+      <div class="chips" id="ideas">
+        <button class="chip" data-topic="">🔥 Trending now</button>
+        <button class="chip" data-topic="Money habits that build wealth">💰 Money tips</button>
+        <button class="chip" data-topic="Mind-blowing space facts">🚀 Space</button>
+        <button class="chip" data-topic="Animals with unbelievable abilities">🐾 Animals</button>
+        <button class="chip" data-topic="How everyday technology actually works">💡 Tech explained</button>
+        <button class="chip" data-topic="Human body facts most people don't know">🧠 Body &amp; brain</button>
+        <button class="chip" data-topic="Ancient engineering that still amazes">🏛️ History</button>
+      </div>
+      <label>How many videos</label>
+      <div class="segmented" id="count">
+        <button data-n="1" class="on">1</button><button data-n="2">2</button><button data-n="3">3</button>
+      </div>
+      <button class="primary" id="genBtn">✨ Generate</button>
+      <p class="hint" id="eta">About 8–15 minutes. You can close this page; it keeps running on your computer.</p>
     </div>
     <div id="jobs"></div>
   </section>
@@ -260,6 +297,9 @@ async function openVideo(id) {
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
     </div>
+    ${v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
+    <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px">
+      ${v.youtube_description ? "↻ Rewrite title, description &amp; hashtags" : "✍️ Write title, description &amp; hashtags"}</button>
     <h4 class="section">Instagram Reels</h4>
     <div class="copyhead"><label>Caption + hashtags</label><button class="mini" data-copy="ig">Copy</button></div>
     <div class="copybox">${esc(igText)}</div>
@@ -276,6 +316,18 @@ async function openVideo(id) {
     <label>Facts used</label>
     <div class="copybox">${esc(v.facts_checked)}</div>`;
   const texts = {ig: igText, ytTitle: v.youtube_title, ytDesc, ytTags};
+  $("#postText").onclick = async () => {
+    const btn = $("#postText");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Claude is checking trending hashtags… (1–2 min)';
+    try {
+      await api("/api/videos/" + encodeURIComponent(id) + "/post-text", { method: "POST" });
+      toast("Post text ready");
+      const top = $("#player").scrollTop;
+      await openVideo(id);
+      $("#player").scrollTop = top;
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Try again"; }
+  };
   document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
   $("#deleteVideo").onclick = async () => {
     if (!confirm("Delete this video from your computer?")) return;
@@ -301,16 +353,55 @@ async function copy(text) {
   toast("Copied");
 }
 
+// Turn the job's log into a friendly progress view.
+const STEPS = [
+  ["Script", /writing the script|picking the topic/], ["Fact-check", /fact-check|Fixing facts/],
+  ["Voice", /voiceover/], ["Footage", /footage/], ["Editing", /Editing/], ["Review", /Verifying|reviewing|title, description/],
+];
+const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed" };
+
 function jobCard(j) {
-  const steps = j.log.slice(-8).map((l) => `<li>${esc(l.msg)}</li>`).join("");
-  const label = { queued: "Waiting", running: '<span class="spinner"></span>Working', done: "Finished", failed: "Failed" }[j.status];
+  const msgs = j.log.map((l) => l.msg);
+  const made = (j.results || []).length;
+  let video = 1, attempt = "", step = -1;
+  msgs.forEach((m) => {
+    const v = m.match(/=== Video (\d+)\/(\d+)/); if (v) { video = +v[1]; step = -1; }
+    const a = m.match(/\[attempt (\d+)\/(\d+)\]/); if (a) attempt = `Try ${a[1]} of ${a[2]}`;
+    STEPS.forEach(([, re], i) => { if (re.test(m)) step = Math.max(step, i); });
+  });
+  const errors = msgs.filter((m) => /failed:|Error:|did not pass/.test(m) && !/Failed verification/.test(m));
+  const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
+  const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = j.topic ? esc(j.topic) : "Trending topic";
-  return `<div class="panel job ${j.status}"><div class="head"><span>${what} ×${j.count}</span><span>${label}</span></div><ol>${steps || "<li>Starting…</li>"}</ol></div>`;
+  const running = j.status === "running";
+  const last = msgs[msgs.length - 1] || "Starting…";
+
+  const stepper = running ? `<div class="steps">${STEPS.map(([name], i) => {
+      const cls = i < step ? "done" : i === step ? "now" : "";
+      const dot = i < step ? "✓" : i === step ? '<span class="spinner"></span>' : "";
+      return `<div class="step ${cls}"><div class="dot">${dot}</div>${name}</div>`;
+    }).join("")}</div>
+    <div class="now-line">${esc(last.replace(/^\[attempt \d+\/\d+\] /, ""))}</div>` : "";
+  const summary = !running && j.status !== "queued"
+    ? (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
+    : "";
+  const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map((e) => esc(e.replace(/^Video \d+ failed: /, ""))).join("<br>")}</div>` : "";
+  const thumbs = made ? `<div class="thumbs">${j.results.map((id) =>
+      `<img src="/media/${encodeURIComponent(id)}/thumbnail.jpg" alt="" onclick="openVideo('${esc(id)}')">`).join("")}</div>` : "";
+  const sub = running ? `Video ${video} of ${j.count}${attempt ? " · " + attempt : ""}` : `${j.count} video${j.count > 1 ? "s" : ""} requested`;
+  return `<div class="panel job ${j.status}">
+    <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
+      <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
+    ${stepper}${summary}${errBox}${thumbs}
+    <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
+  </div>`;
 }
 
 async function loadJobs() {
   const jobs = await api("/api/jobs");
+  const open = new Set([...document.querySelectorAll("details.log[open]")].map((d) => d.dataset.job));
   $("#jobs").innerHTML = jobs.map(jobCard).join("");
+  open.forEach((id) => { const d = document.querySelector(`details.log[data-job="${id}"]`); if (d) d.open = true; });
 }
 
 async function loadSettings() {
@@ -346,10 +437,20 @@ async function poll() {
 
 $("#nav").onclick = (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.view); };
 $("#closePlayer").onclick = closePlayer;
+let countValue = 1;
+document.querySelectorAll("#count button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("#count button").forEach((x) => x.classList.toggle("on", x === b));
+  countValue = +b.dataset.n;
+  $("#eta").textContent = `About ${8 * countValue}–${15 * countValue} minutes. You can close this page; it keeps running on your computer.`;
+});
+document.querySelectorAll("#ideas .chip").forEach((c) => c.onclick = () => {
+  $("#topic").value = c.dataset.topic;
+  document.querySelectorAll("#ideas .chip").forEach((x) => x.classList.toggle("on", x === c));
+});
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: +$("#count").value }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;

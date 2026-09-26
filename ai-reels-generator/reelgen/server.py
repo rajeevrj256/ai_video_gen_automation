@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from .config import EDITABLE, PROJECT_ROOT, Config, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
 from .pipeline import run
+from .script_writer import ReelScript
 
 log = logging.getLogger(__name__)
 WEB_DIR = PROJECT_ROOT / "web"
@@ -78,7 +79,8 @@ class JobManager:
             try:
                 reports = run(load_settings(Config()), job["count"], job["topic"], progress)
                 job["results"] = [r["id"] for r in reports]
-                job["status"] = "done" if len(reports) == job["count"] else "failed"
+                made = len(reports)
+                job["status"] = "done" if made == job["count"] else ("partial" if made else "failed")
             except Exception as exc:  # never kill the worker thread
                 progress(f"Error: {exc}")
                 job["status"] = "failed"
@@ -190,6 +192,21 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/videos/{video_id}")
     def video(video_id: str):
         return json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+
+    @app.post("/api/videos/{video_id}/post-text")
+    def write_post_text(video_id: str):
+        """(Re)write the Instagram/YouTube text for a video, e.g. one made before this existed."""
+        from .post_copy import apply_post_copy
+
+        folder = video_dir(cfg, video_id)
+        script = ReelScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        try:
+            apply_post_copy(report, script, load_settings(Config()), folder)
+        except Exception as exc:
+            raise HTTPException(502, f"Couldn't write the post text: {exc}")
+        (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return report
 
     @app.delete("/api/videos/{video_id}")
     def delete_video(video_id: str):

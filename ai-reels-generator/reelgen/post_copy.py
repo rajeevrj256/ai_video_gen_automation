@@ -68,6 +68,22 @@ def post_text(report: dict) -> str:
     )
 
 
+def apply_post_copy(report: dict, script: ReelScript, cfg: Config, folder: Path) -> dict:
+    """Write the post text for a finished video into its report and post.txt."""
+    post = write_post_copy(script, cfg)
+    report.update({
+        "caption": post.instagram_caption,
+        "hashtags": clean_tags(post.instagram_hashtags),
+        "youtube_title": post.youtube_title,
+        "youtube_description": post.youtube_description,
+        "youtube_hashtags": clean_tags(post.youtube_hashtags),
+        "youtube_tags": [t.strip().lstrip("#") for t in post.youtube_tags if t.strip()],
+        "hashtag_notes": post.hashtag_notes,
+    })
+    save_post_text(report, folder)
+    return report
+
+
 def save_post_text(report: dict, folder: Path) -> Path:
     path = folder / "post.txt"
     path.write_text(post_text(report), encoding="utf-8")
