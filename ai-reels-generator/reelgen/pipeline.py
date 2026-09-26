@@ -11,6 +11,10 @@ import json
 import logging
 import re
 import shutil
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -30,6 +34,16 @@ Progress = Callable[[str], None]
 
 FACT_FIXES = 2  # script rewrites allowed per attempt to fix fact-check findings
 
+# Videos can run in parallel (cfg.parallel_videos). Most of a video's time is spent
+# waiting on Claude and downloads, so those overlap freely. Two things take turns:
+# - picking a trending topic, so parallel videos never grab the same one;
+# - the Remotion edit, which already uses every CPU core (cfg.parallel_renders slots).
+_topic_lock = threading.Lock()
+_history_lock = threading.Lock()
+_claimed: set[str] = set()  # topics taken by videos still in progress
+_render_slots: threading.Semaphore | None = None
+_render_slots_size = 0
+
 
 def slugify(text: str, max_len: int = 40) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:max_len] or "reel"
@@ -39,22 +53,43 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     history_path = cfg.output_dir / "history.json"
 
     progress("Finding trending topics")
+    first_script = None
     if topic:
         candidates = [Trend(title=topic, source="manual", context=angle_note)]
     else:
-        candidates = collect_trends(cfg.geo, load_history(history_path))
+        # One video at a time picks from the trends, skipping topics already used or
+        # being made right now by a parallel video.
+        with _topic_lock:
+            with _history_lock:
+                used = load_history(history_path)
+            candidates = collect_trends(cfg.geo, used + sorted(_claimed))
+            progress("[attempt 1/%d] Claude is picking the topic and writing the script" % cfg.max_attempts)
+            first_script = write_script(cfg, candidates, "", None)
+            _claimed.add(first_script.topic)
+    claimed = first_script.topic if first_script else None
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    run_dir = cfg.output_dir / f"{stamp}-working"
+    run_dir = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-working"  # parallel videos can start in the same second
     run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        return _make_video(cfg, topic, progress, candidates, first_script, run_dir, stamp, history_path)
+    finally:
+        if claimed:
+            _claimed.discard(claimed)
 
+
+def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: list, first_script,
+                run_dir, stamp: str, history_path) -> dict:
     feedback = ""
     script = None
     best: dict | None = None
     for attempt in range(1, cfg.max_attempts + 1):
         tag = f"[attempt {attempt}/{cfg.max_attempts}]"
-        progress(f"{tag} Claude is picking the topic and writing the script")
-        script = write_script(cfg, candidates, feedback, previous=script if feedback else None)
+        if attempt == 1 and first_script is not None:
+            script = first_script  # already written while holding the topic lock
+        else:
+            progress(f"{tag} Claude is picking the topic and writing the script")
+            script = write_script(cfg, candidates, feedback, previous=script if feedback else None)
         if not topic:  # keep later attempts on the chosen topic
             candidates = [c for c in candidates if c.title.lower() == script.topic.lower()] or candidates
 
@@ -98,9 +133,10 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
         backgrounds = fetch_backgrounds([s.visual_queries for s in script.scenes], cfg.pexels_api_key,
                                         cfg.width, cfg.height, run_dir / "backgrounds")
         progress(f"{tag} Editing the video (takes a few minutes)")
-        rendered = render_video(script.title, scenes, backgrounds, cfg, run_dir / "reel.mp4",
-                                graphics=[s.graphic for s in script.scenes],
-                                transitions=[s.transition for s in script.scenes])
+        with _render_slot(cfg):  # waits here if other videos are being edited
+            rendered = render_video(script.title, scenes, backgrounds, cfg, run_dir / "reel.mp4",
+                                    graphics=[s.graphic for s in script.scenes],
+                                    transitions=[s.transition for s in script.scenes])
 
         progress(f"{tag} Verifying video quality")
         verdict = check_video(run_dir / "reel.mp4", scenes, script, cfg)
@@ -167,7 +203,8 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
                        "post_text_error": str(exc)[:300]})
         save_post_text(report, final_dir)
     (final_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-    save_history(history_path, script.topic)
+    with _history_lock:
+        save_history(history_path, script.topic)
 
     notify(report, cfg.telegram_bot_token, cfg.telegram_chat_id)
     progress("Done" if report["verified"] else "Done, but it did not pass every check — review before posting")
@@ -200,20 +237,45 @@ def _restore_snapshot(run_dir) -> None:
         (run_dir / scratch).unlink(missing_ok=True)
 
 
+def _render_slot(cfg: Config) -> threading.Semaphore:
+    global _render_slots, _render_slots_size
+    size = max(1, cfg.parallel_renders)
+    if _render_slots is None or size != _render_slots_size:
+        _render_slots, _render_slots_size = threading.Semaphore(size), size
+    return _render_slots
+
+
 def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progress = log.info) -> list[dict]:
-    reports = []
-    for i in range(count):
-        progress(f"=== Video {i + 1}/{count} ===")
-        # Trending batches get a new topic each time (used topics are skipped). A batch on
-        # one fixed topic needs a different angle per video, or they'd all come out alike.
+    """Make `count` videos, up to cfg.parallel_videos at a time. In a batch every progress
+    line is tagged "[V<n>] " so the app can show one row per video."""
+    workers = max(1, min(cfg.parallel_videos, count))
+    results: dict[int, dict] = {}
+    done_titles: list[str] = []
+
+    def one(i: int) -> None:
+        vp = (lambda m: progress(f"[V{i + 1}] {m}")) if count > 1 else progress
+        vp(f"=== Video {i + 1}/{count} ===")
+        # Trending batches get a new topic each time (used and in-progress topics are
+        # skipped). A batch on one fixed topic needs a different angle per video.
         angle = ""
         if topic and count > 1:
-            made = "; ".join(f"'{r['title']}' ({r['topic']})" for r in reports) or "none yet"
-            angle = (f"Video {i + 1} of {count} on this topic. Already made: {made}. Pick a clearly "
-                     "different angle, facts and hook from those, still on this topic.")
+            made = "; ".join(done_titles) or "none yet"
+            angle = (f"Video {i + 1} of {count} on this topic; the others in this batch take other angles. "
+                     f"Already made: {made}. Pick a clearly different angle, facts and hook, still on this topic.")
         try:
-            reports.append(run_once(cfg, topic, progress, angle))
+            report = run_once(cfg, topic, vp, angle)
+            results[i] = report
+            done_titles.append(f"'{report['title']}' ({report['topic']})")
         except Exception as exc:
             log.exception("Video %d failed", i + 1)
-            progress(f"Video {i + 1} failed: {exc}")
-    return reports
+            vp(f"Video {i + 1} failed: {exc}")
+
+    if workers == 1:
+        for i in range(count):
+            one(i)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for i in range(count):
+                pool.submit(one, i)
+                time.sleep(2)  # stagger starts a little
+    return [results[i] for i in sorted(results)]

@@ -82,6 +82,17 @@
   .step.now .dot { border-color: var(--accent); }
   .step.now { color: var(--text); font-weight: 600; }
   .now-line { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .vrows { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+  .vrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); font-size: 13px; }
+  .vrow b { width: 20px; color: var(--muted); }
+  .vrow .vname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vrow.wait { opacity: .5; }
+  .vrow .try { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .vrow .vtime { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); min-width: 44px; text-align: right; }
+  .vrow.done .vtime, .vrow.check .vtime, .vrow.failed .vtime { color: var(--muted); }
+  .mini-steps { display: flex; gap: 3px; }
+  .mini-steps i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .mini-steps i.done { background: var(--ok); } .mini-steps i.now { background: var(--accent); }
   .timer { font-size: 13px; color: var(--text); margin: 4px 0 8px; font-variant-numeric: tabular-nums; }
   .timer .live { font-weight: 700; color: var(--accent); }
   .errbox { background: rgba(255,90,95,.1); color: #ffb3b5; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
@@ -228,6 +239,12 @@
             <option value="10">10 videos</option><option value="15">15 videos</option>
           </select></div>
       </div>
+      <label for="s-parallel_videos">Videos made at the same time</label>
+      <select id="s-parallel_videos">
+        <option value="1">1 (one after another)</option>
+        <option value="2">2 (recommended)</option>
+        <option value="3">3 (fast PC, 16 GB+ RAM)</option>
+      </select>
       <p class="hint">Picks a different trending topic for each video. Keep the computer on and awake at that time;
         15 videos take about 2–4 hours.</p>
       <label for="s-ai_backend">AI</label>
@@ -426,49 +443,87 @@ setInterval(() => document.querySelectorAll(".live").forEach((el) => {
   el.textContent = mmss(Date.now() / 1000 + clockOffset - +el.dataset.since);
 }), 1000);
 
+// Split a job's log into one entry per video. Batches tag lines "[V<n>] "; a single
+// video (or an older log) uses the "=== Video n/m ===" markers instead.
+function videosOf(j) {
+  const vids = {};
+  let cur = 1;
+  j.log.forEach((l) => {
+    let m = l.msg, n = null;
+    const tag = m.match(/^\[V(\d+)\] ([\s\S]*)$/);
+    if (tag) { n = +tag[1]; m = tag[2]; }
+    const mark = m.match(/^=== Video (\d+)\//);
+    if (mark) cur = +mark[1];
+    if (n === null) n = cur;
+    const v = (vids[n] ||= { n, lines: [], start: l.t, end: l.t, step: -1, attempt: "", state: "running" });
+    v.lines.push(m); v.end = l.t;
+    const a = m.match(/\[attempt (\d+)\/(\d+)\]/); if (a) v.attempt = `Try ${a[1]}/${a[2]}`;
+    STEPS.forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
+    if (/^Done/.test(m)) v.state = /did not pass/.test(m) ? "check" : "done";
+    if (/^Video \d+ failed:/.test(m)) { v.state = "failed"; v.error = m.replace(/^Video \d+ failed: /, ""); }
+  });
+  return Object.values(vids).sort((x, y) => x.n - y.n);
+}
+
+const miniSteps = (step) => `<span class="mini-steps">${STEPS.map(([name], i) =>
+  `<i class="${i < step ? "done" : i === step ? "now" : ""}" title="${name}"></i>`).join("")}</span>`;
+
 function jobCard(j) {
   if (j.now) clockOffset = j.now - Date.now() / 1000;
-  const starts = j.log.filter((l) => /^=== Video \d+\//.test(l.msg)).map((l) => l.t);
   const jobStart = j.log.length ? j.log[0].t : j.created;
   const msgs = j.log.map((l) => l.msg);
+  const vids = videosOf(j);
   const made = (j.results || []).length;
-  let video = 1, attempt = "", step = -1;
-  msgs.forEach((m) => {
-    const v = m.match(/=== Video (\d+)\/(\d+)/); if (v) { video = +v[1]; step = -1; }
-    const a = m.match(/\[attempt (\d+)\/(\d+)\]/); if (a) attempt = `Try ${a[1]} of ${a[2]}`;
-    STEPS.forEach(([, re], i) => { if (re.test(m)) step = Math.max(step, i); });
-  });
-  const errors = msgs.filter((m) => /failed:|Error:|did not pass/.test(m) && !/Failed verification/.test(m));
+  const running = j.status === "running";
+  const errors = vids.filter((v) => v.error).map((v) => `Video ${v.n}: ${v.error}`);
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = j.topic ? esc(j.topic) : "Trending topic";
-  const running = j.status === "running";
-  const last = msgs[msgs.length - 1] || "Starting…";
-
-  const stepper = running ? `<div class="steps">${STEPS.map(([name], i) => {
-      const cls = i < step ? "done" : i === step ? "now" : "";
-      const dot = i < step ? "✓" : i === step ? '<span class="spinner"></span>' : "";
-      return `<div class="step ${cls}"><div class="dot">${dot}</div>${name}</div>`;
-    }).join("")}</div>
-    <div class="now-line">${esc(last.replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
-    <div class="timer">⏱ This video ${liveSince(starts.length ? starts[starts.length - 1] : jobStart)}
-      ${j.count > 1 ? ` · Total ${liveSince(jobStart)}` : ""}</div>` : "";
+  const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
-  const perVideo = starts.map((t, i) => mmss((starts[i + 1] || end) - t));
-  const took = !running && j.status !== "queued" && j.log.length
-    ? `<div class="timer">⏱ Took ${mmss(end - jobStart)}${perVideo.length > 1 ? ` in total · per video ${perVideo.join(", ")}` : ""}</div>`
-    : "";
-  const summary = !running && j.status !== "queued"
-    ? (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
-    : "";
-  const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map((e) => esc(e.replace(/^Video \d+ failed: /, ""))).join("<br>")}</div>` : "";
+
+  let body = "";
+  if (running && j.count === 1 && vids.length) {
+    // One video: the big step tracker.
+    const v = vids[0];
+    body = `<div class="steps">${STEPS.map(([name], i) => {
+        const cls = i < v.step ? "done" : i === v.step ? "now" : "";
+        const dot = i < v.step ? "✓" : i === v.step ? '<span class="spinner"></span>' : "";
+        return `<div class="step ${cls}"><div class="dot">${dot}</div>${name}</div>`;
+      }).join("")}</div>
+      <div class="now-line">${esc(v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
+      <div class="timer">⏱ ${liveSince(v.start)}</div>`;
+  } else if (running) {
+    // A batch: one row per video, running side by side.
+    const rows = [];
+    for (let n = 1; n <= j.count; n++) {
+      const v = vids.find((x) => x.n === n);
+      if (!v) { rows.push(`<div class="vrow wait"><b>${n}</b><span class="vname">Waiting…</span></div>`); continue; }
+      const now = v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, "");
+      const icon = { done: "✅", check: "⚠️", failed: "❌", running: '<span class="spinner"></span>' }[v.state];
+      const time = v.state === "running" ? liveSince(v.start) : mmss(v.end - v.start);
+      rows.push(`<div class="vrow ${v.state}"><b>${n}</b>${icon}
+        <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.step >= 0 ? STEPS[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
+        ${v.state === "running" ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
+        <span class="vtime">${time}</span></div>`);
+    }
+    body = `<div class="vrows">${rows.join("")}</div><div class="timer">⏱ Total ${liveSince(jobStart)}</div>`;
+  } else if (j.status !== "queued" && j.log.length) {
+    const per = vids.map((v) => mmss(v.end - v.start));
+    body = (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
+      + `<div class="timer">⏱ Took ${mmss(end - jobStart)}${per.length > 1 ? ` in total · per video ${per.join(", ")}` : ""}</div>`;
+  }
+  const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map(esc).join("<br>")}</div>` : "";
   const thumbs = made ? `<div class="thumbs">${j.results.map((id) =>
       `<img src="/media/${encodeURIComponent(id)}/thumbnail.jpg" alt="" onclick="openVideo('${esc(id)}')">`).join("")}</div>` : "";
-  const sub = running ? `Video ${video} of ${j.count}${attempt ? " · " + attempt : ""}` : `${j.count} video${j.count > 1 ? "s" : ""} requested`;
+  const sub = running
+    ? (j.count === 1 ? (vids[0] && vids[0].attempt ? vids[0].attempt.replace("Try", "Try ").replace("/", " of ") : "Starting")
+                     : `${j.count} videos · ${active.length} in progress · ${vids.filter((v) => v.state !== "running").length} finished`)
+    : `${j.count} video${j.count > 1 ? "s" : ""} requested`;
   return `<div class="panel job ${j.status}">
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
-    ${stepper}${summary}${took}${errBox}${thumbs}
+    ${body}${errBox}${thumbs}
     <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
   </div>`;
 }

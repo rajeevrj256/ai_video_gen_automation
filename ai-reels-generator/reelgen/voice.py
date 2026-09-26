@@ -17,6 +17,7 @@ import logging
 import os
 import random
 import re
+import threading
 import ssl
 import wave
 from dataclasses import dataclass
@@ -120,6 +121,7 @@ def _edge_scenes(narrations: list[str], voice: str, out_dir: Path) -> list[Scene
 # ---------- kokoro (offline) ----------
 
 _kokoro = None
+_kokoro_lock = threading.Lock()  # parallel videos share one model; synthesis takes seconds
 
 
 def _kokoro_default(edge_voice: str) -> str:
@@ -153,6 +155,11 @@ def _load_kokoro():
 
 
 def _kokoro_scenes(narrations: list[str], voice: str, out_dir: Path) -> list[SceneAudio]:
+    with _kokoro_lock:
+        return _kokoro_scenes_locked(narrations, voice, out_dir)
+
+
+def _kokoro_scenes_locked(narrations: list[str], voice: str, out_dir: Path) -> list[SceneAudio]:
     kokoro = _load_kokoro()
     lang = KOKORO_LANG.get(voice[:1], "en-us")
     results = []

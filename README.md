@@ -82,6 +82,8 @@ One video is about 8 minutes when it passes on the first try. The slow steps are
 | `REEL_CONCURRENCY` | Frames rendered in parallel | your CPU's core count, e.g. `8` or `12` |
 | `REEL_GL` | Lets the renderer's browser use the GPU | `angle` on Windows, `egl` on Linux |
 | `REEL_HWACCEL` | GPU video encoding (NVIDIA NVENC) | `if-possible` (falls back to CPU if it fails) |
+| `REEL_PARALLEL` | Videos made at the same time in a batch (also in Settings). While one waits on Claude, another downloads or renders | `2`; `3` on a 16 GB+ PC |
+| `REEL_PARALLEL_RENDERS` | How many of those may render at once | `1`; `2` on 16+ cores |
 | `REEL_MAX_ATTEMPTS` | Rewrite-and-retry budget | `3` (default); `1` = fastest, more "not verified" |
 
 The best topics pass on the first try and look most real: money, science, nature, tech, places and history. Breaking news about named people is the hardest, because stock footage can't show them.

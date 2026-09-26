@@ -74,6 +74,10 @@ class Config:
     app_pin: str = field(default_factory=lambda: _env("REEL_APP_PIN"))
     # Daily auto-generation time in 24h local time, e.g. "08:30". Empty = off.
     schedule_time: str = field(default_factory=lambda: _env("REEL_SCHEDULE"))
+    # Videos made at the same time (1-3). Claude/download waits overlap; editing takes turns.
+    parallel_videos: int = field(default_factory=lambda: int(_env("REEL_PARALLEL", "2")))
+    # Remotion edits at the same time. Each already uses every core, so 1 is usually fastest.
+    parallel_renders: int = field(default_factory=lambda: int(_env("REEL_PARALLEL_RENDERS", "1")))
     # How many videos the daily run makes (1-15).
     schedule_count: int = field(default_factory=lambda: int(_env("REEL_SCHEDULE_COUNT", "1")))
 
@@ -89,7 +93,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "ai_backend", "claude_model"]
+EDITABLE = ["geo", "language", "voice", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model"]
 
 
 def settings_path(cfg: Config) -> Path:
