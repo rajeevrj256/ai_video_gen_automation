@@ -44,6 +44,9 @@ _history_lock = threading.Lock()
 _claimed: set[str] = set()  # topics taken by videos still in progress
 _render_slots: threading.Semaphore | None = None
 _render_slots_size = 0
+_video_slots: threading.Semaphore | None = None  # shared by every job, not per batch
+_video_slots_size = 0
+_slots_lock = threading.Lock()
 
 
 def slugify(text: str, max_len: int = 40) -> str:
@@ -117,6 +120,11 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             script = fixed
         if not facts.passed:
             progress(f"{tag} Still has unconfirmed facts after rewriting: {'; '.join(facts.issues)}")
+            if attempt < cfg.max_attempts:
+                # A render takes minutes and the review would fail on these same facts,
+                # so rewrite now. The last attempt is rendered anyway so there is a video.
+                feedback = "\n".join(facts.issues)
+                continue
 
         progress(f"{tag} Recording voiceover")
         scenes = synthesize_scenes([s.narration for s in script.scenes], cfg.voice, run_dir / "audio",
@@ -238,6 +246,17 @@ def _restore_snapshot(run_dir) -> None:
         (run_dir / scratch).unlink(missing_ok=True)
 
 
+def _video_slot(cfg: Config) -> threading.Semaphore:
+    """At most cfg.parallel_videos videos run at once across all jobs, so a second job
+    starts as soon as a slot is free instead of waiting for the first job to finish."""
+    global _video_slots, _video_slots_size
+    size = max(1, cfg.parallel_videos)
+    with _slots_lock:
+        if _video_slots is None or size != _video_slots_size:
+            _video_slots, _video_slots_size = threading.Semaphore(size), size
+        return _video_slots
+
+
 def _render_slot(cfg: Config) -> threading.Semaphore:
     global _render_slots, _render_slots_size
     size = max(1, cfg.parallel_renders)
@@ -247,13 +266,16 @@ def _render_slot(cfg: Config) -> threading.Semaphore:
 
 
 def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progress = log.info) -> list[dict]:
-    """Make `count` videos, up to cfg.parallel_videos at a time. In a batch every progress
-    line is tagged "[V<n>] " so the app can show one row per video."""
-    workers = max(1, min(cfg.parallel_videos, count))
+    """Make `count` videos. Each waits for one of the cfg.parallel_videos slots shared by all
+    jobs. In a batch every progress line is tagged "[V<n>] " so the app shows one row per video."""
     results: dict[int, dict] = {}
     done_titles: list[str] = []
 
     def one(i: int) -> None:
+        with _video_slot(cfg):  # holds the same semaphore object it acquired, even if resized
+            make(i)
+
+    def make(i: int) -> None:
         vp = (lambda m: progress(f"[V{i + 1}] {m}")) if count > 1 else progress
         set_limit_reporter(vp)  # a usage-limit pause shows up in this video's log
         vp(f"=== Video {i + 1}/{count} ===")
@@ -272,12 +294,8 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
             log.exception("Video %d failed", i + 1)
             vp(f"Video {i + 1} failed: {exc}")
 
-    if workers == 1:
+    with ThreadPoolExecutor(max_workers=count) as pool:
         for i in range(count):
-            one(i)
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for i in range(count):
-                pool.submit(one, i)
-                time.sleep(2)  # stagger starts a little
+            pool.submit(one, i)
+            time.sleep(0.2)  # keeps videos taking slots roughly in order
     return [results[i] for i in sorted(results)]

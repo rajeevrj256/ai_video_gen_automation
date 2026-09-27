@@ -61,7 +61,7 @@ class JobManager:
 
     def _next(self) -> dict | None:
         with self.lock:
-            queued = [j for j in self.jobs if j["status"] == "queued"]
+            queued = [j for j in self.jobs if j["status"] == "queued" and not j.get("started")]
             return queued[-1] if queued else None
 
     def _worker(self) -> None:
@@ -71,21 +71,26 @@ class JobManager:
                 self.wake.wait(5)
                 self.wake.clear()
                 continue
+            # Each job runs in its own thread; pipeline.run's shared video slots decide how many
+            # videos actually work at once. The job shows "Waiting" until its first video starts.
+            job["started"] = True
+            threading.Thread(target=self._run_job, args=(job,), daemon=True).start()
+
+    def _run_job(self, job: dict) -> None:
+        def progress(msg: str, job=job) -> None:
             job["status"] = "running"
+            job["log"].append({"t": time.time(), "msg": msg})
+            log.info("[job %s] %s", job["id"], msg)
 
-            def progress(msg: str, job=job) -> None:
-                job["log"].append({"t": time.time(), "msg": msg})
-                log.info("[job %s] %s", job["id"], msg)
-
-            try:
-                reports = run(load_settings(Config()), job["count"], job["topic"], progress)
-                job["results"] = [r["id"] for r in reports]
-                made = len(reports)
-                job["status"] = "done" if made == job["count"] else ("partial" if made else "failed")
-            except Exception as exc:  # never kill the worker thread
-                progress(f"Error: {exc}")
-                job["status"] = "failed"
-            job["finished"] = time.time()
+        try:
+            reports = run(load_settings(Config()), job["count"], job["topic"], progress)
+            job["results"] = [r["id"] for r in reports]
+            made = len(reports)
+            job["status"] = "done" if made == job["count"] else ("partial" if made else "failed")
+        except Exception as exc:  # never kill the worker thread
+            progress(f"Error: {exc}")
+            job["status"] = "failed"
+        job["finished"] = time.time()
 
 
 def scheduler(jobs: JobManager) -> None:

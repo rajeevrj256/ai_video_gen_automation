@@ -49,8 +49,8 @@ Studio project uses `^4.0.0`, so keep versions separate). Props shape: `src/type
 
 Set these in `ai-reels-generator/.env`. They're read by `video.py`:
 - `REEL_CONCURRENCY=<cores>`: parallel frame rendering, the biggest speed win.
-- `REEL_PARALLEL=2` (Settings: "Videos made at the same time"): a batch runs this many videos
-  in threads (`pipeline.run`). Claude and download waits overlap; renders still queue on a
+- `REEL_PARALLEL=2` (Settings: "Videos made at the same time"): this many videos run at once
+  across all jobs (a shared semaphore in `pipeline.run`; every job gets its own thread in `server.py`). Claude and download waits overlap; renders still queue on a
   semaphore of `REEL_PARALLEL_RENDERS` (default 1), because two renders fight for the same cores.
   Batch log lines are tagged `[V<n>] `; the app splits them into one row per video.
 - `REEL_GL=angle` (Windows) / `egl` (Linux): GPU for the headless browser. If renders

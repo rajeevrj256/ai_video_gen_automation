@@ -44,7 +44,7 @@ class Graphic(BaseModel):
 
 class Scene(BaseModel):
     narration: str = Field(description="What the voiceover says in this scene: 1-2 spoken sentences that carry on from the previous scene. The scenes are read in one continuous take.")
-    visual_queries: list[str] = Field(description="2-3 different English stock-footage search queries (2-4 words each) for quick cuts inside this scene, concrete and filmable, e.g. 'hands counting cash', 'mumbai street night'. The stock library is literal and American English: write 'soccer' not 'football', and never name a real person, team, brand or event (it has no footage of them) - describe generic things that fit, like 'soccer stadium crowd' or 'coach on sideline', without implying the clip shows the person named. The same goes for a specific landmark, artifact or rare animal: ask for close-ups or context that can't be mistaken for something else ('rusted iron texture', 'brass gears macro', 'coral reef closeup') rather than a different object that looks like a stand-in. Space: the library has almost no footage of Venus, Saturn, Jupiter or other planets, so for those use 'starry night sky', 'telescope at night', 'milky way timelapse' or 'rocket launch' instead of the planet's name.")
+    visual_queries: list[str] = Field(description="2-3 different English stock-footage search queries (2-4 words each) for quick cuts inside this scene, concrete and filmable, e.g. 'hands counting cash', 'mumbai street night'. The stock library is literal and American English: write 'soccer' not 'football', and never name a real person, team, brand or event (it has no footage of them) - describe generic things that fit, like 'soccer stadium crowd' or 'coach on sideline', without implying the clip shows the person named. The same goes for a specific landmark, artifact or rare animal: ask for close-ups or context that can't be mistaken for something else ('rusted iron texture', 'brass gears macro', 'coral reef closeup') rather than a different object that looks like a stand-in. Space: the library has almost no footage of Venus, Saturn, Jupiter or other planets, so for those use 'starry night sky', 'telescope at night', 'milky way timelapse' or 'rocket launch' instead of the planet's name. Never ask for aerial or wide shots of a stadium, skyline or landmark when the script names a specific place: the library returns a different, recognisable one (Wembley or Adelaide Oval for 'the Oval'). Use close-ups instead: 'cricket ball on grass', 'batsman gloves closeup', 'crowd cheering closeup'.")
     graphic: Graphic = Field(description="The animated graphic shown over the footage in this scene, or type 'none'.")
     transition: Literal["flash", "zoom", "slide", "glitch", "fade"] = Field(
         default="flash",
@@ -120,6 +120,11 @@ Transitions: each scene after the first cuts in with a transition that has its o
 to 4 different kinds that suit this video's mood and what each scene does, and never use the same \
 one twice in a row: a list video might alternate slide and zoom, a tech story glitch and flash, a \
 nature or history piece fade and zoom.
+
+Timeless wording: the video is posted and watched days later, so never write "today", \
+"tonight", "yesterday", "this week" or "five days ago". Use dates ("on the 22nd of September") \
+or wording that stays true. For a match or event that hasn't finished, tell the story of \
+what has already happened and don't predict or imply the result.
 
 Accuracy: only state facts you are confident about or have looked up. If a trend is breaking \
 news, check what actually happened first (use web search if you have it); if you can't confirm \

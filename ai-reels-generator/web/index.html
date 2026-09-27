@@ -472,7 +472,12 @@ function videosOf(j) {
     const pause = m.match(/^Paused: .*until (\d\d:\d\d)/);
     v.paused = pause ? pause[1] : "";
     if (/^(Paused|Resumed)/.test(m)) return; // keeps the current step and try count
-    const a = m.match(/\[attempt (\d+)\/(\d+)\]/); if (a) v.attempt = `Try ${a[1]}/${a[2]}`;
+    const a = m.match(/\[attempt (\d+)\/(\d+)\]/);
+    if (a) {
+      const t = `Try ${a[1]}/${a[2]}`;
+      if (t !== v.attempt) v.step = -1; // a new try starts over at Script
+      v.attempt = t;
+    }
     STEPS.forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
     if (/^Done/.test(m)) v.state = /did not pass/.test(m) ? "check" : "done";
     if (/^Video \d+ failed:/.test(m)) { v.state = "failed"; v.error = m.replace(/^Video \d+ failed: /, ""); }
