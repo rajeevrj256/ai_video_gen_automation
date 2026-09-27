@@ -44,7 +44,7 @@ class Graphic(BaseModel):
 
 class Scene(BaseModel):
     narration: str = Field(description="What the voiceover says in this scene: 1-2 spoken sentences that carry on from the previous scene. The scenes are read in one continuous take.")
-    visual_queries: list[str] = Field(description="2-3 different English stock-footage search queries (2-4 words each) for quick cuts inside this scene, concrete and filmable, e.g. 'hands counting cash', 'mumbai street night'. The stock library is literal and American English: write 'soccer' not 'football', and never name a real person, team, brand or event (it has no footage of them) - describe generic things that fit, like 'soccer stadium crowd' or 'coach on sideline', without implying the clip shows the person named. The same goes for a specific landmark, artifact or rare animal: ask for close-ups or context that can't be mistaken for something else ('rusted iron texture', 'brass gears macro', 'coral reef closeup') rather than a different object that looks like a stand-in. Space: the library has almost no footage of Venus, Saturn, Jupiter or other planets, so for those use 'starry night sky', 'telescope at night', 'milky way timelapse' or 'rocket launch' instead of the planet's name. Never ask for aerial or wide shots of a stadium, skyline or landmark when the script names a specific place: the library returns a different, recognisable one (Wembley or Adelaide Oval for 'the Oval'). Use close-ups instead: 'cricket ball on grass', 'batsman gloves closeup', 'crowd cheering closeup'.")
+    visual_queries: list[str] = Field(description="2-3 different English stock-footage search queries (2-4 words each) for quick cuts inside this scene, concrete and filmable, e.g. 'hands counting cash', 'mumbai street night'. The stock library is literal and American English: write 'soccer' not 'football', and never name a real person, team, brand or event (it has no footage of them) - describe generic things that fit, like 'soccer stadium crowd' or 'coach on sideline', without implying the clip shows the person named. The same goes for a specific landmark, artifact or rare animal: ask for close-ups or context that can't be mistaken for something else ('rusted iron texture', 'brass gears macro', 'coral reef closeup') rather than a different object that looks like a stand-in. Space: the library has almost no footage of Venus, Saturn, Jupiter or other planets, so for those use 'starry night sky', 'telescope at night', 'milky way timelapse' or 'rocket launch' instead of the planet's name. Never ask for aerial or wide shots of a stadium, skyline or landmark when the script names a specific place: the library returns a different, recognisable one (Wembley or Adelaide Oval for 'the Oval'). Use close-ups instead: 'cricket ball on grass', 'batsman gloves closeup', 'crowd cheering closeup'. Keep every scene's queries on the video's one subject (different angles, close-ups and moments of the same thing), not a new object each scene.")
     graphic: Graphic = Field(description="The animated graphic shown over the footage in this scene, or type 'none'.")
     transition: Literal["flash", "zoom", "slide", "glitch", "fade"] = Field(
         default="flash",
@@ -59,6 +59,7 @@ class ReelScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list (for fiction or comedy: the theme you used).")
     why_chosen: str = Field(description="One sentence on why this topic will perform well now, and the one story you will tell about it.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from (a source you looked up, or 'general knowledge').")
+    subject: str = Field(description="The one subject the whole video stays on and explores in depth (one event, place, object, character or situation), e.g. 'The rained-out 1971 Melbourne Test that became the first ODI'. Never several examples.")
     hook_question: str = Field(description="The one question or tension the hook plants in the viewer's head, e.g. 'How was Sri Lanka founded?' (fiction: 'What happened to the last passenger?'; comedy: the setup). The video pays it off only in the last one or two scenes.")
     answer: str = Field(description="The answer, twist or punchline the ending delivers, in one sentence.")
     title: str = Field(description="On-screen hook text for the first 2 seconds, max 6 words: the hook's question or tension, written like a creator would type it.")
@@ -157,7 +158,7 @@ The story (the rest of the scenes):
   story inside or behind it (how it started, the record behind it, why it works that way, the \
   surprising cause) and tell that. Don't recap scores or headlines.
 - A list-shaped topic ("facts about X", "tricks for Y") becomes the story of its single best \
-  item. Every fact in the video must move this one story forward.
+  item, told in depth. Never "three examples of X"; one example, explained fully.
 - "Do you know how/why..." questions are welcome. "Did you know..." fact openers are banned.
 
 """,
@@ -184,10 +185,10 @@ recognise, e.g. "Every Indian mom has one secret superpower.", "Nobody warns you
 [everyday situation].", "There are two kinds of people at [place]." The on-screen title says the \
 same setup in at most 6 words. Never open with "Here's a joke" or a greeting.
 
-The structure: one theme from start to end. Either one bit that escalates (each scene makes the \
-situation more absurd, linked by "but" or "so"), or three or four quick jokes on the same theme \
-building to the funniest one last. Save the biggest laugh for the final scene, ideally a \
-callback to the opening line. End with a natural "Tag the friend who does this" style line.
+The structure: one situation followed all the way through, never a list of separate jokes or \
+lines. E.g. not "five things parents say", but one mom's "five minutes" traced from the first \
+promise to the ridiculous end. Each scene makes that same situation more absurd, linked by "but" \
+or "so". Save the biggest laugh for the final scene, ideally a callback to the opening line. End with a natural "Tag the friend who does this" style line.
 
 """,
 }
@@ -246,6 +247,18 @@ the situation (a mom on the phone, a messy desk, a traffic jam, a student asleep
 }
 
 
+# Viewers get lost when every scene brings a new example; one subject explored in depth holds them.
+DEPTH = """One subject, in depth: the whole video stays on the one subject you name in 'subject' (one \
+event, one place, one object, one character, one situation). Scene 1 introduces it; every later \
+scene goes one level deeper into that same thing: how it works, why, the telling detail, what \
+it caused, the part nobody expects. Never switch to a second example, fact, trick or joke. When \
+you feel like adding "another example", go deeper into the first one instead. The footage stays \
+on it too: the same subject from different angles, close-ups and moments, not a new object in \
+every scene.
+
+"""
+
+
 def system_prompt(style: str) -> str:
     style = style if style in STYLES else "facts"
     shared = """It is read by text-to-speech: no abbreviations, symbols, emojis, or URLs in narration; \
@@ -257,7 +270,7 @@ one twice in a row: a list video might alternate slide and zoom, a tech story gl
 nature or history piece fade and zoom.
 
 """
-    return INTRO + VOICE[style] + "\n" + HOOK[style] + shared + GRAPHICS[style] + RULES[style]
+    return INTRO + VOICE[style] + "\n" + HOOK[style] + DEPTH + shared + GRAPHICS[style] + RULES[style]
 
 
 SYSTEM_PROMPT = system_prompt("facts")

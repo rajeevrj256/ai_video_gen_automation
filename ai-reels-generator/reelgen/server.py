@@ -219,7 +219,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         folder = video_dir(cfg, video_id)
         data = json.loads((folder / "script.json").read_text(encoding="utf-8"))
-        for field in ("hook_question", "answer"):  # scripts saved before these fields existed
+        for field in ("subject", "hook_question", "answer"):  # scripts saved before these fields existed
             data.setdefault(field, "")
         script = ReelScript.model_validate(data)
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))

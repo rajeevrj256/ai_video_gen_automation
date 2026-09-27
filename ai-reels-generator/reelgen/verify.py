@@ -194,8 +194,8 @@ class Review(BaseModel):
     hook: int = Field(description="1-10: does the first sentence plant a specific question the viewer wants answered (10), or is it a statement of the topic, background, or the answer given away (1-4)? Would it stop someone scrolling?")
     visuals_match: int = Field(description="1-10: do the frames fit what's being said? Theme-appropriate stock footage counts as a match; only contradicting or misleading footage scores low.")
     accuracy: int = Field(description="1-10: are the claims correct and not misleading, as far as you know?")
-    story: int = Field(description="1-10: is it one story where each scene follows from the last ('but'/'so'), the hook's question is held back and answered only at the end, and the last line ties back to the first (10)? Or a list of loosely connected facts, or a news recap (1-4)?")
-    blocking_issues: list[str] = Field(description="Problems that must be fixed before posting: factual errors, contradictions between scenes, misleading or exaggerated claims, anything that sounds obviously AI-written, a weak first line, or a video that is a list of facts instead of one story. Empty if none.")
+    story: int = Field(description="1-10: is it one story about one subject explored in depth, where each scene follows from the last ('but'/'so'), the hook's question is held back and answered only at the end, and the last line ties back to the first (10)? Or does it jump between several examples, list loosely connected facts or jokes, or recap news (1-4)?")
+    blocking_issues: list[str] = Field(description="Problems that must be fixed before posting: factual errors, contradictions between scenes, misleading or exaggerated claims, anything that sounds obviously AI-written, a weak first line, a video that is a list of facts instead of one story, or scenes that jump to a different example instead of going deeper into one. Empty if none.")
     issues: list[str] = Field(description="Smaller improvements worth making. Empty if none.")
     fix_instructions: str = Field(description="Concrete instructions for the writer to fix the issues in the next draft. Empty if none.")
 
