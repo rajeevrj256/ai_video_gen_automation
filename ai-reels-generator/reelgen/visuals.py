@@ -58,13 +58,20 @@ def _words(text: str) -> set[str]:
     return {w.rstrip("s") for w in re.findall(r"[a-z]+", text.lower()) if w not in STOPWORDS and len(w) > 2}
 
 
+# A query naming one of these must get a clip named after it: Pexels has almost no real
+# footage of other planets, so "saturn planet" otherwise returns Earth on the word "planet".
+NAMED_BODIES = {"mercury", "venus", "earth", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto", "moon", "sun"}
+
+
 def _relevant(query: str, videos: list[dict]) -> list[dict]:
     """Keep results whose Pexels page slug (e.g. /video/a-boy-pitching-a-baseball-123/)
     shares a word with the query, best match first; Pexels' own ranking breaks ties.
     Its search is loose ("football stadium" can return baseball), and a clip that
     visibly doesn't match the narration is the fastest way to look fake."""
     wanted = _words(query)
-    scored = [(len(wanted & _words(v.get("url", ""))), i, v) for i, v in enumerate(videos)]
+    must = wanted & _words(" ".join(NAMED_BODIES))
+    scored = [(len(wanted & _words(v.get("url", ""))), i, v) for i, v in enumerate(videos)
+              if must <= _words(v.get("url", ""))]
     return [v for score, _, v in sorted(scored, key=lambda x: (-x[0], x[1])) if score > 0]
 
 
