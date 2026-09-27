@@ -81,6 +81,9 @@ class LongScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list (fiction: the theme you used).")
     why_chosen: str = Field(description="One sentence: why this will hold viewers for 8 minutes, and the one story you will tell.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from.")
+    category: Literal["Sports", "Money", "Science & Space", "Tech", "History", "Nature & Animals", "Weather",
+                      "Entertainment", "India", "Life & People", "Stories", "Comedy"] = Field(
+        description="The library shelf this video belongs on. Fiction is 'Stories', jokes are 'Comedy'; otherwise the subject area.")
     subject: str = Field(description="The one subject the whole video explores in depth.")
     hook_question: str = Field(description="The one big question the cold open plants; the video answers it only in the last chapter.")
     answer: str = Field(description="The answer or twist the last chapter delivers, in one sentence.")
@@ -576,6 +579,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "topic_source": candidates[0].source if topic else next(
                 (c.source for c in candidates if c.title.lower() == script.topic.lower()), "unknown"),
             "style": cfg.video_style,
+            "category": script.category,
             "why_chosen": script.why_chosen,
             "title": script.youtube_title,
             "subject": script.subject,

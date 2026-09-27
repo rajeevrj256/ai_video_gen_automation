@@ -41,6 +41,7 @@ cd ../../remotion-studio && npm run studio / npm run typecheck
 | `video.py` | Builds props and runs `remotion render` in `ai-reels-generator/remotion/`; falls back to moviepy. `plan_transitions` keeps Claude's per-scene transition (flash/zoom/slide/glitch/fade) but forbids repeats and forces 2+ kinds. |
 | `sfx.py` | Synthesised sounds, one per transition (whoosh, impact, swish, glitch, shimmer) plus a pop for graphics. No audio files. |
 | `longform.py` | **Long videos** (8-10 min, 16:9, fully animated, no footage): `LongScript` (chapters of beats, each a narration line + an animated visual), `check_long_script`, `fact_check_long` (fixes before recording), one voice take per chapter (`long_voice`, default `en-IN-PrabhatNeural`, `long_language` Indian English), Remotion composition `Long` (`remotion/src/long/`), review on 2 frames per chapter, YouTube chapter timestamps in the description. Jobs with `length: "long"` go to `run_long_batch`. |
+| `categories.py` | Library categories. New scripts carry `category` (Claude picks from `CATEGORIES`); older reports get a keyword guess (`categorize`), plurals only. The Videos page shows one shelf per category with search and filters; a video's category can be changed on its page. |
 | `automations.py` | Several scheduled automations in `<output>/automations.json` (name, time, days, count, style, length, topic, `last_run`), run by `server.scheduler`; the old single `schedule_time` becomes the first one. |
 | `server.py`, `web/` | Local app, job queue, automations API, PIN. |
 

@@ -229,6 +229,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         "topic": script.topic,
         "topic_source": source,
         "style": cfg.video_style,
+        "category": script.category,
         "why_chosen": script.why_chosen,
         "title": script.title,
         "youtube_title": script.youtube_title,

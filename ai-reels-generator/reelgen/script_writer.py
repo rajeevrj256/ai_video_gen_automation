@@ -59,6 +59,9 @@ class ReelScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list (for fiction or comedy: the theme you used).")
     why_chosen: str = Field(description="One sentence on why this topic will perform well now, and the one story you will tell about it.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from (a source you looked up, or 'general knowledge').")
+    category: Literal["Sports", "Money", "Science & Space", "Tech", "History", "Nature & Animals", "Weather",
+                      "Entertainment", "India", "Life & People", "Stories", "Comedy"] = Field(
+        description="The library shelf this video belongs on. Fiction is 'Stories', jokes are 'Comedy'; otherwise the subject area.")
     subject: str = Field(description="The one subject the whole video stays on and explores in depth (one event, place, object, character or situation), e.g. 'The rained-out 1971 Melbourne Test that became the first ODI'. Never several examples.")
     hook_question: str = Field(description="The one question or tension the hook plants in the viewer's head, e.g. 'How was Sri Lanka founded?' (fiction: 'What happened to the last passenger?'; comedy: the setup). The video pays it off only in the last one or two scenes.")
     answer: str = Field(description="The answer, twist or punchline the ending delivers, in one sentence.")

@@ -139,7 +139,16 @@
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; resize: vertical; }
   textarea.edit:focus, input.edit:focus { border-color: var(--accent); outline: none; }
   #savePost { margin-top: 14px; }
-  .card .postbadge { position: absolute; top: 36px; left: 8px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
+  /* next to the duration, so it never covers the title burned into the thumbnail */
+  .card .postbadge { position: absolute; top: 8px; right: 52px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
+  .card.wide .postbadge { right: 70px; }
+  .lib-tools { display: grid; gap: 10px; margin-bottom: 14px; }
+  .lib-tools input[type=search] { width: 100%; }
+  .lib-tools .chips { margin-top: 0; }
+  .lib-tools .chip .n { opacity: .6; margin-left: 4px; }
+  .shelf { margin: 18px 0 8px; }
+  .shelf h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 17px; }
+  .shelf h3 .count { font-size: 12px; color: var(--muted); font-weight: 600; }
   /* PC screens: full screen, all the details on the left, the video playing on the right. */
   @media (min-width: 900px) {
     .player.open { display: grid; grid-template-columns: minmax(460px, 1fr) minmax(0, 1.1fr); overflow: hidden; }
@@ -179,7 +188,16 @@
   </section>
 
   <section class="view" id="view-videos">
-    <div class="grid" id="grid"></div>
+    <div class="lib-tools" id="libTools">
+      <input type="search" id="q" placeholder="🔎 Search titles, topics, hashtags…">
+      <div class="chips" id="catChips"></div>
+      <div class="chips">
+        <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="long">🎬 Long</button>
+        <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
+      </div>
+    </div>
+    <div id="shelves"></div>
+    <div class="grid" id="grid" hidden></div>
     <div class="empty" id="empty" hidden><b>No videos yet</b>Tap Create to make your first reel from today's trends.</div>
   </section>
 
@@ -379,19 +397,54 @@ function show(view) {
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
-async function loadVideos() {
-  const videos = await api("/api/videos");
-  $("#empty").hidden = videos.length > 0;
-  $("#grid").innerHTML = videos.map((v) => `
+// Library: one shelf per category, with search and filters on top.
+const CAT_ICON = { "Sports": "🏏", "Money": "💰", "Science & Space": "🚀", "Tech": "💡", "History": "🏛️",
+  "Nature & Animals": "🐾", "Weather": "🌦️", "Entertainment": "🎬", "India": "🇮🇳", "Life & People": "🧑‍🤝‍🧑",
+  "Stories": "🎭", "Comedy": "😂" };
+let library = [], libCat = "", libLen = "", libOk = "";
+const cardHtml = (v) => `
     <div class="card${v.format === "long" ? " wide" : ""}" data-id="${esc(v.id)}">
       <img loading="lazy" src="/media/${encodeURIComponent(v.id)}/thumbnail.jpg" alt="">
       <span class="badge ${v.verified ? "ok-bg" : "warn-bg"}">${v.verified ? "✓ " + (v.score ?? "") : "Check"}</span>
       <span class="dur">${v.format === "long" ? "🎬 " + mmss(v.duration_seconds || 0) : Math.round(v.duration_seconds || 0) + "s"}</span>
-      ${v.youtube_description && !v.post_text_error ? '<span class="postbadge">📝 Post text</span>' : ""}
+      ${v.youtube_description && !v.post_text_error ? '<span class="postbadge" title="Title, description and hashtags ready">📝</span>' : ""}
       <div class="meta">${esc(v.title)}</div>
-    </div>`).join("");
-  document.querySelectorAll(".card").forEach((c) => c.onclick = () => openVideo(c.dataset.id));
+    </div>`;
+function renderLibrary() {
+  const q = $("#q").value.trim().toLowerCase();
+  const text = (v) => [v.title, v.topic, v.youtube_title, v.caption, v.category, v.subject,
+    ...(v.hashtags || []), ...(v.youtube_tags || [])].join(" ").toLowerCase();
+  const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
+    && (!libLen || (v.format === "long" ? "long" : "short") === libLen)
+    && (libOk === "" || String(+!!v.verified) === libOk);
+  const shown = library.filter(match);
+  // Category chips count what the other filters leave.
+  const counts = {}; shown.forEach((v) => counts[v.category] = (counts[v.category] || 0) + 1);
+  const cats = Object.keys(CAT_ICON).filter((c) => counts[c]);
+  $("#catChips").innerHTML = `<button class="chip ${libCat ? "" : "on"}" data-cat="">All <span class="n">${shown.length}</span></button>`
+    + cats.map((c) => `<button class="chip ${libCat === c ? "on" : ""}" data-cat="${esc(c)}">${CAT_ICON[c]} ${esc(c)} <span class="n">${counts[c]}</span></button>`).join("");
+  document.querySelectorAll("#catChips .chip").forEach((b) => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
+  const shelves = (libCat ? [libCat] : cats).map((c) => {
+    const vids = shown.filter((v) => v.category === c);
+    return vids.length ? `<div class="shelf"><h3>${CAT_ICON[c] || ""} ${esc(c)} <span class="count">${vids.length} video${vids.length > 1 ? "s" : ""}</span></h3>
+      <div class="grid">${vids.map(cardHtml).join("")}</div></div>` : "";
+  }).join("");
+  $("#shelves").innerHTML = shelves || (library.length ? `<div class="empty"><b>No videos match</b>Try another word or filter.</div>` : "");
+  document.querySelectorAll("#shelves .card").forEach((c) => c.onclick = () => openVideo(c.dataset.id));
 }
+async function loadVideos() {
+  library = await api("/api/videos");
+  $("#empty").hidden = library.length > 0;
+  $("#libTools").hidden = library.length === 0;
+  renderLibrary();
+}
+$("#q").oninput = () => renderLibrary();
+document.querySelectorAll("#libTools [data-len]").forEach((b) => b.onclick = () => {
+  libLen = b.dataset.len; document.querySelectorAll("#libTools [data-len]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
+});
+document.querySelectorAll("#libTools [data-ok]").forEach((b) => b.onclick = () => {
+  libOk = b.dataset.ok; document.querySelectorAll("#libTools [data-ok]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
+});
 
 async function openVideo(id) {
   const v = await api("/api/videos/" + encodeURIComponent(id));
@@ -405,7 +458,8 @@ async function openVideo(id) {
     : `<div class="verdict warn">⚠️ Didn't pass every check. Watch it before posting.<br>${(v.issues || []).map(esc).join("<br>")}</div>`;
   $("#details").innerHTML = `
     <h3>${esc(v.title)}</h3>
-    <div class="sub">${esc(v.topic)} · ${esc(v.topic_source)} · ${v.format === "long" ? "🎬 " + mmss(v.duration_seconds) + " · 16:9" : Math.round(v.duration_seconds) + "s"}</div>
+    <div class="sub"><select id="catSel" class="mini" title="Category">${Object.keys(CAT_ICON).map((c) =>
+      `<option ${c === v.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select> ${esc(v.topic)} · ${esc(v.topic_source)} · ${v.format === "long" ? "🎬 " + mmss(v.duration_seconds) + " · 16:9" : Math.round(v.duration_seconds) + "s"}</div>
     ${verdict}
     <div class="actions">
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
@@ -474,6 +528,14 @@ async function openVideo(id) {
     } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Try again"; }
   };
   document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
+  $("#catSel").onchange = async () => {
+    try {
+      await api(`/api/videos/${encodeURIComponent(id)}/category`, { method: "POST", body: JSON.stringify({ category: $("#catSel").value }) });
+      toast("Moved to " + $("#catSel").value);
+      const moved = library.find((x) => x.id === id);
+      if (moved) { moved.category = $("#catSel").value; renderLibrary(); }
+    } catch (e) { toast(e.message); }
+  };
   $("#deleteVideo").onclick = async () => {
     if (!confirm("Delete this video from your computer?")) return;
     await api("/api/videos/" + encodeURIComponent(id), { method: "DELETE" });

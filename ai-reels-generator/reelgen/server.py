@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from .categories import CATEGORIES, categorize
 from .config import EDITABLE, PROJECT_ROOT, Config, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
 from .pipeline import run
@@ -150,6 +151,7 @@ def list_videos(cfg: Config) -> list[dict]:
                 continue
             data["id"] = report.parent.name
             data.pop("checks", None)
+            data["category"] = categorize(data)  # saved one, or a keyword guess for older videos
             videos.append(data)
     return sorted(videos, key=lambda v: v.get("created_at", ""), reverse=True)
 
@@ -235,7 +237,9 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/videos/{video_id}")
     def video(video_id: str):
-        return json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        report["category"] = categorize(report)
+        return report
 
     @app.post("/api/videos/{video_id}/post-text")
     def write_post_text(video_id: str):
@@ -259,6 +263,8 @@ def create_app(cfg: Config) -> FastAPI:
         data = json.loads((folder / "script.json").read_text(encoding="utf-8"))
         for field in ("subject", "hook_question", "answer"):  # scripts saved before these fields existed
             data.setdefault(field, "")
+        if data.get("category") not in CATEGORIES:
+            data["category"] = categorize(report)
         script = ReelScript.model_validate(data)
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         try:
@@ -267,6 +273,20 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(502, f"Couldn't write the post text: {exc}")
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         return report
+
+    @app.get("/api/categories")
+    def list_categories():
+        return list(CATEGORIES)
+
+    @app.post("/api/videos/{video_id}/category")
+    def set_category(video_id: str, body: dict):
+        if body.get("category") not in CATEGORIES:
+            raise HTTPException(400, "Unknown category")
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        report["category"] = body["category"]
+        (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"category": report["category"]}
 
     @app.put("/api/videos/{video_id}/post-text")
     def edit_post_text(video_id: str, body: PostEdit):
