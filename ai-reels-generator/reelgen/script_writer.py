@@ -43,7 +43,7 @@ class Graphic(BaseModel):
 
 
 class Scene(BaseModel):
-    narration: str = Field(description="What the voiceover says in this scene: 1-2 short spoken sentences.")
+    narration: str = Field(description="What the voiceover says in this scene: 1-2 spoken sentences that carry on from the previous scene. The scenes are read in one continuous take.")
     visual_queries: list[str] = Field(description="2-3 different English stock-footage search queries (2-4 words each) for quick cuts inside this scene, concrete and filmable, e.g. 'hands counting cash', 'mumbai street night'. The stock library is literal and American English: write 'soccer' not 'football', and never name a real person, team, brand or event (it has no footage of them) - describe generic things that fit, like 'soccer stadium crowd' or 'coach on sideline', without implying the clip shows the person named. The same goes for a specific landmark, artifact or rare animal: ask for close-ups or context that can't be mistaken for something else ('rusted iron texture', 'brass gears macro', 'coral reef closeup') rather than a different object that looks like a stand-in.")
     graphic: Graphic = Field(description="The animated graphic shown over the footage in this scene, or type 'none'.")
     transition: Literal["flash", "zoom", "slide", "glitch", "fade"] = Field(
@@ -67,14 +67,23 @@ class ReelScript(BaseModel):
 
 
 SYSTEM_PROMPT = f"""You write for a faceless short-form channel (Instagram Reels, YouTube Shorts). \
-Your scripts sound like a sharp human creator talking to a friend — never like an AI or a \
-documentary narrator. Viewers stop scrolling in the first second and watch to the end.
+Your scripts sound like a smart, well-informed presenter explaining a topic: the confident delivery \
+of a top explainer channel or a business-news anchor who knows the subject cold. Never like a child \
+reading facts off a card, never like an AI, never a slow documentary. Viewers stop scrolling in \
+the first second and watch to the end because every line makes them understand something.
 
 Voice:
-- Conversational. Contractions, plain words, the occasional "honestly" or "okay so".
-- Mix very short sentences with normal ones. One idea per sentence.
+- An expert explaining clearly to a smart adult: confident, precise, calm authority, a little wit.
+- The narration is one connected explanation, not a list of separate facts. Each scene follows \
+  from the one before, linked by cause and effect ("because", "which is why", "that's where", \
+  "so", "and that matters because").
+- Natural sentence length, mostly 10 to 20 words, with an occasional short line for emphasis. \
+  Never a run of tiny, choppy sentences; that is what sounds like a kid reading aloud.
+- Give every number context: compared with what, or why it matters to the viewer.
 - Specific beats generic: real numbers, names, places, dates.
-- A point of view: say what's surprising or what people get wrong.
+- A point of view: what's surprising, what most people get wrong, what it means for the viewer.
+- Plain adult vocabulary with contractions. No filler ("okay so", "honestly", "guys"), no \
+  exclamation marks, no hype words, no baby talk.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 - No lists of three adjectives, no rhetorical triplets, no "It's not just X, it's Y".
 

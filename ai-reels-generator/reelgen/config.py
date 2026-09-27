@@ -53,11 +53,13 @@ class Config:
     # Content settings.
     geo: str = field(default_factory=lambda: _env("REEL_GEO", "IN"))
     language: str = field(default_factory=lambda: _env("REEL_LANGUAGE", "English"))
-    voice: str = field(default_factory=lambda: _env("REEL_VOICE", "en-US-AndrewNeural"))
+    voice: str = field(default_factory=lambda: _env("REEL_VOICE", "en-US-AndrewMultilingualNeural"))
     # "auto" (Microsoft online voice, offline Kokoro if that's refused), "edge" or "kokoro".
     tts_engine: str = field(default_factory=lambda: _env("REEL_TTS", "auto"))
     # Kokoro voice override, e.g. af_heart, am_michael, bm_george, hf_alpha. Empty = match REEL_VOICE.
     kokoro_voice: str = field(default_factory=lambda: _env("REEL_KOKORO_VOICE"))
+    # Speaking pace for the whole voiceover, e.g. "+10%" (brisk but clear), "+0%" (normal).
+    voice_rate: str = field(default_factory=lambda: _env("REEL_VOICE_RATE", "+10%"))
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
     target_seconds: int = field(default_factory=lambda: int(_env("REEL_SECONDS", str(MAX_SECONDS))))
 
@@ -93,7 +95,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model"]
 
 
 def settings_path(cfg: Config) -> Path:

@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import random
 import re
+import subprocess
 import threading
 import ssl
 import wave
@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import edge_tts
+import imageio_ffmpeg
 import numpy as np
 import requests
 from edge_tts import communicate as _edge_communicate
@@ -47,6 +48,10 @@ SENTENCE_PAUSE, CLAUSE_PAUSE = 0.25, 0.1  # seconds of silence Kokoro puts at . 
 
 # Closest Kokoro voice (and espeak language) for each voice offered in the app.
 KOKORO_FOR_EDGE = {
+    "en-US-AndrewMultilingualNeural": "am_michael",
+    "en-US-BrianMultilingualNeural": "am_puck",
+    "en-US-AvaMultilingualNeural": "af_heart",
+    "en-US-EmmaMultilingualNeural": "af_heart",
     "en-US-AndrewNeural": "am_michael",
     "en-US-AvaNeural": "af_heart",
     "en-US-BrianNeural": "am_puck",
@@ -73,23 +78,71 @@ class SceneAudio:
 
 
 def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: str = "auto",
-                      kokoro_voice: str = "") -> list[SceneAudio]:
-    """Render one audio file per scene so each scene's duration follows its voiceover.
+                      kokoro_voice: str = "", rate: str = "+10%") -> list[SceneAudio]:
+    """One audio file per scene, so each scene's duration follows its voiceover.
 
-    Delivery is brisk, like a Shorts creator (videos are capped at 30 seconds).
-    Speed (and pitch, where supported) drifts slightly from scene to scene, like a
-    person speaking, instead of the flat identical delivery that gives TTS away.
-    The hook is a touch faster and more energetic.
+    The whole narration is spoken in one take and then cut between scenes. Speaking
+    each scene on its own restarts the intonation every few seconds (every scene ends
+    on the same falling "full stop" tone), which is what makes TTS sound like someone
+    reading lines off a card. One take flows like a presenter explaining. `rate` is a
+    steady pace for the whole take, e.g. "+10%".
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    pct = int(re.sub(r"[^\d-]", "", rate) or 0)
     if engine in ("auto", "edge"):
         try:
-            return _edge_scenes(narrations, voice, out_dir)
+            return _edge_scenes(narrations, voice, out_dir, f"{pct:+d}%")
         except Exception as exc:
             if engine == "edge":
                 raise
             log.warning("Microsoft voice unavailable (%s); using the offline Kokoro voice", exc)
-    return _kokoro_scenes(narrations, kokoro_voice or KOKORO_FOR_EDGE.get(voice) or _kokoro_default(voice), out_dir)
+    return _kokoro_scenes(narrations, kokoro_voice or KOKORO_FOR_EDGE.get(voice) or _kokoro_default(voice),
+                          out_dir, 1 + pct / 100)
+
+
+# ---------- one take, cut into scenes ----------
+
+def _letters(text: str) -> int:
+    return len(re.sub(r"[\W_]", "", text))
+
+
+def _scene_of_words(narrations: list[str], words: list[Word]) -> list[int]:
+    """Which scene each spoken word belongs to, matched by position in the text (the
+    engine's words don't always split on the same spaces, so count letters)."""
+    ends, total = [], 0
+    for text in narrations:
+        total += _letters(text)
+        ends.append(total)
+    out, pos = [], 0
+    for w in words:
+        n = _letters(w.text)
+        mid = pos + n / 2
+        out.append(next((i for i, e in enumerate(ends) if mid <= e), len(ends) - 1))
+        pos += n
+    return out
+
+
+def _cut_scenes(samples: np.ndarray, rate: int, words: list[Word], scene_of: list[int],
+                count: int, cuts: list[float], out_dir: Path) -> list[SceneAudio]:
+    """Write scene_XX.wav files, cut at `cuts` (seconds, count-1 of them), with each
+    scene's words shifted to its own start."""
+    bounds = [0.0, *cuts, len(samples) / rate]
+    results = []
+    for i in range(count):
+        a, b = bounds[i], bounds[i + 1]
+        path = out_dir / f"scene_{i:02d}.wav"
+        _write_wav(path, samples[int(a * rate):int(b * rate)], rate)
+        results.append(SceneAudio(path, [Word(w.text, max(0.0, w.start - a), max(0.0, w.end - a))
+                                         for w, s in zip(words, scene_of) if s == i]))
+    return results
+
+
+def _write_wav(path: Path, samples: np.ndarray, rate: int) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes((np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes())
 
 
 # ---------- edge (online) ----------
@@ -107,15 +160,27 @@ async def _edge_synthesize(text: str, voice: str, rate: str, pitch: str, out_pat
     return words
 
 
-def _edge_scenes(narrations: list[str], voice: str, out_dir: Path) -> list[SceneAudio]:
-    results = []
-    for i, text in enumerate(narrations):
-        path = out_dir / f"scene_{i:02d}.mp3"
-        rate = f"{random.randint(20, 24) if i == 0 else random.randint(12, 20):+d}%"
-        pitch = f"{random.randint(-3, 3):+d}Hz"
-        words = asyncio.run(_edge_synthesize(text, voice, rate, pitch, path))
-        results.append(SceneAudio(path, words))
-    return results
+def _edge_scenes(narrations: list[str], voice: str, out_dir: Path, rate: str) -> list[SceneAudio]:
+    full = out_dir / "narration.mp3"
+    words = asyncio.run(_edge_synthesize(" ".join(t.strip() for t in narrations), voice, rate, "+0Hz", full))
+    scene_of = _scene_of_words(narrations, words)
+    if sorted(set(scene_of)) != list(range(len(narrations))):
+        raise RuntimeError("could not match the spoken words to the scenes")
+    # Cut halfway through the pause between one scene's last word and the next one's first.
+    cuts = []
+    for i in range(1, len(narrations)):
+        last = max(w.end for w, s in zip(words, scene_of) if s == i - 1)
+        first = min(w.start for w, s in zip(words, scene_of) if s == i)
+        cuts.append((last + first) / 2)
+    samples, sr = _decode(full)
+    return _cut_scenes(samples, sr, words, scene_of, len(narrations), cuts, out_dir)
+
+
+def _decode(path: Path, rate: int = 24000) -> tuple[np.ndarray, int]:
+    """Any audio file -> mono float samples, via ffmpeg."""
+    raw = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error", "-i", str(path), "-f", "s16le",
+                          "-ac", "1", "-ar", str(rate), "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767, rate
 
 
 # ---------- kokoro (offline) ----------
@@ -154,27 +219,31 @@ def _load_kokoro():
     return _kokoro
 
 
-def _kokoro_scenes(narrations: list[str], voice: str, out_dir: Path) -> list[SceneAudio]:
+def _kokoro_scenes(narrations: list[str], voice: str, out_dir: Path, speed: float) -> list[SceneAudio]:
     with _kokoro_lock:
-        return _kokoro_scenes_locked(narrations, voice, out_dir)
-
-
-def _kokoro_scenes_locked(narrations: list[str], voice: str, out_dir: Path) -> list[SceneAudio]:
-    kokoro = _load_kokoro()
-    lang = KOKORO_LANG.get(voice[:1], "en-us")
-    results = []
-    for i, text in enumerate(narrations):
-        speed = random.uniform(1.20, 1.24) if i == 0 else random.uniform(1.12, 1.20)
-        samples, rate = kokoro.create(text, voice=voice, speed=speed, lang=lang,
+        kokoro = _load_kokoro()
+        text = " ".join(t.strip() for t in narrations)
+        samples, rate = kokoro.create(text, voice=voice, speed=speed, lang=KOKORO_LANG.get(voice[:1], "en-us"),
                                       sentence_pause=SENTENCE_PAUSE, clause_pause=CLAUSE_PAUSE)
-        path = out_dir / f"scene_{i:02d}.wav"
-        with wave.open(str(path), "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(rate)
-            wav.writeframes((np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes())
-        results.append(SceneAudio(path, _estimate_words(text, samples, rate)))
-    return results
+    words = _estimate_words(text, samples, rate)
+    counts = [len(t.split()) for t in narrations]
+    scene_of = [i for i, n in enumerate(counts) for _ in range(n)]
+    # Word times are estimates, so cut in the quietest spot of the pause near each boundary.
+    cuts, k = [], 0
+    for n in counts[:-1]:
+        k += n
+        cuts.append(_quietest(samples, rate, words[k - 1].end, words[k].start))
+    return _cut_scenes(samples, rate, words, scene_of, len(narrations), cuts, out_dir)
+
+
+def _quietest(samples: np.ndarray, rate: int, a: float, b: float, reach: float = 0.35) -> float:
+    """The centre of the quietest 40 ms between a-reach and b+reach seconds."""
+    win = int(0.04 * rate)
+    lo, hi = max(0, int((a - reach) * rate)), min(len(samples) - win, int((b + reach) * rate))
+    if hi <= lo:
+        return (a + b) / 2
+    energy = np.convolve(np.abs(samples[lo:hi + win]), np.ones(win), "valid")
+    return (lo + int(np.argmin(energy)) + win / 2) / rate
 
 
 def _syllables(word: str) -> float:

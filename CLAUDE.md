@@ -36,7 +36,7 @@ cd ../../remotion-studio && npm run studio / npm run typecheck
 | `script_writer.py` | Claude prompt + `ReelScript` schema (scenes, `visual_queries`, `graphic`). Topic rules, AI-cliché ban list, stock-footage query rules. |
 | `llm.py` | Claude via the logged-in `claude -p --json-schema` CLI (no API key) or the Anthropic API. |
 | `verify.py` | Script checks, fact-check (web search), ffmpeg checks (≤30s, audio, black frames, captions), Claude review of a 6-frame contact sheet. |
-| `voice.py` | edge-tts (online, exact word timings) with Kokoro fallback (offline ONNX, estimated timings). |
+| `voice.py` | edge-tts (online, exact word timings) with Kokoro fallback (offline ONNX, estimated timings). The whole narration is spoken in **one take** at a steady `REEL_VOICE_RATE` and cut into per-scene WAVs; per-scene synthesis made every scene end on the same falling tone and sounded like reading. Default voice `en-US-AndrewMultilingualNeural`. |
 | `visuals.py` | Pexels search. Keeps only results whose page slug shares a word with the query. |
 | `video.py` | Builds props and runs `remotion render` in `ai-reels-generator/remotion/`; falls back to moviepy. `plan_transitions` keeps Claude's per-scene transition (flash/zoom/slide/glitch/fade) but forbids repeats and forces 2+ kinds. |
 | `sfx.py` | Synthesised sounds, one per transition (whoosh, impact, swish, glitch, shimmer) plus a pop for graphics. No audio files. |

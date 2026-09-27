@@ -119,7 +119,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
 
         progress(f"{tag} Recording voiceover")
         scenes = synthesize_scenes([s.narration for s in script.scenes], cfg.voice, run_dir / "audio",
-                                   cfg.tts_engine, cfg.kokoro_voice)
+                                   cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
         spoken = voice_seconds(scenes)
         if spoken > MAX_SECONDS - 1 and attempt < cfg.max_attempts:
             # Too long to fit: skip the render and ask for a shorter script. (On the last
