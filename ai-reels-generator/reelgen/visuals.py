@@ -21,22 +21,27 @@ PALETTES = [
 
 
 def pexels_video(query: str, api_key: str, out_path: Path, used_ids: set[int],
-                 min_height: int = 1280) -> Path | None:
-    """Download a portrait stock clip matching `query` not used yet in this video, or None."""
+                 min_height: int = 1280, landscape: bool = False) -> Path | None:
+    """Download a stock clip matching `query` not used yet in this video, or None. Portrait
+    for Shorts; landscape (and its first word must be in the clip's title) for long videos."""
     resp = requests.get(
         "https://api.pexels.com/videos/search",
-        params={"query": query, "orientation": "portrait", "size": "medium", "per_page": 8},
+        params={"query": query, "orientation": "landscape" if landscape else "portrait", "size": "medium",
+                "per_page": 8},
         headers={"Authorization": api_key},
         timeout=20,
     )
     resp.raise_for_status()
     videos = _relevant(query, resp.json().get("videos", []))
+    if landscape:  # "stockholm old town" must show Stockholm, not any old town
+        first = _words(query.split()[0]) if query.split() else set()
+        videos = [v for v in videos if first <= _words(v.get("url", ""))]
     for video in videos:
         if video.get("id") in used_ids:
             continue
         files = [f for f in video.get("video_files", [])
                  if f.get("file_type") == "video/mp4" and (f.get("height") or 0) >= min_height
-                 and (f.get("width") or 0) < (f.get("height") or 0)]
+                 and ((f.get("width") or 0) > (f.get("height") or 0)) == landscape]
         if not files:
             continue
         # Smallest file that is still tall enough keeps downloads fast.

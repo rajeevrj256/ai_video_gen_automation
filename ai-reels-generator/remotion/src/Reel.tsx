@@ -1,7 +1,8 @@
 import React from 'react';
-import {Html5Audio, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Html5Audio, Sequence, staticFile, useVideoConfig} from 'remotion';
 import type {ReelProps} from './types';
-import {COLORS, clamp, useFonts} from './theme';
+import {COLORS, useFonts} from './theme';
+import {Cues, Music} from './Sound';
 import {Layer} from './Layer';
 import {Background} from './Background';
 import {GraphicView} from './Graphics';
@@ -9,8 +10,8 @@ import {HookTitle} from './HookTitle';
 import {Captions} from './Captions';
 
 // The whole video: footage, one graphic per scene (when the script has one),
-// the hook title, word-by-word captions, a progress bar, narration, music and
-// sound effects. Every time comes from the props in seconds.
+// the hook title, word-by-word captions, narration, music that dips under the voice,
+// transition sounds and the sound effects placed on words. Every time comes from the props in seconds.
 
 const TITLE_SECONDS = 2.6;
 
@@ -25,11 +26,13 @@ const TRANSITION_SOUND: Record<string, {name: 'whoosh' | 'impact' | 'swish' | 'g
 const MIN_GRAPHIC_SECONDS = 1.4; // shorter than this and it can't finish animating
 const GRAPHIC_DELAY = 4; // frames after the cut, so the flash lands first
 
-export const Reel: React.FC<ReelProps> = ({title, scenes, cuts, captions, music, sfx}) => {
+export const Reel: React.FC<ReelProps> = ({title, scenes, cuts, captions, music, sfx, cues = [], speech = []}) => {
   useFonts();
-  const {fps, durationInFrames} = useVideoConfig();
+  const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const titleFrames = f(Math.min(TITLE_SECONDS, scenes[0]?.duration ?? TITLE_SECONDS));
+  // A word's own sound effect replaces the stock transition sound near it: never two at once.
+  const cueNear = (t: number) => cues.some((c) => Math.abs(c.at - t) < 0.45);
 
   // A graphic fills its scene; in the first scene it waits for the hook title to leave.
   const graphics = scenes.flatMap((s, i) => {
@@ -66,24 +69,18 @@ export const Reel: React.FC<ReelProps> = ({title, scenes, cuts, captions, music,
         ) : null,
       )}
 
-      {music ? (
-        <Html5Audio
-          src={staticFile(music)}
-          loop
-          loopVolumeCurveBehavior="extend"
-          // Sits well under the voice; fades in and out instead of cutting.
-          volume={(frame) =>
-            interpolate(frame, [0, 15, durationInFrames - 45, durationInFrames], [0, 0.12, 0.12, 0], clamp)
-          }
-        />
-      ) : null}
+      {music ? <Music src={music} speech={speech} full={0.2} duck={0.07} /> : null}
+      <Cues cues={cues} />
 
       {sfx ? (
         <>
-          <Sequence name="sfx whoosh (title)" durationInFrames={f(1)}>
-            <Html5Audio src={staticFile(sfx.whoosh)} volume={0.22} />
-          </Sequence>
+          {cueNear(0) ? null : (
+            <Sequence name="sfx whoosh (title)" durationInFrames={f(1)}>
+              <Html5Audio src={staticFile(sfx.whoosh)} volume={0.22} />
+            </Sequence>
+          )}
           {scenes.slice(1).map((s, i) => {
+            if (cueNear(s.start)) return null;
             // Each transition has its own sound. Swells start a few frames early so they
             // peak on the cut; hits start exactly on it.
             const cue = TRANSITION_SOUND[s.transition ?? 'flash'] ?? TRANSITION_SOUND.flash;

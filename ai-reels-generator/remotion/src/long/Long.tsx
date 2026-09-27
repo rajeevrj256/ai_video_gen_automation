@@ -4,11 +4,13 @@ import {COLORS, FONT, clamp, exitProgress, useFonts} from '../theme';
 import {Layer} from '../Layer';
 import type {CaptionGroup} from '../types';
 import {VisualView} from './Visuals';
+import {Cues, Music} from '../Sound';
+import {Footage, Model3D} from './Media';
 import type {Chapter, LongProps} from './types';
 
 // The whole long video: an animated backdrop that changes colour per chapter, one
 // motion-graphic visual per beat, a title card before each chapter, subtitles at the
-// bottom, a chapter progress bar, the narration, music and sound effects.
+// bottom, the narration, music that dips under the voice and sound effects on words.
 
 // Each chapter gets its own colour world, so the viewer feels the story move on.
 const PALETTES = [
@@ -21,9 +23,9 @@ const PALETTES = [
 ];
 export const paletteFor = (chapter: number) => PALETTES[chapter % PALETTES.length];
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = []}) => {
   useFonts();
-  const {fps, durationInFrames} = useVideoConfig();
+  const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   return (
     <Layer name="long" style={{backgroundColor: COLORS.ink, fontFamily: FONT, overflow: 'hidden'}}>
@@ -33,8 +35,16 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         const frames = Math.max(1, (next && next.chapter === b.chapter ? f(next.start) : f(b.start + b.duration)) - from);
         return (
           <Sequence key={i} name={`beat ${i + 1} (${b.visual.type})`} from={from} durationInFrames={frames}>
-            <Backdrop chapter={b.chapter} seed={i} />
-            <VisualView v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} roomy={captions.length === 0} />
+            {b.visual.type === 'footage' && b.visual.src ? (
+              <Footage v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} />
+            ) : b.visual.type === 'model3d' && b.visual.src ? (
+              <Model3D v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} />
+            ) : (
+              <>
+                <Backdrop chapter={b.chapter} seed={i} />
+                <VisualView v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} roomy={captions.length === 0} />
+              </>
+            )}
           </Sequence>
         );
       })}
@@ -58,14 +68,8 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
           </Sequence>
         ) : null,
       )}
-      {music ? (
-        <Html5Audio
-          src={staticFile(music)}
-          loop
-          loopVolumeCurveBehavior="extend"
-          volume={(frame) => interpolate(frame, [0, 30, durationInFrames - 60, durationInFrames], [0, 0.09, 0.09, 0], clamp)}
-        />
-      ) : null}
+      {music ? <Music src={music} speech={speech} full={0.16} duck={0.06} /> : null}
+      <Cues cues={cues} />
       {sfx
         ? chapters
             .filter((c) => c.card > 0)

@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from . import media
 from .config import Config
 from .llm import ask
 from .trends import Trend, trends_as_json
@@ -43,6 +44,12 @@ class Graphic(BaseModel):
     points: list[Point] = Field(description="chart: 3-6 points in time order. compare: exactly 2 points. Empty for stat, keyword and none.")
 
 
+class SoundCue(BaseModel):
+    sound: str = Field(description="A sound effect's name, exactly as in the sound list.")
+    word: str = Field(description="The one word of this scene's narration it lands on, copied exactly.")
+    volume: Literal["soft", "medium", "strong"] = Field(default="soft", description="Usually 'soft'; 'strong' only for the hook's key hit.")
+
+
 class Scene(BaseModel):
     narration: str = Field(description="What the voiceover says in this scene: 1-2 spoken sentences that carry on from the previous scene. The scenes are read in one continuous take.")
     visual_queries: list[str] = Field(description="2-3 different English stock-footage search queries (2-4 words each) for quick cuts inside this scene, concrete and filmable, e.g. 'hands counting cash', 'mumbai street night'. The stock library is literal and American English: write 'soccer' not 'football', and never name a real person, team, brand or event (it has no footage of them) - describe generic things that fit, like 'soccer stadium crowd' or 'coach on sideline', without implying the clip shows the person named. The same goes for a specific landmark, artifact or rare animal: ask for close-ups or context that can't be mistaken for something else ('rusted iron texture', 'brass gears macro', 'coral reef closeup') rather than a different object that looks like a stand-in. Space: the library has almost no footage of Venus, Saturn, Jupiter or other planets, so for those use 'starry night sky', 'telescope at night', 'milky way timelapse' or 'rocket launch' instead of the planet's name. Never ask for aerial or wide shots of a stadium, skyline or landmark when the script names a specific place: the library returns a different, recognisable one (Wembley or Adelaide Oval for 'the Oval'). Use close-ups instead: 'cricket ball on grass', 'batsman gloves closeup', 'crowd cheering closeup'. Keep every scene's queries on the video's one subject (different angles, close-ups and moments of the same thing), not a new object each scene.")
@@ -54,6 +61,7 @@ class Scene(BaseModel):
                     "'slide': fast whip-pan, for the next item in a list. 'glitch': digital stutter, for tech "
                     "or a shocking twist. 'fade': soft dissolve with a shimmer, for calm, nature, history or "
                     "an emotional beat.")
+    sounds: list[SoundCue] = Field(default_factory=list, description="Sound effects on words of this scene: 2-4 layered in scene 1 (the hook), 0-2 in later scenes.")
 
 
 class ReelScript(BaseModel):
@@ -71,6 +79,7 @@ class ReelScript(BaseModel):
     caption: str = Field(description="Instagram/YouTube caption: 1-3 casual lines, at most 2 emojis.")
     hashtags: list[str] = Field(description="8-12 relevant hashtags without the # sign; mix broad and niche.")
     youtube_title: str = Field(description="YouTube Shorts title, max 90 characters, ends with #shorts.")
+    music: str = Field(default="", description="Background track name from the music list, or 'none'.")
 
 
 STYLES = ("facts", "story", "comedy")
@@ -309,6 +318,7 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
         f"- 5 to 7 scenes.\n"
         f"- {graphics}"
     )
+    prompt += "\n\n" + media.prompt_block(cfg)
     if feedback:
         prompt += f"\n\nA reviewer rejected the previous draft. Fix every point:\n{feedback}"
         if previous is not None:

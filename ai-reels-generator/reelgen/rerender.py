@@ -86,7 +86,8 @@ def _short(cfg: Config, folder: Path, work: Path, progress: Progress) -> dict:
     progress("Editing the video (takes a few minutes)")
     rendered = render_video(script.title, scenes, backgrounds, cfg, work / "reel.mp4",
                             graphics=[s.graphic for s in script.scenes],
-                            transitions=[s.transition for s in script.scenes])
+                            transitions=[s.transition for s in script.scenes],
+                            sounds=[s.sounds for s in script.scenes], music=script.music)
     return {"duration_seconds": rendered["duration_seconds"], "editor": rendered.get("editor", "")}
 
 

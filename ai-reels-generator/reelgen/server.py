@@ -464,6 +464,41 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(404, "No such automation")
         return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
 
+    @app.get("/api/library")
+    def library():
+        from . import media
+
+        return media.listing(cfg)
+
+    @app.post("/api/library/{kind}")
+    async def upload_to_library(kind: str, name: str, request: Request):
+        # The raw file is the request body (no form encoding), so no extra upload package is needed.
+        from . import media
+
+        try:
+            path = media.save_upload(cfg, kind, name, await request.body())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"file": path.name, "name": media.slug(path.name)}
+
+    @app.get("/api/library/{kind}/{name}")
+    def library_file(kind: str, name: str):
+        from . import media
+
+        if kind not in media.KINDS:
+            raise HTTPException(404)
+        path = media.folder(cfg, kind) / Path(name).name
+        if not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.delete("/api/library/{kind}/{name}")
+    def delete_from_library(kind: str, name: str):
+        from . import media
+
+        media.remove(cfg, kind, name)
+        return {"ok": True}
+
     @app.get("/api/settings")
     def get_settings():
         current = load_settings(Config())

@@ -34,6 +34,7 @@ from moviepy import (
 
 from .captions import build_captions, group_words, render_title
 from .config import MAX_SECONDS, PROJECT_ROOT, Config
+from . import media
 from .sfx import write_sfx
 from .voice import SceneAudio
 
@@ -89,7 +90,8 @@ def plan_timeline(scenes: list[SceneAudio]) -> Timeline:
 
 
 def render_video(title: str, scenes: list[SceneAudio], backgrounds: list[list[Path]], cfg: Config,
-                 out_path: Path, graphics: list | None = None, transitions: list[str] | None = None) -> dict:
+                 out_path: Path, graphics: list | None = None, transitions: list[str] | None = None,
+                 sounds: list[list] | None = None, music: str = "") -> dict:
     """Render to `out_path`. Every input file must live inside out_path's folder,
     which is the public dir Remotion serves them from."""
     timeline = plan_timeline(scenes)
@@ -100,7 +102,7 @@ def render_video(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pa
         if cli is None:
             raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
         props = build_props(title, scenes, backgrounds, graphics or [None] * len(scenes), timeline, cfg,
-                            out_path.parent, transitions)
+                            out_path.parent, transitions, sounds, music)
         _render_remotion(cli, props, out_path)
     except Exception as exc:
         log.warning("Remotion edit unavailable, using the simpler moviepy edit: %s", exc)
@@ -160,13 +162,15 @@ def plan_transitions(requested: list[str] | None, count: int) -> list[str]:
 
 
 def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Path]], graphics: list,
-                timeline: Timeline, cfg: Config, public_dir: Path, transitions: list[str] | None = None) -> dict:
+                timeline: Timeline, cfg: Config, public_dir: Path, transitions: list[str] | None = None,
+                sounds: list[list] | None = None, music_name: str = "") -> dict:
     """Everything the Reel composition needs (see remotion/src/types.ts). Times in seconds."""
     def rel(path: Path) -> str:  # paths in props are relative to the public dir
         return Path(path).resolve().relative_to(public_dir.resolve()).as_posix()
 
     kinds = plan_transitions(transitions, len(scenes))
-    scene_props, cuts, captions = [], [], []
+    scene_props, cuts, captions, cues, spoken = [], [], [], [], []
+    used: dict[str, str] = {}
     for i, (scene, clips, start, duration) in enumerate(zip(scenes, backgrounds, timeline.starts, timeline.durations)):
         scene_props.append({"start": start, "duration": duration, "audio": rel(scene.path),
                             "graphic": _graphic(graphics[i] if i < len(graphics) else None),
@@ -189,6 +193,11 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
                 "image": not video,
             })
 
+        spoken += [(start + w.start, start + w.end) for w in scene.words]
+        room = media.TOTAL_CUES - len(cues)
+        cues += media.resolve_cues((sounds[i] if sounds and i < len(sounds) else []), scene.words, start, cfg,
+                                   public_dir / "sfx", rel, min(room, media.HOOK_CUES if i == 0 else media.SCENE_CUES),
+                                   used)
         groups = group_words(scene.words)
         for g_idx, group in enumerate(groups):
             end = groups[g_idx + 1][0].start if g_idx + 1 < len(groups) else duration
@@ -197,7 +206,7 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
             if end > group[0].start:
                 captions.append({"start": words[0]["start"], "end": round(start + end, 3), "words": words})
 
-    music = _pick_music(cfg, public_dir)
+    music = media.pick_music(cfg, music_name, public_dir, timeline.total)
     sfx = write_sfx(public_dir / "sfx")
     return {
         "title": title,
@@ -208,14 +217,9 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
         "captions": captions if cfg.captions else [],  # subtitles off: no caption layer at all
         "music": rel(music) if music else None,
         "sfx": {name: rel(path) for name, path in sfx.items()},
+        "cues": cues,
+        "speech": media.speech_spans(spoken),
     }
-
-
-def _pick_music(cfg: Config, public_dir: Path) -> Path | None:
-    tracks = sorted(cfg.music_dir.glob("*.mp3")) if cfg.music_dir.exists() else []
-    if not tracks:
-        return None
-    return Path(shutil.copy(random.choice(tracks), public_dir / "music.mp3"))
 
 
 def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = "Reel", crf: int = 18,

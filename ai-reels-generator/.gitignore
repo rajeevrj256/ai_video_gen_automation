@@ -7,3 +7,6 @@ assets/models
 .venv/
 remotion/node_modules/
 remotion/out/
+assets/sfx/
+assets/music/
+assets/models3d/

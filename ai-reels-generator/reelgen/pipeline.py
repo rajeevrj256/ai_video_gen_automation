@@ -186,7 +186,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             with _render_slot(cfg):  # waits here if other videos are being edited
                 rendered = render_video(script.title, scenes, backgrounds, cfg, run_dir / "reel.mp4",
                                         graphics=[s.graphic for s in script.scenes],
-                                        transitions=[s.transition for s in script.scenes])
+                                        transitions=[s.transition for s in script.scenes],
+                                        sounds=[s.sounds for s in script.scenes], music=script.music)
             save(stage="rendered", rendered=rendered)
 
         progress(f"{tag} Verifying video quality")
@@ -404,8 +405,8 @@ def _restore_snapshot(run_dir) -> None:
         best.rmdir()
     for scratch in ("audio", "backgrounds", "sfx"):
         shutil.rmtree(run_dir / scratch, ignore_errors=True)
-    for scratch in ("props.json", "music.mp3"):  # render inputs for Remotion
-        (run_dir / scratch).unlink(missing_ok=True)
+    for scratch in [run_dir / "props.json", *run_dir.glob("music.*")]:  # render inputs for Remotion
+        scratch.unlink(missing_ok=True)
 
 
 def _video_slot(cfg: Config) -> threading.Semaphore:

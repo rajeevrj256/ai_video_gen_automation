@@ -176,6 +176,8 @@
            padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: 14px; z-index: 30; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
   .login { max-width: 340px; margin: 18vh auto 0; text-align: center; }
+.libitem { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+.libitem audio { height: 32px; max-width: 100%; }
 </style>
 </head>
 <body>
@@ -371,6 +373,20 @@
         <option value="max">Max (slowest, uses the most of your limit)</option>
       </select>
       <button class="primary" id="saveBtn">Save settings</button>
+    </div>
+    <div class="panel">
+      <h2>Media library</h2>
+      <p class="hint">Sound effects, background music and 3D models the editor can use. Download them from
+        <a href="https://pixabay.com/sound-effects/" target="_blank" rel="noopener">pixabay.com/sound-effects</a> or
+        <a href="https://pixabay.com/music/" target="_blank" rel="noopener">pixabay.com/music</a> and add them here.
+        The file name is how Claude knows what it is, so keep names like “sword-slash” or “mysterious-ambient”.
+        Built-in sounds work without adding anything.</p>
+      <div class="row">
+        <div><label for="lib-kind">Add to</label>
+          <select id="lib-kind"><option value="sfx">🔊 Sound effects</option><option value="music">🎵 Music</option><option value="models3d">🧊 3D models (.glb)</option></select></div>
+        <div><label for="lib-file">Files</label><input id="lib-file" type="file" multiple accept=".mp3,.wav,.ogg,.m4a,.glb"></div>
+      </div>
+      <div id="libList"></div>
     </div>
     <div class="panel">
       <h2>This computer</h2>
@@ -867,8 +883,39 @@ async function loadHistory() {
   }).join("");
 }
 
+// ---- Media library: sound effects, music and 3D models (assets/sfx, assets/music, assets/models3d) ----
+const LIB_TITLE = { sfx: "🔊 Sound effects", music: "🎵 Music", models3d: "🧊 3D models" };
+async function loadLibrary() {
+  const items = await api("/api/library");
+  $("#libList").innerHTML = Object.keys(LIB_TITLE).map((k) => {
+    const mine = items.filter((i) => i.kind === k && !i.builtin), built = items.filter((i) => i.kind === k && i.builtin);
+    return `<h3>${LIB_TITLE[k]}</h3>${mine.map((i) => `
+      <div class="libitem"><b>${esc(i.name)}</b> <span class="hint">${(i.size / 1048576).toFixed(1)} MB</span>
+        ${k === "models3d" ? "" : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
+        <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button></div>`).join("")
+      || `<p class="hint">None added yet.</p>`}${built.length ? `<p class="hint">Built in: ${built.map((i) => esc(i.name)).join(", ")}${k === "music" && mine.length ? " (not used while you have your own music)" : ""}</p>` : ""}`;
+  }).join("");
+}
+$("#lib-file").addEventListener("change", async (e) => {
+  const kind = $("#lib-kind").value;
+  for (const file of e.target.files) {
+    try {
+      const res = await fetch(`/api/library/${kind}?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+      toast("Added " + file.name);
+    } catch (err) { toast(file.name + ": " + err.message); }
+  }
+  e.target.value = ""; loadLibrary();
+});
+$("#libList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-lib-del]"); if (!b || !confirm("Delete this file from the library?")) return;
+  await api("/api/library/" + b.dataset.libDel.split("/").map(encodeURIComponent).join("/"), { method: "DELETE" });
+  loadLibrary();
+});
+
 async function loadSettings() {
   loadAutomations().catch(() => {});
+  loadLibrary().catch(() => {});
   const [s, st] = await Promise.all([api("/api/settings"), api("/api/status")]);
   for (const [k, v] of Object.entries(s)) {
     const el = $("#s-" + k); if (!el) continue;

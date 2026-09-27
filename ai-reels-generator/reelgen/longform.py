@@ -26,11 +26,13 @@ from .fsutil import move
 from .config import Config
 from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
 from .post_copy import PostCopy, clean_tags, save_post_text
-from .script_writer import AI_CLICHES
+from . import media
+from .script_writer import AI_CLICHES, SoundCue
 from .sfx import write_sfx
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
 from .verify import FactCheck, VerifyResult, Review, probe
-from .video import FFMPEG, _pick_music, _remotion_cli, _render_remotion, media_seconds
+from .video import FFMPEG, _remotion_cli, _render_remotion, media_seconds
+from .visuals import pexels_video
 from .voice import synthesize_scenes
 
 log = logging.getLogger(__name__)
@@ -57,20 +59,26 @@ class LItem(BaseModel):
 
 
 class LVisual(BaseModel):
-    type: Literal["title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart"] = Field(
+    type: Literal["title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart",
+                  "footage", "model3d"] = Field(
         description="title: a big headline. stat: one striking number. timeline: 2-5 dated moments. compare: "
                     "exactly 2 things side by side. steps: 2-4 steps of how something works. icons: 1-3 icons "
                     "that picture the line. quote: a real, verified quote. keyword: one word or short phrase. "
-                    "chart: 3-6 real data points over time.")
+                    "chart: 3-6 real data points over time. footage: a real video clip of a place or scene, "
+                    "full screen. model3d: a 3D model from the list, animated.")
     headline: str = Field(description="title/keyword: the text (keyword max 3 words). stat: the number exactly as shown, e.g. '₹1.2 lakh'. quote: the quote. icons/timeline/compare/steps/chart: a short heading (max 7 words).")
     sub: str = Field(description="A short supporting line (max 10 words): what the stat is, who said the quote, the chart's unit. Can be empty.")
     items: list[LItem] = Field(description="timeline: 2-5, compare: exactly 2, steps: 2-4, chart: 3-6. Empty for the other types.")
     icons: list[str] = Field(description="icons: 1-3 Lucide icon names in kebab-case that picture the line, e.g. 'cloud-rain', 'train-front', 'indian-rupee', 'landmark', 'satellite'. Empty for other types.")
+    query: str = Field(default="", description="footage only: an English stock-video search, 2-4 words, the place or subject first, e.g. 'stockholm old town', 'monsoon rain street'. Empty otherwise.")
+    model: str = Field(default="", description="model3d only: the model's name exactly as in the 3D model list. Empty otherwise.")
+    scene: Literal["sky", "space", "studio"] = Field(default="studio", description="model3d only: where it's shown. sky: flying through clouds. space: drifting among stars. studio: turning on a dark stage.")
 
 
 class LBeat(BaseModel):
     narration: str = Field(description="What the narrator says over this visual: 1-2 sentences, 12-30 words.")
     visual: LVisual
+    sounds: list[SoundCue] = Field(default_factory=list, description="Sound effects on words of this line: up to 4 layered in the cold open's first beats, otherwise usually none.")
 
 
 class LChapter(BaseModel):
@@ -90,14 +98,15 @@ class LongScript(BaseModel):
     answer: str = Field(description="The answer or twist the last chapter delivers, in one sentence.")
     youtube_title: str = Field(description="YouTube title, max 70 characters: curiosity plus the main search keyword, no clickbait the video doesn't deliver.")
     chapters: list[LChapter] = Field(description="6-8 chapters in order. The first is the cold open ('Intro').")
+    music: str = Field(default="", description="Background track name from the music list, or 'none'.")
 
 
 def _system(style: str, language: str) -> str:
     kind = ("a true story told like a documentary, every fact checked" if style != "story"
             else "an original fiction story, clearly presented as a story")
     return f"""You write 8 to 10 minute YouTube videos that people watch to the end: {kind}. \
-The video is fully animated motion graphics (no footage), so every beat pairs one narration line with \
-one animated visual that shows exactly what that line says.
+The video is animated motion graphics, so every beat pairs one narration line with one animated \
+visual that shows exactly what that line says. A few beats can be a real video clip or a 3D model.
 
 Language and voice: write in {language}. For Indian English that means natural, educated Indian English \
 as a sharp Indian presenter speaks it: clear and warm, not American slang, not Hinglish. Use lakh and \
@@ -138,6 +147,16 @@ otherwise use a stat or a keyword. A quote must be a real, verified quote with i
 can't verify one, don't use a quote.
 - Vary the types; never the same type twice in a row. Use 'title' sparingly, mostly for turns in \
 the story. Prefer icons, timelines, steps, compares and stats that make the idea visual.
+- 'footage' (at most one per chapter, only in a true story): when the viewer needs to SEE a real \
+place or scene the line talks about (a city, a landscape, a busy street, rain on a road). Only what \
+stock video can show truthfully: a city or country by name, nature, everyday scenes. Never a named \
+person, a specific event, a specific building's interior, an old photo or anything from the past \
+("stockholm 1967"): stock video is filmed recently. The headline is a short place label ("Stockholm") \
+and the sub what we're seeing; both may be empty.
+- 'model3d' (only when a model in the list fits, at most once every two chapters): an object from \
+the story brought to life, e.g. a plane flying through the sky while the line talks about a flight, \
+a satellite in space. Never in a serious or tragic moment (a crash, a war, a death, a disaster): a \
+toy-like 3D model there is disrespectful. Headline: a short label, or empty.
 
 Accuracy: only state facts you are confident about or have looked up with web search. Never invent \
 details, dialogue or figures in a true story. Timeless wording: never "today", "this week" or "five \
@@ -153,7 +172,8 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     prompt = (f"Candidate topics trending now (region {cfg.geo}):\n{trends_as_json(candidates)}\n\n{task}\n"
               f"- Length: about {words} words of narration in total ({minutes:g} minutes), no less than "
               f"{int(words * 0.9)} and no more than {int(words * 1.1)}.\n"
-              f"- 6 to 8 chapters, 6 to 14 beats each.")
+              f"- 6 to 8 chapters, 6 to 14 beats each.\n\n" + media.prompt_block(cfg, long=True)
+              + media.models_block(cfg))
     if len(candidates) == 1 and candidates[0].source == "manual":
         prompt += f"\n- The user asked for this topic: {candidates[0].title}. Use it."
     if feedback:
@@ -197,7 +217,9 @@ def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instruct
     fixed = script.model_copy(deep=True)
     for f in result.fixes:
         if 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
-            fixed.chapters[f.chapter - 1].beats[f.beat - 1] = LBeat(narration=f.narration, visual=f.visual)
+            old = fixed.chapters[f.chapter - 1].beats[f.beat - 1]
+            fixed.chapters[f.chapter - 1].beats[f.beat - 1] = LBeat(narration=f.narration, visual=f.visual,
+                                                                    sounds=old.sounds)
     log.info("Fixed %d line(s): %s", len(result.fixes), ", ".join(f"{f.chapter}.{f.beat}" for f in result.fixes))
     return fixed
 
@@ -283,7 +305,9 @@ def _group_words(words: list[dict], max_words: int = 9, pause: float = 0.22) -> 
 
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) -> dict:
     """Record the voice (one take per chapter) and lay out every beat on the timeline."""
-    beats, chapters, lines = [], [], []
+    beats, chapters, lines, cues, spoken = [], [], [], [], []
+    used: dict[str, str] = {}
+    clip_ids: set[int] = set()  # never the same stock clip twice
     t = 0.0
     for ci, chapter in enumerate(script.chapters):
         card = CARD_SECONDS if ci > 0 else 0.0
@@ -294,12 +318,16 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) 
                                   cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
         for beat, sa in zip(chapter.beats, audio):
             duration = media_seconds(sa.path)
-            v = beat.visual.model_dump()
+            v = _media_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids)
             v["icons"] = [i.strip().lower().replace(" ", "-") for i in v["icons"]]
             beats.append({"start": round(t, 3), "duration": round(duration, 3), "chapter": ci,
                           "audio": sa.path.relative_to(work).as_posix(), "visual": v})
             lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
                                    for w in sa.words])
+            spoken += [(t + w.start, t + w.end) for w in sa.words]
+            cues += media.resolve_cues(beat.sounds, sa.words, t, cfg, work / "sfx",
+                                       lambda p: p.relative_to(work).as_posix(),
+                                       media.HOOK_CUES if ci == 0 else 1, used)
             t += duration
         t += CHAPTER_GAP
     captions = []
@@ -307,7 +335,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) 
         captions.append({"start": g[0]["start"], "end": round(g[-1]["end"] + 0.25, 3), "words": g})
     for a, b in zip(captions, captions[1:]):  # never two subtitle lines at once
         a["end"] = min(a["end"], b["start"])
-    music = _pick_music(cfg, work)
+    music = media.pick_music(cfg, script.music, work, t)
     sfx = write_sfx(work / "sfx")
     return {
         "title": script.youtube_title,
@@ -318,7 +346,41 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) 
         "captions": captions if cfg.captions else [],  # off: the visuals use the space instead
         "music": music.relative_to(work).as_posix() if music else None,
         "sfx": {k: p.relative_to(work).as_posix() for k, p in sfx.items()},
+        "cues": cues,
+        "speech": media.speech_spans(spoken),
     }
+
+
+def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) -> dict:
+    """Fetch a footage beat's clip or copy a model3d beat's model into the render folder.
+    Without one (no Pexels key, no matching clip, model deleted) the beat becomes a title card."""
+    if v["type"] == "footage":
+        clip = None
+        if cfg.pexels_api_key and v.get("query"):
+            (work / "footage").mkdir(parents=True, exist_ok=True)
+            try:
+                clip = pexels_video(v["query"], cfg.pexels_api_key, work / "footage" / f"beat{index:03d}.mp4",
+                                    used, min_height=1080, landscape=True)
+            except Exception as exc:
+                log.warning("Pexels failed for %r: %s", v["query"], exc)
+        if clip:
+            v.update(src=clip.relative_to(work).as_posix(), length=round(media_seconds(clip), 3))
+            return v
+    elif v["type"] == "model3d":
+        item = next((m for m in media.models(cfg) if m.name == v.get("model")), None)
+        if item is not None:
+            (work / "models").mkdir(parents=True, exist_ok=True)
+            dest = work / "models" / item.path.name
+            if not dest.exists():
+                shutil.copy(item.path, dest)
+            v["src"] = dest.relative_to(work).as_posix()
+            return v
+    else:
+        return v
+    v["type"] = "title" if v.get("headline") else "keyword"
+    v["headline"] = v.get("headline") or (v.get("query") or v.get("model") or "").split(" ")[0].title()
+    return v
+
 
 
 def youtube_chapters(props: dict) -> str:
@@ -580,7 +642,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         script, verdict, props = best["script"], best["verdict"], best["props"]
         move(best["file"], work / "reel.mp4")
         (work / f"attempt{best['attempt']}.jpg").replace(work / "thumbnail.jpg")
-        for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg"), work / "music.mp3"]:
+        for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg"), *work.glob("music.*")]:
             scratch.unlink(missing_ok=True)
         (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-long"

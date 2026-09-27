@@ -3,7 +3,7 @@
 // nothing on screen can show the wrong place or thing. Times are in seconds from
 // the start of the video; file paths are relative to the render's public dir.
 
-import type {CaptionGroup} from '../types';
+import type {CaptionGroup, Cue, Span} from '../types';
 
 export type Item = {label: string; text: string; value: number; display: string};
 
@@ -16,7 +16,9 @@ export type VisualType =
   | 'icons' // 1-3 icons that illustrate the line + a caption
   | 'quote' // a real quote and who said it
   | 'keyword' // one word or short phrase slammed on screen
-  | 'chart'; // 3-6 points over time
+  | 'chart' // 3-6 points over time
+  | 'footage' // a real stock clip of a place or scene, full screen (src = clip)
+  | 'model3d'; // a 3D model animated in its own world (src = .glb)
 
 export type Visual = {
   type: VisualType;
@@ -24,6 +26,9 @@ export type Visual = {
   sub: string;
   items: Item[];
   icons: string[]; // lucide names in kebab-case, e.g. "cloud-rain"
+  src?: string; // footage clip or .glb, relative to the public dir
+  length?: number; // footage: the clip's length in seconds
+  scene?: 'sky' | 'space' | 'studio'; // model3d: the world it's shown in
 };
 
 export type Beat = {start: number; duration: number; chapter: number; audio: string | null; visual: Visual};
@@ -39,4 +44,6 @@ export type LongProps = {
   captions: CaptionGroup[];
   music: string | null;
   sfx: {whoosh: string; impact: string; swish: string; glitch: string; shimmer: string; pop: string} | null;
+  cues?: Cue[];
+  speech?: Span[];
 };
