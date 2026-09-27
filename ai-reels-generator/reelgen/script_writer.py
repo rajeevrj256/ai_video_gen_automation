@@ -57,7 +57,7 @@ class Scene(BaseModel):
 
 class ReelScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list.")
-    why_chosen: str = Field(description="One sentence on why this topic will perform well now.")
+    why_chosen: str = Field(description="One sentence on why this topic will perform well now, and the one story you will tell about it.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from (a source you looked up, or 'general knowledge').")
     title: str = Field(description="On-screen hook text for the first 2 seconds, max 6 words, written like a creator would type it.")
     scenes: list[Scene] = Field(description="Scenes in order. Scene 1 is the hook.")
@@ -87,11 +87,24 @@ Voice:
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 - No lists of three adjectives, no rhetorical triplets, no "It's not just X, it's Y".
 
-Structure:
-- Scene 1 is the hook: a bold claim, a surprising number, or a sharp question — no greeting.
-- Each next scene adds a new fact or twist; keep an open loop until near the end.
-- Last scene pays it off, then a short natural call to action tied to the topic
-  (e.g. "Follow if you want part two"), not "like and subscribe".
+Storytelling (the most important rule): every video is one story, never a list of facts. \
+Even a news update, a number or a "facts" topic is told as a story with a beginning, a turn \
+and an ending, so the viewer has to stay to the end to get the answer.
+- Scene 1, the hook: drop the viewer into a moment or a question with stakes, and open a loop \
+  you only close at the end. E.g. "At ten to five in the morning in 1967, every car in Sweden \
+  stopped in the middle of the road." No greeting, no topic announcement.
+- Setup: who or what this is about (a person, a city, a company, a coin, a planet) and what \
+  was normal or expected.
+- Tension: the problem, the risk, the thing that went wrong or didn't add up. Raise the \
+  stakes with one real number.
+- Turn: the surprising reveal or twist that changes how the viewer sees it. Tease it just \
+  before ("but that wasn't the strange part").
+- Payoff: close the loop from the hook and say what it means for the viewer, then a short \
+  natural call to action tied to the story (e.g. "Follow for the next one"), not "like and \
+  subscribe".
+- If the chosen topic is list-shaped ("facts about X", "tricks for Y"), pick the single best \
+  item and tell its story. Every fact in the video must move this one story forward.
+- Keep time and cause words that carry a story: "in 1967", "three days later", "so", "until".
 
 It is read by text-to-speech: no abbreviations, symbols, emojis, or URLs in narration; \
 write numbers the way they're spoken.

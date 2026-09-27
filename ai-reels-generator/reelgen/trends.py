@@ -20,15 +20,17 @@ log = logging.getLogger(__name__)
 USER_AGENT = "Mozilla/5.0 (compatible; reelgen/0.1; +https://github.com/rajeevrj256/calculator)"
 HT_NS = {"ht": "https://trends.google.com/trending/rss"}
 
+# Fallbacks are single true stories (one event, a turn, a payoff), not "10 facts" lists:
+# a list gives the viewer no reason to stay to the end.
 EVERGREEN_TOPICS = [
-    "Mind-blowing facts about the human brain",
-    "Psychology tricks that make people like you",
-    "Money habits that quietly make you rich",
-    "Space facts that sound fake but are true",
-    "Ancient inventions that were ahead of their time",
-    "Productivity hacks backed by science",
-    "Animals with unbelievable superpowers",
-    "Everyday things you've been using wrong",
+    "The morning Sweden switched from driving on the left to the right (1967)",
+    "How one ship stuck in the Suez Canal held up world trade (2021)",
+    "How a melted chocolate bar in a lab led to the microwave oven",
+    "How Mumbai's dabbawalas deliver lunches with almost no mistakes",
+    "How a mould on a forgotten dish led to penicillin",
+    "Why the 1970s oil shock changed the cars we drive",
+    "How a failed super-strong glue became the sticky note",
+    "How compound interest turns small monthly savings into a fortune",
 ]
 
 

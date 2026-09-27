@@ -186,7 +186,8 @@ class Review(BaseModel):
     hook: int = Field(description="1-10: would the first 2 seconds stop someone scrolling?")
     visuals_match: int = Field(description="1-10: do the frames fit what's being said? Theme-appropriate stock footage counts as a match; only contradicting or misleading footage scores low.")
     accuracy: int = Field(description="1-10: are the claims correct and not misleading, as far as you know?")
-    blocking_issues: list[str] = Field(description="Problems that must be fixed before posting: factual errors, contradictions between scenes, misleading or exaggerated claims, anything that sounds obviously AI-written, or a weak first line. Empty if none.")
+    story: int = Field(description="1-10: is it one story with a hook that opens a question, rising tension, a turn and a payoff that closes the loop (10), or a list of loosely connected facts (1-4)?")
+    blocking_issues: list[str] = Field(description="Problems that must be fixed before posting: factual errors, contradictions between scenes, misleading or exaggerated claims, anything that sounds obviously AI-written, a weak first line, or a video that is a list of facts instead of one story. Empty if none.")
     issues: list[str] = Field(description="Smaller improvements worth making. Empty if none.")
     fix_instructions: str = Field(description="Concrete instructions for the writer to fix the issues in the next draft. Empty if none.")
 
@@ -251,7 +252,7 @@ def review_with_claude(video: Path, script: ReelScript, cfg: Config,
     review = ask(cfg.ai_backend, cfg.claude_model, REVIEW_SYSTEM, prompt, Review, images=[sheet])
 
     result = VerifyResult()
-    scores = [review.human_feel, review.hook, review.visuals_match, review.accuracy]
+    scores = [review.human_feel, review.hook, review.visuals_match, review.accuracy, review.story]
     result.score = round(sum(scores) / len(scores), 1)
     result.checks["review"] = review.model_dump()
     if review.blocking_issues:
