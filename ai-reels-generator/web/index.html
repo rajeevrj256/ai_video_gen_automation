@@ -178,17 +178,14 @@
   <section class="view" id="view-create">
     <div class="panel">
       <h2>New video</h2>
+      <label>Style</label>
+      <div class="segmented" id="style">
+        <button data-style="facts" class="on">📚 Facts</button><button data-style="story">🎭 Fiction</button><button data-style="comedy">😂 Jokes</button><button data-style="mix">🔀 Mix</button>
+      </div>
+      <p class="hint" id="styleHint"></p>
       <label for="topic">Topic</label>
       <input id="topic" placeholder="Leave empty for what's trending now">
-      <div class="chips" id="ideas">
-        <button class="chip" data-topic="">🔥 Trending now</button>
-        <button class="chip" data-topic="Money habits that build wealth">💰 Money tips</button>
-        <button class="chip" data-topic="Mind-blowing space facts">🚀 Space</button>
-        <button class="chip" data-topic="Animals with unbelievable abilities">🐾 Animals</button>
-        <button class="chip" data-topic="How everyday technology actually works">💡 Tech explained</button>
-        <button class="chip" data-topic="Human body facts most people don't know">🧠 Body &amp; brain</button>
-        <button class="chip" data-topic="Ancient engineering that still amazes">🏛️ History</button>
-      </div>
+      <div class="chips" id="ideas"></div>
       <label>How many videos</label>
       <div class="segmented" id="count">
         <button data-n="1" class="on">1</button><button data-n="3">3</button><button data-n="5">5</button><button data-n="10">10</button><button data-n="15">15</button>
@@ -251,6 +248,13 @@
             <option value="10">10 videos</option><option value="15">15 videos</option>
           </select></div>
       </div>
+      <label for="s-video_style">Style of daily videos</label>
+      <select id="s-video_style">
+        <option value="facts">📚 True stories (fact-checked)</option>
+        <option value="story">🎭 Fiction short stories</option>
+        <option value="comedy">😂 Jokes and comedy</option>
+        <option value="mix">🔀 Mix of all three</option>
+      </select>
       <label for="s-parallel_videos">Videos made at the same time</label>
       <select id="s-parallel_videos">
         <option value="1">1 (one after another)</option>
@@ -509,7 +513,7 @@ function jobCard(j) {
   const errors = vids.filter((v) => v.error).map((v) => `Video ${v.n}: ${v.error}`);
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
-  const what = j.topic ? esc(j.topic) : "Trending topic";
+  const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -610,14 +614,43 @@ document.querySelectorAll("#count button").forEach((b) => b.onclick = () => {
     `lock your phone; it keeps running on your computer (keep the computer on and awake).` +
     (countValue > 1 && $("#topic").value.trim() ? " Each video takes a different angle on your topic." : "");
 });
-document.querySelectorAll("#ideas .chip").forEach((c) => c.onclick = () => {
-  $("#topic").value = c.dataset.topic;
-  document.querySelectorAll("#ideas .chip").forEach((x) => x.classList.toggle("on", x === c));
-});
+// Style picker: each style has its own topic ideas and a one-line explanation.
+const STYLE_TAG = { facts: "📚 Facts", story: "🎭 Fiction", comedy: "😂 Jokes", mix: "🔀 Mix" };
+const STYLE_HINT = {
+  facts: "Real stories behind the news and history, every fact checked before the edit.",
+  story: "Original short fiction with a hook and a twist ending. Marked as a story, never as news.",
+  comedy: "Clean, relatable jokes about everyday life, with the biggest laugh at the end.",
+  mix: "A batch rotates true story, fiction and jokes.",
+};
+const IDEAS = {
+  facts: [["🔥 Trending now", ""], ["🏝️ How places began", "How a famous country or city was founded"],
+          ["💰 Money", "The story behind a money habit that builds wealth"], ["🏛️ History", "An invention that happened by accident"],
+          ["🧠 Body & brain", "Why the human body does something strange"], ["💡 Tech", "The origin story of an everyday technology"]],
+  story: [["🎲 Surprise me", ""], ["🕵️ Mystery", "A mystery with a twist ending"], ["😨 Suspense", "A late-night suspense story"],
+          ["💛 Emotional", "A small act of kindness with an emotional twist"], ["🧠 Clever escape", "A clever escape from an impossible situation"]],
+  comedy: [["🎲 Surprise me", ""], ["👩 Indian parents", "Things Indian parents always say"], ["🏢 Office life", "Office life and meetings"],
+           ["📚 Exams", "Exam night logic"], ["📱 Phones", "Our relationship with our phones"], ["👯 Friends", "That one friend in every group"]],
+  mix: [["🔥 Trending now", ""]],
+};
+let styleValue = "facts";
+function setStyle(style) {
+  styleValue = STYLE_TAG[style] ? style : "facts";
+  document.querySelectorAll("#style button").forEach((x) => x.classList.toggle("on", x.dataset.style === styleValue));
+  $("#styleHint").textContent = STYLE_HINT[styleValue];
+  $("#ideas").innerHTML = IDEAS[styleValue].map(([label, topic]) =>
+    `<button class="chip" data-topic="${esc(topic)}">${esc(label)}</button>`).join("");
+  document.querySelectorAll("#ideas .chip").forEach((c) => c.onclick = () => {
+    $("#topic").value = c.dataset.topic;
+    document.querySelectorAll("#ideas .chip").forEach((x) => x.classList.toggle("on", x === c));
+  });
+}
+document.querySelectorAll("#style button").forEach((b) => b.onclick = () => setStyle(b.dataset.style));
+setStyle("facts");
+api("/api/settings").then((s) => setStyle(s.video_style)).catch(() => {}); // start on the style from Settings
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;

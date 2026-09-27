@@ -33,12 +33,20 @@ right now. Use web search to check current hashtags and search terms for the top
 Never promise anything the video doesn't deliver, and keep the facts identical to the script."""
 
 
+STYLE_NOTE = {
+    "story": "This is an original fiction short story: say so in the caption (e.g. 'A short story') "
+             "and use story tags like shortstory and fiction; never present it as real.",
+    "comedy": "This is a comedy video: write the caption and tags for comedy and relatable humour.",
+}
+
+
 def write_post_copy(script: ReelScript, cfg: Config) -> PostCopy:
     narration = " ".join(s.narration for s in script.scenes)
     prompt = (
         f"Topic: {script.topic}\nRegion: {cfg.geo}, language: {cfg.language}\n"
         f"On-screen hook: {script.title}\nVoiceover: {narration}\n"
-        f"Draft caption: {script.caption}\nDraft hashtags: {', '.join(script.hashtags)}\n\n"
+        f"Draft caption: {script.caption}\nDraft hashtags: {', '.join(script.hashtags)}\n"
+        f"{STYLE_NOTE.get(cfg.video_style, '')}\n"
         "Write the Instagram and YouTube Shorts post text for this video."
     )
     return ask(cfg.ai_backend, cfg.claude_model, SYSTEM, prompt, PostCopy, allow_web=True, effort=cfg.claude_effort)

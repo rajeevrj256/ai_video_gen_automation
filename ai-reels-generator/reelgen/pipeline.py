@@ -14,6 +14,7 @@ import shutil
 import threading
 import time
 import uuid
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
@@ -22,7 +23,7 @@ from .config import MAX_SECONDS, Config
 from .llm import set_limit_reporter
 from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
-from .script_writer import write_script
+from .script_writer import STYLE_NAMES, STYLES as MIX, write_script
 from .trends import Trend, collect_trends, load_history, save_history
 from .verify import VerifyResult, check_script, check_video, fact_check_script, review_with_claude
 from .video import render_video, voice_seconds
@@ -106,7 +107,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         # Fact-check the words before paying for voice, footage and a render. A
         # flagged script is fixed here (up to FACT_FIXES times) without using up
         # an attempt; the final review then mostly judges the finished video.
-        for fix in range(FACT_FIXES + 1):
+        # Fiction and comedy have no factual claims to check; the review still guards them.
+        for fix in range(FACT_FIXES + 1 if cfg.video_style == "facts" else 0):
             progress(f"{tag} Claude is fact-checking the script")
             facts = fact_check_script(script, cfg)
             if facts.passed or fix == FACT_FIXES:
@@ -118,7 +120,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             if not check_script(fixed, cfg).passed:
                 break  # keep the last script that passed the basic checks
             script = fixed
-        if not facts.passed:
+        if cfg.video_style == "facts" and not facts.passed:
             progress(f"{tag} Still has unconfirmed facts after rewriting: {'; '.join(facts.issues)}")
             if attempt < cfg.max_attempts:
                 # A render takes minutes and the review would fail on these same facts,
@@ -186,6 +188,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         "id": final_dir.name,
         "topic": script.topic,
         "topic_source": source,
+        "style": cfg.video_style,
         "why_chosen": script.why_chosen,
         "title": script.title,
         "youtube_title": script.youtube_title,
@@ -279,6 +282,10 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
         vp = (lambda m: progress(f"[V{i + 1}] {m}")) if count > 1 else progress
         set_limit_reporter(vp)  # a usage-limit pause shows up in this video's log
         vp(f"=== Video {i + 1}/{count} ===")
+        # "mix" rotates true story, fiction and comedy through a batch.
+        vcfg = replace(cfg, video_style=MIX[i % len(MIX)]) if cfg.video_style == "mix" else cfg
+        if vcfg.video_style != "facts" or cfg.video_style == "mix":
+            vp(f"Style: {STYLE_NAMES.get(vcfg.video_style, vcfg.video_style)}")
         # Trending batches get a new topic each time (used and in-progress topics are
         # skipped). A batch on one fixed topic needs a different angle per video.
         angle = ""
@@ -287,7 +294,7 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
             angle = (f"Video {i + 1} of {count} on this topic; the others in this batch take other angles. "
                      f"Already made: {made}. Pick a clearly different angle, facts and hook, still on this topic.")
         try:
-            report = run_once(cfg, topic, vp, angle)
+            report = run_once(vcfg, topic, vp, angle)
             results[i] = report
             done_titles.append(f"'{report['title']}' ({report['topic']})")
         except Exception as exc:

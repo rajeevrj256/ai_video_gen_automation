@@ -72,8 +72,10 @@ def check_script(script: ReelScript, cfg: Config) -> VerifyResult:
 
     graphics = [s.graphic for s in script.scenes if s.graphic.type != "none"]
     result.checks["graphics"] = [g.type for g in graphics]
-    if not 2 <= len(graphics) <= 5:
+    if cfg.video_style == "facts" and not 2 <= len(graphics) <= 5:
         result.fail(f"{len(graphics)} on-screen graphics; design 3 or 4.")
+    elif cfg.video_style != "facts" and len(graphics) > 3:
+        result.fail(f"{len(graphics)} on-screen graphics; use at most 3 'keyword' graphics.")
     for i, scene in enumerate(script.scenes, 1):
         g = scene.graphic
         if g.type == "chart" and not 3 <= len(g.points) <= 6:
@@ -240,6 +242,19 @@ def _describe_graphic(g) -> str:
     return f"\n   [on-screen {g.type}: {g.headline!r}, {g.label}{f' ({points})' if points else ''}]"
 
 
+# The review rubric is written for true stories; fiction and comedy are judged on their own terms.
+STYLE_REVIEW = {
+    "story": ("\n\nThis is an original fiction short story, not a factual video. Judge 'accuracy' as: it "
+              "states no false real-world facts, uses no real people or brands, and isn't presented as "
+              "real news. Judge 'story' on the hook's tension, rising stakes and a fair twist at the "
+              "end. Stock footage only needs to fit the mood and setting."),
+    "comedy": ("\n\nThis is a comedy video, not a factual one. Judge 'accuracy' as: nothing false is "
+               "presented as real fact, and the jokes punch at situations, never at a group or a real "
+               "person. Judge 'story' as setup, escalation and a final punchline that lands, and say "
+               "plainly if it isn't funny. Stock footage only needs to fit the situation."),
+}
+
+
 def review_with_claude(video: Path, script: ReelScript, cfg: Config,
                        stock_footage: bool = True) -> tuple[Review, VerifyResult]:
     sheet = contact_sheet(video, video.with_name("review_frames.jpg"))
@@ -252,6 +267,7 @@ def review_with_claude(video: Path, script: ReelScript, cfg: Config,
         f"on screen if any (its numbers are claims too):\n{narration}\n\n"
         f"Caption: {script.caption}\n\nScore it and list what to fix."
     )
+    prompt += STYLE_REVIEW.get(cfg.video_style, "")
     if not stock_footage:
         prompt += ("\nNote: backgrounds are plain placeholder gradients because no stock-footage key is "
                    "configured. Don't penalise that; score visuals_match 10 and judge the rest.")
@@ -266,4 +282,7 @@ def review_with_claude(video: Path, script: ReelScript, cfg: Config,
             result.fail("Reviewer: " + issue)
     elif min(scores) < 6 or result.score < 7:
         result.fail("Reviewer: " + "; ".join(review.issues or ["scores too low"]))
+    elif review.hook < 7:  # the hook decides whether anyone watches, so it has a higher bar
+        result.fail(f"Reviewer: the hook scored {review.hook}/10; it needs 7+. "
+                    + "; ".join(review.issues or ["make the first line plant a question without the answer"]))
     return review, result

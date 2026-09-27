@@ -48,8 +48,9 @@ class JobManager:
         self.wake = threading.Event()
         threading.Thread(target=self._worker, daemon=True).start()
 
-    def submit(self, topic: str | None, count: int, trigger: str) -> dict:
+    def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None) -> dict:
         job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger,
+               "style": style or load_settings(Config()).video_style,
                "status": "queued", "log": [], "created": time.time(), "results": []}
         with self.lock:
             self.jobs.appendleft(job)
@@ -83,7 +84,9 @@ class JobManager:
             log.info("[job %s] %s", job["id"], msg)
 
         try:
-            reports = run(load_settings(Config()), job["count"], job["topic"], progress)
+            cfg = load_settings(Config())
+            cfg.video_style = job["style"]
+            reports = run(cfg, job["count"], job["topic"], progress)
             job["results"] = [r["id"] for r in reports]
             made = len(reports)
             job["status"] = "done" if made == job["count"] else ("partial" if made else "failed")
@@ -148,6 +151,7 @@ def video_dir(cfg: Config, video_id: str) -> Path:
 class GenerateRequest(BaseModel):
     topic: str | None = None
     count: int = 1
+    style: str | None = None  # facts | story | comedy | mix; empty = the style in Settings
 
 
 class PostEdit(BaseModel):
@@ -262,7 +266,8 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/generate")
     def generate(body: GenerateRequest):
-        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH)), "manual")
+        style = body.style if body.style in ("facts", "story", "comedy", "mix") else None
+        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH)), "manual", style)
 
     @app.get("/api/jobs")
     def list_jobs():

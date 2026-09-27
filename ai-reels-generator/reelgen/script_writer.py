@@ -56,11 +56,11 @@ class Scene(BaseModel):
 
 
 class ReelScript(BaseModel):
-    topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list.")
+    topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list (for fiction or comedy: the theme you used).")
     why_chosen: str = Field(description="One sentence on why this topic will perform well now, and the one story you will tell about it.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from (a source you looked up, or 'general knowledge').")
-    hook_question: str = Field(description="The one question the hook plants in the viewer's head, e.g. 'How was Sri Lanka founded?'. The video answers it only in the last one or two scenes.")
-    answer: str = Field(description="The answer or reveal to hook_question that the ending delivers, in one sentence.")
+    hook_question: str = Field(description="The one question or tension the hook plants in the viewer's head, e.g. 'How was Sri Lanka founded?' (fiction: 'What happened to the last passenger?'; comedy: the setup). The video pays it off only in the last one or two scenes.")
+    answer: str = Field(description="The answer, twist or punchline the ending delivers, in one sentence.")
     title: str = Field(description="On-screen hook text for the first 2 seconds, max 6 words: the hook's question or tension, written like a creator would type it.")
     scenes: list[Scene] = Field(description="Scenes in order. Scene 1 opens with the hook sentence; the last scenes deliver the answer.")
     caption: str = Field(description="Instagram/YouTube caption: 1-3 casual lines, at most 2 emojis.")
@@ -68,8 +68,13 @@ class ReelScript(BaseModel):
     youtube_title: str = Field(description="YouTube Shorts title, max 90 characters, ends with #shorts.")
 
 
-SYSTEM_PROMPT = f"""You write for a faceless short-form channel (Instagram Reels, YouTube Shorts). \
-Your scripts sound like a smart, well-informed presenter explaining a topic: the confident delivery \
+STYLES = ("facts", "story", "comedy")
+STYLE_NAMES = {"facts": "true story (fact-checked)", "story": "fiction short story", "comedy": "comedy / jokes"}
+
+INTRO = "You write for a faceless short-form channel (Instagram Reels, YouTube Shorts). "
+
+VOICE = {
+    "facts": f"""Your scripts sound like a smart, well-informed presenter explaining a topic: the confident delivery \
 of a top explainer channel or a business-news anchor who knows the subject cold. Never like a child \
 reading facts off a card, never like an AI, never a slow documentary. Viewers stop scrolling in \
 the first second and watch to the end because every line makes them understand something.
@@ -89,7 +94,34 @@ Voice:
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 - No lists of three adjectives, no rhetorical triplets, no "It's not just X, it's Y".
 
-Hook and story (the most important rules). A viewer decides in the first two seconds, then \
+""",
+    "story": f"""You write original short fiction told by one narrator: the kind of 30-second story people \
+watch twice and send to a friend. Clearly a story, never presented as real news.
+
+Voice:
+- A gripping storyteller, not a presenter: past tense or a vivid present, one main character, \
+  concrete sensory details (a sound, a smell, a time on a clock) instead of adjectives.
+- Short sentences are allowed for suspense, mixed with flowing ones; never a run of choppy lines.
+- Show, don't explain. No morals spelled out at the end; let the twist do the work.
+- Never use these phrases: {", ".join(AI_CLICHES)}.
+- No exclamation marks, no rhetorical triplets.
+""",
+    "comedy": f"""You write clean comedy: relatable, observational humour about everyday life that makes \
+people laugh, tag a friend and share. Think of a sharp stand-up comic, not a joke book.
+
+Voice:
+- Conversational and confident, with comic timing: set up, a beat, then the punchline. Short \
+  lines are fine for timing.
+- Specific beats generic: real everyday details (the family WhatsApp group, the "five minutes" \
+  that means an hour, exam-night logic, office meetings that could have been an email).
+- Clean and kind: laugh at situations and at ourselves, never at a religion, caste, region, \
+  gender, body or any real person. No politics, no insults, nothing adult.
+- Never use these phrases: {", ".join(AI_CLICHES)}.
+""",
+}
+
+HOOK = {
+    "facts": """Hook and story (the most important rules). A viewer decides in the first two seconds, then \
 stays only while they still need an answer. So every video is one story built around one \
 question: the hook plants it, the middle delays it while raising the stakes, and the end answers it.
 
@@ -105,6 +137,9 @@ The hook (scene 1, first sentence, at most 12 words, spoken in about 2 seconds):
   - Wrong belief: "Most people think [common belief]. [Place or thing] proves otherwise."
 - The on-screen title says the same question or tension in at most 6 words.
 - Never open with a greeting, the topic's name, "In this video", background, or the answer.
+- The hook must not contain the answer or its key word: if the answer is "rain", the hook \
+  can't mention rain ("Do you know why one-day cricket exists at all?", not "Rain gave us \
+  one-day cricket").
 
 The story (the rest of the scenes):
 - Scene 2 starts the story straight away, in time and place ("It starts in 543 BC, when...", \
@@ -125,22 +160,59 @@ The story (the rest of the scenes):
   item. Every fact in the video must move this one story forward.
 - "Do you know how/why..." questions are welcome. "Did you know..." fact openers are banned.
 
-It is read by text-to-speech: no abbreviations, symbols, emojis, or URLs in narration; \
-write numbers the way they're spoken.
+""",
+    "story": """Hook and story (the most important rules). A viewer decides in the first two seconds, then \
+stays only while they need to know what happens.
 
-On-screen graphics: design 3 or 4 across the video, on the scenes where a number or a key word \
+The hook (scene 1, first sentence, at most 12 words): drop into a strange or tense moment that \
+raises a question, e.g. "[Someone] found [something impossible] in [ordinary place].", "At \
+[exact time], every [thing] in [place] stopped.", "The last [person] to [do something] never \
+[came back / got off / woke up].". The on-screen title says the same tension in at most 6 words. \
+Never open with "Once upon a time", a name introduction or scenery.
+
+The story: one character, one wish or problem, rising tension (each scene linked by "but" or \
+"so"), a turn around the middle that makes things worse or stranger, and a twist in the last \
+one or two scenes that makes the viewer see the opening line differently. The twist must be \
+fair (set up by an earlier detail), not "it was all a dream". The last line lands the twist; \
+then a short "Follow for part two" or similar only if it fits.
+
+""",
+    "comedy": """Hook and structure (the most important rules). A viewer decides in the first two seconds.
+
+The hook (scene 1, first sentence, at most 12 words): a relatable setup people instantly \
+recognise, e.g. "Every Indian mom has one secret superpower.", "Nobody warns you about \
+[everyday situation].", "There are two kinds of people at [place]." The on-screen title says the \
+same setup in at most 6 words. Never open with "Here's a joke" or a greeting.
+
+The structure: one theme from start to end. Either one bit that escalates (each scene makes the \
+situation more absurd, linked by "but" or "so"), or three or four quick jokes on the same theme \
+building to the funniest one last. Save the biggest laugh for the final scene, ideally a \
+callback to the opening line. End with a natural "Tag the friend who does this" style line.
+
+""",
+}
+
+GRAPHICS = {
+    "facts": """On-screen graphics: design 3 or 4 across the video, on the scenes where a number or a key word \
 lands hardest (never scene 1: the hook title is on screen then); set the rest to 'none'. Mix the \
 types: a stat for one striking number, a chart for a change over time, a compare for before/after \
 or A vs B, a keyword for the scene's one-word punch. Every number in a graphic must be real, \
 sourced, and match what the narration says; no made-up, estimated or illustrative data points. \
 If you don't have real figures for a chart, use a stat or a keyword instead.
 
-Transitions: each scene after the first cuts in with a transition that has its own sound. Pick 2 \
-to 4 different kinds that suit this video's mood and what each scene does, and never use the same \
-one twice in a row: a list video might alternate slide and zoom, a tech story glitch and flash, a \
-nature or history piece fade and zoom.
+""",
+    "story": """On-screen graphics: at most 2, only 'keyword' (a time, a place name or one word that \
+raises tension, e.g. '3:17 AM'); the rest 'none'. No stats or charts in fiction.
 
-Timeless wording: the video is posted and watched days later, so never write "today", \
+""",
+    "comedy": """On-screen graphics: 1 to 3 'keyword' graphics that land a punchline word or label \
+(e.g. 'MOM MODE: ON'); the rest 'none'. No stats or charts.
+
+""",
+}
+
+RULES = {
+    "facts": """Timeless wording: the video is posted and watched days later, so never write "today", \
 "tonight", "yesterday", "this week" or "five days ago". Use dates ("on the 22nd of September") \
 or wording that stays true. For a match or event that hasn't finished, tell the story of \
 what has already happened and don't predict or imply the result.
@@ -156,7 +228,39 @@ about a real person. Sports, science, tech, money, entertainment releases, weath
 are good fits. The visuals are stock footage plus animated graphics, so prefer topics generic \
 footage can show (a place, an activity, money, nature, technology) over a story that is only \
 about one named person, whom no stock clip can show. Evergreen \
-candidates are fallbacks — prefer a real trend when a good one exists."""
+candidates are fallbacks — prefer a real trend when a good one exists.""",
+    "story": """Fiction rules: invented characters only. Never use a real person, a real brand or a \
+real tragedy, and never present the story as something that really happened. No gore, no \
+self-harm, nothing adult. Candidate trending topics are only inspiration: use one as the \
+setting or theme when it fits naturally, otherwise pick your own evergreen theme (mystery, \
+suspense, a small act of kindness, a clever escape). Set 'topic' to the theme you used. The \
+visuals are stock footage, so set scenes in places stock clips can show (a rainy street, a \
+train at night, an old house, a busy market) and ask for moody close-ups, never faces that \
+must stay the same person across scenes.""",
+    "comedy": """Comedy rules: nothing presented as a real fact unless it is true; no real people, \
+brands or news events as targets; punch at situations, not at groups. Candidate trending \
+topics are only inspiration: use one when there's a clean, relatable joke in it, otherwise \
+pick an everyday theme (family, school and exams, office life, friends, phones, food, travel). \
+Set 'topic' to the theme you used. The visuals are stock footage, so ask for clips that show \
+the situation (a mom on the phone, a messy desk, a traffic jam, a student asleep on books).""",
+}
+
+
+def system_prompt(style: str) -> str:
+    style = style if style in STYLES else "facts"
+    shared = """It is read by text-to-speech: no abbreviations, symbols, emojis, or URLs in narration; \
+write numbers the way they're spoken.
+
+""" + """Transitions: each scene after the first cuts in with a transition that has its own sound. Pick 2 \
+to 4 different kinds that suit this video's mood and what each scene does, and never use the same \
+one twice in a row: a list video might alternate slide and zoom, a tech story glitch and flash, a \
+nature or history piece fade and zoom.
+
+"""
+    return INTRO + VOICE[style] + "\n" + HOOK[style] + shared + GRAPHICS[style] + RULES[style]
+
+
+SYSTEM_PROMPT = system_prompt("facts")
 
 
 def word_range(seconds: int) -> tuple[int, int]:
@@ -165,18 +269,27 @@ def word_range(seconds: int) -> tuple[int, int]:
     return round(seconds * 2.2), round(seconds * 2.45)
 
 
+def topic_is_manual(candidates: list[Trend]) -> bool:
+    return len(candidates) == 1 and candidates[0].source == "manual"
+
+
 def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
                  previous: ReelScript | None = None) -> ReelScript:
     niche = f"\nChannel niche: {cfg.niche}. Prefer topics that fit it." if cfg.niche else ""
     low, high = word_range(cfg.target_seconds)
+    style = cfg.video_style if cfg.video_style in STYLES else "facts"
+    task = ("Pick one topic and write the video." if style == "facts" else
+            f"Write a {STYLE_NAMES[style]} video. The topics are only inspiration; use one only if it fits.")
+    graphics = ("3 or 4 scenes with a graphic, the rest 'none'." if style == "facts" else
+                "1 to 3 'keyword' graphics at most, the rest 'none'.")
     prompt = (
         f"Candidate topics trending right now (region {cfg.geo}):\n{trends_as_json(candidates)}\n"
         f"{niche}\n"
-        f"Pick one topic and write the video.\n"
+        f"{task}\n"
         f"- Narration language: {cfg.language} (visual_queries always in English).\n"
         f"- Length: {cfg.target_seconds} seconds at most, spoken quickly: {low}-{high} words in total, no more.\n"
         f"- 5 to 7 scenes.\n"
-        f"- 3 or 4 scenes with a graphic, the rest 'none'."
+        f"- {graphics}"
     )
     if feedback:
         prompt += f"\n\nA reviewer rejected the previous draft. Fix every point:\n{feedback}"
@@ -184,7 +297,10 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
             prompt += (f"\n\nThe rejected draft:\n{previous.model_dump_json(indent=1)}\n"
                        "Rewrite the lines the reviewer flagged — don't reuse a flagged claim in softer "
                        "words; replace it with one that is clearly true, or drop it.")
+    if style != "facts" and topic_is_manual(candidates):
+        prompt += f"\n\nThe user asked for this theme: {candidates[0].title}. Use it."
 
-    script = ask(cfg.ai_backend, cfg.claude_model, SYSTEM_PROMPT, prompt, ReelScript, allow_web=True, effort=cfg.claude_effort)
+    script = ask(cfg.ai_backend, cfg.claude_model, system_prompt(cfg.video_style), prompt, ReelScript,
+                 allow_web=True, effort=cfg.claude_effort)
     log.info("Chosen topic: %s (%s)", script.topic, script.why_chosen)
     return script

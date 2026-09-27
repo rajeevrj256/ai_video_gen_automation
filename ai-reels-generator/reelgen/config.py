@@ -41,6 +41,9 @@ class Config:
     # Model for every Claude step (script, fact-check, review, post text) and how hard it
     # thinks: low | medium | high | xhigh | max. Opus 5.5's own default effort is medium.
     claude_model: str = field(default_factory=lambda: _env("CLAUDE_MODEL", "claude-opus-5-5"))
+    # What kind of videos: "facts" (true stories, fact-checked), "story" (fiction),
+    # "comedy" (jokes) or "mix" (rotates through the three in a batch).
+    video_style: str = field(default_factory=lambda: _env("REEL_STYLE", "facts"))
     claude_effort: str = field(default_factory=lambda: _env("REEL_CLAUDE_EFFORT", "high"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
@@ -97,7 +100,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "video_style"]
 
 
 def settings_path(cfg: Config) -> Path:

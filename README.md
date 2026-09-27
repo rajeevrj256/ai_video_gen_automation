@@ -23,6 +23,8 @@ Google Trends ─► Claude picks a topic and writes the script (web search for 
              ─► Saved in ai-reels-generator/output/, shown in the app (and Telegram if set)
 ```
 
+Pick a **style** on the Create page (and for the daily videos in Settings): **📚 Facts** (true stories, every fact checked), **🎭 Fiction** (original short stories with a twist, marked as fiction), **😂 Jokes** (clean, relatable comedy) or **🔀 Mix**.
+
 A video that fails a check is rewritten and made again (up to 3 tries). If none passes, you still get the best one, marked "not verified" with the reasons.
 
 ## Set up on your PC (one time)
