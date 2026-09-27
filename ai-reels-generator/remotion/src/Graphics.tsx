@@ -85,7 +85,10 @@ const Stat: React.FC<{g: Graphic}> = ({g}) => {
   const {fps} = useVideoConfig();
   const t = interpolate(frame, [4, 4 + fps * 0.9], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   const parsed = parseNumber(g.headline);
-  const text = parsed ? formatNumber(parsed.value * t, parsed) : g.headline;
+  // Only count up when there are enough steps to look like counting. "1 billion" would
+  // sit on "0 billion" for a third of a second, which is a wrong figure on screen.
+  const counts = parsed !== null && Math.abs(parsed.value) * 10 ** parsed.decimals >= 20;
+  const text = counts ? formatNumber(parsed.value * t, parsed) : g.headline;
   const line = interpolate(frame, [10, 26], [0, 1], {...clamp, easing: Easing.out(Easing.quad)});
   const landed = Math.round(4 + fps * 0.9);
   const glow = interpolate(frame, [landed, landed + 6, landed + 24], [0, 1, 0.35], clamp);

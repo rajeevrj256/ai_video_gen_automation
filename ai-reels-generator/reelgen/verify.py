@@ -200,7 +200,11 @@ is a blocking issue, and so is stating an unconfirmed claim about a real person 
 The footage is stock video: it can never show a specific named person, team or event. Generic \
 footage that fits the theme (a soccer pitch for a football story, a trading screen for markets) is \
 normal for this format and fine. Only footage that contradicts or misleads — the wrong sport or \
-place, or a stranger presented as if they were the person being named — is a visuals problem."""
+place, or a stranger presented as if they were the person being named — is a visuals problem. \
+
+Big numbers in 'stat' graphics count up from zero during the first second of their scene, so a \
+frame can catch one mid-count (e.g. 31,000 on its way to 52,000). That is the animation, not an \
+error: judge the number against the graphic's headline listed with the voiceover."""
 
 
 def contact_sheet(video: Path, out_path: Path, frames: int = 6) -> Path:
