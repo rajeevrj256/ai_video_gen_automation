@@ -25,6 +25,8 @@ Google Trends ─► Claude picks a topic and writes the script (web search for 
 
 Pick a **style** on the Create page (and for the daily videos in Settings): **📚 Facts** (true stories, every fact checked), **🎭 Fiction** (original short stories with a twist, marked as fiction), **😂 Jokes** (clean, relatable comedy) or **🔀 Mix**.
 
+Pick a **length** too: **📱 Short** (30 s, 9:16, real footage) or **🎬 Long** (8–10 min, 16:9 for YouTube, fully animated motion graphics with chapters, narrated in Indian English by default; set length, language and voice under Settings → Long videos). A long video takes about 30–90 minutes to make.
+
 A video that fails a check is rewritten and made again (up to 3 tries). If none passes, you still get the best one, marked "not verified" with the reasons.
 
 ## Set up on your PC (one time)

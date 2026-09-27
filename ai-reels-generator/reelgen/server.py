@@ -33,6 +33,7 @@ from .script_writer import ReelScript
 log = logging.getLogger(__name__)
 WEB_DIR = PROJECT_ROOT / "web"
 MAX_BATCH = 15  # videos per Generate click
+MAX_LONG_BATCH = 5  # long videos take much longer to make
 MEDIA_FILES = {"reel.mp4", "thumbnail.jpg", "review_frames.jpg"}
 
 
@@ -48,9 +49,10 @@ class JobManager:
         self.wake = threading.Event()
         threading.Thread(target=self._worker, daemon=True).start()
 
-    def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None) -> dict:
+    def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None,
+               length: str = "short") -> dict:
         job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger,
-               "style": style or load_settings(Config()).video_style,
+               "style": style or load_settings(Config()).video_style, "length": length,
                "status": "queued", "log": [], "created": time.time(), "results": []}
         with self.lock:
             self.jobs.appendleft(job)
@@ -86,7 +88,11 @@ class JobManager:
         try:
             cfg = load_settings(Config())
             cfg.video_style = job["style"]
-            reports = run(cfg, job["count"], job["topic"], progress)
+            if job.get("length") == "long":
+                from .longform import run_long_batch
+                reports = run_long_batch(cfg, job["count"], job["topic"], progress)
+            else:
+                reports = run(cfg, job["count"], job["topic"], progress)
             job["results"] = [r["id"] for r in reports]
             made = len(reports)
             job["status"] = "done" if made == job["count"] else ("partial" if made else "failed")
@@ -152,6 +158,7 @@ class GenerateRequest(BaseModel):
     topic: str | None = None
     count: int = 1
     style: str | None = None  # facts | story | comedy | mix; empty = the style in Settings
+    length: str = "short"  # "short" (30s, 9:16) or "long" (8-10 min, 16:9, animated)
 
 
 class PostEdit(BaseModel):
@@ -215,9 +222,22 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/videos/{video_id}/post-text")
     def write_post_text(video_id: str):
         """(Re)write the Instagram/YouTube text for a video, e.g. one made before this existed."""
-        from .post_copy import apply_post_copy
+        from .post_copy import apply_post_copy, save_post_text
 
         folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("format") == "long":  # long videos have their own script and chapters
+            from .longform import LongScript, write_long_post
+
+            long_script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
+            try:
+                report.update(write_long_post(long_script, {"chapters": report.get("chapters", [])}, load_settings(Config())))
+            except Exception as exc:
+                raise HTTPException(502, f"Couldn't write the post text: {exc}")
+            report.pop("post_text_error", None)
+            save_post_text(report, folder)
+            (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+            return report
         data = json.loads((folder / "script.json").read_text(encoding="utf-8"))
         for field in ("subject", "hook_question", "answer"):  # scripts saved before these fields existed
             data.setdefault(field, "")
@@ -267,7 +287,9 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/generate")
     def generate(body: GenerateRequest):
         style = body.style if body.style in ("facts", "story", "comedy", "mix") else None
-        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH)), "manual", style)
+        long = body.length == "long"
+        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_LONG_BATCH if long else MAX_BATCH)),
+                           "manual", style, "long" if long else "short")
 
     @app.get("/api/jobs")
     def list_jobs():

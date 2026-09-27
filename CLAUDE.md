@@ -40,6 +40,7 @@ cd ../../remotion-studio && npm run studio / npm run typecheck
 | `visuals.py` | Pexels search. Keeps only results whose page slug shares a word with the query. |
 | `video.py` | Builds props and runs `remotion render` in `ai-reels-generator/remotion/`; falls back to moviepy. `plan_transitions` keeps Claude's per-scene transition (flash/zoom/slide/glitch/fade) but forbids repeats and forces 2+ kinds. |
 | `sfx.py` | Synthesised sounds, one per transition (whoosh, impact, swish, glitch, shimmer) plus a pop for graphics. No audio files. |
+| `longform.py` | **Long videos** (8-10 min, 16:9, fully animated, no footage): `LongScript` (chapters of beats, each a narration line + an animated visual), `check_long_script`, `fact_check_long` (fixes before recording), one voice take per chapter (`long_voice`, default `en-IN-PrabhatNeural`, `long_language` Indian English), Remotion composition `Long` (`remotion/src/long/`), review on 2 frames per chapter, YouTube chapter timestamps in the description. Jobs with `length: "long"` go to `run_long_batch`. |
 | `server.py`, `web/` | Local app, job queue, daily schedule, PIN. |
 
 The reels editor is `ai-reels-generator/remotion/` (Remotion **4.0.529**, pinned; the

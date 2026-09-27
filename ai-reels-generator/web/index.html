@@ -36,6 +36,7 @@
   .card { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--panel); aspect-ratio: 9/16;
           cursor: pointer; border: 1px solid var(--line); }
   .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card.wide { grid-column: span 2; aspect-ratio: 16/9; } /* long videos are 16:9 */
   .card .meta { position: absolute; inset: auto 0 0 0; padding: 28px 10px 10px; font-size: 13px; font-weight: 600;
                 background: linear-gradient(transparent, rgba(0,0,0,.85)); }
   .card .badge { position: absolute; top: 8px; left: 8px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
@@ -183,6 +184,11 @@
         <button data-style="facts" class="on">📚 Facts</button><button data-style="story">🎭 Fiction</button><button data-style="comedy">😂 Jokes</button><button data-style="mix">🔀 Mix</button>
       </div>
       <p class="hint" id="styleHint"></p>
+      <label>Length</label>
+      <div class="segmented" id="length">
+        <button data-length="short" class="on">📱 Short · 30s</button><button data-length="long">🎬 Long · 8–10 min</button>
+      </div>
+      <p class="hint" id="lengthHint">Vertical 9:16 for Reels and Shorts, with real footage.</p>
       <label for="topic">Topic</label>
       <input id="topic" placeholder="Leave empty for what's trending now">
       <div class="chips" id="ideas"></div>
@@ -236,6 +242,24 @@
       </select>
       <label for="s-niche">Channel niche (optional)</label>
       <input id="s-niche" placeholder="e.g. tech and AI, money, facts">
+    </div>
+    <div class="panel">
+      <h2>Long videos (YouTube, 16:9)</h2>
+      <p class="hint">Fully animated, no stock footage, with chapters.</p>
+      <div class="row">
+        <div><label for="s-long_minutes">Length</label>
+          <select id="s-long_minutes"><option value="6">About 6 min</option><option value="8">About 8 min</option><option value="10">About 10 min</option></select></div>
+        <div><label for="s-long_language">Narration</label>
+          <select id="s-long_language"><option value="Indian English">Indian English</option><option value="English">English (international)</option><option value="Hindi">Hindi</option></select></div>
+      </div>
+      <label for="s-long_voice">Voice</label>
+      <select id="s-long_voice">
+        <option value="en-IN-PrabhatNeural">Indian English – Prabhat, male (recommended)</option>
+        <option value="en-IN-NeerjaExpressiveNeural">Indian English – Neerja, female, expressive</option>
+        <option value="en-IN-NeerjaNeural">Indian English – Neerja, female</option>
+        <option value="hi-IN-MadhurNeural">Hindi – Madhur, male</option>
+        <option value="en-US-AndrewMultilingualNeural">US English – Andrew, presenter</option>
+      </select>
     </div>
     <div class="panel">
       <h2>Automation</h2>
@@ -337,10 +361,10 @@ async function loadVideos() {
   const videos = await api("/api/videos");
   $("#empty").hidden = videos.length > 0;
   $("#grid").innerHTML = videos.map((v) => `
-    <div class="card" data-id="${esc(v.id)}">
+    <div class="card${v.format === "long" ? " wide" : ""}" data-id="${esc(v.id)}">
       <img loading="lazy" src="/media/${encodeURIComponent(v.id)}/thumbnail.jpg" alt="">
       <span class="badge ${v.verified ? "ok-bg" : "warn-bg"}">${v.verified ? "✓ " + (v.score ?? "") : "Check"}</span>
-      <span class="dur">${Math.round(v.duration_seconds || 0)}s</span>
+      <span class="dur">${v.format === "long" ? "🎬 " + mmss(v.duration_seconds || 0) : Math.round(v.duration_seconds || 0) + "s"}</span>
       ${v.youtube_description && !v.post_text_error ? '<span class="postbadge">📝 Post text</span>' : ""}
       <div class="meta">${esc(v.title)}</div>
     </div>`).join("");
@@ -352,13 +376,14 @@ async function openVideo(id) {
   const src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
   $("#video").poster = "/media/" + encodeURIComponent(id) + "/thumbnail.jpg";
   $("#video").src = src;
+  $("#video").style.aspectRatio = v.format === "long" ? "16/9" : "9/16";
   const tags = (v.hashtags || []).map((h) => "#" + h).join(" ");
   const verdict = v.verified
     ? `<div class="verdict ok">✅ Verified automatically — score ${esc(v.score)}/10</div>`
     : `<div class="verdict warn">⚠️ Didn't pass every check. Watch it before posting.<br>${(v.issues || []).map(esc).join("<br>")}</div>`;
   $("#details").innerHTML = `
     <h3>${esc(v.title)}</h3>
-    <div class="sub">${esc(v.topic)} · ${esc(v.topic_source)} · ${Math.round(v.duration_seconds)}s</div>
+    <div class="sub">${esc(v.topic)} · ${esc(v.topic_source)} · ${v.format === "long" ? "🎬 " + mmss(v.duration_seconds) + " · 16:9" : Math.round(v.duration_seconds) + "s"}</div>
     ${verdict}
     <div class="actions">
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
@@ -513,7 +538,8 @@ function jobCard(j) {
   const errors = vids.filter((v) => v.error).map((v) => `Video ${v.n}: ${v.error}`);
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
-  const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "");
+  const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
+    + (j.length === "long" ? " · 🎬 Long" : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -645,12 +671,20 @@ function setStyle(style) {
   });
 }
 document.querySelectorAll("#style button").forEach((b) => b.onclick = () => setStyle(b.dataset.style));
+let lengthValue = "short";
+document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
+  lengthValue = b.dataset.length;
+  document.querySelectorAll("#length button").forEach((x) => x.classList.toggle("on", x === b));
+  $("#lengthHint").textContent = lengthValue === "long"
+    ? "16:9 for YouTube, fully animated with chapters, Indian English (change in Settings). Takes about 30–90 minutes each; up to 5 at a time. Jokes become true stories at this length."
+    : "Vertical 9:16 for Reels and Shorts, with real footage.";
+});
 setStyle("facts");
 api("/api/settings").then((s) => setStyle(s.video_style)).catch(() => {}); // start on the style from Settings
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;

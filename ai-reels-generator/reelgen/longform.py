@@ -404,6 +404,8 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
             script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
             for fix in range(FACT_FIXES + 1):
                 basic = check_long_script(script, minutes)
+                if basic.passed and cfg.video_style != "story":
+                    progress(f"{tag} Claude is fact-checking the script")
                 facts = fact_check_long(script, cfg) if basic.passed and cfg.video_style != "story" else VerifyResult()
                 if basic.passed and facts.passed:
                     break
@@ -509,3 +511,26 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
         if work.exists():
             shutil.rmtree(work, ignore_errors=True)
         raise
+
+
+def run_long_batch(cfg: Config, count: int, topic: str | None, progress: Progress) -> list[dict]:
+    """Several long videos, one after another (each takes the shared video slot). Jokes
+    don't suit 8 minutes, so 'comedy' becomes a true story; 'mix' alternates true and fiction."""
+    from dataclasses import replace
+
+    from .llm import set_limit_reporter
+    from .pipeline import _video_slot
+
+    reports = []
+    for i in range(count):
+        style = {"comedy": "facts", "mix": ("facts", "story")[i % 2]}.get(cfg.video_style, cfg.video_style)
+        vp = (lambda m, n=i + 1: progress(f"[V{n}] {m}")) if count > 1 else progress
+        with _video_slot(cfg):
+            set_limit_reporter(vp)
+            vp(f"=== Video {i + 1}/{count} ===")
+            try:
+                reports.append(run_long(replace(cfg, video_style=style), topic, vp))
+            except Exception as exc:
+                log.exception("Long video %d failed", i + 1)
+                vp(f"Video {i + 1} failed: {exc}")
+    return reports
