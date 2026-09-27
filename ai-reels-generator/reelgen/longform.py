@@ -106,9 +106,14 @@ cricket ground, the monsoon) where they genuinely make a number easier to pictur
 text-to-speech: no abbreviations, symbols or emojis in narration; write numbers as they are spoken.
 
 Retention structure (the most important rules):
-- Chapter 1, the cold open (45-75 seconds): the first sentence (12 words or fewer) plants one big \
-question without the answer, e.g. "Do you know how [place] was founded?". Then raise the stakes and \
-promise what the viewer will understand by the end. No greeting, no "in this video".
+- Build the big question around the most surprising fact in the story (the paradox or twist), \
+not the obvious "how did they do it": e.g. "Sweden flipped every car to the other side of the \
+road, and crashes dropped. Why?" beats "How did Sweden switch sides?".
+- Chapter 1, the cold open (45-75 seconds): the first sentence (12 words or fewer) plants that \
+question. Then raise the stakes. It must NOT explain the method, the answer or the twist, not \
+even in passing; the viewer learns them where the story reaches them. No greeting, no "in this \
+video", no "by the end you'll know".
+- Never repeat the answer: reveal it once, late, then use it for the payoff.
 - 5 to 7 more chapters of 60-100 seconds. Each opens with a mini-hook (a new question or surprise) \
 and ends on an open loop that pulls into the next ("But that created a bigger problem.").
 - Around the middle, a twist that changes how the story looks.
@@ -117,7 +122,13 @@ with one short, natural line asking viewers to subscribe for the next story.
 - One subject, in depth: the whole video stays on the subject you name. Every chapter goes a level \
 deeper (how, why, the telling detail, what it caused, what nobody expects). Never a list of \
 separate examples.
-- Scenes are linked by "but" and "so", never "and also". Vary sentence length. No filler.
+- Scenes are linked by "but" and "so", never "and also". Vary sentence length. No filler \
+("think about that", "their answer was brutal").
+- Vary how chapters open: a question, a scene, a number, a quote, a contradiction. Never the \
+same pattern twice in a row.
+- No chapter is a list (logo, song, signs, buses...): every beat must raise the risk, answer a \
+worry or push the story forward, or it goes.
+- The call to action names a concrete next story, not a generic "subscribe for more".
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
 Visuals:

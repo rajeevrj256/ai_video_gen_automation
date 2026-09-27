@@ -181,7 +181,7 @@ const SubtitleLine: React.FC<{group: CaptionGroup}> = ({group}) => {
         }}
       >
         {group.words.map((w, i) => (
-          <span key={i} style={{color: t >= w.start ? COLORS.text : 'rgba(255,255,255,0.55)'}}>
+          <span key={i} style={{color: t >= w.start ? COLORS.text : 'rgba(255,255,255,0.78)'}}>
             {w.text}{' '}
           </span>
         ))}

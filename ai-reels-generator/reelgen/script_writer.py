@@ -22,7 +22,8 @@ AI_CLICHES = [
     "the world of", "fascinating world", "embark on", "journey", "tapestry", "testament to",
     "whether you're", "stay tuned", "without further ado", "let that sink in", "here's the kicker",
     "but here's the thing", "in conclusion", "ever wondered", "have you ever wondered",
-    "smash that like", "you won't believe",
+    "smash that like", "you won't believe", "by the end of this video", "by the end, you'll know",
+    "by the end you'll know", "think about that", "and that's not all",
 ]
 
 
