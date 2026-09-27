@@ -21,7 +21,7 @@ const PALETTES = [
 ];
 export const paletteFor = (chapter: number) => PALETTES[chapter % PALETTES.length];
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, duration}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx}) => {
   useFonts();
   const {fps, durationInFrames} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
@@ -49,7 +49,6 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         ))}
 
       <Subtitles groups={captions} />
-      <ChapterBar chapters={chapters} total={durationInFrames} duration={duration} />
       <Grain />
 
       {beats.map((b, i) =>
@@ -187,21 +186,6 @@ const SubtitleLine: React.FC<{group: CaptionGroup}> = ({group}) => {
         ))}
       </div>
     </div>
-  );
-};
-
-// Thin bar along the top, split into chapters, so viewers see how far along they are.
-const ChapterBar: React.FC<{chapters: Chapter[]; total: number; duration: number}> = ({chapters, total, duration}) => {
-  const frame = useCurrentFrame();
-  const p = frame / Math.max(1, total - 1);
-  return (
-    <Layer name="chapter-bar">
-      <div style={{position: 'absolute', top: 0, left: 0, right: 0, height: 10, background: 'rgba(255,255,255,0.12)'}} />
-      <div style={{position: 'absolute', top: 0, left: 0, height: 10, width: `${p * 100}%`, background: COLORS.accent, boxShadow: '0 0 16px rgba(255,214,10,0.6)'}} />
-      {chapters.slice(1).map((c) => (
-        <div key={c.index} style={{position: 'absolute', top: 0, height: 10, width: 4, left: `${(c.start / duration) * 100}%`, background: COLORS.ink}} />
-      ))}
-    </Layer>
   );
 };
 

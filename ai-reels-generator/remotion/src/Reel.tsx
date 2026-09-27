@@ -56,7 +56,6 @@ export const Reel: React.FC<ReelProps> = ({title, scenes, cuts, captions, music,
       ) : null}
 
       <Captions groups={captions} />
-      <ProgressBar total={durationInFrames} />
 
       {scenes.map((s, i) =>
         s.audio ? (
@@ -106,33 +105,6 @@ export const Reel: React.FC<ReelProps> = ({title, scenes, cuts, captions, music,
           ))}
         </>
       ) : null}
-    </Layer>
-  );
-};
-
-// Thin yellow bar along the top edge with a glowing head. Top, not bottom: on
-// Reels/Shorts the bottom of the frame sits under the platform's caption and
-// buttons (same rule as the "claude code remotion" explainer project).
-const ProgressBar: React.FC<{total: number}> = ({total}) => {
-  const frame = useCurrentFrame();
-  const progress = interpolate(frame, [0, total - 1], [0, 1], clamp);
-  const enter = interpolate(frame, [0, 10], [0, 1], clamp);
-  return (
-    <Layer name="progress-bar">
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          height: 12,
-          width: `${progress * 100}%`,
-          background: COLORS.accent,
-          opacity: enter,
-          boxShadow: `0 0 18px rgba(255,214,10,0.7)`,
-          borderTopRightRadius: 6,
-          borderBottomRightRadius: 6,
-        }}
-      />
     </Layer>
   );
 };

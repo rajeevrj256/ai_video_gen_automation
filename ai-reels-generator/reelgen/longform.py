@@ -544,7 +544,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 pass  # the edit finished before it stopped
             else:
                 with _render_slot(cfg):
-                    _render_remotion(cli, props, out, composition="Long", crf=20, timeout=4 * 3600)
+                    _render_remotion(cli, props, out, composition="Long", crf=18, timeout=4 * 3600)
                 save(stage="rendered")
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "3", "-i", str(out), "-frames:v", "1",
                             "-q:v", "3", str(work / "thumbnail.jpg")], check=False)

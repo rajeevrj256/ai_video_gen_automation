@@ -163,7 +163,7 @@ const Stat: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
     <Stage>
       <div
         style={{
-          fontSize: Math.max(90, fitSize(text, 230, INNER * 1.3)),
+          fontSize: Math.max(90, fitSize(text, 230, INNER * 1.12)),
           fontWeight: 900,
           whiteSpace: 'nowrap', // "5 to 1" must never break as "5 to / 1"
           color: accent,
