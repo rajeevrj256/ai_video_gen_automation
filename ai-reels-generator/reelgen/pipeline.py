@@ -108,6 +108,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         # flagged script is fixed here (up to FACT_FIXES times) without using up
         # an attempt; the final review then mostly judges the finished video.
         # Fiction and comedy have no factual claims to check; the review still guards them.
+        facts = VerifyResult()  # passes unless the fact-check below finds something
         for fix in range(FACT_FIXES + 1 if cfg.video_style == "facts" else 0):
             progress(f"{tag} Claude is fact-checking the script")
             facts = fact_check_script(script, cfg)
