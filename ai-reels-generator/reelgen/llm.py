@@ -14,9 +14,13 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypeVar
 
@@ -71,8 +75,90 @@ def resolve_backend(backend: str) -> str:
     raise LLMError(INSTALL_HELP)
 
 
+# ---- Usage limits: pause until the limit resets, then retry the same step. ----
+# Claude Code reports e.g. "You've hit your session limit · resets 10:30pm (UTC)". Every
+# video thread waits for the same reset, so a batch picks up exactly where it stopped.
+LIMIT_RE = re.compile(r"hit your .{0,20}limit|(usage|session|weekly) limit|limit reached|rate.limit", re.I)
+LIMIT_BUFFER = 120  # seconds after the reset, so the first call isn't too early
+_limit_until = 0.0
+_limit_lock = threading.Lock()
+_reporter = threading.local()
+
+
+def set_limit_reporter(report) -> None:
+    """Where this thread's "paused"/"resumed" messages go (the video's progress log)."""
+    _reporter.fn = report
+
+
+def _report(msg: str) -> None:
+    getattr(_reporter, "fn", None) and _reporter.fn(msg)
+    log.warning(msg)
+
+
+def _zone(name: str | None):
+    if not name or name.upper() in ("UTC", "GMT"):
+        return timezone.utc if name else None
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo({"Asia/Calcutta": "Asia/Kolkata"}.get(name, name))
+    except Exception:  # unknown name, or no tz database (Windows without tzdata)
+        return None
+
+
+def reset_time(message: str, now: datetime | None = None) -> float | None:
+    """The reset moment in a limit message ("resets 10:30pm (UTC)", "resets Oct 3, 9am
+    (Asia/Calcutta)") as a timestamp, or None if there isn't one."""
+    m = re.search(r"resets?\s+(?:at\s+)?(?:([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(?:at\s+)?)?"
+                  r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]+)\))?", message, re.I)
+    if not m:
+        return None
+    mon, day, hour, minute, ampm, zone = m.groups()
+    hour, minute = int(hour) % 24, int(minute or 0)
+    if ampm:
+        hour = hour % 12 + (12 if ampm.lower() == "pm" else 0)
+    tz = _zone(zone)
+    now = (now or datetime.now(timezone.utc)).astimezone(tz)  # tz None = this computer's zone
+    try:
+        when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if mon:
+            when = when.replace(month=datetime.strptime(mon[:3].title(), "%b").month, day=int(day))
+            if when <= now:
+                when = when.replace(year=when.year + 1)
+        elif when <= now:
+            when += timedelta(days=1)
+    except ValueError:
+        return None
+    return when.timestamp()
+
+
+def _wait_for_limit() -> None:
+    until = _limit_until
+    if time.time() >= until:
+        return
+    clock = datetime.fromtimestamp(until).strftime("%H:%M")
+    _report(f"Paused: Claude usage limit reached. Waiting until {clock}, then continuing from this step")
+    while time.time() < _limit_until:
+        time.sleep(min(60, max(1, _limit_until - time.time())))
+    _report("Resumed after the Claude usage limit reset")
+
+
 def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
         images: list[Path] | None = None, allow_web: bool = False, cwd: Path | None = None) -> T:
+    global _limit_until
+    while True:
+        _wait_for_limit()
+        try:
+            return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd)
+        except LLMError as exc:
+            if not LIMIT_RE.search(str(exc)):
+                raise
+            until = (reset_time(str(exc)) or time.time() + 30 * 60) + LIMIT_BUFFER
+            with _limit_lock:
+                _limit_until = max(_limit_until, until)
+
+
+def _ask_once(backend: str, model: str, system: str, prompt: str, schema: type[T],
+              images: list[Path] | None, allow_web: bool, cwd: Path | None) -> T:
     backend = resolve_backend(backend)
     if backend == "claude-code":
         return _ask_claude_code(model, system, prompt, schema, images or [], allow_web, cwd)

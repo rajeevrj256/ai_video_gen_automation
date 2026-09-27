@@ -469,6 +469,9 @@ function videosOf(j) {
     if (n === null) n = cur;
     const v = (vids[n] ||= { n, lines: [], start: l.t, end: l.t, step: -1, attempt: "", state: "running" });
     v.lines.push(m); v.end = l.t;
+    const pause = m.match(/^Paused: .*until (\d\d:\d\d)/);
+    v.paused = pause ? pause[1] : "";
+    if (/^(Paused|Resumed)/.test(m)) return; // keeps the current step and try count
     const a = m.match(/\[attempt (\d+)\/(\d+)\]/); if (a) v.attempt = `Try ${a[1]}/${a[2]}`;
     STEPS.forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
     if (/^Done/.test(m)) v.state = /did not pass/.test(m) ? "check" : "done";
@@ -512,11 +515,12 @@ function jobCard(j) {
       const v = vids.find((x) => x.n === n);
       if (!v) { rows.push(`<div class="vrow wait"><b>${n}</b><span class="vname">Waiting…</span></div>`); continue; }
       const now = v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, "");
-      const icon = { done: "✅", check: "⚠️", failed: "❌", running: '<span class="spinner"></span>' }[v.state];
+      const icon = v.paused && v.state === "running" ? "⏸️"
+        : { done: "✅", check: "⚠️", failed: "❌", running: '<span class="spinner"></span>' }[v.state];
       const time = v.state === "running" ? liveSince(v.start) : mmss(v.end - v.start);
       rows.push(`<div class="vrow ${v.state}"><b>${n}</b>${icon}
-        <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.step >= 0 ? STEPS[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
-        ${v.state === "running" ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
+        <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.paused ? `Paused till ${v.paused}` : v.step >= 0 ? STEPS[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
+        ${v.state === "running" && !v.paused ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
         <span class="vtime">${time}</span></div>`);
     }
     body = `<div class="vrows">${rows.join("")}</div><div class="timer">⏱ Total ${liveSince(jobStart)}</div>`;

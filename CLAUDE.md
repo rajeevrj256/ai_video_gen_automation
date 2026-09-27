@@ -84,6 +84,11 @@ review about 1 min. A failed review costs a whole extra try.
   as American football, so use "soccer".
 - **Rendered files are big** (CRF 18: 25–45 MB for 30s). Fine for Instagram/YouTube,
   over Telegram's 50 MB bot limit only rarely.
+- **Claude usage limits**: a batch can run out of Claude Code usage ("You've hit your session
+  limit · resets 10:30pm (UTC)"). `llm.ask` reads the reset time, pauses every video thread at
+  its current step until then (+2 min), and retries that same call, so nothing is redone. The
+  app shows "Paused till HH:MM". The time zone may be `Asia/Calcutta`, which needs `tzdata`.
+  If the app is closed during the pause, the job is lost.
 - **`.env` holds keys** (Pexels, optional Anthropic/Telegram). Never print, commit or
   paste it. It's git-ignored.
 

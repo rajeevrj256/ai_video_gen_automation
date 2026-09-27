@@ -10,3 +10,4 @@ uvicorn>=0.29
 qrcode>=7.4
 imageio-ffmpeg>=0.5
 kokoro-onnx>=0.4
+tzdata   # time zones in Claude's "limit resets at" messages

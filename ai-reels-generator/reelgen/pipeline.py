@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .config import MAX_SECONDS, Config
+from .llm import set_limit_reporter
 from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
 from .script_writer import write_script
@@ -254,6 +255,7 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
 
     def one(i: int) -> None:
         vp = (lambda m: progress(f"[V{i + 1}] {m}")) if count > 1 else progress
+        set_limit_reporter(vp)  # a usage-limit pause shows up in this video's log
         vp(f"=== Video {i + 1}/{count} ===")
         # Trending batches get a new topic each time (used and in-progress topics are
         # skipped). A batch on one fixed topic needs a different angle per video.

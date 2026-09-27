@@ -86,6 +86,8 @@ One video is about 8 minutes when it passes on the first try. The slow steps are
 | `REEL_PARALLEL_RENDERS` | How many of those may render at once | `1`; `2` on 16+ cores |
 | `REEL_MAX_ATTEMPTS` | Rewrite-and-retry budget | `3` (default); `1` = fastest, more "not verified" |
 
+If Claude's usage limit runs out partway through a batch, the videos pause ("Paused till 22:30" in the app) and carry on from the same step once the limit resets. Keep Reel Studio open while it waits.
+
 The best topics pass on the first try and look most real: money, science, nature, tech, places and history. Breaking news about named people is the hardest, because stock footage can't show them.
 
 ## More
