@@ -218,14 +218,15 @@ def _pick_music(cfg: Config, public_dir: Path) -> Path | None:
     return Path(shutil.copy(random.choice(tracks), public_dir / "music.mp3"))
 
 
-def _render_remotion(cli: Path, props: dict, out_path: Path) -> None:
+def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = "Reel", crf: int = 18,
+                     timeout: int = 1800) -> None:
     public_dir = out_path.parent
     props_path = public_dir / "props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-    cmd = [str(cli), "render", "src/index.ts", "Reel", str(out_path),
+    cmd = [str(cli), "render", "src/index.ts", composition, str(out_path),
            f"--props={props_path}", f"--public-dir={public_dir}",
            # bt709 tags the file as standard TV-range colour, so phones don't show it washed out.
-           "--codec=h264", "--crf=18", "--color-space=bt709", "--overwrite"]
+           "--codec=h264", f"--crf={crf}", "--color-space=bt709", "--overwrite"]
     # Remotion downloads its own headless Chrome on first render. Where that
     # download is blocked, REEL_CHROME can point at an installed Chrome/Chromium.
     chrome = os.environ.get("REEL_CHROME", "").strip()
@@ -242,7 +243,7 @@ def _render_remotion(cli: Path, props: dict, out_path: Path) -> None:
             cmd.append(f"{flag}={value}")
     log.info("Rendering with Remotion: %s", " ".join(cmd))
     proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=1800, stdin=subprocess.DEVNULL)
+                          errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
     gpu_encode = [a for a in cmd if a.startswith("--hardware-acceleration=")]
     if (proc.returncode != 0 or not out_path.exists()) and gpu_encode:
         # GPU encoding (NVENC) fails outright on machines without a usable NVIDIA GPU
@@ -250,7 +251,7 @@ def _render_remotion(cli: Path, props: dict, out_path: Path) -> None:
         log.warning("GPU encoding failed; rendering again with CPU encoding")
         cmd = [a for a in cmd if a not in gpu_encode]
         proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=1800, stdin=subprocess.DEVNULL)
+                              errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out_path.exists():
         tail = (proc.stderr.strip() or proc.stdout.strip())[-1500:]
         raise RuntimeError(f"Remotion render failed ({proc.returncode}): {tail}")

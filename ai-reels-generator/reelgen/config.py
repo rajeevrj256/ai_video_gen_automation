@@ -44,6 +44,10 @@ class Config:
     # What kind of videos: "facts" (true stories, fact-checked), "story" (fiction),
     # "comedy" (jokes) or "mix" (rotates through the three in a batch).
     video_style: str = field(default_factory=lambda: _env("REEL_STYLE", "facts"))
+    # Long videos (16:9, fully animated, reelgen/longform.py): length, narration language and voice.
+    long_minutes: float = field(default_factory=lambda: float(_env("REEL_LONG_MINUTES", "8")))
+    long_language: str = field(default_factory=lambda: _env("REEL_LONG_LANGUAGE", "Indian English"))
+    long_voice: str = field(default_factory=lambda: _env("REEL_LONG_VOICE", "en-IN-PrabhatNeural"))
     claude_effort: str = field(default_factory=lambda: _env("REEL_CLAUDE_EFFORT", "high"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
@@ -100,7 +104,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "video_style"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "video_style", "long_minutes", "long_language", "long_voice"]
 
 
 def settings_path(cfg: Config) -> Path:
