@@ -37,7 +37,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
           <Sequence key={i} name={`beat ${i + 1} (${b.visual.type})`} from={from} durationInFrames={frames}>
             {b.visual.type === 'footage' && b.visual.src ? (
               <Footage v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} />
-            ) : b.visual.type === 'model3d' && b.visual.src ? (
+            ) : b.visual.type === 'model3d' && (b.visual.src || b.visual.parts?.length) ? (
               <Model3D v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} />
             ) : (
               <>

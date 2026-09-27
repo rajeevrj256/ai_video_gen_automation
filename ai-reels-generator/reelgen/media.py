@@ -145,8 +145,9 @@ def prompt_block(cfg: Config, long: bool = False) -> str:
 def models_block(cfg: Config) -> str:
     found = models(cfg)
     if not found:
-        return "3D models: none in the library, so don't use 'model3d'.\n"
-    return "3D models you can use for 'model3d':\n" + "\n".join(f"  - {m.name}: {m.about}" for m in found) + "\n"
+        return ""
+    return ("3D models already in the library (use their words in 'search' when one fits; any other object "
+            "is found online or built from your parts):\n" + "\n".join(f"  - {m.about}" for m in found) + "\n")
 
 
 def pick_music(cfg: Config, name: str, out_dir: Path, seconds: float) -> Path | None:

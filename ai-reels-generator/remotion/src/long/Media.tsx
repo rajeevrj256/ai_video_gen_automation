@@ -1,11 +1,12 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {OffthreadVideo, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig, Easing} from 'remotion';
 import {ThreeCanvas} from '@remotion/three';
+import {useThree} from '@react-three/fiber';
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {COLORS, FONT, clamp, exitProgress} from '../theme';
 import {Layer} from '../Layer';
-import type {Visual} from './types';
+import type {Part, Visual} from './types';
 
 // Full-screen beats: a real stock clip of a place or scene, or a 3D model in its own world
 // (a plane flying through clouds, a satellite in space, an object on a turntable).
@@ -50,25 +51,32 @@ const LowerThird: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
 
 // ---------- 3D ----------
 
-// Loads a .glb once per beat and scales it to fit a 2-unit box around the origin. The glTF
-// convention is +Y up and the nose facing +Z, which the flying pose below relies on.
-const useModel = (src: string) => {
+// Scales any object to fit a 2-unit box around the origin, so every model frames the same way.
+const normalize = (obj: THREE.Object3D) => {
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  obj.position.sub(center);
+  const wrap = new THREE.Group();
+  wrap.add(obj);
+  wrap.scale.setScalar(2 / Math.max(size.x, size.y, size.z, 1e-6));
+  return wrap;
+};
+
+// Loads a .glb/.gltf once per beat. The glTF convention is +Y up and the front facing +Z,
+// which the flying pose relies on.
+const useModel = (src: string | undefined) => {
   const [model, setModel] = useState<THREE.Object3D | null>(null);
-  const [handle] = useState(() => delayRender(`Loading 3D model ${src}`));
+  const [handle] = useState(() => (src ? delayRender(`Loading 3D model ${src}`) : null));
   useEffect(() => {
+    if (!src || handle === null) return;
     new GLTFLoader().load(
       staticFile(src),
       (gltf) => {
-        const obj = gltf.scene;
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        obj.position.sub(center);
-        const wrap = new THREE.Group();
-        wrap.add(obj);
-        wrap.scale.setScalar(2 / Math.max(size.x, size.y, size.z, 1e-6));
-        setModel(wrap);
-        continueRender(handle);
+        setModel(normalize(gltf.scene));
+        // Let React mount it and the GPU upload its textures before the frame is captured.
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => continueRender(handle))));
       },
       undefined,
       (err) => {
@@ -80,10 +88,60 @@ const useModel = (src: string) => {
   return model;
 };
 
+const MATERIALS: Record<string, (color: string) => THREE.Material> = {
+  matte: (c) => new THREE.MeshStandardMaterial({color: c, roughness: 0.8, metalness: 0}),
+  glossy: (c) => new THREE.MeshStandardMaterial({color: c, roughness: 0.25, metalness: 0.05}),
+  metal: (c) => new THREE.MeshStandardMaterial({color: c, roughness: 0.3, metalness: 0.9}),
+  glass: (c) => new THREE.MeshStandardMaterial({color: c, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.45}),
+  glow: (c) => new THREE.MeshStandardMaterial({color: c, emissive: c, emissiveIntensity: 1.2}),
+};
+
+// An object Claude designed from simple shapes, for things no ready-made model exists for.
+const buildParts = (parts: Part[]) => {
+  const group = new THREE.Group();
+  for (const p of parts) {
+    const [a = 1, b = a, c = a] = p.size;
+    let geometry: THREE.BufferGeometry;
+    let scale: [number, number, number] = [1, 1, 1];
+    switch (p.shape) {
+      case 'box':
+        geometry = new THREE.BoxGeometry(a, b, c);
+        break;
+      case 'sphere':
+        geometry = new THREE.SphereGeometry(0.5, 48, 32);
+        scale = [a, p.size.length > 1 ? b : a, p.size.length > 2 ? c : a];
+        break;
+      case 'cylinder':
+        geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 48);
+        scale = [a, b, p.size.length > 2 ? c : a];
+        break;
+      case 'cone':
+        geometry = new THREE.ConeGeometry(0.5, 1, 48);
+        scale = [a, b, p.size.length > 2 ? c : a];
+        break;
+      case 'torus':
+        geometry = new THREE.TorusGeometry(a / 2, Math.max(0.001, (p.size[1] ?? a * 0.2) / 2), 24, 64);
+        break;
+      default:
+        geometry = new THREE.CapsuleGeometry(a / 2, Math.max(0, b - a), 8, 24);
+    }
+    const mesh = new THREE.Mesh(geometry, (MATERIALS[p.material ?? 'matte'] ?? MATERIALS.matte)(p.color || '#cccccc'));
+    mesh.scale.set(...scale);
+    mesh.position.set(p.position[0] ?? 0, p.position[1] ?? 0, p.position[2] ?? 0);
+    const r = (p.rotation ?? [0, 0, 0]).map((d) => (d * Math.PI) / 180);
+    mesh.rotation.set(r[0] ?? 0, r[1] ?? 0, r[2] ?? 0);
+    group.add(mesh);
+  }
+  group.updateMatrixWorld(true);
+  return normalize(group);
+};
+
 export const Model3D: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
-  const model = useModel(v.src!);
+  const loaded = useModel(v.src);
+  const built = useMemo(() => (!v.src && v.parts?.length ? buildParts(v.parts) : null), [v.src, v.parts]);
+  const model = loaded ?? built;
   const scene = v.scene ?? 'studio';
   const fade = interpolate(frame, [0, 8], [0, 1], clamp) * (1 - exitProgress(frame, frames, 9));
   const t = frame / fps;
@@ -116,6 +174,7 @@ export const Model3D: React.FC<{v: Visual; frames: number; accent: string}> = ({
         <hemisphereLight args={['#dff1ff', '#6b7b8c', scene === 'space' ? 0.4 : 1.1]} />
         <directionalLight position={[4, 6, 5]} intensity={scene === 'space' ? 3 : 2.2} />
         <directionalLight position={[-5, 2, -3]} intensity={0.6} color={accent} />
+        <Redraw dep={model} />
         {model ? (
           <group position={[pose.x, pose.y, pose.z]} rotation={[pose.rx, pose.ry, pose.rz]} scale={pose.scale}>
             <primitive object={model} />
@@ -126,6 +185,15 @@ export const Model3D: React.FC<{v: Visual; frames: number; accent: string}> = ({
       <LowerThird v={v} accent={accent} />
     </Layer>
   );
+};
+
+// The canvas only draws when the frame changes; a model that finishes loading later needs a draw of its own.
+const Redraw: React.FC<{dep: unknown}> = ({dep}) => {
+  const advance = useThree((s) => s.advance);
+  useEffect(() => {
+    advance(performance.now());
+  }, [dep, advance]);
+  return null;
 };
 
 // Soft clouds made of blurred ellipses. The back layer is the sky with slow clouds; the front

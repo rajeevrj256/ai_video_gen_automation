@@ -27,6 +27,7 @@ from .config import Config
 from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
 from .post_copy import PostCopy, clean_tags, save_post_text
 from . import media
+from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
 from .sfx import write_sfx
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
@@ -65,13 +66,15 @@ class LVisual(BaseModel):
                     "exactly 2 things side by side. steps: 2-4 steps of how something works. icons: 1-3 icons "
                     "that picture the line. quote: a real, verified quote. keyword: one word or short phrase. "
                     "chart: 3-6 real data points over time. footage: a real video clip of a place or scene, "
-                    "full screen. model3d: a 3D model from the list, animated.")
+                    "full screen. model3d: an object from the story as an animated 3D model.")
     headline: str = Field(description="title/keyword: the text (keyword max 3 words). stat: the number exactly as shown, e.g. '₹1.2 lakh'. quote: the quote. icons/timeline/compare/steps/chart: a short heading (max 7 words).")
     sub: str = Field(description="A short supporting line (max 10 words): what the stat is, who said the quote, the chart's unit. Can be empty.")
     items: list[LItem] = Field(description="timeline: 2-5, compare: exactly 2, steps: 2-4, chart: 3-6. Empty for the other types.")
     icons: list[str] = Field(description="icons: 1-3 Lucide icon names in kebab-case that picture the line, e.g. 'cloud-rain', 'train-front', 'indian-rupee', 'landmark', 'satellite'. Empty for other types.")
     query: str = Field(default="", description="footage only: an English stock-video search, 2-4 words, the place or subject first, e.g. 'stockholm old town', 'monsoon rain street'. Empty otherwise.")
-    model: str = Field(default="", description="model3d only: the model's name exactly as in the 3D model list. Empty otherwise.")
+    model: str = Field(default="", description="model3d only: the object, concretely, e.g. 'red oil barrel', 'vintage propeller plane', 'gold coin'. Empty otherwise.")
+    search: str = Field(default="", description="model3d only: 1-3 English words to find a ready-made model, the main noun LAST, e.g. 'oil barrel', 'propeller plane', 'coin'. Empty otherwise.")
+    parts: list[Part] = Field(default_factory=list, description="model3d only: how to build the object from 4-24 simple shapes if no ready-made model is found, in metres, +Y up, front facing +Z. Make it recognisable: proportions and colours matter more than detail. Empty otherwise.")
     scene: Literal["sky", "space", "studio"] = Field(default="studio", description="model3d only: where it's shown. sky: flying through clouds. space: drifting among stars. studio: turning on a dark stage.")
 
 
@@ -153,10 +156,14 @@ stock video can show truthfully: a city or country by name, nature, everyday sce
 person, a specific event, a specific building's interior, an old photo or anything from the past \
 ("stockholm 1967"): stock video is filmed recently. The headline is a short place label ("Stockholm") \
 and the sub what we're seeing; both may be empty.
-- 'model3d' (only when a model in the list fits, at most once every two chapters): an object from \
-the story brought to life, e.g. a plane flying through the sky while the line talks about a flight, \
-a satellite in space. Never in a serious or tragic moment (a crash, a war, a death, a disaster): a \
-toy-like 3D model there is disrespectful. Headline: a short label, or empty.
+- 'model3d' (at most once per chapter, only where it helps): the one object a line is about, brought \
+to life in 3D, e.g. the plane while the line talks about a flight, a satellite in space, a barrel of \
+oil for an oil-price line, a coin for money. You decide the object from the story. Describe it, give \
+search words, and always give its parts (4-24 simple shapes) so it can be built if no ready-made \
+model exists. Pick the scene: 'sky' only for things that fly (the model flies left to right with its \
+front first), 'space' for space objects, 'studio' (a turntable) for everything else. Never in a \
+serious or tragic moment (a crash, a war, a death, a disaster): a toy-like 3D model there is \
+disrespectful. Headline: a short label, or empty.
 
 Accuracy: only state facts you are confident about or have looked up with web search. Never invent \
 details, dialogue or figures in a true story. Timeless wording: never "today", "this week" or "five \
@@ -367,13 +374,12 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
             v.update(src=clip.relative_to(work).as_posix(), length=round(media_seconds(clip), 3))
             return v
     elif v["type"] == "model3d":
-        item = next((m for m in media.models(cfg) if m.name == v.get("model")), None)
-        if item is not None:
-            (work / "models").mkdir(parents=True, exist_ok=True)
-            dest = work / "models" / item.path.name
-            if not dest.exists():
-                shutil.copy(item.path, dest)
-            v["src"] = dest.relative_to(work).as_posix()
+        path = find_model(cfg, v.get("model", ""), v.get("search", ""), work / "models")
+        if path is not None:
+            v["src"] = path.relative_to(work).as_posix()
+            v["parts"] = []
+            return v
+        if len(v.get("parts") or []) >= 2:  # built from Claude's shapes in the editor
             return v
     else:
         return v

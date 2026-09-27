@@ -29,6 +29,17 @@ export type Visual = {
   src?: string; // footage clip or .glb, relative to the public dir
   length?: number; // footage: the clip's length in seconds
   scene?: 'sky' | 'space' | 'studio'; // model3d: the world it's shown in
+  parts?: Part[]; // model3d without a file: build it from these shapes
+};
+
+// One simple shape of a 3D object Claude designed (reelgen/models3d.py Part). Metres, +Y up, front +Z.
+export type Part = {
+  shape: 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'capsule';
+  size: number[];
+  position: number[];
+  rotation?: number[]; // degrees
+  color: string;
+  material?: 'matte' | 'glossy' | 'metal' | 'glass' | 'glow';
 };
 
 export type Beat = {start: number; duration: number; chapter: number; audio: string | null; visual: Visual};
