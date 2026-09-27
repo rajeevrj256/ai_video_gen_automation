@@ -151,6 +151,41 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     return script
 
 
+class BeatFix(BaseModel):
+    chapter: int = Field(description="Chapter number, 1-based, as in the numbered script (3.4 = chapter 3).")
+    beat: int = Field(description="Beat number within the chapter, 1-based (3.4 = beat 4).")
+    narration: str = Field(description="The corrected line, same length and flow as before.")
+    visual: LVisual = Field(description="The corrected visual; unchanged if only the words were wrong.")
+
+
+class ScriptFixes(BaseModel):
+    fixes: list[BeatFix] = Field(description="One entry per line that must change. Only the flagged lines.")
+
+
+FIX_SYSTEM = """You correct flagged lines in a finished documentary script. Change only what the fact-check \
+flagged, keep each line's length, tone and place in the story, and keep every number on screen identical to \
+its narration. If a claim can't be stated accurately, replace it with a nearby fact you are sure of, or make \
+the line less specific. Use web search when you need to confirm the corrected fact."""
+
+
+def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instructions: str) -> LongScript:
+    """Rewrite only the flagged beats. Regenerating the whole script to fix one figure
+    brought new small errors each time; a targeted fix leaves everything else untouched."""
+    numbered = "\n".join(f"{ci}.{bi} {b.narration}  {_visual_text(b.visual)}"
+                         for ci, c in enumerate(script.chapters, 1) for bi, b in enumerate(c.beats, 1))
+    prompt = (f"The script, numbered chapter.beat:\n{numbered}\n\nThe fact-check flagged:\n" + "\n".join(issues)
+              + (f"\n\nSuggested fixes: {instructions}" if instructions else "")
+              + "\n\nReturn the corrected lines only.")
+    result = ask(cfg.ai_backend, cfg.claude_model, FIX_SYSTEM, prompt, ScriptFixes, allow_web=True,
+                 effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
+    fixed = script.model_copy(deep=True)
+    for f in result.fixes:
+        if 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
+            fixed.chapters[f.chapter - 1].beats[f.beat - 1] = LBeat(narration=f.narration, visual=f.visual)
+    log.info("Fixed %d line(s): %s", len(result.fixes), ", ".join(f"{f.chapter}.{f.beat}" for f in result.fixes))
+    return fixed
+
+
 def narration_words(script: LongScript) -> int:
     return sum(len(b.narration.split()) for c in script.chapters for b in c.beats)
 
@@ -417,7 +452,10 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
                     break
                 progress(f"{tag} Fixing the script: {'; '.join(problems)}")
                 fixes = facts.checks.get("fact_check", {}).get("fix_instructions", "")
-                script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
+                if basic.passed:  # only facts are wrong: correct just those lines
+                    script = fix_long_script(script, cfg, facts.issues, fixes)
+                else:  # structure or length is off: that needs a real rewrite
+                    script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
             if not (basic.passed and facts.passed) and attempt < LONG_ATTEMPTS:
                 feedback = "\n".join(problems)
                 continue
