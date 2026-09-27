@@ -221,6 +221,10 @@
         <button data-length="short" class="on">📱 Short · 30s</button><button data-length="long">🎬 Long · 8–10 min</button>
       </div>
       <p class="hint" id="lengthHint">Vertical 9:16 for Reels and Shorts, with real footage.</p>
+      <label>Subtitles</label>
+      <div class="segmented" id="cc">
+        <button data-cc="true" class="on">💬 CC on</button><button data-cc="false">🚫 CC off</button>
+      </div>
       <label for="topic">Topic</label>
       <input id="topic" placeholder="Leave empty for what's trending now">
       <div class="chips" id="ideas"></div>
@@ -324,11 +328,15 @@
           <div><label for="a-style">Style</label>
             <select id="a-style"><option value="facts">📚 Facts</option><option value="story">🎭 Fiction</option><option value="comedy">😂 Jokes</option><option value="mix">🔀 Mix</option></select></div>
         </div>
+        <label for="a-captions">Subtitles</label>
+        <select id="a-captions"><option value="true">💬 CC on</option><option value="false">🚫 CC off</option></select>
         <label for="a-topic">Topic (optional)</label><input id="a-topic" placeholder="Empty = what's trending that day">
         <div class="row">
           <button class="primary" id="saveAuto">Save automation</button><button id="cancelAuto">Cancel</button>
         </div>
       </div>
+      <label for="s-captions">Subtitles (CC) by default</label>
+      <select id="s-captions"><option value="true">💬 On</option><option value="false">🚫 Off (graphics use the space)</option></select>
       <label for="s-video_style">Default style (Create page)</label>
       <select id="s-video_style">
         <option value="facts">📚 True stories (fact-checked)</option>
@@ -480,6 +488,13 @@ async function openVideo(id) {
     ${verdict}
     ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
+    <h4 class="section">Voice &amp; subtitles</h4>
+    <p class="hint">Re-make this video with another voice or with subtitles on/off. Same script and footage, no Claude tokens.</p>
+    <div class="row">
+      <div><label for="rv-voice">Voice</label><select id="rv-voice">${($(v.format === "long" ? "#s-long_voice" : "#s-voice") || {}).innerHTML || ""}</select></div>
+      <div><label for="rv-cc">Subtitles</label><select id="rv-cc"><option value="true">💬 On</option><option value="false">🚫 Off</option></select></div>
+    </div>
+    <button id="rvGo" style="width:100%;margin-top:8px">🎙️ Re-make with these settings</button>
     <div class="actions">
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
@@ -547,6 +562,16 @@ async function openVideo(id) {
     } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Try again"; }
   };
   document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
+  if (v.voice) $("#rv-voice").value = v.voice;
+  $("#rv-cc").value = String(v.captions !== false);
+  $("#rvGo").onclick = async () => {
+    $("#rvGo").disabled = true;
+    try {
+      await api(`/api/videos/${encodeURIComponent(id)}/rerender`, { method: "POST",
+        body: JSON.stringify({ voice: $("#rv-voice").value, captions: $("#rv-cc").value === "true" }) });
+      toast("Re-making the video — follow it on the Create page");
+    } catch (e) { toast(e.message); $("#rvGo").disabled = false; }
+  };
   $("#catSel").onchange = async () => {
     try {
       await api(`/api/videos/${encodeURIComponent(id)}/category`, { method: "POST", body: JSON.stringify({ category: $("#catSel").value }) });
@@ -764,7 +789,7 @@ async function loadAutomations() {
     <div class="auto ${a.enabled ? "" : "off"}">
       <div class="top"><b>${esc(a.name)}</b><span class="pill">${a.enabled ? "Next: " + esc(a.next) : "Off"}</span></div>
       <div class="what">${esc(a.time)} · ${daysText(a.days)} · ${a.count} ${a.length === "long" ? "🎬 long" : "📱 short"} video${a.count > 1 ? "s" : ""}
-        · ${STYLE_TAG[a.style] || a.style} · ${a.topic ? "“" + esc(a.topic) + "”" : "trending topics"}</div>
+        · ${STYLE_TAG[a.style] || a.style} · ${a.topic ? "“" + esc(a.topic) + "”" : "trending topics"}${a.captions === false ? " · CC off" : ""}</div>
       <div class="btns">
         <button data-act="toggle" data-id="${a.id}">${a.enabled ? "⏸ Turn off" : "▶ Turn on"}</button>
         <button data-act="edit" data-id="${a.id}">✏️ Edit</button>
@@ -779,6 +804,7 @@ function openAutoForm(a) {
   $("#a-name").value = a ? a.name : ""; $("#a-time").value = a ? a.time : "09:00";
   $("#a-count").value = String(a ? a.count : 3); $("#a-length").value = a ? a.length : "short";
   $("#a-style").value = a ? a.style : "facts"; $("#a-topic").value = a ? a.topic : "";
+  $("#a-captions").value = String(a ? a.captions !== false : true);
   const days = a ? a.days : [0, 1, 2, 3, 4, 5, 6];
   $("#a-days").innerHTML = DAY_NAMES.map((d, i) => `<button class="chip ${days.includes(i) ? "on" : ""}" data-day="${i}">${d}</button>`).join("");
   document.querySelectorAll("#a-days .chip").forEach((c) => c.onclick = () => c.classList.toggle("on"));
@@ -791,6 +817,7 @@ $("#saveAuto").onclick = async () => {
     name: $("#a-name").value, time: $("#a-time").value, count: +$("#a-count").value,
     days: [...document.querySelectorAll("#a-days .chip.on")].map((c) => +c.dataset.day),
     length: $("#a-length").value, style: $("#a-style").value, topic: $("#a-topic").value,
+    captions: $("#a-captions").value === "true",
   };
   try {
     await api("/api/automations", { method: "POST", body: JSON.stringify(body) });
@@ -916,7 +943,12 @@ function setStyle(style) {
   });
 }
 document.querySelectorAll("#style button").forEach((b) => b.onclick = () => setStyle(b.dataset.style));
-let lengthValue = "short";
+let lengthValue = "short", ccValue = true;
+function setCc(on) {
+  ccValue = !!on;
+  document.querySelectorAll("#cc button").forEach((x) => x.classList.toggle("on", x.dataset.cc === String(ccValue)));
+}
+document.querySelectorAll("#cc button").forEach((b) => b.onclick = () => setCc(b.dataset.cc === "true"));
 document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
   lengthValue = b.dataset.length;
   document.querySelectorAll("#length button").forEach((x) => x.classList.toggle("on", x === b));
@@ -925,11 +957,11 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
     : "Vertical 9:16 for Reels and Shorts, with real footage.";
 });
 setStyle("facts");
-api("/api/settings").then((s) => setStyle(s.video_style)).catch(() => {}); // start on the style from Settings
+api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions !== false); }).catch(() => {}); // start from Settings
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;

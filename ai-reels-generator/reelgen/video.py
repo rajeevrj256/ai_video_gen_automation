@@ -205,7 +205,7 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
         "duration": round(timeline.total, 3),
         "scenes": scene_props,
         "cuts": cuts,
-        "captions": captions,
+        "captions": captions if cfg.captions else [],  # subtitles off: no caption layer at all
         "music": rel(music) if music else None,
         "sfx": {name: rel(path) for name, path in sfx.items()},
     }

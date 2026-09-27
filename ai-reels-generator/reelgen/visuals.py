@@ -47,6 +47,7 @@ def pexels_video(query: str, api_key: str, out_path: Path, used_ids: set[int],
                 for block in dl.iter_content(1 << 20):
                     fh.write(block)
         used_ids.add(video.get("id"))
+        out_path.with_suffix(".url").write_text(best["link"], encoding="utf-8")  # lets a re-render fetch the same clip
         return out_path
     return None
 

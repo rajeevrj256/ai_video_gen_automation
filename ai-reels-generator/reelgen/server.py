@@ -53,10 +53,10 @@ class JobManager:
         threading.Thread(target=self._worker, daemon=True).start()
 
     def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None,
-               length: str = "short", resume: list[str] | None = None) -> dict:
+               length: str = "short", resume: list[str] | None = None, **extra) -> dict:
         job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger, "resume": resume or [],
                "style": style or load_settings(Config()).video_style, "length": length,
-               "status": "queued", "log": [], "created": time.time(), "results": []}
+               "status": "queued", "log": [], "created": time.time(), "results": [], **extra}
         with self.lock:
             self.jobs.appendleft(job)
         self.wake.set()
@@ -107,7 +107,13 @@ class JobManager:
         try:
             cfg = load_settings(Config())
             cfg.video_style = job["style"]
-            if job.get("resume"):
+            if job.get("captions") is not None:
+                cfg.captions = bool(job["captions"])
+            if job.get("rerender"):
+                from .rerender import rerender
+                r = job["rerender"]
+                reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress)]
+            elif job.get("resume"):
                 from .pipeline import resume_batch
                 reports = resume_batch(cfg, job["resume"], progress)
                 fresh = job["count"] - len(job["resume"])  # videos that never started before the pause
@@ -145,7 +151,7 @@ def scheduler(jobs: JobManager) -> None:
         try:
             cfg = load_settings(Config())
             for a in automations.due(cfg, datetime.now()):
-                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length)
+                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
         except Exception:  # a bad file must not stop the scheduler for good
             log.exception("Automation check failed")
         time.sleep(20)
@@ -197,6 +203,7 @@ class GenerateRequest(BaseModel):
     count: int = 1
     style: str | None = None  # facts | story | comedy | mix; empty = the style in Settings
     length: str = "short"  # "short" (30s, 9:16) or "long" (8-10 min, 16:9, animated)
+    captions: bool | None = None  # subtitles; empty = the Settings value
 
 
 class PostEdit(BaseModel):
@@ -307,6 +314,17 @@ def create_app(cfg: Config) -> FastAPI:
 
         return runlog.history(cfg)
 
+    @app.post("/api/videos/{video_id}/rerender")
+    def rerender_video(video_id: str, body: dict):
+        """New voice and/or subtitles on or off: same script and footage, no Claude tokens."""
+        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        if any(j.get("rerender", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being re-made")
+        return jobs.submit(f"Re-make: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
+                           report.get("format", "short"),
+                           rerender={"id": video_id, "voice": body.get("voice") or None,
+                                     "captions": None if body.get("captions") is None else bool(body.get("captions"))})
+
     @app.get("/api/categories")
     def list_categories():
         return list(CATEGORIES)
@@ -360,7 +378,7 @@ def create_app(cfg: Config) -> FastAPI:
         style = body.style if body.style in ("facts", "story", "comedy", "mix") else None
         long = body.length == "long"
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_LONG_BATCH if long else MAX_BATCH)),
-                           "manual", style, "long" if long else "short")
+                           "manual", style, "long" if long else "short", captions=body.captions)
 
     @app.get("/api/jobs")
     def list_jobs():
@@ -444,7 +462,7 @@ def create_app(cfg: Config) -> FastAPI:
         a = next((x for x in automations.load(cfg) if x.id == automation_id), None)
         if a is None:
             raise HTTPException(404, "No such automation")
-        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length)
+        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
 
     @app.get("/api/settings")
     def get_settings():

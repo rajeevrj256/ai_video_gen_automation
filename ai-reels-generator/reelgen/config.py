@@ -44,6 +44,8 @@ class Config:
     # What kind of videos: "facts" (true stories, fact-checked), "story" (fiction),
     # "comedy" (jokes) or "mix" (rotates through the three in a batch).
     video_style: str = field(default_factory=lambda: _env("REEL_STYLE", "facts"))
+    # Subtitles burned into the video. Off gives the graphics the space they used.
+    captions: bool = field(default_factory=lambda: _env("REEL_CAPTIONS", "on").lower() not in ("off", "0", "false", "no"))
     # Long videos (16:9, fully animated, reelgen/longform.py): length, narration language and voice.
     long_minutes: float = field(default_factory=lambda: float(_env("REEL_LONG_MINUTES", "8")))
     long_language: str = field(default_factory=lambda: _env("REEL_LONG_LANGUAGE", "Indian English"))
@@ -104,7 +106,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "video_style", "long_minutes", "long_language", "long_voice"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions"]
 
 
 def settings_path(cfg: Config) -> Path:
@@ -119,8 +121,16 @@ def load_settings(cfg: Config) -> Config:
     if path.exists():
         for key, value in json.loads(path.read_text(encoding="utf-8")).items():
             if key in EDITABLE and not (key in ("claude_model", "claude_effort") and value == ""):
-                setattr(cfg, key, type(getattr(cfg, key))(value))  # blank model/effort = default
+                setattr(cfg, key, _typed(cfg, key, value))  # blank model/effort = default
     return cfg
+
+
+def _typed(cfg: Config, key: str, value):
+    """Settings arrive as text from the app; bool("false") would be True, so parse yes/no."""
+    kind = type(getattr(cfg, key))
+    if kind is bool:
+        return value if isinstance(value, bool) else str(value).lower() in ("true", "1", "on", "yes")
+    return kind(value)
 
 
 def save_settings(cfg: Config, updates: dict) -> Config:
@@ -128,7 +138,7 @@ def save_settings(cfg: Config, updates: dict) -> Config:
 
     for key, value in updates.items():
         if key in EDITABLE:
-            setattr(cfg, key, type(getattr(cfg, key))(value))
+            setattr(cfg, key, _typed(cfg, key, value))
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     settings_path(cfg).write_text(json.dumps({k: getattr(cfg, k) for k in EDITABLE}, indent=2), encoding="utf-8")
     return cfg

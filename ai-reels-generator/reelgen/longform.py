@@ -315,7 +315,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) 
         "duration": round(t, 3),
         "chapters": chapters,
         "beats": beats,
-        "captions": captions,
+        "captions": captions if cfg.captions else [],  # off: the visuals use the space instead
         "music": music.relative_to(work).as_posix() if music else None,
         "sfx": {k: p.relative_to(work).as_posix() for k, p in sfx.items()},
     }
@@ -595,6 +595,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 (c.source for c in candidates if c.title.lower() == script.topic.lower()), "unknown"),
             "style": cfg.video_style,
             "category": script.category,
+            "voice": cfg.long_voice,
+            "captions": cfg.captions,
             "why_chosen": script.why_chosen,
             "title": script.youtube_title,
             "subject": script.subject,

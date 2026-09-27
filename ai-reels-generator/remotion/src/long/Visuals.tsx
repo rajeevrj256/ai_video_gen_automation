@@ -12,7 +12,8 @@ const W = 1920;
 const SIDE = 170; // left/right margin
 const INNER = W - SIDE * 2;
 
-export const VisualView: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
+// `roomy`: subtitles are off, so the bottom band is free: sit in the true centre and grow ~10%.
+export const VisualView: React.FC<{v: Visual; frames: number; accent: string; roomy?: boolean}> = ({v, frames, accent, roomy}) => {
   const frame = useCurrentFrame();
   const exit = exitProgress(frame, frames, 9);
   const push = interpolate(frame, [0, frames], [1, 1.035], clamp); // slow camera push
@@ -46,7 +47,7 @@ export const VisualView: React.FC<{v: Visual; frames: number; accent: string}> =
         fontFamily: FONT,
         color: COLORS.text,
         opacity: 1 - exit,
-        transform: `scale(${push * (1 - 0.04 * exit)}) translateY(${-30 * exit}px)`,
+        transform: `translateY(${roomy ? 75 : 0}px) scale(${push * (1 - 0.04 * exit) * (roomy ? 1.1 : 1)}) translateY(${-30 * exit}px)`,
       }}
     >
       {body}

@@ -34,7 +34,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         return (
           <Sequence key={i} name={`beat ${i + 1} (${b.visual.type})`} from={from} durationInFrames={frames}>
             <Backdrop chapter={b.chapter} seed={i} />
-            <VisualView v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} />
+            <VisualView v={b.visual} frames={frames} accent={paletteFor(b.chapter).accent} roomy={captions.length === 0} />
           </Sequence>
         );
       })}

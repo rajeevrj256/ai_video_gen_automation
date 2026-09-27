@@ -200,7 +200,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             verdict.passed = False
             verdict.issues += [i for i in facts.issues if i not in verdict.issues]
 
-        attempt_result = {"script": script, "rendered": rendered, "verdict": verdict, "attempt": attempt}
+        attempt_result = {"script": script, "rendered": rendered, "verdict": verdict, "attempt": attempt,
+                          "sources": footage_sources(backgrounds)}
         if best is None or (verdict.score or 0) >= (best["verdict"].score or 0):
             best = attempt_result
             # Keep the best attempt's files; later attempts render into a scratch copy.
@@ -224,6 +225,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
     move(run_dir, final_dir)  # retries through OneDrive/antivirus locks on Windows
     (final_dir / CHECKPOINT).unlink(missing_ok=True)  # finished: nothing left to resume
     script, verdict = best["script"], best["verdict"]
+    # The footage links, so "change voice" / "subtitles off" can re-render with the same clips.
+    (final_dir / "footage.json").write_text(json.dumps(best.get("sources", [])), encoding="utf-8")
     (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")
 
     source = next((c.source for c in candidates if c.title.lower() == script.topic.lower()), "manual" if topic else "unknown")
@@ -233,6 +236,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         "topic_source": source,
         "style": cfg.video_style,
         "category": script.category,
+        "voice": cfg.voice,
+        "captions": cfg.captions,
         "why_chosen": script.why_chosen,
         "title": script.title,
         "youtube_title": script.youtube_title,
@@ -287,6 +292,18 @@ def pause_point() -> None:
         raise Paused()
 
 
+def footage_sources(backgrounds: list[list[Path]]) -> list[list[str | None]]:
+    """The download link of every clip (saved next to it by visuals.pexels_video)."""
+    out = []
+    for clips in backgrounds:
+        row = []
+        for p in clips:
+            link = Path(p).with_suffix(".url")
+            row.append(link.read_text(encoding="utf-8").strip() if link.exists() else None)
+        out.append(row)
+    return out
+
+
 def done_line(report: dict) -> str:
     """Progress line the app uses to link a finished video (and its tokens) to its job."""
     total = (report.get("usage") or {}).get("total", {})
@@ -321,14 +338,14 @@ def _enc_best(best: dict | None) -> dict | None:
     if best is None:
         return None
     return {"script": best["script"].model_dump(), "rendered": best["rendered"],
-            "verdict": _enc_result(best["verdict"]), "attempt": best["attempt"]}
+            "verdict": _enc_result(best["verdict"]), "attempt": best["attempt"], "sources": best.get("sources", [])}
 
 
 def _dec_best(d: dict | None) -> dict | None:
     if not d:
         return None
     return {"script": ReelScript.model_validate(d["script"]), "rendered": d["rendered"],
-            "verdict": _dec_result(d["verdict"]), "attempt": d["attempt"]}
+            "verdict": _dec_result(d["verdict"]), "attempt": d["attempt"], "sources": d.get("sources", [])}
 
 
 def unfinished(cfg: Config) -> list[dict]:

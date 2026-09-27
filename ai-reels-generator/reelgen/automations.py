@@ -31,6 +31,7 @@ class Automation(BaseModel):
     style: str = "facts"
     length: str = "short"  # short | long
     topic: str = ""  # empty = trending
+    captions: bool = True  # subtitles burned into the videos
     last_run: str = ""  # ISO date of the last run, so a restart doesn't run it twice
 
     def clean(self) -> "Automation":
