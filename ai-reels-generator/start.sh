@@ -6,8 +6,9 @@ if [ ! -d .venv ]; then
   echo "First run: setting up (takes a minute)..."
   python3 -m venv .venv
   .venv/bin/pip install -q --upgrade pip
-  .venv/bin/pip install -q -r requirements.txt
 fi
+# Every start: installs anything new that a git pull added (quick when nothing is missing).
+.venv/bin/pip install -q -r requirements.txt
 # The video editor (Remotion) needs Node.js. Without it videos still work, using a simpler edit.
 if [ ! -e remotion/node_modules/.bin/remotion ]; then
   if command -v npm >/dev/null; then
