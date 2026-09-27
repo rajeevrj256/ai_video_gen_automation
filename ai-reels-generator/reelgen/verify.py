@@ -56,7 +56,7 @@ def check_script(script: ReelScript, cfg: Config) -> VerifyResult:
     words = len(narration.split())
     result.checks["word_count"] = words
     low, high = word_range(cfg.target_seconds)
-    if not low * 0.85 <= words <= high * 1.1:
+    if not low * 0.85 <= words <= high:  # over the top means over 30 seconds
         result.fail(f"Narration is {words} words; use {low}-{high} for a {cfg.target_seconds}s video.")
 
     if not 4 <= len(script.scenes) <= 8:

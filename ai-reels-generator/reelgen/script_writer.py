@@ -160,8 +160,9 @@ candidates are fallbacks — prefer a real trend when a good one exists."""
 
 
 def word_range(seconds: int) -> tuple[int, int]:
-    """Spoken words that fit `seconds` at the brisk voice pace: 70-80 for 30s."""
-    return round(seconds * 7 / 3), round(seconds * 8 / 3)
+    """Spoken words that fit `seconds` at the presenter pace (+10%, one take): 66-74 for 30s.
+    Measured: 86 words took 33.6s, about 2.56 words a second, plus the pauses between scenes."""
+    return round(seconds * 2.2), round(seconds * 2.45)
 
 
 def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
