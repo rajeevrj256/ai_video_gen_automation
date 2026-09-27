@@ -61,6 +61,12 @@ def check_script(script: ReelScript, cfg: Config) -> VerifyResult:
 
     if not 4 <= len(script.scenes) <= 8:
         result.fail(f"{len(script.scenes)} scenes; use 5-7.")
+    if script.scenes:
+        hook = re.split(r"(?<=[.?!])\s", script.scenes[0].narration.strip(), maxsplit=1)[0]
+        result.checks["hook"] = hook
+        if len(hook.split()) > 14:
+            result.fail(f"The hook sentence is {len(hook.split())} words ('{hook}'). Make it 12 words or "
+                        "fewer, so it lands in the first 2 seconds.")
     if re.search(r"https?://|www\.|[#@*_]", narration):
         result.fail("Narration contains URLs or symbols that text-to-speech will read out loud.")
 
@@ -104,7 +110,7 @@ def fact_check_script(script: ReelScript, cfg: Config) -> VerifyResult:
             lines.append(f"Scene {i} graphic ({g.type}): {g.headline} | {g.label}" + (f" | {pts}" if pts else ""))
     prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n\n" + "\n".join(lines)
               + "\n\nFact-check this script.")
-    check = ask(cfg.ai_backend, cfg.claude_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=True)
+    check = ask(cfg.ai_backend, cfg.claude_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.claude_effort)
     result = VerifyResult()
     result.checks["fact_check"] = check.model_dump()
     for issue in check.blocking_issues:
@@ -183,10 +189,10 @@ def check_video(video: Path, scenes: list[SceneAudio], script: ReelScript, cfg: 
 
 class Review(BaseModel):
     human_feel: int = Field(description="1-10: does this look and sound like a real creator made it (10) or obviously AI-generated (1)?")
-    hook: int = Field(description="1-10: would the first 2 seconds stop someone scrolling?")
+    hook: int = Field(description="1-10: does the first sentence plant a specific question the viewer wants answered (10), or is it a statement of the topic, background, or the answer given away (1-4)? Would it stop someone scrolling?")
     visuals_match: int = Field(description="1-10: do the frames fit what's being said? Theme-appropriate stock footage counts as a match; only contradicting or misleading footage scores low.")
     accuracy: int = Field(description="1-10: are the claims correct and not misleading, as far as you know?")
-    story: int = Field(description="1-10: is it one story with a hook that opens a question, rising tension, a turn and a payoff that closes the loop (10), or a list of loosely connected facts (1-4)?")
+    story: int = Field(description="1-10: is it one story where each scene follows from the last ('but'/'so'), the hook's question is held back and answered only at the end, and the last line ties back to the first (10)? Or a list of loosely connected facts, or a news recap (1-4)?")
     blocking_issues: list[str] = Field(description="Problems that must be fixed before posting: factual errors, contradictions between scenes, misleading or exaggerated claims, anything that sounds obviously AI-written, a weak first line, or a video that is a list of facts instead of one story. Empty if none.")
     issues: list[str] = Field(description="Smaller improvements worth making. Empty if none.")
     fix_instructions: str = Field(description="Concrete instructions for the writer to fix the issues in the next draft. Empty if none.")
@@ -249,7 +255,7 @@ def review_with_claude(video: Path, script: ReelScript, cfg: Config,
     if not stock_footage:
         prompt += ("\nNote: backgrounds are plain placeholder gradients because no stock-footage key is "
                    "configured. Don't penalise that; score visuals_match 10 and judge the rest.")
-    review = ask(cfg.ai_backend, cfg.claude_model, REVIEW_SYSTEM, prompt, Review, images=[sheet])
+    review = ask(cfg.ai_backend, cfg.claude_model, REVIEW_SYSTEM, prompt, Review, images=[sheet], effort=cfg.claude_effort)
 
     result = VerifyResult()
     scores = [review.human_feel, review.hook, review.visuals_match, review.accuracy, review.story]

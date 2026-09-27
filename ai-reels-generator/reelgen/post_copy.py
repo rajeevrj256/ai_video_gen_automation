@@ -41,7 +41,7 @@ def write_post_copy(script: ReelScript, cfg: Config) -> PostCopy:
         f"Draft caption: {script.caption}\nDraft hashtags: {', '.join(script.hashtags)}\n\n"
         "Write the Instagram and YouTube Shorts post text for this video."
     )
-    return ask(cfg.ai_backend, cfg.claude_model, SYSTEM, prompt, PostCopy, allow_web=True)
+    return ask(cfg.ai_backend, cfg.claude_model, SYSTEM, prompt, PostCopy, allow_web=True, effort=cfg.claude_effort)
 
 
 def clean_tags(tags: list[str]) -> list[str]:

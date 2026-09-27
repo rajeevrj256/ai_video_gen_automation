@@ -214,7 +214,10 @@ def create_app(cfg: Config) -> FastAPI:
         from .post_copy import apply_post_copy
 
         folder = video_dir(cfg, video_id)
-        script = ReelScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
+        data = json.loads((folder / "script.json").read_text(encoding="utf-8"))
+        for field in ("hook_question", "answer"):  # scripts saved before these fields existed
+            data.setdefault(field, "")
+        script = ReelScript.model_validate(data)
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         try:
             apply_post_copy(report, script, load_settings(Config()), folder)

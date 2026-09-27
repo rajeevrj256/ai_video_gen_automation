@@ -265,8 +265,19 @@
         <option value="claude-code">Claude Code on this computer (no API key)</option>
         <option value="api">Anthropic API key</option>
       </select>
-      <label for="s-claude_model">Model (optional)</label>
-      <input id="s-claude_model" placeholder="default">
+      <label for="s-claude_model">Claude model</label>
+      <select id="s-claude_model">
+        <option value="claude-opus-5-5">Opus 5.5 (recommended)</option>
+        <option value="claude-opus-5">Opus 5</option>
+        <option value="claude-sonnet-5">Sonnet 5 (faster, uses less of your limit)</option>
+      </select>
+      <label for="s-claude_effort">How hard Claude thinks</label>
+      <select id="s-claude_effort">
+        <option value="medium">Medium (faster)</option>
+        <option value="high">High (recommended)</option>
+        <option value="xhigh">Extra high (slower)</option>
+        <option value="max">Max (slowest, uses the most of your limit)</option>
+      </select>
       <button class="primary" id="saveBtn">Save settings</button>
     </div>
     <div class="panel">

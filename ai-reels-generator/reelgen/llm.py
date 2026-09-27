@@ -143,12 +143,13 @@ def _wait_for_limit() -> None:
 
 
 def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
-        images: list[Path] | None = None, allow_web: bool = False, cwd: Path | None = None) -> T:
+        images: list[Path] | None = None, allow_web: bool = False, cwd: Path | None = None,
+        effort: str = "") -> T:
     global _limit_until
     while True:
         _wait_for_limit()
         try:
-            return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd)
+            return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd, effort)
         except LLMError as exc:
             if not LIMIT_RE.search(str(exc)):
                 raise
@@ -158,15 +159,15 @@ def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
 
 
 def _ask_once(backend: str, model: str, system: str, prompt: str, schema: type[T],
-              images: list[Path] | None, allow_web: bool, cwd: Path | None) -> T:
+              images: list[Path] | None, allow_web: bool, cwd: Path | None, effort: str) -> T:
     backend = resolve_backend(backend)
     if backend == "claude-code":
-        return _ask_claude_code(model, system, prompt, schema, images or [], allow_web, cwd)
-    return _ask_api(model, system, prompt, schema, images or [])
+        return _ask_claude_code(model, system, prompt, schema, images or [], allow_web, cwd, effort)
+    return _ask_api(model, system, prompt, schema, images or [], effort)
 
 
 def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], images: list[Path],
-                     allow_web: bool, cwd: Path | None) -> T:
+                     allow_web: bool, cwd: Path | None, effort: str = "") -> T:
     claude = find_claude()
     if claude is None:
         raise LLMError(INSTALL_HELP)
@@ -209,6 +210,8 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
     ]
     if model:
         cmd += ["--model", model]
+    if effort:
+        cmd += ["--effort", effort]
     # Only the tools this step needs are available, and they're pre-approved
     # so the non-interactive run never waits on a permission prompt.
     cmd += ["--tools", ",".join(tools)]
@@ -243,7 +246,8 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
         raise LLMError(f"Claude Code output did not match the schema: {exc}") from exc
 
 
-def _ask_api(model: str, system: str, prompt: str, schema: type[T], images: list[Path]) -> T:
+def _ask_api(model: str, system: str, prompt: str, schema: type[T], images: list[Path],
+             effort: str = "") -> T:
     import anthropic
 
     content: list[dict] = []
@@ -256,11 +260,12 @@ def _ask_api(model: str, system: str, prompt: str, schema: type[T], images: list
     content.append({"type": "text", "text": prompt})
 
     response = anthropic.Anthropic().messages.parse(
-        model=model or "claude-opus-5",
+        model=model or "claude-opus-5-5",
         max_tokens=16000,
         system=system,
         messages=[{"role": "user", "content": content}],
-        output_format=schema,
+        output_format=schema,  # the SDK merges this into output_config.format
+        **({"output_config": {"effort": effort}} if effort else {}),
     )
     if response.stop_reason == "refusal" or response.parsed_output is None:
         raise LLMError(f"Claude returned no usable answer (stop_reason={response.stop_reason})")

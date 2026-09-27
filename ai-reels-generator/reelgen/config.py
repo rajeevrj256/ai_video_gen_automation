@@ -38,8 +38,10 @@ class Config:
     # How to reach Claude: "auto" (Claude Code CLI if installed, else API),
     # "claude-code" (your logged-in Claude Code, no API key) or "api".
     ai_backend: str = field(default_factory=lambda: _env("REEL_AI_BACKEND", "auto"))
-    # Empty = Claude Code's default model / claude-opus-5 on the API.
-    claude_model: str = field(default_factory=lambda: _env("CLAUDE_MODEL"))
+    # Model for every Claude step (script, fact-check, review, post text) and how hard it
+    # thinks: low | medium | high | xhigh | max. Opus 5.5's own default effort is medium.
+    claude_model: str = field(default_factory=lambda: _env("CLAUDE_MODEL", "claude-opus-5-5"))
+    claude_effort: str = field(default_factory=lambda: _env("REEL_CLAUDE_EFFORT", "high"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
     # without it the video uses animated gradient backgrounds.
@@ -95,7 +97,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort"]
 
 
 def settings_path(cfg: Config) -> Path:
@@ -109,8 +111,8 @@ def load_settings(cfg: Config) -> Config:
     path = settings_path(cfg)
     if path.exists():
         for key, value in json.loads(path.read_text(encoding="utf-8")).items():
-            if key in EDITABLE:
-                setattr(cfg, key, type(getattr(cfg, key))(value))
+            if key in EDITABLE and not (key in ("claude_model", "claude_effort") and value == ""):
+                setattr(cfg, key, type(getattr(cfg, key))(value))  # blank model/effort = default
     return cfg
 
 

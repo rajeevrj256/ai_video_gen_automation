@@ -59,8 +59,10 @@ class ReelScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list.")
     why_chosen: str = Field(description="One sentence on why this topic will perform well now, and the one story you will tell about it.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from (a source you looked up, or 'general knowledge').")
-    title: str = Field(description="On-screen hook text for the first 2 seconds, max 6 words, written like a creator would type it.")
-    scenes: list[Scene] = Field(description="Scenes in order. Scene 1 is the hook.")
+    hook_question: str = Field(description="The one question the hook plants in the viewer's head, e.g. 'How was Sri Lanka founded?'. The video answers it only in the last one or two scenes.")
+    answer: str = Field(description="The answer or reveal to hook_question that the ending delivers, in one sentence.")
+    title: str = Field(description="On-screen hook text for the first 2 seconds, max 6 words: the hook's question or tension, written like a creator would type it.")
+    scenes: list[Scene] = Field(description="Scenes in order. Scene 1 opens with the hook sentence; the last scenes deliver the answer.")
     caption: str = Field(description="Instagram/YouTube caption: 1-3 casual lines, at most 2 emojis.")
     hashtags: list[str] = Field(description="8-12 relevant hashtags without the # sign; mix broad and niche.")
     youtube_title: str = Field(description="YouTube Shorts title, max 90 characters, ends with #shorts.")
@@ -87,24 +89,41 @@ Voice:
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 - No lists of three adjectives, no rhetorical triplets, no "It's not just X, it's Y".
 
-Storytelling (the most important rule): every video is one story, never a list of facts. \
-Even a news update, a number or a "facts" topic is told as a story with a beginning, a turn \
-and an ending, so the viewer has to stay to the end to get the answer.
-- Scene 1, the hook: drop the viewer into a moment or a question with stakes, and open a loop \
-  you only close at the end. E.g. "At ten to five in the morning in 1967, every car in Sweden \
-  stopped in the middle of the road." No greeting, no topic announcement.
-- Setup: who or what this is about (a person, a city, a company, a coin, a planet) and what \
-  was normal or expected.
-- Tension: the problem, the risk, the thing that went wrong or didn't add up. Raise the \
-  stakes with one real number.
-- Turn: the surprising reveal or twist that changes how the viewer sees it. Tease it just \
-  before ("but that wasn't the strange part").
-- Payoff: close the loop from the hook and say what it means for the viewer, then a short \
-  natural call to action tied to the story (e.g. "Follow for the next one"), not "like and \
-  subscribe".
-- If the chosen topic is list-shaped ("facts about X", "tricks for Y"), pick the single best \
-  item and tell its story. Every fact in the video must move this one story forward.
-- Keep time and cause words that carry a story: "in 1967", "three days later", "so", "until".
+Hook and story (the most important rules). A viewer decides in the first two seconds, then \
+stays only while they still need an answer. So every video is one story built around one \
+question: the hook plants it, the middle delays it while raising the stakes, and the end answers it.
+
+The hook (scene 1, first sentence, at most 12 words, spoken in about 2 seconds):
+- It plants a specific question the viewer can't answer and now wants answered. Pick the style \
+  that fits this story best, and vary it from video to video:
+  - Straight question: "Do you know how [country] was founded?", "Why does [everyday thing] \
+    [odd detail]?", "What happens to [thing] after [moment]?"
+  - Hidden origin: "The reason [everyday thing] looks like this goes back to [year]."
+  - Contradiction: "[Place or thing] has [the opposite of what you'd expect]."
+  - Stakes in one number: "[One small thing] cost [someone] [a huge, real amount]."
+  - Mid-action: start inside the moment of decision, e.g. "[Someone] had [minutes] to decide."
+  - Wrong belief: "Most people think [common belief]. [Place or thing] proves otherwise."
+- The on-screen title says the same question or tension in at most 6 words.
+- Never open with a greeting, the topic's name, "In this video", background, or the answer.
+
+The story (the rest of the scenes):
+- Scene 2 starts the story straight away, in time and place ("It starts in 543 BC, when...", \
+  "In 1967, Sweden..."). No throat-clearing.
+- Every scene is linked to the one before by "but" or "so" (tension or consequence), never by \
+  "and also". If a scene could be moved without breaking the story, it's a list: rewrite it.
+- Around the middle, re-hook with a fresh twist or a sharper version of the question, in your \
+  own words.
+- The answer to the hook's question arrives only in the last one or two scenes, as the turn \
+  or reveal.
+- The last line ties back to the first, ideally so it could flow into the opening again when \
+  the video loops, followed by a short natural call to action tied to the story ("Follow for \
+  the next one"), not "like and subscribe".
+- A trending news item (a match, a launch, a price move) is not a story on its own: find the \
+  story inside or behind it (how it started, the record behind it, why it works that way, the \
+  surprising cause) and tell that. Don't recap scores or headlines.
+- A list-shaped topic ("facts about X", "tricks for Y") becomes the story of its single best \
+  item. Every fact in the video must move this one story forward.
+- "Do you know how/why..." questions are welcome. "Did you know..." fact openers are banned.
 
 It is read by text-to-speech: no abbreviations, symbols, emojis, or URLs in narration; \
 write numbers the way they're spoken.
@@ -165,6 +184,6 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
                        "Rewrite the lines the reviewer flagged — don't reuse a flagged claim in softer "
                        "words; replace it with one that is clearly true, or drop it.")
 
-    script = ask(cfg.ai_backend, cfg.claude_model, SYSTEM_PROMPT, prompt, ReelScript, allow_web=True)
+    script = ask(cfg.ai_backend, cfg.claude_model, SYSTEM_PROMPT, prompt, ReelScript, allow_web=True, effort=cfg.claude_effort)
     log.info("Chosen topic: %s (%s)", script.topic, script.why_chosen)
     return script
