@@ -40,6 +40,7 @@ CHAPTER_GAP = 0.5  # breath at the end of each chapter
 WORDS_PER_SECOND = 2.5  # measured presenter pace at +10%, pauses included
 MIN_MINUTES, MAX_MINUTES = 6.5, 11.0
 FACT_FIXES = 2
+LLM_TIMEOUT = 2400  # a 1,300-word script with research at high effort can take well over 15 minutes
 LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
 VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart")
 
@@ -145,7 +146,7 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
             prompt += (f"\n\nThe rejected draft:\n{previous.model_dump_json()}\n"
                        "Keep what works; rewrite what was flagged. Don't reuse a flagged claim in softer words.")
     script = ask(cfg.ai_backend, cfg.claude_model, _system(cfg.video_style, cfg.long_language), prompt,
-                 LongScript, allow_web=True, effort=cfg.claude_effort)
+                 LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
     return script
 
@@ -202,7 +203,8 @@ def fact_check_long(script: LongScript, cfg: Config) -> VerifyResult:
             lines.append(f"{ci}.{bi} {b.narration}  {_visual_text(b.visual)}")
     prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n" + "\n".join(lines)
               + "\n\nFact-check this script. Refer to lines by their numbers (e.g. 3.4).")
-    check = ask(cfg.ai_backend, cfg.claude_model, FACT_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.claude_effort)
+    check = ask(cfg.ai_backend, cfg.claude_model, FACT_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.claude_effort,
+                timeout=LLM_TIMEOUT)
     result = VerifyResult()
     result.checks["fact_check"] = check.model_dump()
     for issue in check.blocking_issues:
@@ -338,7 +340,7 @@ def review_long(video: Path, script: LongScript, props: dict, cfg: Config) -> tu
               + "\n".join(lines) + "\n\nScore it and list what to fix. For 'visuals_match', judge the animated "
               "visuals against their lines. For 'story', judge retention across the whole video.")
     review = ask(cfg.ai_backend, cfg.claude_model, LONG_REVIEW_SYSTEM, prompt, Review, images=[sheet],
-                 effort=cfg.claude_effort)
+                 effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     result = VerifyResult()
     scores = [review.human_feel, review.hook, review.visuals_match, review.accuracy, review.story]
     result.score = round(sum(scores) / len(scores), 1)

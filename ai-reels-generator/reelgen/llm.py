@@ -144,12 +144,13 @@ def _wait_for_limit() -> None:
 
 def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
         images: list[Path] | None = None, allow_web: bool = False, cwd: Path | None = None,
-        effort: str = "") -> T:
+        effort: str = "", timeout: int = 900) -> T:
+    """`timeout`: seconds one Claude Code run may take (long-video scripts need more)."""
     global _limit_until
     while True:
         _wait_for_limit()
         try:
-            return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd, effort)
+            return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd, effort, timeout)
         except LLMError as exc:
             if not LIMIT_RE.search(str(exc)):
                 raise
@@ -159,15 +160,15 @@ def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
 
 
 def _ask_once(backend: str, model: str, system: str, prompt: str, schema: type[T],
-              images: list[Path] | None, allow_web: bool, cwd: Path | None, effort: str) -> T:
+              images: list[Path] | None, allow_web: bool, cwd: Path | None, effort: str, timeout: int = 900) -> T:
     backend = resolve_backend(backend)
     if backend == "claude-code":
-        return _ask_claude_code(model, system, prompt, schema, images or [], allow_web, cwd, effort)
+        return _ask_claude_code(model, system, prompt, schema, images or [], allow_web, cwd, effort, timeout)
     return _ask_api(model, system, prompt, schema, images or [], effort)
 
 
 def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], images: list[Path],
-                     allow_web: bool, cwd: Path | None, effort: str = "") -> T:
+                     allow_web: bool, cwd: Path | None, effort: str = "", timeout: int = 900) -> T:
     claude = find_claude()
     if claude is None:
         raise LLMError(INSTALL_HELP)
@@ -223,7 +224,7 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
         # Output is always read as UTF-8: Windows would otherwise decode it with its legacy
         # code page, fail on characters like ₹ or emoji, and hand back no output at all.
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=900, cwd=cwd, stdin=subprocess.DEVNULL)
+                              errors="replace", timeout=timeout, cwd=cwd, stdin=subprocess.DEVNULL)
     finally:
         for name in temp_files:
             Path(name).unlink(missing_ok=True)
