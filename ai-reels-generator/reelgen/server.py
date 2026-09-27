@@ -103,14 +103,16 @@ class JobManager:
 
 
 def scheduler(jobs: JobManager) -> None:
-    """Daily auto-generation at the time set in Settings (local time)."""
-    last_run_day = None
+    """Runs every automation (Settings -> Automations) at its time, local time."""
+    from . import automations
+
     while True:
-        cfg = load_settings(Config())
-        now = datetime.now()
-        if cfg.schedule_time and now.strftime("%H:%M") == cfg.schedule_time and last_run_day != now.date():
-            last_run_day = now.date()
-            jobs.submit(None, max(1, min(cfg.schedule_count, MAX_BATCH)), "schedule")
+        try:
+            cfg = load_settings(Config())
+            for a in automations.due(cfg, datetime.now()):
+                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length)
+        except Exception:  # a bad file must not stop the scheduler for good
+            log.exception("Automation check failed")
         time.sleep(20)
 
 
@@ -295,6 +297,38 @@ def create_app(cfg: Config) -> FastAPI:
     def list_jobs():
         now = time.time()  # lets the page run its timers on this computer's clock
         return [{**j, "now": now} for j in jobs.jobs]
+
+    @app.get("/api/automations")
+    def list_automations():
+        from . import automations
+
+        now = datetime.now()
+        return [{**a.model_dump(), "next": automations.next_run(a, now)} for a in automations.load(cfg)]
+
+    @app.post("/api/automations")
+    def save_automation(body: dict):
+        from . import automations
+
+        try:
+            return automations.upsert(cfg, automations.Automation(**body)).model_dump()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.delete("/api/automations/{automation_id}")
+    def delete_automation(automation_id: str):
+        from . import automations
+
+        automations.delete(cfg, automation_id)
+        return {"ok": True}
+
+    @app.post("/api/automations/{automation_id}/run")
+    def run_automation_now(automation_id: str):
+        from . import automations
+
+        a = next((x for x in automations.load(cfg) if x.id == automation_id), None)
+        if a is None:
+            raise HTTPException(404, "No such automation")
+        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length)
 
     @app.get("/api/settings")
     def get_settings():

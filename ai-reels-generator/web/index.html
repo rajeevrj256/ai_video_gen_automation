@@ -37,6 +37,13 @@
           cursor: pointer; border: 1px solid var(--line); }
   .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card.wide { grid-column: span 2; aspect-ratio: 16/9; } /* long videos are 16:9 */
+  .auto { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; margin-bottom: 10px; background: var(--panel-2); }
+  .auto.off { opacity: .55; }
+  .auto .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .auto .what { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .auto .btns { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .auto .btns button { padding: 6px 10px; font-size: 13px; }
+  .autoform { margin-top: 12px; padding: 12px; border: 1px dashed var(--accent); border-radius: 14px; }
   .card .meta { position: absolute; inset: auto 0 0 0; padding: 28px 10px 10px; font-size: 13px; font-weight: 600;
                 background: linear-gradient(transparent, rgba(0,0,0,.85)); }
   .card .badge { position: absolute; top: 8px; left: 8px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
@@ -262,17 +269,32 @@
       </select>
     </div>
     <div class="panel">
-      <h2>Automation</h2>
-      <label>Daily automatic videos (leave the time empty to turn off)</label>
-      <div class="row">
-        <div><label for="s-schedule_time">Every day at</label><input id="s-schedule_time" type="time"></div>
-        <div><label for="s-schedule_count">Make</label>
-          <select id="s-schedule_count">
-            <option value="1">1 video</option><option value="3">3 videos</option><option value="5">5 videos</option>
-            <option value="10">10 videos</option><option value="15">15 videos</option>
-          </select></div>
+      <h2>Automations</h2>
+      <p class="hint">Each automation makes videos by itself at its time, with its own settings. Keep the
+        computer on and awake at those times.</p>
+      <div id="autoList"></div>
+      <button id="addAuto" style="width:100%">＋ Add automation</button>
+      <div id="autoForm" class="autoform" hidden>
+        <label for="a-name">Name</label><input id="a-name" placeholder="e.g. Morning Shorts">
+        <div class="row">
+          <div><label for="a-time">Time</label><input id="a-time" type="time" value="09:00"></div>
+          <div><label for="a-count">Videos</label>
+            <select id="a-count"><option>1</option><option selected>3</option><option>5</option><option>10</option><option>15</option></select></div>
+        </div>
+        <label>Days</label>
+        <div class="chips" id="a-days"></div>
+        <div class="row">
+          <div><label for="a-length">Length</label>
+            <select id="a-length"><option value="short">📱 Short · 30s</option><option value="long">🎬 Long · 8–10 min</option></select></div>
+          <div><label for="a-style">Style</label>
+            <select id="a-style"><option value="facts">📚 Facts</option><option value="story">🎭 Fiction</option><option value="comedy">😂 Jokes</option><option value="mix">🔀 Mix</option></select></div>
+        </div>
+        <label for="a-topic">Topic (optional)</label><input id="a-topic" placeholder="Empty = what's trending that day">
+        <div class="row">
+          <button class="primary" id="saveAuto">Save automation</button><button id="cancelAuto">Cancel</button>
+        </div>
       </div>
-      <label for="s-video_style">Style of daily videos</label>
+      <label for="s-video_style">Default style (Create page)</label>
       <select id="s-video_style">
         <option value="facts">📚 True stories (fact-checked)</option>
         <option value="story">🎭 Fiction short stories</option>
@@ -285,8 +307,7 @@
         <option value="2">2 (recommended)</option>
         <option value="3">3 (fast PC, 16 GB+ RAM)</option>
       </select>
-      <p class="hint">Picks a different trending topic for each video. Keep the computer on and awake at that time;
-        15 videos take about 2–4 hours.</p>
+      <p class="hint">Picks a different trending topic for each video. 15 Shorts take about 2–4 hours; a long video 30–90 minutes.</p>
       <label for="s-ai_backend">AI</label>
       <select id="s-ai_backend">
         <option value="auto">Auto</option>
@@ -597,7 +618,67 @@ async function loadJobs() {
   open.forEach((id) => { const d = document.querySelector(`details.log[data-job="${id}"]`); if (d) d.open = true; });
 }
 
+// ---- Automations: several daily jobs, each with its own settings ----
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+let autos = [], editingAuto = null;
+const daysText = (d) => d.length === 7 ? "Every day" : d.join() === "0,1,2,3,4" ? "Mon–Fri" : d.join() === "5,6" ? "Weekends"
+  : d.map((i) => DAY_NAMES[i]).join(", ");
+async function loadAutomations() {
+  autos = await api("/api/automations");
+  $("#autoList").innerHTML = autos.length ? autos.map((a) => `
+    <div class="auto ${a.enabled ? "" : "off"}">
+      <div class="top"><b>${esc(a.name)}</b><span class="pill">${a.enabled ? "Next: " + esc(a.next) : "Off"}</span></div>
+      <div class="what">${esc(a.time)} · ${daysText(a.days)} · ${a.count} ${a.length === "long" ? "🎬 long" : "📱 short"} video${a.count > 1 ? "s" : ""}
+        · ${STYLE_TAG[a.style] || a.style} · ${a.topic ? "“" + esc(a.topic) + "”" : "trending topics"}</div>
+      <div class="btns">
+        <button data-act="toggle" data-id="${a.id}">${a.enabled ? "⏸ Turn off" : "▶ Turn on"}</button>
+        <button data-act="edit" data-id="${a.id}">✏️ Edit</button>
+        <button data-act="run" data-id="${a.id}">⚡ Run now</button>
+        <button data-act="delete" data-id="${a.id}" class="danger">Delete</button>
+      </div>
+    </div>`).join("") : `<p class="hint">No automations yet.</p>`;
+}
+function openAutoForm(a) {
+  editingAuto = a || null;
+  $("#autoForm").hidden = false; $("#addAuto").hidden = true;
+  $("#a-name").value = a ? a.name : ""; $("#a-time").value = a ? a.time : "09:00";
+  $("#a-count").value = String(a ? a.count : 3); $("#a-length").value = a ? a.length : "short";
+  $("#a-style").value = a ? a.style : "facts"; $("#a-topic").value = a ? a.topic : "";
+  const days = a ? a.days : [0, 1, 2, 3, 4, 5, 6];
+  $("#a-days").innerHTML = DAY_NAMES.map((d, i) => `<button class="chip ${days.includes(i) ? "on" : ""}" data-day="${i}">${d}</button>`).join("");
+  document.querySelectorAll("#a-days .chip").forEach((c) => c.onclick = () => c.classList.toggle("on"));
+}
+$("#addAuto").onclick = () => openAutoForm(null);
+$("#cancelAuto").onclick = () => { $("#autoForm").hidden = true; $("#addAuto").hidden = false; };
+$("#saveAuto").onclick = async () => {
+  const body = {
+    ...(editingAuto ? { id: editingAuto.id, enabled: editingAuto.enabled } : {}),
+    name: $("#a-name").value, time: $("#a-time").value, count: +$("#a-count").value,
+    days: [...document.querySelectorAll("#a-days .chip.on")].map((c) => +c.dataset.day),
+    length: $("#a-length").value, style: $("#a-style").value, topic: $("#a-topic").value,
+  };
+  try {
+    await api("/api/automations", { method: "POST", body: JSON.stringify(body) });
+    toast("Automation saved"); $("#autoForm").hidden = true; $("#addAuto").hidden = false; loadAutomations();
+  } catch (e) { toast(e.message); }
+};
+$("#autoList").onclick = async (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const a = autos.find((x) => x.id === b.dataset.id); if (!a) return;
+  try {
+    if (b.dataset.act === "edit") return openAutoForm(a);
+    if (b.dataset.act === "toggle") await api("/api/automations", { method: "POST", body: JSON.stringify({ ...a, enabled: !a.enabled }) });
+    if (b.dataset.act === "run") { await api(`/api/automations/${a.id}/run`, { method: "POST" }); toast("Started"); }
+    if (b.dataset.act === "delete") {
+      if (!confirm(`Delete "${a.name}"?`)) return;
+      await api(`/api/automations/${a.id}`, { method: "DELETE" });
+    }
+    loadAutomations();
+  } catch (err) { toast(err.message); }
+};
+
 async function loadSettings() {
+  loadAutomations().catch(() => {});
   const [s, st] = await Promise.all([api("/api/settings"), api("/api/status")]);
   for (const [k, v] of Object.entries(s)) {
     const el = $("#s-" + k); if (!el) continue;

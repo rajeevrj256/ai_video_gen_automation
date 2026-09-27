@@ -27,6 +27,8 @@ Pick a **style** on the Create page (and for the daily videos in Settings): **�
 
 Pick a **length** too: **📱 Short** (30 s, 9:16, real footage) or **🎬 Long** (8–10 min, 16:9 for YouTube, fully animated motion graphics with chapters, narrated in Indian English by default; set length, language and voice under Settings → Long videos). A long video takes about 30–90 minutes to make.
 
+**Automations** (Settings): add as many as you like, each with its own time, days, number of videos, length, style and optional topic, e.g. *Morning Shorts* at 09:00 every day (5 jokes videos) and *Evening long* at 18:30 on weekdays (1 long video). Each can be turned off, edited or run now.
+
 A video that fails a check is rewritten and made again (up to 3 tries). If none passes, you still get the best one, marked "not verified" with the reasons.
 
 ## Set up on your PC (one time)
