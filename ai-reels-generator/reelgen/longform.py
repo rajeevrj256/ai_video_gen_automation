@@ -22,6 +22,7 @@ from typing import Callable, Literal
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from .fsutil import move
 from .config import Config
 from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
 from .post_copy import PostCopy, clean_tags, save_post_text
@@ -549,7 +550,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                     verdict.issues += review.issues
             # Keep each rendered attempt; the best one (passed, then highest score) becomes reel.mp4.
             kept = work / f"attempt{attempt}.mp4"
-            out.rename(kept)
+            move(out, kept)
             shutil.copy(work / "thumbnail.jpg", work / f"attempt{attempt}.jpg")
             this = {"script": script, "verdict": verdict, "props": props, "attempt": attempt, "file": kept}
             if best is None or (verdict.passed, verdict.score or 0) > (best["verdict"].passed, best["verdict"].score or 0):
@@ -566,13 +567,13 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         if best is None:
             raise RuntimeError(f"No usable long script after {LONG_ATTEMPTS} attempts: {feedback}")
         script, verdict, props = best["script"], best["verdict"], best["props"]
-        best["file"].rename(work / "reel.mp4")
+        move(best["file"], work / "reel.mp4")
         (work / f"attempt{best['attempt']}.jpg").replace(work / "thumbnail.jpg")
         for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg"), work / "music.mp3"]:
             scratch.unlink(missing_ok=True)
         (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-long"
-        work.rename(final_dir)
+        move(work, final_dir)
         (final_dir / CHECKPOINT).unlink(missing_ok=True)
         (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")
         report = {

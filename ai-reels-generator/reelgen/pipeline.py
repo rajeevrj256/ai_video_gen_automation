@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
+from .fsutil import move
 from .config import MAX_SECONDS, Config
 from .llm import meter_add_earlier, meter_records, set_limit_reporter, start_meter, summarize_usage, usage_line
 from .notifier import notify
@@ -220,7 +221,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
 
     _restore_snapshot(run_dir)
     final_dir = cfg.output_dir / f"{stamp}-{slugify(best['script'].topic)}"
-    run_dir.rename(final_dir)
+    move(run_dir, final_dir)  # retries through OneDrive/antivirus locks on Windows
     (final_dir / CHECKPOINT).unlink(missing_ok=True)  # finished: nothing left to resume
     script, verdict = best["script"], best["verdict"]
     (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")

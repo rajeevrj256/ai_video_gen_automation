@@ -79,6 +79,9 @@ review about 1 min. A failed review costs a whole extra try.
 - **OneDrive on Windows**: every file there is a reparse point, so Remotion's bundler
   fails with EPERM symlink errors. `remotion/scripts/patch-remotion-windows.js` runs on
   `postinstall`. Rerun it after upgrading Remotion.
+- **WinError 5 when finishing a video**: renaming `...-working` to its final name fails on Windows while any file
+  inside is open (OneDrive syncing, antivirus). `fsutil.move` retries for ~30 s, then copies. Keeping the project
+  outside OneDrive (or `REEL_OUTPUT_DIR` outside it) avoids the locks entirely.
 - **Microsoft voice 403**: `speech.platform.bing.com` refuses some cloud IPs. Auto mode
   falls back to Kokoro (the model downloads once, about 350 MB, into `assets/models/`).
 - **edge-tts ignores system CAs**: `voice.py` swaps its SSL context for
