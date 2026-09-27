@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
@@ -433,13 +434,59 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     work = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-long-working"
     work.mkdir(parents=True, exist_ok=True)
-    feedback, script, best = "", None, None
+    progress(f"Saving progress in {work.name}")  # lets a failed job resume from here
+    return _long_loop(cfg, work, candidates, topic, stamp, progress)
+
+
+def resume_long(cfg: Config, work: Path, state: dict, progress: Progress) -> dict:
+    from dataclasses import replace
+
+    cfg = replace(cfg, video_style=state.get("style", cfg.video_style))
+    progress(f"Resuming {work.name}")
+    return _long_loop(cfg, work, [Trend(**c) for c in state.get("candidates", [])], state.get("topic"),
+                      state["stamp"], progress, resume=state)
+
+
+def _enc_long_best(best: dict | None) -> dict | None:
+    return None if best is None else {"script": best["script"].model_dump(), "verdict": asdict(best["verdict"]),
+                                      "props": best["props"], "attempt": best["attempt"], "file": str(best["file"])}
+
+
+def _dec_long_best(d: dict | None) -> dict | None:
+    return None if not d else {"script": LongScript.model_validate(d["script"]), "verdict": VerifyResult(**d["verdict"]),
+                               "props": d["props"], "attempt": d["attempt"], "file": Path(d["file"])}
+
+
+def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, stamp: str, progress: Progress,
+               resume: dict | None = None) -> dict:
+    """The attempt loop for one long video. Saves checkpoint.json after the script, the
+    voice and every render, so a stopped video can carry on instead of starting again."""
+    from .pipeline import CHECKPOINT, STAGE_DONE, _history_lock, _render_slot, slugify
+
+    minutes = cfg.long_minutes
+    history_path = cfg.output_dir / "history.json"
+    resume = resume or {}
+    feedback = resume.get("feedback", "")
+    script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
+    best = _dec_long_best(resume.get("best"))
+    start = resume.get("attempt", 1)
+    state = {"length": "long", "topic": topic, "stamp": stamp, "style": cfg.video_style,
+             "candidates": [asdict(c) for c in candidates], "best": resume.get("best")}
+
+    def save(**changes) -> None:
+        state.update(changes)
+        (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
     try:
-        for attempt in range(1, LONG_ATTEMPTS + 1):
+        for attempt in range(start, LONG_ATTEMPTS + 1):
             tag = f"[attempt {attempt}/{LONG_ATTEMPTS}]"
-            progress(f"{tag} Claude is picking the topic and writing the script (long video, a few minutes)")
-            script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
-            for fix in range(FACT_FIXES + 1):
+            stage = resume.get("stage") if attempt == start else None
+            if stage:
+                progress(f"{tag} Resuming: {STAGE_DONE.get(stage, stage)} already done")
+            else:
+                progress(f"{tag} Claude is picking the topic and writing the script (long video, a few minutes)")
+                script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
+            for fix in range(0 if stage else FACT_FIXES + 1):
                 basic = check_long_script(script, minutes)
                 if basic.passed and cfg.video_style != "story":
                     progress(f"{tag} Claude is fact-checking the script")
@@ -456,20 +503,31 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
                     script = fix_long_script(script, cfg, facts.issues, fixes)
                 else:  # structure or length is off: that needs a real rewrite
                     script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
-            if not (basic.passed and facts.passed) and attempt < LONG_ATTEMPTS:
+            if not stage and not (basic.passed and facts.passed) and attempt < LONG_ATTEMPTS:
                 feedback = "\n".join(problems)
+                save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
                 continue
+            if not stage:
+                save(attempt=attempt, stage="scripted", script=script.model_dump(), feedback=feedback)
 
-            for old in ("audio", "sfx"):
-                shutil.rmtree(work / old, ignore_errors=True)
-            props = build_long(script, cfg, work, progress)
+            if stage in ("voiced", "rendered"):
+                props = resume["props"]
+            else:
+                for old in ("audio", "sfx"):
+                    shutil.rmtree(work / old, ignore_errors=True)
+                props = build_long(script, cfg, work, progress)
+                save(stage="voiced", props=props)
             progress(f"{tag} Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
             cli = _remotion_cli()
             if cli is None:
                 raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
             out = work / "reel.mp4"
-            with _render_slot(cfg):
-                _render_remotion(cli, props, out, composition="Long", crf=20, timeout=4 * 3600)
+            if stage == "rendered" and out.exists():
+                pass  # the edit finished before it stopped
+            else:
+                with _render_slot(cfg):
+                    _render_remotion(cli, props, out, composition="Long", crf=20, timeout=4 * 3600)
+                save(stage="rendered")
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "3", "-i", str(out), "-frames:v", "1",
                             "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
 
@@ -490,12 +548,14 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
             this = {"script": script, "verdict": verdict, "props": props, "attempt": attempt, "file": kept}
             if best is None or (verdict.passed, verdict.score or 0) > (best["verdict"].passed, best["verdict"].score or 0):
                 best = this
+            save(best=_enc_long_best(best))
             if verdict.passed:
                 progress(f"{tag} Passed verification (score {verdict.score})")
                 break
             progress(f"{tag} Failed verification: {'; '.join(verdict.issues)}")
             review_fix = verdict.checks.get("review", {}).get("fix_instructions", "")
             feedback = "\n".join(verdict.issues + ([review_fix] if review_fix else []))
+            save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
 
         if best is None:
             raise RuntimeError(f"No usable long script after {LONG_ATTEMPTS} attempts: {feedback}")
@@ -507,6 +567,7 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
         (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-long"
         work.rename(final_dir)
+        (final_dir / CHECKPOINT).unlink(missing_ok=True)
         (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")
         report = {
             "id": final_dir.name,
@@ -548,7 +609,8 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
         progress("Done" if report["verified"] else "Done, but it did not pass every check — review before posting")
         return report
     except Exception:
-        if work.exists():
+        # Keep the folder when it has a checkpoint: the video can be resumed from there.
+        if work.exists() and not (work / CHECKPOINT).exists():
             shutil.rmtree(work, ignore_errors=True)
         raise
 

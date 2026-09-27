@@ -14,6 +14,7 @@ import os
 import secrets
 import shutil
 import socket
+import subprocess
 import threading
 import time
 import uuid
@@ -50,8 +51,8 @@ class JobManager:
         threading.Thread(target=self._worker, daemon=True).start()
 
     def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None,
-               length: str = "short") -> dict:
-        job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger,
+               length: str = "short", resume: list[str] | None = None) -> dict:
+        job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger, "resume": resume or [],
                "style": style or load_settings(Config()).video_style, "length": length,
                "status": "queued", "log": [], "created": time.time(), "results": []}
         with self.lock:
@@ -82,13 +83,19 @@ class JobManager:
     def _run_job(self, job: dict) -> None:
         def progress(msg: str, job=job) -> None:
             job["status"] = "running"
+            if "Saving progress in " in msg:  # remember each video's folder, to resume it later
+                job.setdefault("folders", []).append(msg.rsplit("Saving progress in ", 1)[1].strip())
             job["log"].append({"t": time.time(), "msg": msg})
             log.info("[job %s] %s", job["id"], msg)
 
         try:
             cfg = load_settings(Config())
             cfg.video_style = job["style"]
-            if job.get("length") == "long":
+            if job.get("resume"):
+                from .pipeline import resume_batch
+                job["folders"] = list(job["resume"])
+                reports = resume_batch(cfg, job["resume"], progress)
+            elif job.get("length") == "long":
                 from .longform import run_long_batch
                 reports = run_long_batch(cfg, job["count"], job["topic"], progress)
             else:
@@ -179,6 +186,14 @@ class LoginRequest(BaseModel):
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Reel Studio", docs_url=None, redoc_url=None)
     jobs = JobManager(cfg)
+    # Which code this server is running (shown in Settings), so a git pull without a
+    # restart is easy to spot: the running app keeps the code it started with.
+    try:
+        running_version = subprocess.run(["git", "log", "-1", "--format=%h %cd", "--date=format:%d %b %H:%M"],
+                                         cwd=Path(__file__).resolve().parent, capture_output=True, text=True,
+                                         timeout=10).stdout.strip() or "unknown"
+    except Exception:
+        running_version = "unknown"
     threading.Thread(target=scheduler, args=(jobs,), daemon=True).start()
     # Cookie value is a random session secret, so the PIN itself is never stored in the browser.
     session_token = secrets.token_urlsafe(24)
@@ -211,6 +226,7 @@ def create_app(cfg: Config) -> FastAPI:
             "urls": [f"http://{ip}:{cfg.port}" for ip in lan_ips()],
             "busy": jobs.busy(),
             "storage": str(current.output_dir),
+            "version": running_version,
         }
 
     @app.get("/api/videos")
@@ -297,6 +313,34 @@ def create_app(cfg: Config) -> FastAPI:
     def list_jobs():
         now = time.time()  # lets the page run its timers on this computer's clock
         return [{**j, "now": now} for j in jobs.jobs]
+
+    def busy_folders() -> set[str]:
+        return {f for j in jobs.jobs if j["status"] in ("queued", "running") for f in j.get("folders", []) + j.get("resume", [])}
+
+    @app.get("/api/unfinished")
+    def list_unfinished():
+        """Videos that stopped part-way (failed, or the app was closed) and can be resumed."""
+        from .pipeline import unfinished
+
+        busy = busy_folders()
+        return [u for u in unfinished(cfg) if u["id"] not in busy]
+
+    @app.post("/api/resume")
+    def resume(body: dict):
+        from .pipeline import unfinished
+
+        available = {u["id"] for u in unfinished(cfg)} - busy_folders()
+        folders = [f for f in body.get("folders", []) if f in available]
+        if not folders:
+            raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
+        return jobs.submit(None, len(folders), "resume", resume=folders)
+
+    @app.post("/api/jobs/{job_id}/resume")
+    def resume_job(job_id: str):
+        job = next((j for j in jobs.jobs if j["id"] == job_id), None)
+        if job is None:
+            raise HTTPException(404, "No such job")
+        return resume({"folders": job.get("folders", [])})
 
     @app.get("/api/automations")
     def list_automations():

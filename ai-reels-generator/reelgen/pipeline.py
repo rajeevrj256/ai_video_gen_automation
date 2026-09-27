@@ -14,7 +14,8 @@ import shutil
 import threading
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
@@ -23,12 +24,12 @@ from .config import MAX_SECONDS, Config
 from .llm import set_limit_reporter
 from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
-from .script_writer import STYLE_NAMES, STYLES as MIX, write_script
+from .script_writer import STYLE_NAMES, STYLES as MIX, ReelScript, write_script
 from .trends import Trend, collect_trends, load_history, save_history
 from .verify import VerifyResult, check_script, check_video, fact_check_script, review_with_claude
 from .video import render_video, voice_seconds
 from .visuals import fetch_backgrounds
-from .voice import synthesize_scenes
+from .voice import SceneAudio, Word, synthesize_scenes
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_dir = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-working"  # parallel videos can start in the same second
     run_dir.mkdir(parents=True, exist_ok=True)
+    progress(f"Saving progress in {run_dir.name}")  # lets a failed job resume from here
     try:
         return _make_video(cfg, topic, progress, candidates, first_script, run_dir, stamp, history_path)
     finally:
@@ -84,71 +86,105 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
 
 
 def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: list, first_script,
-                run_dir, stamp: str, history_path) -> dict:
-    feedback = ""
-    script = None
-    best: dict | None = None
-    for attempt in range(1, cfg.max_attempts + 1):
+                run_dir, stamp: str, history_path, resume: dict | None = None) -> dict:
+    """The attempt loop. After every finished step it saves a checkpoint (checkpoint.json in
+    run_dir); with `resume` it starts at the saved attempt and skips the finished steps."""
+    resume = resume or {}
+    feedback = resume.get("feedback", "")
+    script = ReelScript.model_validate(resume["script"]) if resume.get("script") else None
+    best: dict | None = _dec_best(resume.get("best"))
+    start = resume.get("attempt", 1)
+    state = {"topic": topic, "stamp": stamp, "style": cfg.video_style, "candidates": [asdict(c) for c in candidates],
+             "best": resume.get("best")}
+
+    def save(**changes) -> None:
+        state.update(changes)
+        (run_dir / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    for attempt in range(start, cfg.max_attempts + 1):
         tag = f"[attempt {attempt}/{cfg.max_attempts}]"
-        if attempt == 1 and first_script is not None:
+        stage = resume.get("stage") if attempt == start else None
+        if stage:
+            progress(f"{tag} Resuming: {STAGE_DONE[stage]} already done")
+            facts = _dec_result(resume.get("facts"))
+        elif attempt == 1 and first_script is not None:
             script = first_script  # already written while holding the topic lock
         else:
             progress(f"{tag} Claude is picking the topic and writing the script")
             script = write_script(cfg, candidates, feedback, previous=script if feedback else None)
-        if not topic:  # keep later attempts on the chosen topic
-            candidates = [c for c in candidates if c.title.lower() == script.topic.lower()] or candidates
+        if not stage:
+            if not topic:  # keep later attempts on the chosen topic
+                candidates = [c for c in candidates if c.title.lower() == script.topic.lower()] or candidates
 
-        verdict = check_script(script, cfg)
-        if not verdict.passed:
-            progress(f"{tag} Script rejected: {'; '.join(verdict.issues)}")
-            feedback = "\n".join(verdict.issues)
-            continue
-
-        # Fact-check the words before paying for voice, footage and a render. A
-        # flagged script is fixed here (up to FACT_FIXES times) without using up
-        # an attempt; the final review then mostly judges the finished video.
-        # Fiction and comedy have no factual claims to check; the review still guards them.
-        facts = VerifyResult()  # passes unless the fact-check below finds something
-        for fix in range(FACT_FIXES + 1 if cfg.video_style == "facts" else 0):
-            progress(f"{tag} Claude is fact-checking the script")
-            facts = fact_check_script(script, cfg)
-            if facts.passed or fix == FACT_FIXES:
-                break
-            progress(f"{tag} Fixing facts: {'; '.join(facts.issues)}")
-            fixes = facts.checks["fact_check"].get("fix_instructions", "")
-            fixed = write_script(cfg, candidates, "\n".join(facts.issues + ([fixes] if fixes else [])),
-                                 previous=script)
-            if not check_script(fixed, cfg).passed:
-                break  # keep the last script that passed the basic checks
-            script = fixed
-        if cfg.video_style == "facts" and not facts.passed:
-            progress(f"{tag} Still has unconfirmed facts after rewriting: {'; '.join(facts.issues)}")
-            if attempt < cfg.max_attempts:
-                # A render takes minutes and the review would fail on these same facts,
-                # so rewrite now. The last attempt is rendered anyway so there is a video.
-                feedback = "\n".join(facts.issues)
+            verdict = check_script(script, cfg)
+            if not verdict.passed:
+                progress(f"{tag} Script rejected: {'; '.join(verdict.issues)}")
+                feedback = "\n".join(verdict.issues)
+                save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
                 continue
 
-        progress(f"{tag} Recording voiceover")
-        scenes = synthesize_scenes([s.narration for s in script.scenes], cfg.voice, run_dir / "audio",
-                                   cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
-        spoken = voice_seconds(scenes)
-        if spoken > MAX_SECONDS - 1 and attempt < cfg.max_attempts:
-            # Too long to fit: skip the render and ask for a shorter script. (On the last
-            # attempt it's rendered anyway, so there's still a video to look at.)
-            words = sum(len(s.narration.split()) for s in script.scenes)
-            feedback = (f"The voiceover runs {spoken:.1f}s but the whole video must stay under {MAX_SECONDS}s. "
-                        f"Cut the narration from {words} to about {int(words * (MAX_SECONDS - 3) / spoken)} words.")
-            progress(f"{tag} Script too long: {feedback}")
-            continue
-        progress(f"{tag} Downloading footage")
-        backgrounds = fetch_backgrounds([s.visual_queries for s in script.scenes], cfg.pexels_api_key,
-                                        cfg.width, cfg.height, run_dir / "backgrounds")
-        progress(f"{tag} Editing the video (takes a few minutes)")
-        with _render_slot(cfg):  # waits here if other videos are being edited
-            rendered = render_video(script.title, scenes, backgrounds, cfg, run_dir / "reel.mp4",
-                                    graphics=[s.graphic for s in script.scenes],
-                                    transitions=[s.transition for s in script.scenes])
+            # Fact-check the words before paying for voice, footage and a render. A
+            # flagged script is fixed here (up to FACT_FIXES times) without using up
+            # an attempt; the final review then mostly judges the finished video.
+            # Fiction and comedy have no factual claims to check; the review still guards them.
+            facts = VerifyResult()  # passes unless the fact-check below finds something
+            for fix in range(FACT_FIXES + 1 if cfg.video_style == "facts" else 0):
+                progress(f"{tag} Claude is fact-checking the script")
+                facts = fact_check_script(script, cfg)
+                if facts.passed or fix == FACT_FIXES:
+                    break
+                progress(f"{tag} Fixing facts: {'; '.join(facts.issues)}")
+                fixes = facts.checks["fact_check"].get("fix_instructions", "")
+                fixed = write_script(cfg, candidates, "\n".join(facts.issues + ([fixes] if fixes else [])),
+                                     previous=script)
+                if not check_script(fixed, cfg).passed:
+                    break  # keep the last script that passed the basic checks
+                script = fixed
+            if cfg.video_style == "facts" and not facts.passed:
+                progress(f"{tag} Still has unconfirmed facts after rewriting: {'; '.join(facts.issues)}")
+                if attempt < cfg.max_attempts:
+                    # A render takes minutes and the review would fail on these same facts,
+                    # so rewrite now. The last attempt is rendered anyway so there is a video.
+                    feedback = "\n".join(facts.issues)
+                    save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
+                    continue
+
+            save(attempt=attempt, stage="scripted", script=script.model_dump(), facts=_enc_result(facts),
+                 feedback=feedback)
+
+        if stage in ("voiced", "footage", "rendered"):
+            scenes = _dec_scenes(resume["scenes"])
+        else:
+            progress(f"{tag} Recording voiceover")
+            scenes = synthesize_scenes([s.narration for s in script.scenes], cfg.voice, run_dir / "audio",
+                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
+            spoken = voice_seconds(scenes)
+            if spoken > MAX_SECONDS - 1 and attempt < cfg.max_attempts:
+                # Too long to fit: skip the render and ask for a shorter script. (On the last
+                # attempt it's rendered anyway, so there's still a video to look at.)
+                words = sum(len(s.narration.split()) for s in script.scenes)
+                feedback = (f"The voiceover runs {spoken:.1f}s but the whole video must stay under {MAX_SECONDS}s. "
+                            f"Cut the narration from {words} to about {int(words * (MAX_SECONDS - 3) / spoken)} words.")
+                progress(f"{tag} Script too long: {feedback}")
+                save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
+                continue
+            save(stage="voiced", scenes=_enc_scenes(scenes))
+        if stage in ("footage", "rendered"):
+            backgrounds = [[Path(p) for p in clips] for clips in resume["backgrounds"]]
+        else:
+            progress(f"{tag} Downloading footage")
+            backgrounds = fetch_backgrounds([s.visual_queries for s in script.scenes], cfg.pexels_api_key,
+                                            cfg.width, cfg.height, run_dir / "backgrounds")
+            save(stage="footage", backgrounds=[[str(p) for p in clips] for clips in backgrounds])
+        if stage == "rendered" and (run_dir / "reel.mp4").exists():
+            rendered = resume["rendered"]
+        else:
+            progress(f"{tag} Editing the video (takes a few minutes)")
+            with _render_slot(cfg):  # waits here if other videos are being edited
+                rendered = render_video(script.title, scenes, backgrounds, cfg, run_dir / "reel.mp4",
+                                        graphics=[s.graphic for s in script.scenes],
+                                        transitions=[s.transition for s in script.scenes])
+            save(stage="rendered", rendered=rendered)
 
         progress(f"{tag} Verifying video quality")
         verdict = check_video(run_dir / "reel.mp4", scenes, script, cfg)
@@ -166,6 +202,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             best = attempt_result
             # Keep the best attempt's files; later attempts render into a scratch copy.
             _snapshot(run_dir)
+            save(best=_enc_best(best))
 
         if verdict.passed:
             progress(f"{tag} Passed verification (score {verdict.score})")
@@ -173,6 +210,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         progress(f"{tag} Failed verification: {'; '.join(verdict.issues)}")
         review = verdict.checks.get("review", {})
         feedback = "\n".join(verdict.issues + ([review["fix_instructions"]] if review.get("fix_instructions") else []))
+        save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
 
     if best is None:
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -181,6 +219,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
     _restore_snapshot(run_dir)
     final_dir = cfg.output_dir / f"{stamp}-{slugify(best['script'].topic)}"
     run_dir.rename(final_dir)
+    (final_dir / CHECKPOINT).unlink(missing_ok=True)  # finished: nothing left to resume
     script, verdict = best["script"], best["verdict"]
     (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")
 
@@ -222,6 +261,76 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
     notify(report, cfg.telegram_bot_token, cfg.telegram_chat_id)
     progress("Done" if report["verified"] else "Done, but it did not pass every check — review before posting")
     return report
+
+
+# ---- checkpoints: resume a failed video from its last finished step ----
+
+CHECKPOINT = "checkpoint.json"
+STAGE_DONE = {"scripted": "script and fact-check", "voiced": "script and voiceover",
+              "footage": "script, voiceover and footage", "rendered": "script, voiceover, footage and edit"}
+
+
+def _enc_result(r: VerifyResult | None) -> dict | None:
+    return asdict(r) if r is not None else None
+
+
+def _dec_result(d: dict | None) -> VerifyResult:
+    return VerifyResult(**d) if d else VerifyResult()
+
+
+def _enc_scenes(scenes: list[SceneAudio]) -> list[dict]:
+    return [{"path": str(s.path), "words": [asdict(w) for w in s.words]} for s in scenes]
+
+
+def _dec_scenes(data: list[dict]) -> list[SceneAudio]:
+    return [SceneAudio(Path(s["path"]), [Word(**w) for w in s["words"]]) for s in data]
+
+
+def _enc_best(best: dict | None) -> dict | None:
+    if best is None:
+        return None
+    return {"script": best["script"].model_dump(), "rendered": best["rendered"],
+            "verdict": _enc_result(best["verdict"]), "attempt": best["attempt"]}
+
+
+def _dec_best(d: dict | None) -> dict | None:
+    if not d:
+        return None
+    return {"script": ReelScript.model_validate(d["script"]), "rendered": d["rendered"],
+            "verdict": _dec_result(d["verdict"]), "attempt": d["attempt"]}
+
+
+def unfinished(cfg: Config) -> list[dict]:
+    """Working folders of videos that stopped part-way and can be resumed."""
+    out = []
+    for folder in sorted(cfg.output_dir.glob("*-working")):
+        path = folder / CHECKPOINT
+        if not path.exists():
+            continue
+        state = json.loads(path.read_text(encoding="utf-8"))
+        script = state.get("script") or {}
+        out.append({"id": folder.name, "topic": script.get("topic") or state.get("topic") or "Trending topic",
+                    "title": script.get("title", ""), "style": state.get("style", "facts"),
+                    "length": state.get("length", "short"), "attempt": state.get("attempt", 1),
+                    "done": STAGE_DONE.get(state.get("stage") or "", "nothing yet"),
+                    "updated": path.stat().st_mtime})
+    return out
+
+
+def resume_video(cfg: Config, folder_id: str, progress: Progress = log.info) -> dict:
+    """Carry on a stopped video from its checkpoint instead of starting again."""
+    run_dir = cfg.output_dir / folder_id
+    if run_dir.parent.resolve() != cfg.output_dir.resolve() or not (run_dir / CHECKPOINT).exists():
+        raise RuntimeError(f"Nothing to resume in {folder_id}")
+    state = json.loads((run_dir / CHECKPOINT).read_text(encoding="utf-8"))
+    if state.get("length") == "long":
+        from .longform import resume_long
+        return resume_long(cfg, run_dir, state, progress)
+    cfg = replace(cfg, video_style=state.get("style", cfg.video_style))
+    candidates = [Trend(**c) for c in state.get("candidates", [])]
+    progress(f"Resuming {folder_id}")
+    return _make_video(cfg, state.get("topic"), progress, candidates, None, run_dir, state["stamp"],
+                       cfg.output_dir / "history.json", resume=state)
 
 
 def _merge(a: VerifyResult, b: VerifyResult) -> VerifyResult:
@@ -307,3 +416,24 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
             pool.submit(one, i)
             time.sleep(0.2)  # keeps videos taking slots roughly in order
     return [results[i] for i in sorted(results)]
+
+
+def resume_batch(cfg: Config, folders: list[str], progress: Progress = log.info) -> list[dict]:
+    """Resume several stopped videos, each in one of the shared video slots."""
+    reports: list[dict] = []
+
+    def one(i: int, folder: str) -> None:
+        vp = (lambda m: progress(f"[V{i + 1}] {m}")) if len(folders) > 1 else progress
+        with _video_slot(cfg):
+            set_limit_reporter(vp)
+            vp(f"=== Video {i + 1}/{len(folders)} ===")
+            try:
+                reports.append(resume_video(cfg, folder, vp))
+            except Exception as exc:
+                log.exception("Resuming %s failed", folder)
+                vp(f"Video {i + 1} failed: {exc}")
+
+    with ThreadPoolExecutor(max_workers=max(1, len(folders))) as pool:
+        for i, folder in enumerate(folders):
+            pool.submit(one, i, folder)
+    return reports

@@ -107,6 +107,20 @@ def _shimmer(duration: float = 0.7) -> np.ndarray:
     return tone
 
 
+def _sad(notes: tuple[float, ...] = (392.0, 370.0, 349.2, 329.6)) -> np.ndarray:
+    """"Wah wah wah waaah": four falling brassy notes, the last one long and wobbling."""
+    out = []
+    for i, f0 in enumerate(notes):
+        dur = 0.34 if i < len(notes) - 1 else 1.1
+        t = np.arange(int(RATE * dur)) / RATE
+        wobble = 1 + (0.012 * np.sin(2 * np.pi * 6 * t) if i == len(notes) - 1 else 0)
+        phase = 2 * np.pi * np.cumsum(f0 * wobble) / RATE
+        tone = sum(np.sin(k * phase) / k for k in range(1, 6))  # brassy: a few harmonics
+        env = np.minimum(1, t / 0.03) * np.minimum(1, (dur - t) / 0.08)
+        out.append(tone * env)
+    return np.concatenate(out)
+
+
 def write_sfx(out_dir: Path) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     return {
@@ -116,4 +130,5 @@ def write_sfx(out_dir: Path) -> dict[str, Path]:
         "glitch": _write(out_dir / "glitch.wav", _glitch(), peak=0.35),
         "shimmer": _write(out_dir / "shimmer.wav", _shimmer(), peak=0.3),
         "pop": _write(out_dir / "pop.wav", _pop(), peak=0.45),
+        "sad": _write(out_dir / "sad.wav", _sad(), peak=0.4),
     }

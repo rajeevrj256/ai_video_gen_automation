@@ -277,9 +277,10 @@ SYSTEM_PROMPT = system_prompt("facts")
 
 
 def word_range(seconds: int) -> tuple[int, int]:
-    """Spoken words that fit `seconds` at the presenter pace (+10%, one take): 66-74 for 30s.
-    Measured: 86 words took 33.6s, about 2.56 words a second, plus the pauses between scenes."""
-    return round(seconds * 2.2), round(seconds * 2.45)
+    """Spoken words that fit `seconds` at the presenter pace (+10%, one take): 56-62 for 30s.
+    Measured: 86 words took 33.6s in a true story, but a fiction script with more pauses
+    ran 74 words in 31.6s and 64 in 29.3s, so the budget leaves room for pauses."""
+    return round(seconds * 1.85), round(seconds * 2.07)
 
 
 def topic_is_manual(candidates: list[Trend]) -> bool:

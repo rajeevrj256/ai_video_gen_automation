@@ -206,6 +206,7 @@
       <button class="primary" id="genBtn">✨ Generate</button>
       <p class="hint" id="eta">About 8–15 minutes. You can close this page; it keeps running on your computer.</p>
     </div>
+    <div id="unfinished"></div>
     <div id="jobs"></div>
   </section>
 
@@ -597,6 +598,9 @@ function jobCard(j) {
       + `<div class="timer">⏱ Took ${mmss(end - jobStart)}${per.length > 1 ? ` in total · per video ${per.join(", ")}` : ""}</div>`;
   }
   const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map(esc).join("<br>")}</div>` : "";
+  const canResume = !running && j.status !== "queued" && made < j.count && (j.folders || []).length;
+  const resumeBtn = canResume ? `<button class="primary resume" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">
+      ↻ Resume from where it stopped</button>` : "";
   const thumbs = made ? `<div class="thumbs">${j.results.map((id) =>
       `<img src="/media/${encodeURIComponent(id)}/thumbnail.jpg" alt="" onclick="openVideo('${esc(id)}')">`).join("")}</div>` : "";
   const sub = running
@@ -606,12 +610,39 @@ function jobCard(j) {
   return `<div class="panel job ${j.status}">
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
-    ${body}${errBox}${thumbs}
+    ${body}${errBox}${resumeBtn}${thumbs}
     <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
   </div>`;
 }
 
+// Videos that stopped part-way (failed, or the app was closed) can carry on from their last finished step.
+async function loadUnfinished() {
+  const items = await api("/api/unfinished");
+  $("#unfinished").innerHTML = items.length ? `<div class="panel">
+      <h2>Unfinished videos</h2>
+      <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
+      ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : "📱 Short"}</span></div>
+        <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
+        <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button></div></div>`).join("")}
+      ${items.length > 1 ? `<button id="resumeAll" style="width:100%">↻ Resume all ${items.length}</button>` : ""}
+    </div>` : "";
+  document.querySelectorAll("[data-resume]").forEach((b) => b.onclick = () => startResume([b.dataset.resume]));
+  if ($("#resumeAll")) $("#resumeAll").onclick = () => startResume(items.map((u) => u.id));
+}
+async function startResume(folders) {
+  try { await api("/api/resume", { method: "POST", body: JSON.stringify({ folders }) }); toast("Resuming"); lastBusy = true; loadJobs(); }
+  catch (e) { toast(e.message); }
+}
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button.resume"); if (!b) return;
+  b.disabled = true;
+  try { await api(`/api/jobs/${b.dataset.job}/resume`, { method: "POST" }); toast("Resuming"); lastBusy = true; loadJobs(); }
+  catch (err) { toast(err.message); b.disabled = false; }
+});
+
 async function loadJobs() {
+  loadUnfinished().catch(() => {});
   const jobs = await api("/api/jobs");
   const open = new Set([...document.querySelectorAll("details.log[open]")].map((d) => d.dataset.job));
   $("#jobs").innerHTML = jobs.map(jobCard).join("");
@@ -688,6 +719,7 @@ async function loadSettings() {
   const ai = { "claude-code": "Claude Code (your login)", api: st.api_key_set ? "Anthropic API key" : "API key — NOT SET",
     missing: "NOT SET UP — install Claude Code and run `claude` once" }[st.backend];
   $("#statusList").innerHTML = [
+    ["Running version", st.version || "unknown"],
     ["AI in use", ai],
     ["Claude Code installed", st.claude_code_installed ? "Yes" : "No"],
     ["Stock footage (Pexels)", st.pexels ? "On" : "Off — add PEXELS_API_KEY for real footage"],
