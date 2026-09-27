@@ -85,6 +85,77 @@ _limit_lock = threading.Lock()
 _reporter = threading.local()
 
 
+# ---- Token metering: every Claude call is recorded against the current video ----
+# pipeline.py starts a meter per video thread; each call adds one record (the step, tokens
+# in/out/cached and the API-equivalent cost that Claude Code reports).
+
+STEP_NAMES = {"ReelScript": "Script", "LongScript": "Script", "FactCheck": "Fact-check", "ScriptFixes": "Fact fixes",
+              "Review": "Review", "PostCopy": "Post text"}
+_meter = threading.local()
+
+
+def start_meter(on_record=None, earlier: list[dict] | None = None) -> list[dict]:
+    """Start counting this thread's Claude usage (continuing `earlier` records on a resume)."""
+    _meter.records = list(earlier or [])
+    _meter.fn = on_record
+    return _meter.records
+
+
+def meter_add_earlier(records: list[dict] | None) -> None:
+    """On a resume: put the usage recorded before the stop back in front."""
+    if records and hasattr(_meter, "records"):
+        _meter.records[:0] = records
+
+
+def usage_line(rec: dict) -> str:
+    """A progress-log line the app turns into live token counts (and hides from the log)."""
+    return "§usage " + json.dumps(rec)
+
+
+def meter_records() -> list[dict]:
+    return list(getattr(_meter, "records", []))
+
+
+def _record(schema, usage: dict) -> None:
+    rec = {"step": STEP_NAMES.get(schema.__name__, schema.__name__), "at": round(time.time(), 1), **usage}
+    rec["tokens"] = rec["input"] + rec["output"] + rec["cache_read"] + rec["cache_write"]
+    if hasattr(_meter, "records"):
+        _meter.records.append(rec)
+    fn = getattr(_meter, "fn", None)
+    if fn:
+        fn(rec)
+    log.info("Claude usage for %s: %s tokens", rec["step"], f"{rec['tokens']:,}")
+
+
+def _cli_usage(out: dict) -> dict:
+    """Totals for one Claude Code run across every model it used (web search and helpers included)."""
+    models = out.get("modelUsage") or {}
+    if models:
+        total = lambda k: sum(int(m.get(k) or 0) for m in models.values())
+        return {"input": total("inputTokens"), "output": total("outputTokens"), "cache_read": total("cacheReadInputTokens"),
+                "cache_write": total("cacheCreationInputTokens"), "web_searches": total("webSearchRequests"),
+                "cost_usd": round(sum(float(m.get("costUSD") or 0) for m in models.values()), 4)}
+    u = out.get("usage") or {}
+    return {"input": u.get("input_tokens", 0), "output": u.get("output_tokens", 0),
+            "cache_read": u.get("cache_read_input_tokens", 0), "cache_write": u.get("cache_creation_input_tokens", 0),
+            "web_searches": 0, "cost_usd": out.get("total_cost_usd")}
+
+
+def summarize_usage(records: list[dict]) -> dict:
+    """Per-step and total token counts for a report or a job."""
+    steps: dict[str, dict] = {}
+    for r in records:
+        s = steps.setdefault(r["step"], {"calls": 0, "tokens": 0, "input": 0, "output": 0, "cache_read": 0,
+                                          "cache_write": 0, "cost_usd": 0.0})
+        s["calls"] += 1
+        for k in ("tokens", "input", "output", "cache_read", "cache_write"):
+            s[k] += int(r.get(k) or 0)
+        s["cost_usd"] = round(s["cost_usd"] + float(r.get("cost_usd") or 0), 4)
+    total = {k: sum(s[k] for s in steps.values()) for k in ("calls", "tokens", "input", "output", "cache_read", "cache_write")}
+    total["cost_usd"] = round(sum(s["cost_usd"] for s in steps.values()), 4)
+    return {"steps": steps, "total": total}
+
+
 def set_limit_reporter(report) -> None:
     """Where this thread's "paused"/"resumed" messages go (the video's progress log)."""
     _reporter.fn = report
@@ -238,6 +309,7 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
     if out.get("is_error"):
         raise LLMError(f"Claude Code error: {out.get('result') or out.get('subtype')}")
 
+    _record(schema, _cli_usage(out))
     data = out.get("structured_output")
     if data is None:  # older CLI versions: parse the text result
         data = _extract_json(out.get("result", ""))
@@ -268,6 +340,10 @@ def _ask_api(model: str, system: str, prompt: str, schema: type[T], images: list
         output_format=schema,  # the SDK merges this into output_config.format
         **({"output_config": {"effort": effort}} if effort else {}),
     )
+    u = response.usage
+    _record(schema, {"input": u.input_tokens or 0, "output": u.output_tokens or 0,
+                     "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0,
+                     "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0, "cost_usd": None, "web_searches": 0})
     if response.stop_reason == "refusal" or response.parsed_output is None:
         raise LLMError(f"Claude returned no usable answer (stop_reason={response.stop_reason})")
     return response.parsed_output

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -84,18 +85,38 @@ class JobManager:
     def _run_job(self, job: dict) -> None:
         def progress(msg: str, job=job) -> None:
             job["status"] = "running"
+            if "§usage " in msg or "§done " in msg or "§skip " in msg:  # token counts / finished video: data, not a log line
+                tag, _, rest = msg.partition("§")
+                kind, _, payload = rest.partition(" ")
+                m = re.match(r"\[V(\d+)\]", tag.strip())
+                try:
+                    data = {**json.loads(payload), "video": int(m[1]) if m else 1}
+                except ValueError:
+                    return
+                if kind == "skip":
+                    job["skipped"] = job.get("skipped", 0) + 1
+                else:
+                    job.setdefault("usage" if kind == "usage" else "videos", []).append(data)
+                return
             if "Saving progress in " in msg:  # remember each video's folder, to resume it later
                 job.setdefault("folders", []).append(msg.rsplit("Saving progress in ", 1)[1].strip())
             job["log"].append({"t": time.time(), "msg": msg})
             log.info("[job %s] %s", job["id"], msg)
 
+        progress.should_pause = lambda job=job: bool(job.get("pause"))  # checked at every step boundary
         try:
             cfg = load_settings(Config())
             cfg.video_style = job["style"]
             if job.get("resume"):
                 from .pipeline import resume_batch
-                job["folders"] = list(job["resume"])
                 reports = resume_batch(cfg, job["resume"], progress)
+                fresh = job["count"] - len(job["resume"])  # videos that never started before the pause
+                if fresh > 0 and not job.get("pause"):
+                    if job.get("length") == "long":
+                        from .longform import run_long_batch
+                        reports += run_long_batch(cfg, fresh, job["topic"], progress)
+                    else:
+                        reports += run(cfg, fresh, job["topic"], progress)
             elif job.get("length") == "long":
                 from .longform import run_long_batch
                 reports = run_long_batch(cfg, job["count"], job["topic"], progress)
@@ -103,11 +124,17 @@ class JobManager:
                 reports = run(cfg, job["count"], job["topic"], progress)
             job["results"] = [r["id"] for r in reports]
             made = len(reports)
-            job["status"] = "done" if made == job["count"] else ("partial" if made else "failed")
+            job["status"] = ("done" if made == job["count"] else "paused" if job.get("pause")
+                             else "partial" if made else "failed")
         except Exception as exc:  # never kill the worker thread
             progress(f"Error: {exc}")
             job["status"] = "failed"
         job["finished"] = time.time()
+        try:
+            from . import runlog
+            runlog.record_job(self.cfg, job)
+        except Exception:
+            log.exception("Couldn't save the run history")
 
 
 def scheduler(jobs: JobManager) -> None:
@@ -274,6 +301,12 @@ def create_app(cfg: Config) -> FastAPI:
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         return report
 
+    @app.get("/api/history")
+    def run_history():
+        from . import runlog
+
+        return runlog.history(cfg)
+
     @app.get("/api/categories")
     def list_categories():
         return list(CATEGORIES)
@@ -355,12 +388,31 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
         return jobs.submit(None, len(folders), "resume", resume=folders)
 
-    @app.post("/api/jobs/{job_id}/resume")
-    def resume_job(job_id: str):
+    @app.post("/api/jobs/{job_id}/pause")
+    def pause_job(job_id: str):
+        """Stop after the step each video is on; its progress is saved for Resume."""
         job = next((j for j in jobs.jobs if j["id"] == job_id), None)
         if job is None:
             raise HTTPException(404, "No such job")
-        return resume({"folders": job.get("folders", [])})
+        if job["status"] == "queued" and not job.get("started"):
+            job["status"] = "paused"
+        job["pause"] = True
+        return {"ok": True}
+
+    @app.post("/api/jobs/{job_id}/resume")
+    def resume_job(job_id: str):
+        from .pipeline import unfinished
+
+        job = next((j for j in jobs.jobs if j["id"] == job_id), None)
+        if job is None:
+            raise HTTPException(404, "No such job")
+        available = {u["id"] for u in unfinished(cfg)} - busy_folders()
+        folders = list(dict.fromkeys(f for f in job.get("folders", []) if f in available))
+        fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+        if not folders and not fresh:
+            raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
+        return jobs.submit(job["topic"], len(folders) + fresh, "resume", job.get("style"), job.get("length", "short"),
+                           resume=folders)
 
     @app.get("/api/automations")
     def list_automations():

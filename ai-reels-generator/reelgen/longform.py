@@ -23,7 +23,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from .config import Config
-from .llm import ask
+from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
 from .post_copy import PostCopy, clean_tags, save_post_text
 from .script_writer import AI_CLICHES
 from .sfx import write_sfx
@@ -446,6 +446,7 @@ def resume_long(cfg: Config, work: Path, state: dict, progress: Progress) -> dic
 
     cfg = replace(cfg, video_style=state.get("style", cfg.video_style))
     progress(f"Resuming {work.name}")
+    progress(f"Saving progress in {work.name}")
     return _long_loop(cfg, work, [Trend(**c) for c in state.get("candidates", [])], state.get("topic"),
                       state["stamp"], progress, resume=state)
 
@@ -464,7 +465,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                resume: dict | None = None) -> dict:
     """The attempt loop for one long video. Saves checkpoint.json after the script, the
     voice and every render, so a stopped video can carry on instead of starting again."""
-    from .pipeline import CHECKPOINT, STAGE_DONE, _history_lock, _render_slot, slugify
+    from .pipeline import CHECKPOINT, STAGE_DONE, _history_lock, _render_slot, pause_point, slugify
 
     minutes = cfg.long_minutes
     history_path = cfg.output_dir / "history.json"
@@ -473,12 +474,14 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
     best = _dec_long_best(resume.get("best"))
     start = resume.get("attempt", 1)
+    meter_add_earlier(resume.get("usage"))
     state = {"length": "long", "topic": topic, "stamp": stamp, "style": cfg.video_style,
              "candidates": [asdict(c) for c in candidates], "best": resume.get("best")}
 
     def save(**changes) -> None:
-        state.update(changes)
+        state.update(changes, usage=meter_records())
         (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        pause_point()
 
     try:
         for attempt in range(start, LONG_ATTEMPTS + 1):
@@ -607,6 +610,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                            "youtube_description": "Chapters:\n" + youtube_chapters(props), "youtube_hashtags": [],
                            "youtube_tags": [], "post_text_error": str(exc)[:300]})
         save_post_text(report, final_dir)
+        report["usage"] = summarize_usage(meter_records())
         (final_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         with _history_lock:
             save_history(history_path, script.topic)
@@ -625,17 +629,26 @@ def run_long_batch(cfg: Config, count: int, topic: str | None, progress: Progres
     from dataclasses import replace
 
     from .llm import set_limit_reporter
-    from .pipeline import _video_slot
+    from .pipeline import Paused, _video_slot, done_line, set_pause_check
 
     reports = []
+    should_pause = getattr(progress, "should_pause", None)
     for i in range(count):
         style = {"comedy": "facts", "mix": ("facts", "story")[i % 2]}.get(cfg.video_style, cfg.video_style)
         vp = (lambda m, n=i + 1: progress(f"[V{n}] {m}")) if count > 1 else progress
         with _video_slot(cfg):
+            if should_pause and should_pause():
+                progress((f"[V{i + 1}] " if count > 1 else "") + "§skip {}")
+                continue
+            set_pause_check(should_pause)
             set_limit_reporter(vp)
+            start_meter(lambda r, vp=vp: vp(usage_line(r)))
             vp(f"=== Video {i + 1}/{count} ===")
             try:
                 reports.append(run_long(replace(cfg, video_style=style), topic, vp))
+                vp(done_line(reports[-1]))
+            except Paused:
+                vp("Paused: progress saved. Press Resume to carry on from here.")
             except Exception as exc:
                 log.exception("Long video %d failed", i + 1)
                 vp(f"Video {i + 1} failed: {exc}")

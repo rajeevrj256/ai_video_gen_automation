@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .config import MAX_SECONDS, Config
-from .llm import set_limit_reporter
+from .llm import meter_add_earlier, meter_records, set_limit_reporter, start_meter, summarize_usage, usage_line
 from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
 from .script_writer import STYLE_NAMES, STYLES as MIX, ReelScript, write_script
@@ -94,12 +94,14 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
     script = ReelScript.model_validate(resume["script"]) if resume.get("script") else None
     best: dict | None = _dec_best(resume.get("best"))
     start = resume.get("attempt", 1)
+    meter_add_earlier(resume.get("usage"))
     state = {"topic": topic, "stamp": stamp, "style": cfg.video_style, "candidates": [asdict(c) for c in candidates],
              "best": resume.get("best")}
 
     def save(**changes) -> None:
-        state.update(changes)
+        state.update(changes, usage=meter_records())
         (run_dir / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        pause_point()
 
     for attempt in range(start, cfg.max_attempts + 1):
         tag = f"[attempt {attempt}/{cfg.max_attempts}]"
@@ -255,6 +257,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         report.update({"youtube_description": script.caption, "youtube_hashtags": ["shorts"], "youtube_tags": [],
                        "post_text_error": str(exc)[:300]})
         save_post_text(report, final_dir)
+    report["usage"] = summarize_usage(meter_records())  # every Claude step for this video, post text included
     (final_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     with _history_lock:
         save_history(history_path, script.topic)
@@ -262,6 +265,32 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
     notify(report, cfg.telegram_bot_token, cfg.telegram_chat_id)
     progress("Done" if report["verified"] else "Done, but it did not pass every check — review before posting")
     return report
+
+
+# ---- pause: stop at the next step boundary, resume later from the checkpoint ----
+
+class Paused(Exception):
+    """Raised at a step boundary when the user pressed Pause; the checkpoint is already saved."""
+
+
+_pause = threading.local()
+
+
+def set_pause_check(fn) -> None:
+    _pause.fn = fn
+
+
+def pause_point() -> None:
+    fn = getattr(_pause, "fn", None)
+    if fn and fn():
+        raise Paused()
+
+
+def done_line(report: dict) -> str:
+    """Progress line the app uses to link a finished video (and its tokens) to its job."""
+    total = (report.get("usage") or {}).get("total", {})
+    return "§done " + json.dumps({"id": report["id"], "title": report.get("title", ""), "tokens": total.get("tokens", 0),
+                                  "cost_usd": total.get("cost_usd", 0), "verified": report.get("verified")})
 
 
 # ---- checkpoints: resume a failed video from its last finished step ----
@@ -330,6 +359,7 @@ def resume_video(cfg: Config, folder_id: str, progress: Progress = log.info) -> 
     cfg = replace(cfg, video_style=state.get("style", cfg.video_style))
     candidates = [Trend(**c) for c in state.get("candidates", [])]
     progress(f"Resuming {folder_id}")
+    progress(f"Saving progress in {folder_id}")
     return _make_video(cfg, state.get("topic"), progress, candidates, None, run_dir, state["stamp"],
                        cfg.output_dir / "history.json", resume=state)
 
@@ -385,13 +415,20 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
     results: dict[int, dict] = {}
     done_titles: list[str] = []
 
+    should_pause = getattr(progress, "should_pause", None)
+
     def one(i: int) -> None:
         with _video_slot(cfg):  # holds the same semaphore object it acquired, even if resized
+            if should_pause and should_pause():  # paused before this video started
+                progress((f"[V{i + 1}] " if count > 1 else "") + "§skip {}")
+                return
+            set_pause_check(should_pause)
             make(i)
 
     def make(i: int) -> None:
         vp = (lambda m: progress(f"[V{i + 1}] {m}")) if count > 1 else progress
         set_limit_reporter(vp)  # a usage-limit pause shows up in this video's log
+        start_meter(lambda r: vp(usage_line(r)))  # count this video's Claude tokens
         vp(f"=== Video {i + 1}/{count} ===")
         # "mix" rotates true story, fiction and comedy through a batch.
         vcfg = replace(cfg, video_style=MIX[i % len(MIX)]) if cfg.video_style == "mix" else cfg
@@ -406,8 +443,11 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
                      f"Already made: {made}. Pick a clearly different angle, facts and hook, still on this topic.")
         try:
             report = run_once(vcfg, topic, vp, angle)
+            vp(done_line(report))
             results[i] = report
             done_titles.append(f"'{report['title']}' ({report['topic']})")
+        except Paused:
+            vp("Paused: progress saved. Press Resume to carry on from here.")
         except Exception as exc:
             log.exception("Video %d failed", i + 1)
             vp(f"Video {i + 1} failed: {exc}")
@@ -422,14 +462,23 @@ def run(cfg: Config, count: int = 1, topic: str | None = None, progress: Progres
 def resume_batch(cfg: Config, folders: list[str], progress: Progress = log.info) -> list[dict]:
     """Resume several stopped videos, each in one of the shared video slots."""
     reports: list[dict] = []
+    should_pause = getattr(progress, "should_pause", None)
 
     def one(i: int, folder: str) -> None:
         vp = (lambda m: progress(f"[V{i + 1}] {m}")) if len(folders) > 1 else progress
         with _video_slot(cfg):
+            if should_pause and should_pause():
+                vp(f"Saving progress in {folder}")  # still resumable next time
+                return
+            set_pause_check(should_pause)
             set_limit_reporter(vp)
+            start_meter(lambda r: vp(usage_line(r)))
             vp(f"=== Video {i + 1}/{len(folders)} ===")
             try:
                 reports.append(resume_video(cfg, folder, vp))
+                vp(done_line(reports[-1]))
+            except Paused:
+                vp("Paused: progress saved. Press Resume to carry on from here.")
             except Exception as exc:
                 log.exception("Resuming %s failed", folder)
                 vp(f"Video {i + 1} failed: {exc}")

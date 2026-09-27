@@ -74,6 +74,13 @@
   .segmented button.on { background: var(--accent); color: #111; }
 
   .job { border-left: 4px solid var(--accent); }
+  .job.paused { border-left-color: var(--muted); } .pill.paused { background: var(--panel-2); color: var(--text); }
+  .tokens { margin-top: 10px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tokens b { color: var(--text); }
+  .tok { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; }
+  .vtok { font-size: 12px; color: var(--muted); margin-left: 6px; }
+  .vrow .vname { min-width: 80px; }
+  @media (max-width: 480px) { .vrow .mini-steps { display: none; } }
   .job.done { border-left-color: var(--ok); } .job.partial { border-left-color: var(--warn); } .job.failed { border-left-color: var(--bad); }
   .job .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
   .job .title { font-weight: 700; } .job .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
@@ -228,6 +235,15 @@
     <div id="jobs"></div>
   </section>
 
+  <section class="view" id="view-history">
+    <div class="panel">
+      <h2>Generation history</h2>
+      <div id="histTotal" class="hint"></div>
+    </div>
+    <div id="histAutos"></div>
+    <div id="histRuns"></div>
+  </section>
+
   <section class="view" id="view-settings">
     <div class="panel">
       <h2>Content</h2>
@@ -358,6 +374,7 @@
 <nav id="nav">
   <button data-view="videos" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="9" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/></svg>Videos</button>
   <button data-view="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Create</button>
+  <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
 
@@ -393,7 +410,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, settings: loadSettings }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -408,7 +425,7 @@ const cardHtml = (v) => `
       <span class="badge ${v.verified ? "ok-bg" : "warn-bg"}">${v.verified ? "✓ " + (v.score ?? "") : "Check"}</span>
       <span class="dur">${v.format === "long" ? "🎬 " + mmss(v.duration_seconds || 0) : Math.round(v.duration_seconds || 0) + "s"}</span>
       ${v.youtube_description && !v.post_text_error ? '<span class="postbadge" title="Title, description and hashtags ready">📝</span>' : ""}
-      <div class="meta">${esc(v.title)}</div>
+      <div class="meta">${esc(v.title)}${v.usage ? `<div class="vtok" style="margin:2px 0 0">🪙 ${fmtTok(v.usage.total.tokens)} tokens</div>` : ""}</div>
     </div>`;
 function renderLibrary() {
   const q = $("#q").value.trim().toLowerCase();
@@ -461,6 +478,8 @@ async function openVideo(id) {
     <div class="sub"><select id="catSel" class="mini" title="Category">${Object.keys(CAT_ICON).map((c) =>
       `<option ${c === v.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select> ${esc(v.topic)} · ${esc(v.topic_source)} · ${v.format === "long" ? "🎬 " + mmss(v.duration_seconds) + " · 16:9" : Math.round(v.duration_seconds) + "s"}</div>
     ${verdict}
+    ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
+      total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
     <div class="actions">
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
@@ -565,7 +584,17 @@ const STEPS = [
   ["Script", /writing the script|picking the topic/], ["Fact-check", /fact-check|Fixing facts/],
   ["Voice", /voiceover/], ["Footage", /footage/], ["Editing", /Editing/], ["Review", /Verifying|reviewing|title, description/],
 ];
-const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed" };
+const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
+// Token counts: every Claude step reports input + output + cached tokens.
+const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
+function sumUsage(records) {
+  const steps = {}; let total = 0, cost = 0;
+  (records || []).forEach((r) => { steps[r.step] = (steps[r.step] || 0) + (r.tokens || 0); total += r.tokens || 0; cost += r.cost_usd || 0; });
+  return { steps, total, cost };
+}
+const usageHtml = (u, label = "Claude tokens") => u.total ? `<div class="tokens">🪙 ${label}: <b>${fmtTok(u.total)}</b>
+    ${Object.entries(u.steps).map(([s, n]) => `<span class="tok">${esc(s)} ${fmtTok(n)}</span>`).join("")}
+    ${u.cost ? `<span title="What these tokens would cost on the Anthropic API; your Claude plan isn't charged per token">≈ $${u.cost.toFixed(2)} at API prices</span>` : ""}</div>` : "";
 
 // Timers: elapsed times come from the server's clock (j.now), then tick locally each second.
 let clockOffset = 0; // server time minus this device's time, in seconds
@@ -639,7 +668,8 @@ function jobCard(j) {
       <div class="now-line">${esc(v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
       <div class="timer">⏱ ${liveSince(v.start)}</div>`;
   } else if (running) {
-    // A batch: one row per video, running side by side.
+    // A batch: one row per video, running side by side, each with its own token count.
+    const vtok = {}; (j.usage || []).forEach((r) => vtok[r.video] = (vtok[r.video] || 0) + (r.tokens || 0));
     const rows = [];
     for (let n = 1; n <= j.count; n++) {
       const v = vids.find((x) => x.n === n);
@@ -651,7 +681,7 @@ function jobCard(j) {
       rows.push(`<div class="vrow ${v.state}"><b>${n}</b>${icon}
         <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.paused ? `Paused till ${v.paused}` : v.step >= 0 ? STEPS[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
         ${v.state === "running" && !v.paused ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
-        <span class="vtime">${time}</span></div>`);
+        ${vtok[n] ? `<span class="vtok">🪙 ${fmtTok(vtok[n])}</span>` : ""}<span class="vtime">${time}</span></div>`);
     }
     body = `<div class="vrows">${rows.join("")}</div><div class="timer">⏱ Total ${liveSince(jobStart)}</div>`;
   } else if (j.status !== "queued" && j.log.length) {
@@ -660,7 +690,13 @@ function jobCard(j) {
       + `<div class="timer">⏱ Took ${mmss(end - jobStart)}${per.length > 1 ? ` in total · per video ${per.join(", ")}` : ""}</div>`;
   }
   const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map(esc).join("<br>")}</div>` : "";
-  const canResume = !running && j.status !== "queued" && made < j.count && (j.folders || []).length;
+  const canResume = !running && j.status !== "queued" && made < j.count
+    && ((j.folders || []).length || j.skipped || j.status === "paused");
+  const pauseBtn = running || j.status === "queued"
+    ? (j.pause ? `<button disabled style="width:100%;margin-top:8px">⏸️ Pausing after the current step…</button>`
+               : `<button class="pausebtn" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">⏸️ Pause after this step</button>`)
+    : "";
+  const usage = sumUsage(j.usage);
   const resumeBtn = canResume ? `<button class="primary resume" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">
       ↻ Resume from where it stopped</button>` : "";
   const thumbs = made ? `<div class="thumbs">${j.results.map((id) =>
@@ -672,7 +708,7 @@ function jobCard(j) {
   return `<div class="panel job ${j.status}">
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
-    ${body}${errBox}${resumeBtn}${thumbs}
+    ${body}${usageHtml(usage)}${errBox}${pauseBtn}${resumeBtn}${thumbs}
     <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
   </div>`;
 }
@@ -696,6 +732,12 @@ async function startResume(folders) {
   try { await api("/api/resume", { method: "POST", body: JSON.stringify({ folders }) }); toast("Resuming"); lastBusy = true; loadJobs(); }
   catch (e) { toast(e.message); }
 }
+document.addEventListener("click", async (e) => {
+  const p = e.target.closest("button.pausebtn"); if (!p) return;
+  p.disabled = true;
+  try { await api(`/api/jobs/${p.dataset.job}/pause`, { method: "POST" }); toast("Pausing after the current step"); loadJobs(); }
+  catch (err) { toast(err.message); p.disabled = false; }
+});
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("button.resume"); if (!b) return;
   b.disabled = true;
@@ -769,6 +811,34 @@ $("#autoList").onclick = async (e) => {
     loadAutomations();
   } catch (err) { toast(err.message); }
 };
+
+// ---- History: every run (manual, automation, resume) with its Claude tokens ----
+const TRIGGER = (t) => t.startsWith("automation: ") ? "⏰ " + t.slice(12) : t === "resume" ? "↻ Resume" : t === "schedule" ? "⏰ Daily" : "👆 Manual";
+async function loadHistory() {
+  const h = await api("/api/history");
+  $("#histTotal").innerHTML = h.total.runs
+    ? `${h.total.runs} runs · ${h.total.videos} videos made · 🪙 <b>${fmtTok(h.total.tokens)}</b> Claude tokens in total`
+      + (h.total.cost_usd ? ` · ≈ $${h.total.cost_usd.toFixed(2)} at API prices` : "")
+    : "Nothing yet. Every run you start, and every automation, will be listed here with the tokens it used.";
+  $("#histAutos").innerHTML = h.automations.length ? `<div class="panel"><h2>Automations</h2>${h.automations.map((a) => `
+      <div class="auto"><div class="top"><b>⏰ ${esc(a.name)}</b><span class="pill">🪙 ${fmtTok(a.tokens)}</span></div>
+      <div class="what">${a.runs} run${a.runs > 1 ? "s" : ""} · ${a.videos} video${a.videos === 1 ? "" : "s"} made ·
+        ${a.videos ? "about " + fmtTok(Math.round(a.tokens / a.videos)) + " tokens per video · " : ""}last ${new Date(a.last_run * 1000).toLocaleString()}</div></div>`).join("")}</div>` : "";
+  $("#histRuns").innerHTML = h.runs.map((r) => {
+    const steps = Object.fromEntries(Object.entries(r.usage.steps || {}).map(([k, x]) => [k, x.tokens]));
+    const mins = r.finished && r.created ? mmss(r.finished - r.created) : "";
+    return `<div class="panel job ${esc(r.status)}">
+      <div class="head"><div><div class="title">${TRIGGER(r.trigger || "manual")} · ${r.topic ? esc(r.topic) : "Trending topics"}
+          ${STYLE_TAG[r.style] ? " · " + STYLE_TAG[r.style] : ""}${r.length === "long" ? " · 🎬 Long" : ""}</div>
+        <div class="sub">${new Date(r.created * 1000).toLocaleString()}${mins ? " · took " + mins : ""} · ${r.made} of ${r.count} made</div></div>
+        <span class="pill ${esc(r.status)}">${LABEL[r.status] || esc(r.status)}</span></div>
+      ${usageHtml({ steps, total: r.usage.total.tokens, cost: r.usage.total.cost_usd }, "Total")}
+      ${r.videos.length ? `<details class="log"><summary>Tokens per video (${r.videos.length})</summary><ol>${r.videos.map((v) => `
+        <li>${v.made ? (v.id ? `<a href="#" onclick="openVideo('${esc(v.id)}');return false">${esc(v.title || v.id)}</a>` : esc(v.title)) : "Not finished"}
+          · 🪙 <b>${fmtTok(v.tokens)}</b> ${Object.entries(v.steps).map(([s, n]) => `<span class="tok">${esc(s)} ${fmtTok(n)}</span>`).join(" ")}</li>`).join("")}</ol></details>` : ""}
+    </div>`;
+  }).join("");
+}
 
 async function loadSettings() {
   loadAutomations().catch(() => {});
