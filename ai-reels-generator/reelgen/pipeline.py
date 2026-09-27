@@ -392,7 +392,7 @@ def _snapshot(run_dir) -> None:
     best = run_dir / "_best"
     shutil.rmtree(best, ignore_errors=True)
     best.mkdir()
-    for name in ("reel.mp4", "thumbnail.jpg", "review_frames.jpg"):
+    for name in ("reel.mp4", "thumbnail.jpg", "review_frames.jpg", "props.json"):
         if (run_dir / name).exists():
             shutil.copy2(run_dir / name, best / name)
 
@@ -405,7 +405,7 @@ def _restore_snapshot(run_dir) -> None:
         best.rmdir()
     for scratch in ("audio", "backgrounds", "sfx"):
         shutil.rmtree(run_dir / scratch, ignore_errors=True)
-    for scratch in [run_dir / "props.json", *run_dir.glob("music.*")]:  # render inputs for Remotion
+    for scratch in run_dir.glob("music.*"):  # render input for Remotion; props.json stays (timings for "my voice")
         scratch.unlink(missing_ok=True)
 
 

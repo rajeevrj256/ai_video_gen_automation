@@ -11,3 +11,4 @@ qrcode>=7.4
 imageio-ffmpeg>=0.5
 kokoro-onnx>=0.4
 tzdata   # time zones in Claude's "limit resets at" messages
+faster-whisper>=1.0   # checks your own recorded voiceover against the script (optional)

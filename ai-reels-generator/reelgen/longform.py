@@ -34,7 +34,7 @@ from .trends import collect_trends, load_history, save_history, trends_as_json, 
 from .verify import FactCheck, VerifyResult, Review, probe
 from .video import FFMPEG, _remotion_cli, _render_remotion, media_seconds
 from .visuals import pexels_video
-from .voice import synthesize_scenes
+from .voice import SceneAudio, synthesize_scenes
 
 log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
@@ -310,8 +310,10 @@ def _group_words(words: list[dict], max_words: int = 9, pause: float = 0.22) -> 
     return groups
 
 
-def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) -> dict:
-    """Record the voice (one take per chapter) and lay out every beat on the timeline."""
+def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
+               voices: list[list[SceneAudio]] | None = None) -> dict:
+    """Record the voice (one take per chapter) and lay out every beat on the timeline.
+    `voices`: recordings to use instead (the user's own voiceover), one list per chapter."""
     beats, chapters, lines, cues, spoken = [], [], [], [], []
     used: dict[str, str] = {}
     clip_ids: set[int] = set()  # never the same stock clip twice
@@ -320,9 +322,12 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress) 
         card = CARD_SECONDS if ci > 0 else 0.0
         chapters.append({"index": ci, "title": chapter.title, "start": round(t, 3), "card": card})
         t += card
-        progress(f"Recording voiceover: chapter {ci + 1} of {len(script.chapters)}")
-        audio = synthesize_scenes([b.narration for b in chapter.beats], cfg.long_voice, work / "audio" / f"ch{ci:02d}",
-                                  cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
+        if voices is not None:
+            audio = voices[ci]
+        else:
+            progress(f"Recording voiceover: chapter {ci + 1} of {len(script.chapters)}")
+            audio = synthesize_scenes([b.narration for b in chapter.beats], cfg.long_voice, work / "audio" / f"ch{ci:02d}",
+                                      cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
         for beat, sa in zip(chapter.beats, audio):
             duration = media_seconds(sa.path)
             v = _media_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids)

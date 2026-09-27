@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 WEB_DIR = PROJECT_ROOT / "web"
 MAX_BATCH = 15  # videos per Generate click
 MAX_LONG_BATCH = 5  # long videos take much longer to make
-MEDIA_FILES = {"reel.mp4", "thumbnail.jpg", "review_frames.jpg"}
+MEDIA_FILES = {"reel.mp4", "thumbnail.jpg", "review_frames.jpg", "reel-myvoice.mp4"}
 
 
 # ---------- background jobs ----------
@@ -109,7 +109,11 @@ class JobManager:
             cfg.video_style = job["style"]
             if job.get("captions") is not None:
                 cfg.captions = bool(job["captions"])
-            if job.get("rerender"):
+            if job.get("myvoice"):
+                from .myvoice import finish
+                r = job["myvoice"]
+                reports = [finish(cfg, video_dir(cfg, r["id"]), r["mode"], r["fit"], progress)]
+            elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
                 reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress)]
@@ -324,6 +328,46 @@ def create_app(cfg: Config) -> FastAPI:
                            report.get("format", "short"),
                            rerender={"id": video_id, "voice": body.get("voice") or None,
                                      "captions": None if body.get("captions") is None else bool(body.get("captions"))})
+
+    # ---- your own voiceover ----
+    @app.get("/api/videos/{video_id}/myvoice")
+    def my_voice_state(video_id: str):
+        from . import myvoice
+
+        return myvoice.segments(video_dir(cfg, video_id))
+
+    @app.post("/api/videos/{video_id}/myvoice/take")
+    async def my_voice_take(video_id: str, part: str, name: str, request: Request):
+        """One recording (the raw file is the body): part 'all' for one take, or a line number."""
+        from . import myvoice
+
+        folder = video_dir(cfg, video_id)
+        if part != "all" and not part.isdigit():
+            raise HTTPException(400, "part must be 'all' or a line number")
+        try:
+            saved = myvoice.save_take(folder, part, name, await request.body())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"file": saved, "takes": myvoice.takes(folder)}
+
+    @app.get("/api/videos/{video_id}/myvoice/file/{name}")
+    def my_voice_file(video_id: str, name: str):
+        from . import myvoice
+
+        path = video_dir(cfg, video_id) / myvoice.TAKES / Path(name).name
+        if not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.post("/api/videos/{video_id}/myvoice/finish")
+    def my_voice_finish(video_id: str, body: dict):
+        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        if any(j.get("myvoice", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "Your voice version of this video is already being made")
+        mode = "all" if body.get("mode") == "all" else "parts"
+        fit = "slides" if body.get("fit") == "slides" else "mine"
+        return jobs.submit(f"My voice: {report.get('title', video_id)}", 1, "myvoice", report.get("style"),
+                           report.get("format", "short"), myvoice={"id": video_id, "mode": mode, "fit": fit})
 
     @app.get("/api/categories")
     def list_categories():

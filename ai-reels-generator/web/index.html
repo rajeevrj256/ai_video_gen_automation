@@ -178,6 +178,40 @@
   .login { max-width: 340px; margin: 18vh auto 0; text-align: center; }
 .libitem { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
 .libitem audio { height: 32px; max-width: 100%; }
+
+  /* ---- Record your own voice: script on the left, video + recorder on the right ---- */
+  .vstudio { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: none; }
+  .vstudio.open { display: grid; grid-template-rows: auto 1fr; }
+  .vs-top { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; border-bottom: 1px solid var(--line); }
+  .vs-top b { flex: 1; }
+  .vs-body { display: grid; grid-template-columns: 1fr; overflow-y: auto; }
+  .vs-script { padding: 14px 16px; }
+  .vs-right { padding: 14px 16px; display: grid; gap: 12px; align-content: start; }
+  .vs-video { background: #000; border-radius: 12px; overflow: hidden; display: flex; justify-content: center; position: relative; }
+  .vs-video video { max-width: 100%; max-height: 52vh; display: block; }
+  .vs-count[hidden] { display: none; }
+  .vs-count { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 96px; font-weight: 900; color: #fff; background: rgba(0,0,0,.45); }
+  .vs-rec { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
+  .vs-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .vs-btns .rec { background: #d62828; color: #fff; border-color: #d62828; }
+  .vs-timer { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 64px; }
+  .vs-meter { flex: 1; min-width: 80px; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+  .vs-meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .08s; }
+  .vs-line { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+  .vs-line.now { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .vs-line .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .vs-line .say { font-size: 19px; line-height: 1.4; margin: 6px 0; }
+  .vs-line .pace-fast { color: var(--warn); } .vs-line .pace-calm { color: #8ecae6; }
+  .vs-line .tools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .vs-line audio { height: 30px; max-width: 220px; }
+  .vs-check { font-size: 13px; margin-top: 6px; padding: 6px 8px; border-radius: 8px; background: var(--panel-2); }
+  .vs-check.good { color: var(--ok); } .vs-check.bad { color: var(--warn); }
+  @media (min-width: 900px) {
+    .vs-body { grid-template-columns: minmax(380px, 1fr) minmax(0, 1.15fr); overflow: hidden; }
+    .vs-script, .vs-right { overflow-y: auto; height: calc(100vh - 56px); }
+    .vs-script { border-right: 1px solid var(--line); }
+    .vs-video video { max-height: 58vh; }
+  }
 </style>
 </head>
 <body>
@@ -410,6 +444,43 @@
   </div>
   <div class="details" id="details"></div>
 </div>
+
+<div class="vstudio" id="vstudio">
+  <div class="vs-top"><button id="vsClose">✕ Close</button><b id="vsTitle">Record your voice</b></div>
+  <div class="vs-body">
+    <div class="vs-script">
+      <div class="chips" id="vsMode">
+        <button class="chip on" data-mode="all">🎙 One take (whole video)</button>
+        <button class="chip" data-mode="parts">🧩 Line by line</button>
+      </div>
+      <p class="hint" id="vsHint"></p>
+      <div id="vsLines"></div>
+    </div>
+    <div class="vs-right">
+      <div class="vs-video"><video id="vsVideo" playsinline preload="auto"></video><div class="vs-count" id="vsCount" hidden></div></div>
+      <div class="vs-rec">
+        <div class="vs-btns">
+          <button class="rec" id="vsRec">● Record</button>
+          <button id="vsPause" disabled>⏸ Pause</button>
+          <button id="vsStop" disabled>■ Stop</button>
+          <span class="vs-timer" id="vsTimer">0:00.0</span>
+          <span class="vs-meter"><i id="vsLevel"></i></span>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin:0"><input type="checkbox" id="vsGuide" style="width:auto"> Hear the original voice while recording (use headphones)</label>
+        <div id="vsTake"></div>
+        <div id="vsNoMic" class="hint" hidden></div>
+        <label>Or upload a recording <input type="file" id="vsUpload" accept="audio/*,video/mp4,.webm,.m4a,.mp3,.wav,.ogg"></label>
+        <label for="vsFit">Timing</label>
+        <select id="vsFit">
+          <option value="mine">Keep my timing (the video follows my voice)</option>
+          <option value="slides">Match the video's timing (each line sped up or slowed down, at most 20%)</option>
+        </select>
+        <button class="primary" id="vsMake">✅ Make the video with my voice</button>
+        <div id="vsResult"></div>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -511,6 +582,9 @@ async function openVideo(id) {
       <div><label for="rv-cc">Subtitles</label><select id="rv-cc"><option value="true">💬 On</option><option value="false">🚫 Off</option></select></div>
     </div>
     <button id="rvGo" style="width:100%;margin-top:8px">🎙️ Re-make with these settings</button>
+    <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
+    ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
+      <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
     <div class="actions">
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
@@ -580,6 +654,8 @@ async function openVideo(id) {
   document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
   if (v.voice) $("#rv-voice").value = v.voice;
   $("#rv-cc").value = String(v.captions !== false);
+  $("#myVoice").onclick = () => { $("#video").pause(); openVoiceStudio(id, v.title); };
+  if ($("#playMine")) $("#playMine").onclick = (e) => { e.preventDefault(); $("#video").src = "/media/" + encodeURIComponent(id) + "/reel-myvoice.mp4?" + v.my_voice.made; $("#video").play(); };
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {
@@ -605,6 +681,177 @@ async function openVideo(id) {
   document.body.style.overflow = "hidden";
   $("#video").play().catch(() => {});
 }
+
+// ---- Record your own voice (reelgen/myvoice.py) ----
+const VS = { id: null, data: null, mode: "all", part: null, rec: null, chunks: [], stream: null, ctx: null,
+             t0: 0, paused: 0, pauseAt: 0, timer: null, stopAt: null, lastMade: null, poll: null };
+const fmtT = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+const vsUrl = (p = "") => `/api/videos/${encodeURIComponent(VS.id)}/myvoice${p}`;
+
+async function openVoiceStudio(id, title) {
+  VS.id = id;
+  $("#vsTitle").textContent = "Record your voice · " + title;
+  const video = $("#vsVideo");
+  video.src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
+  video.muted = !$("#vsGuide").checked; video.volume = 0.35;
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    $("#vsNoMic").hidden = false;
+    $("#vsNoMic").textContent = "This browser can't use the microphone on this address. Browsers only allow it on the computer running the app (http://localhost:8000) or over https. Record there, or record with your phone's voice recorder and upload the file below.";
+    $("#vsRec").disabled = true;
+  }
+  $("#vstudio").classList.add("open"); document.body.style.overflow = "hidden";
+  VS.pickMode = true; $("#vsResult").innerHTML = "";
+  await vsLoad();
+  VS.lastMade = VS.data.result && VS.data.result.made;
+}
+
+async function vsLoad() {
+  VS.data = await api(vsUrl());
+  const d = VS.data;
+  if (VS.pickMode) { // first open: continue in the mode you recorded in before
+    VS.pickMode = false;
+    if (Object.keys(d.takes.parts).length && !d.takes.all) VS.mode = "parts";
+    else if (d.takes.all) VS.mode = "all";
+  }
+  document.querySelectorAll("#vsMode .chip").forEach((c) => c.classList.toggle("on", c.dataset.mode === VS.mode));
+  $("#vsHint").innerHTML = (VS.mode === "all"
+    ? "Press <b>● Record</b>: after a 3-second count the video plays from the start (muted) and the line you should be saying lights up. Speak each line in its slot. Pause any time; it stops by itself at the end."
+    : "Record each line on its own with its <b>● Record</b> button: the video plays that line's part and holds at its end; press <b>■ Stop</b> when you've finished speaking. Re-record any line.")
+    + (d.exact ? "" : "<br>⚠️ This video was made before exact timings were saved, so the times are estimates.");
+  const checks = Object.fromEntries(((d.result && d.result.lines) || []).map((c) => [c.index, c]));
+  $("#vsLines").innerHTML = d.segments.map((s) => {
+    const c = checks[s.index], take = d.takes.parts[s.index];
+    return `<div class="vs-line" data-i="${s.index}" data-start="${s.start}" data-end="${s.end}">
+      <div class="meta"><b>${esc(s.label)}</b><span>${fmtT(s.start)} – ${fmtT(s.end)}</span>
+        <span>${s.words} words in ${s.seconds}s</span><span class="pace-${s.pace}">${s.rate} words/s · ${s.pace} pace</span></div>
+      <div class="say">${esc(s.text)}</div>
+      <div class="tools">${VS.mode === "parts" ? `<button class="mini rec" data-rec="${s.index}">● Record this line</button>
+        ${take ? `<audio controls preload="none" src="${vsUrl("/file/" + encodeURIComponent(take))}"></audio> ✓` : `<span class="hint">not recorded</span>`}` : ""}</div>
+      ${c ? `<div class="vs-check ${c.verdict === "good" ? "good" : "bad"}">${c.verdict === "good" ? "✅" : "⚠️"} ${esc(c.verdict)} ·
+        you ${c.your_seconds}s vs video ${c.video_seconds}s (${c.speed}${c.fitted_by && c.fitted_by !== 1 ? `, fitted ×${c.fitted_by}` : ""})
+        ${c.words_matched !== undefined ? `· ${Math.round(c.words_matched * 100)}% of the words` : ""}
+        ${c.missing && c.missing.length ? `<br>Missed or changed: <b>${c.missing.map(esc).join(", ")}</b>${c.extra.length ? ` (heard: ${c.extra.map(esc).join(", ")})` : ""}` : ""}
+        ${c.heard ? `<br><span class="hint">Heard: “${esc(c.heard)}”</span>` : ""}</div>` : ""}
+    </div>`;
+  }).join("");
+  $("#vsTake").innerHTML = VS.mode === "all" && d.takes.all
+    ? `Your take: <audio controls preload="none" src="${vsUrl("/file/" + encodeURIComponent(d.takes.all))}"></audio>` : "";
+  const r = d.result;
+  $("#vsResult").innerHTML = r && d.has_video ? `<div class="verdict ${r.good_lines === r.lines.length ? "ok" : "warn"}">
+      ${esc(r.summary)}${r.transcribed ? "" : " (install faster-whisper to check the words too)"} · ${r.duration_seconds}s</div>
+      <div class="vs-btns"><button id="vsWatch">▶ Watch the version with my voice</button>
+      <a href="/media/${encodeURIComponent(VS.id)}/reel-myvoice.mp4" download="${esc(VS.id)}-myvoice.mp4"><button>⬇ Save it</button></a>
+      <button id="vsOrig">↺ Original video</button></div>` : "";
+  if ($("#vsWatch")) {
+    $("#vsWatch").onclick = () => { const v = $("#vsVideo"); v.src = "/media/" + encodeURIComponent(VS.id) + "/reel-myvoice.mp4?" + r.made; v.muted = false; v.volume = 1; v.play(); };
+    $("#vsOrig").onclick = () => { const v = $("#vsVideo"); v.src = "/media/" + encodeURIComponent(VS.id) + "/reel.mp4"; v.muted = !$("#vsGuide").checked; v.volume = 0.35; };
+  }
+}
+
+// The line being spoken now lights up and scrolls into view.
+$("#vsVideo").addEventListener("timeupdate", () => {
+  const t = $("#vsVideo").currentTime;
+  document.querySelectorAll(".vs-line").forEach((el) => {
+    const now = t >= +el.dataset.start && t < +el.dataset.end;
+    if (now && !el.classList.contains("now")) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.toggle("now", now);
+  });
+  if (VS.stopAt !== null && t >= VS.stopAt) { $("#vsVideo").pause(); VS.stopAt = null; } // line by line: hold at the line's end
+});
+$("#vsVideo").addEventListener("ended", () => { if (VS.rec && VS.mode === "all") vsStop(); });
+$("#vsGuide").onchange = () => { $("#vsVideo").muted = !$("#vsGuide").checked; };
+document.querySelectorAll("#vsMode .chip").forEach((c) => c.onclick = () => { if (VS.rec) return; VS.mode = c.dataset.mode;
+  document.querySelectorAll("#vsMode .chip").forEach((x) => x.classList.toggle("on", x === c)); vsLoad(); });
+
+async function vsStart(part) {
+  if (VS.rec) return;
+  try {
+    VS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) { toast("Microphone blocked: " + e.message); return; }
+  const type = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  VS.part = part; VS.chunks = [];
+  VS.rec = new MediaRecorder(VS.stream, type ? { mimeType: type } : {});
+  VS.rec.ondataavailable = (e) => e.data.size && VS.chunks.push(e.data);
+  // Level meter, so you can see the mic is picking you up.
+  VS.ctx = new AudioContext(); const an = VS.ctx.createAnalyser(); an.fftSize = 512;
+  VS.ctx.createMediaStreamSource(VS.stream).connect(an); const buf = new Uint8Array(an.fftSize);
+  const video = $("#vsVideo");
+  const seg = part === "all" ? null : VS.data.segments[part];
+  video.pause(); video.currentTime = seg ? seg.start : 0;
+  for (const n of [3, 2, 1]) { $("#vsCount").hidden = false; $("#vsCount").textContent = n; await new Promise((r) => setTimeout(r, 800)); }
+  $("#vsCount").hidden = true;
+  VS.stopAt = seg ? seg.end : null;
+  VS.rec.start(250); video.play().catch(() => {});
+  VS.t0 = performance.now(); VS.paused = 0;
+  VS.timer = setInterval(() => {
+    an.getByteTimeDomainData(buf); let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    $("#vsLevel").style.width = Math.min(100, peak / 1.28) + "%";
+    if (VS.rec && VS.rec.state === "recording") $("#vsTimer").textContent = fmtT((performance.now() - VS.t0 - VS.paused) / 1000);
+  }, 100);
+  $("#vsRec").disabled = true; $("#vsPause").disabled = false; $("#vsStop").disabled = false;
+  $("#vsPause").textContent = "⏸ Pause";
+}
+
+function vsPause() {
+  const video = $("#vsVideo");
+  if (VS.rec.state === "recording") { VS.rec.pause(); video.pause(); VS.pauseAt = performance.now(); $("#vsPause").textContent = "▶ Resume"; }
+  else { VS.rec.resume(); video.play().catch(() => {}); VS.paused += performance.now() - VS.pauseAt; $("#vsPause").textContent = "⏸ Pause"; }
+}
+
+async function vsStop() {
+  if (!VS.rec) return;
+  const rec = VS.rec; VS.rec = null;
+  const done = new Promise((r) => rec.onstop = r);
+  rec.stop(); await done;
+  clearInterval(VS.timer); $("#vsLevel").style.width = "0";
+  VS.stream.getTracks().forEach((t) => t.stop()); VS.ctx.close(); $("#vsVideo").pause(); VS.stopAt = null;
+  $("#vsRec").disabled = false; $("#vsPause").disabled = true; $("#vsStop").disabled = true;
+  const blob = new Blob(VS.chunks, { type: rec.mimeType });
+  const ext = rec.mimeType.includes("mp4") ? ".m4a" : rec.mimeType.includes("ogg") ? ".ogg" : ".webm";
+  await vsUpload(VS.part, blob, "take" + ext);
+}
+
+async function vsUpload(part, blob, name) {
+  try {
+    const res = await fetch(vsUrl(`/take?part=${part}&name=${encodeURIComponent(name)}`), { method: "POST", body: blob, credentials: "same-origin" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    toast(part === "all" ? "Take saved" : "Line saved");
+    await vsLoad();
+  } catch (e) { toast("Couldn't save the recording: " + e.message); }
+}
+
+$("#vsRec").onclick = () => vsStart("all");
+$("#vsPause").onclick = vsPause;
+$("#vsStop").onclick = vsStop;
+$("#vsLines").addEventListener("click", (e) => { const b = e.target.closest("[data-rec]"); if (b) vsStart(+b.dataset.rec); });
+$("#vsUpload").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  let part = "all";
+  if (VS.mode === "parts") {
+    const n = prompt(`Which line is this recording for? (1-${VS.data.segments.length})`); if (!n) return;
+    part = String(Math.max(1, Math.min(VS.data.segments.length, parseInt(n, 10) || 1)) - 1);
+  }
+  await vsUpload(part, f, f.name); e.target.value = "";
+};
+$("#vsMake").onclick = async () => {
+  try {
+    await api(vsUrl("/finish"), { method: "POST", body: JSON.stringify({ mode: VS.mode, fit: $("#vsFit").value }) });
+    $("#vsResult").innerHTML = `<div class="hint"><span class="spinner"></span>Checking your voice and editing the video (a few minutes; also on the Create page)…</div>`;
+    clearInterval(VS.poll);
+    VS.poll = setInterval(async () => {
+      const [d, jobs] = await Promise.all([api(vsUrl()), api("/api/jobs")]);
+      const job = jobs.find((j) => j.myvoice && j.myvoice.id === VS.id);
+      if (d.result && d.result.made !== VS.lastMade) { clearInterval(VS.poll); VS.lastMade = d.result.made; toast("Your voice version is ready"); vsLoad(); }
+      else if (job && job.status === "failed") { clearInterval(VS.poll);
+        $("#vsResult").innerHTML = `<div class="errbox">${esc((job.log.slice(-1)[0] || {}).msg || "Failed")}</div>`; }
+    }, 4000);
+  } catch (e) { toast(e.message); }
+};
+$("#vsClose").onclick = () => {
+  if (VS.rec) vsStop();
+  clearInterval(VS.poll); $("#vsVideo").pause();
+  $("#vstudio").classList.remove("open"); document.body.style.overflow = $("#player").classList.contains("open") ? "hidden" : "";
+};
 
 function closePlayer() {
   $("#video").pause(); $("#video").removeAttribute("src"); $("#video").load();

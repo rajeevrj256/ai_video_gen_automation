@@ -42,6 +42,8 @@ def rerender(cfg: Config, folder: Path, voice: str | None = None, captions: bool
         move(work / "reel.mp4", folder / "reel.mp4.new")
         (folder / "reel.mp4").unlink(missing_ok=True)
         move(folder / "reel.mp4.new", folder / "reel.mp4")
+        if not long and (work / "props.json").exists():  # the new timings, for recording your own voice
+            move(work / "props.json", folder / "props.json")
         if (work / "thumbnail.jpg").exists():
             move(work / "thumbnail.jpg", folder / "thumbnail.jpg.new")
             (folder / "thumbnail.jpg").unlink(missing_ok=True)
