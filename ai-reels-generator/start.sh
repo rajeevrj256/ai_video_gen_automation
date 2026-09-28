@@ -10,10 +10,12 @@ fi
 # Every start: installs anything new that a git pull added (quick when nothing is missing).
 .venv/bin/pip install -q -r requirements.txt
 # The video editor (Remotion) needs Node.js. Without it videos still work, using a simpler edit.
-if [ ! -e remotion/node_modules/.bin/remotion ]; then
+# Installs on the first run, and again whenever a git pull changed its packages.
+if [ ! -e remotion/node_modules/.bin/remotion ] || ! cmp -s remotion/package-lock.json remotion/node_modules/.installed-lock; then
   if command -v npm >/dev/null; then
-    echo "First run: installing the video editor (takes a few minutes)..."
-    (cd remotion && npm install --no-audit --no-fund --loglevel=error && node_modules/.bin/remotion browser ensure) \
+    echo "Installing the video editor packages (takes a few minutes)..."
+    (cd remotion && npm install --no-audit --no-fund --loglevel=error && cp package-lock.json node_modules/.installed-lock \
+      && node_modules/.bin/remotion browser ensure) \
       || echo "Note: the video editor didn't install; videos will use the simpler edit."
   else
     echo "Note: Node.js not found, so videos use the simpler edit without animated graphics."

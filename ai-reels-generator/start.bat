@@ -8,7 +8,8 @@ if not exist .venv (
 )
 rem Every start: installs anything new that a git pull added (quick when nothing is missing).
 .venv\Scripts\python -m pip install -q -r requirements.txt
-if not exist remotion\node_modules\.bin\remotion.cmd call :install_editor
+rem Installs the editor on the first run, and again whenever a git pull changed its packages.
+if not exist remotion\node_modules\.bin\remotion.cmd (call :install_editor) else (fc /b remotion\package-lock.json remotion\node_modules\.installed-lock >nul 2>nul || call :install_editor)
 if not exist .env copy .env.example .env >nul
 where claude >nul 2>nul || echo Note: Claude Code not found. Install it from https://claude.com/claude-code and run "claude" once to log in, or put ANTHROPIC_API_KEY in .env.
 .venv\Scripts\python -m reelgen serve %*
@@ -22,9 +23,10 @@ where npm >nul 2>nul || (
   echo       Install Node.js LTS from https://nodejs.org and start again to get the full edit.
   exit /b
 )
-echo First run: installing the video editor, takes a few minutes...
+echo Installing the video editor packages, takes a few minutes...
 pushd remotion
 call npm install --no-audit --no-fund --loglevel=error
+if not errorlevel 1 copy /y package-lock.json node_modules\.installed-lock >nul
 if not errorlevel 1 call node_modules\.bin\remotion browser ensure
 popd
 exit /b
