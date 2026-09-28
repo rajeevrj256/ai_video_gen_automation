@@ -356,6 +356,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         "chapters": chapters,
         "beats": beats,
         "captions": captions if cfg.captions else [],  # off: the visuals use the space instead
+        "all_captions": captions,  # kept either way, so subtitles can be switched later without re-recording
         "music": music.relative_to(work).as_posix() if music else None,
         "sfx": {k: p.relative_to(work).as_posix() for k, p in sfx.items()},
         "cues": cues,
@@ -695,7 +696,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         script, verdict, props = best["script"], best["verdict"], best["props"]
         move(best["file"], work / "reel.mp4")
         (work / f"attempt{best['attempt']}.jpg").replace(work / "thumbnail.jpg")
-        for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg"), *work.glob("music.*")]:
+        for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg")]:
             scratch.unlink(missing_ok=True)
         (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-long"

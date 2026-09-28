@@ -37,7 +37,9 @@ def rerender(cfg: Config, folder: Path, voice: str | None = None, captions: bool
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir()
     try:
-        info = _long(cfg, folder, work, report, progress) if long else _short(cfg, folder, work, progress)
+        same_voice = not voice or voice == report.get("voice")
+        info = (_long(cfg, folder, work, report, progress, same_voice) if long
+                else _short(cfg, folder, work, progress))
         progress("Replacing the video")
         move(work / "reel.mp4", folder / "reel.mp4.new")
         (folder / "reel.mp4").unlink(missing_ok=True)
@@ -86,11 +88,43 @@ def _short(cfg: Config, folder: Path, work: Path, progress: Progress) -> dict:
         backgrounds = fetch_backgrounds([s.visual_queries for s in script.scenes], cfg.pexels_api_key,
                                         cfg.width, cfg.height, work / "backgrounds")
     progress("Editing the video (takes a few minutes)")
-    rendered = render_video(script.title, scenes, backgrounds, cfg, work / "reel.mp4",
-                            graphics=[s.graphic for s in script.scenes],
-                            transitions=[s.transition for s in script.scenes],
-                            sounds=[s.sounds for s in script.scenes], music=script.music)
+    from .pipeline import _render_slot
+    with _render_slot(cfg):  # one edit at a time: two renders only slow each other down
+        rendered = render_video(script.title, scenes, backgrounds, cfg, work / "reel.mp4",
+                                graphics=[s.graphic for s in script.scenes],
+                                transitions=[s.transition for s in script.scenes],
+                                sounds=[s.sounds for s in script.scenes], music=script.music)
     return {"duration_seconds": rendered["duration_seconds"], "editor": rendered.get("editor", "")}
+
+
+def _same_voice_props(folder: Path, work: Path, cfg: Config, music_name: str) -> dict | None:
+    """The saved edit with only the subtitles switched, when its voice and sound files are still
+    there: no new voiceover, so the timings (and YouTube chapters) stay exactly the same."""
+    path = folder / "props.json"
+    if not path.exists():
+        return None
+    props = json.loads(path.read_text(encoding="utf-8"))
+    captions = props.get("all_captions", props.get("captions") or [])
+    if cfg.captions and not captions:
+        return None  # made with subtitles off and no saved lines: record again to get word timings
+    files = [b["audio"] for b in props.get("beats", []) if b.get("audio")] + [c["src"] for c in props.get("cues", [])]
+    files += [v for v in (props.get("sfx") or {}).values()]
+    files += [b["visual"]["src"] for b in props.get("beats", []) if b["visual"].get("src")]
+    if not all((folder / f).exists() for f in files):
+        return None
+    for f in files:  # the render reads everything from its own folder
+        (work / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(folder / f, work / f)
+    if props.get("music"):  # finished videos made before it was kept: make or copy the same track again
+        if (folder / props["music"]).exists():
+            shutil.copy(folder / props["music"], work / props["music"])
+        else:
+            from .media import pick_music
+            track = pick_music(cfg, music_name, work, props["duration"])
+            props["music"] = track.relative_to(work).as_posix() if track else None
+    props["captions"] = captions if cfg.captions else []
+    props["all_captions"] = captions
+    return props
 
 
 def _same_footage(folder: Path, work: Path, count: int) -> list[list[Path]] | None:
@@ -125,17 +159,29 @@ def _same_footage(folder: Path, work: Path, count: int) -> list[list[Path]] | No
     return result
 
 
-def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progress) -> dict:
+def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progress, same_voice: bool = False) -> dict:
     from .longform import FFMPEG, LongScript, build_long, youtube_chapters
+    from .pipeline import _render_slot
     from .video import _remotion_cli, _render_remotion
 
     script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
-    props = build_long(script, cfg, work, progress)
-    progress(f"Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
+    props = _same_voice_props(folder, work, cfg, script.music) if same_voice else None
+    if props is None:
+        props = build_long(script, cfg, work, progress)
+    else:
+        progress("Same voice: keeping the recorded voiceover and timings, only the subtitles change")
     cli = _remotion_cli()
     if cli is None:
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
-    _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, timeout=4 * 3600)
+    slot = _render_slot(cfg)
+    if not slot.acquire(blocking=False):  # one edit at a time: two renders only slow each other down
+        progress("Waiting for the editor: another video is being edited")
+        slot.acquire()
+    try:
+        progress(f"Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
+        _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, timeout=4 * 3600)
+    finally:
+        slot.release()
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "3", "-i", str(work / "reel.mp4"), "-frames:v", "1",
                     "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
     (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")

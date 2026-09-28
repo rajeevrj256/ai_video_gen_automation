@@ -371,8 +371,11 @@ def _render_short(cfg: Config, folder: Path, work: Path, report: dict, script: d
         local.append(SceneAudio(dst, sc.words))
     backgrounds = _same_footage(folder, work, len(s.scenes)) or fetch_backgrounds(
         [x.visual_queries for x in s.scenes], cfg.pexels_api_key, cfg.width, cfg.height, work / "backgrounds")
-    render_video(s.title, local, backgrounds, cfg, work / "reel.mp4", graphics=[x.graphic for x in s.scenes],
-                 transitions=[x.transition for x in s.scenes], sounds=[x.sounds for x in s.scenes], music=s.music)
+    from .pipeline import _render_slot
+    with _render_slot(cfg):  # one edit at a time
+        render_video(s.title, local, backgrounds, cfg, work / "reel.mp4", graphics=[x.graphic for x in s.scenes],
+                     transitions=[x.transition for x in s.scenes], sounds=[x.sounds for x in s.scenes],
+                     music=s.music)
 
 
 def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: dict, scenes: list[SceneAudio],
@@ -396,4 +399,6 @@ def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: di
     cli = _remotion_cli()
     if cli is None:
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
-    _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, timeout=4 * 3600)
+    from .pipeline import _render_slot
+    with _render_slot(cfg):  # one edit at a time
+        _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, timeout=4 * 3600)
