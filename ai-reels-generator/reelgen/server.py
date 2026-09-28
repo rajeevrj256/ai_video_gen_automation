@@ -223,9 +223,35 @@ class LoginRequest(BaseModel):
     pin: str
 
 
+SAMPLES_DIR = PROJECT_ROOT.parent / "sample-videos"
+
+
+def import_samples(cfg: Config) -> None:
+    """Copy the example videos that come with the repo (sample-videos/<id>/) into the
+    library once, so they show on the Videos page. One you delete stays deleted."""
+    done_file = cfg.output_dir / "samples_imported.json"
+    done = set(json.loads(done_file.read_text(encoding="utf-8"))) if done_file.exists() else set()
+    for folder in sorted(SAMPLES_DIR.glob("*/report.json")) if SAMPLES_DIR.exists() else []:
+        sample = folder.parent
+        if sample.name in done:
+            continue
+        dest = cfg.output_dir / sample.name
+        if not dest.exists():
+            try:
+                shutil.copytree(sample, dest)
+                log.info("Added the sample video %s to the library", sample.name)
+            except OSError as exc:
+                log.warning("Couldn't add sample video %s: %s", sample.name, exc)
+                continue
+        done.add(sample.name)
+        done_file.parent.mkdir(parents=True, exist_ok=True)
+        done_file.write_text(json.dumps(sorted(done)), encoding="utf-8")
+
+
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Reel Studio", docs_url=None, redoc_url=None)
     jobs = JobManager(cfg)
+    import_samples(cfg)
     # Which code this server is running (shown in Settings), so a git pull without a
     # restart is easy to spot: the running app keeps the code it started with.
     try:
@@ -431,6 +457,46 @@ def create_app(cfg: Config) -> FastAPI:
 
     def busy_folders() -> set[str]:
         return {f for j in jobs.jobs if j["status"] in ("queued", "running") for f in j.get("folders", []) + j.get("resume", [])}
+
+    @app.delete("/api/jobs/{job_id}")
+    def remove_job(job_id: str, discard: bool = False):
+        """Take a finished or failed job off the list; `discard` also deletes the files of
+        videos it left unfinished (they can't be resumed after that)."""
+        from .pipeline import CHECKPOINT
+        with jobs.lock:
+            job = next((j for j in jobs.jobs if j["id"] == job_id), None)
+            if job is None:
+                raise HTTPException(404, "No such job")
+            if job["status"] in ("queued", "running"):
+                raise HTTPException(409, "Pause it first; a running job can't be removed")
+            jobs.jobs.remove(job)
+        if discard:
+            busy = busy_folders()
+            for f in set(job.get("folders", []) + job.get("resume", [])) - busy:
+                path = (cfg.output_dir / f).resolve()
+                if path.parent == cfg.output_dir.resolve() and (path / CHECKPOINT).exists():
+                    shutil.rmtree(path, ignore_errors=True)
+        return {"ok": True}
+
+    @app.post("/api/jobs/clear")
+    def clear_jobs():
+        """Remove every job that has finished (done, failed, partial or paused) from the list."""
+        with jobs.lock:
+            keep = [j for j in jobs.jobs if j["status"] in ("queued", "running")]
+            jobs.jobs.clear()
+            jobs.jobs.extend(keep)
+        return {"ok": True}
+
+    @app.delete("/api/unfinished/{folder_id}")
+    def discard_unfinished(folder_id: str):
+        from .pipeline import CHECKPOINT
+        path = (cfg.output_dir / folder_id).resolve()
+        if path.parent != cfg.output_dir.resolve() or not (path / CHECKPOINT).exists():
+            raise HTTPException(404, "Not an unfinished video")
+        if folder_id in busy_folders():
+            raise HTTPException(409, "It's being made right now")
+        shutil.rmtree(path, ignore_errors=True)
+        return {"ok": True}
 
     @app.get("/api/unfinished")
     def list_unfinished():

@@ -272,6 +272,7 @@
       <p class="hint" id="eta">About 8–15 minutes. You can close this page; it keeps running on your computer.</p>
     </div>
     <div id="unfinished"></div>
+    <button id="clearJobs" class="mini" hidden style="margin:4px 0 10px">🧹 Clear finished and failed jobs</button>
     <div id="jobs"></div>
   </section>
 
@@ -997,6 +998,7 @@ function jobCard(j) {
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
     ${body}${usageHtml(usage)}${errBox}${pauseBtn}${resumeBtn}${thumbs}
+    ${running || j.status === "queued" ? "" : `<button class="mini removejob" data-job="${esc(j.id)}" data-unfinished="${canResume ? 1 : 0}" style="margin-top:8px">✕ Remove from list</button>`}
     <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
   </div>`;
 }
@@ -1010,10 +1012,16 @@ async function loadUnfinished() {
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
           <span class="pill">${u.length === "long" ? "🎬 Long" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
-        <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button></div></div>`).join("")}
+        <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
+          <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
       ${items.length > 1 ? `<button id="resumeAll" style="width:100%">↻ Resume all ${items.length}</button>` : ""}
     </div>` : "";
   document.querySelectorAll("[data-resume]").forEach((b) => b.onclick = () => startResume([b.dataset.resume]));
+  document.querySelectorAll("[data-discard]").forEach((b) => b.onclick = async () => {
+    if (!confirm("Delete this unfinished video? It can't be resumed after that.")) return;
+    try { await api("/api/unfinished/" + encodeURIComponent(b.dataset.discard), { method: "DELETE" }); toast("Discarded"); loadJobs(); }
+    catch (err) { toast(err.message); }
+  });
   if ($("#resumeAll")) $("#resumeAll").onclick = () => startResume(items.map((u) => u.id));
 }
 async function startResume(folders) {
@@ -1033,11 +1041,24 @@ document.addEventListener("click", async (e) => {
   catch (err) { toast(err.message); b.disabled = false; }
 });
 
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button.removejob"); if (!b) return;
+  // A failed job's half-made video can be kept (resume it later from "Unfinished videos") or deleted.
+  const discard = b.dataset.unfinished === "1"
+    && confirm("Also delete this job's unfinished video?\nOK = delete it too · Cancel = keep it under Unfinished videos");
+  try { await api(`/api/jobs/${b.dataset.job}?discard=${discard}`, { method: "DELETE" }); loadJobs(); }
+  catch (err) { toast(err.message); }
+});
+$("#clearJobs").onclick = async () => {
+  try { await api("/api/jobs/clear", { method: "POST" }); toast("Cleared finished jobs"); loadJobs(); } catch (err) { toast(err.message); }
+};
+
 async function loadJobs() {
   loadUnfinished().catch(() => {});
   const jobs = await api("/api/jobs");
   const open = new Set([...document.querySelectorAll("details.log[open]")].map((d) => d.dataset.job));
   $("#jobs").innerHTML = jobs.map(jobCard).join("");
+  $("#clearJobs").hidden = !jobs.some((j) => !["queued", "running"].includes(j.status));
   open.forEach((id) => { const d = document.querySelector(`details.log[data-job="${id}"]`); if (d) d.open = true; });
 }
 

@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
-from .fsutil import move
+from .fsutil import move, rebase
 from .config import MAX_SECONDS, Config
 from .llm import meter_add_earlier, meter_records, set_limit_reporter, start_meter, summarize_usage, usage_line
 from .notifier import notify
@@ -155,6 +155,14 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             save(attempt=attempt, stage="scripted", script=script.model_dump(), facts=_enc_result(facts),
                  feedback=feedback)
 
+        if stage in ("voiced", "footage", "rendered") and not all(
+                Path(x["path"]).exists() for x in resume.get("scenes") or [{"path": ""}]):
+            progress(f"{tag} The saved voiceover files are gone; recording it again")
+            stage = "scripted"
+        if stage in ("footage", "rendered") and not all(
+                Path(p).exists() for clips in resume.get("backgrounds") or [[""]] for p in clips):
+            progress(f"{tag} The saved footage files are gone; downloading them again")
+            stage = "voiced"
         if stage in ("voiced", "footage", "rendered"):
             scenes = _dec_scenes(resume["scenes"])
         else:
@@ -371,7 +379,7 @@ def resume_video(cfg: Config, folder_id: str, progress: Progress = log.info) -> 
     run_dir = cfg.output_dir / folder_id
     if run_dir.parent.resolve() != cfg.output_dir.resolve() or not (run_dir / CHECKPOINT).exists():
         raise RuntimeError(f"Nothing to resume in {folder_id}")
-    state = json.loads((run_dir / CHECKPOINT).read_text(encoding="utf-8"))
+    state = rebase(json.loads((run_dir / CHECKPOINT).read_text(encoding="utf-8")), run_dir)
     if state.get("length") == "long":
         from .longform import resume_long
         return resume_long(cfg, run_dir, state, progress)

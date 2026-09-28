@@ -601,6 +601,10 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             if not stage:
                 save(attempt=attempt, stage="scripted", script=script.model_dump(), feedback=feedback)
 
+            if stage in ("voiced", "rendered") and not all(
+                    (work / b["audio"]).exists() for b in resume["props"]["beats"] if b.get("audio")):
+                progress(f"{tag} The saved voiceover files are gone; recording it again")
+                stage = "scripted"
             if stage in ("voiced", "rendered"):
                 props = resume["props"]
             else:

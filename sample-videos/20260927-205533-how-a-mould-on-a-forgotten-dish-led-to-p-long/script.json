@@ -1,0 +1,2474 @@
+{
+  "topic": "How a mould on a forgotten dish led to penicillin",
+  "why_chosen": "The famous 'lucky mould' story hides a stronger twist: Fleming's mould could never have supplied the world, and the one that did came off a rotten melon from an Illinois market, carried in by someone history still cannot name for certain, which gives one question to carry for ten minutes.",
+  "facts_checked": "Fleming back at St Mary's on 3 September 1928, mould probably from the mycology lab on the floor below, named penicillin 7 March 1929, paper in British Journal of Experimental Pathology June 1929, two assistants (Ridley and Craddock) tried to extract it and left (Wikipedia, History of penicillin; Science Museum). Lysozyme found 1921 (Fleming biography). Chain left Germany 1933, joined Florey's Oxford department 1935; Oxford team took up penicillin 1939 with Rockefeller funding. Mouse test Saturday 25 May 1940, 8 mice, 4 treated survived, untreated dead by early Sunday; Lancet August 1940 (Wikipedia; Science Museum). Pie dishes, biscuit tins, bedpans, milk churns; about 150 flasks for a small sample; 700 ceramic vessels by James Macintyre and Co, first batch seeded Christmas Day 1940 (Oxford History of Science Museum). Six 'penicillin girls' at two pounds a week (Science Museum). Spores rubbed into coats in case of invasion (Eric Lax, The Mould in Dr Florey's Coat). Albert Alexander, 43, Oxford police constable, first penicillin injection 12 February 1941 at the Radcliffe Infirmary (no dose figure stated because sources disagree), improved within 24 hours, urine recycled, died 15 March 1941 (Wikipedia; Science Museum). Chapter no longer calls him 'the first patient'. Florey and Heatley reached New York 2 July 1941 via Lisbon and met the Peoria (NRRL) team 14 July (HistoryNet). Moyer's corn steep liquor about tenfold yield increase, lactose swap (Wikipedia, Andrew J. Moyer). Worldwide soil and mould search; mouldy cantaloupe from a Peoria market, 1943, strain NRRL 1951, 'parent of all strains used commercially' (USDA-ARS Tellus 'The Enduring Mystery of Moldy Mary'). Mary Hunt's role collecting mould specimens from produce markets is documented; who found the melon is uncertain: Hunt claimed it in a 1962 article, Kenneth Raper credited a Peoria woman who handed it to a guard and left unnamed, and an Abbott advertisement notation names Mary Lou Finley Roberson as 'the original Moldy Mary' (USDA-ARS; Peoria Magazine). X-ray mutant at Cold Spring Harbor 250 to 500 units per millilitre, UV at University of Wisconsin nearly doubled it again (PMC3673487). Pfizer bought an old Brooklyn ice plant for its refrigeration, fourteen deep tanks, opened 1 March 1944 (ACS National Historic Chemical Landmark booklet; EurekAlert). 2.3 million doses for D-Day (UW-Madison; IBMS). Nobel 1945 to Fleming, Florey and Chain; Fleming's Nobel lecture 11 December 1945 quote 'The time may come when penicillin can be bought by anyone in the shops' and warning on underdosing and resistance (NobelPrize.org).",
+  "category": "History",
+  "subject": "How penicillin went from Fleming's contaminated dish to mass production, and where the mould that actually supplied the world came from",
+  "hook_question": "If Fleming's famous mould did not make the world's penicillin, where did the one that did come from?",
+  "answer": "Almost all the world's penicillin descends from a mould found on a rotten cantaloupe from a Peoria, Illinois market in 1943, a strain later boosted by X-rays and ultraviolet and grown in deep tanks, and nobody is certain who carried that melon in.",
+  "youtube_title": "The Penicillin Mould That Saved Millions Wasn't Fleming's",
+  "chapters": [
+    {
+      "title": "Intro",
+      "beats": [
+        {
+          "narration": "The mould that saved millions was not Fleming's mould. Nor did it come from a laboratory.",
+          "visual": {
+            "type": "title",
+            "headline": "Not Fleming's Mould",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "drone",
+              "word": "saved",
+              "volume": "soft"
+            },
+            {
+              "sound": "hit",
+              "word": "not",
+              "volume": "strong"
+            }
+          ]
+        },
+        {
+          "narration": "Every schoolchild hears the same story: a busy scientist, a forgotten dish, a lucky blue-green mould, and the age of antibiotics begins.",
+          "visual": {
+            "type": "icons",
+            "headline": "The story everyone knows",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "flask-conical",
+              "microscope",
+              "pill"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "But in February 1941, the entire penicillin supply in Oxford could not save one policeman.",
+          "visual": {
+            "type": "keyword",
+            "headline": "One Policeman",
+            "sub": "Oxford, February 1941",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "heartbeat",
+              "word": "save",
+              "volume": "soft"
+            }
+          ]
+        },
+        {
+          "narration": "Three years later, factories in America had two point three million doses ready for a single invasion.",
+          "visual": {
+            "type": "stat",
+            "headline": "2.3 million",
+            "sub": "penicillin doses prepared for D-Day, June 1944",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "boom",
+              "word": "million",
+              "volume": "soft"
+            }
+          ]
+        },
+        {
+          "narration": "Somewhere between those two moments, the world quietly swapped the mould that made the medicine.",
+          "visual": {
+            "type": "keyword",
+            "headline": "The Swap",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Fleming's famous strain was pushed aside by one from a place you would never guess.",
+          "visual": {
+            "type": "icons",
+            "headline": "A strain from somewhere unexpected",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "map-pin",
+              "search",
+              "circle-help"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Scientists on two continents spent years chasing a problem that luck alone could not fix.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Two Continents",
+            "sub": "Britain and America",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "And the person who found that mould has never been identified for certain.",
+          "visual": {
+            "type": "icons",
+            "headline": "A finder nobody can name",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "user",
+              "circle-help"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So if Fleming's mould did not make the world's penicillin, where did the real one come from?",
+          "visual": {
+            "type": "title",
+            "headline": "Where Did It Come From?",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        }
+      ]
+    },
+    {
+      "title": "The Forgotten Dish",
+      "beats": [
+        {
+          "narration": "London, the third of September, 1928. Alexander Fleming comes back from his summer holiday to a cluttered bench at Saint Mary's Hospital.",
+          "visual": {
+            "type": "footage",
+            "headline": "London",
+            "sub": "Where Fleming worked",
+            "items": [],
+            "icons": [],
+            "query": "london street",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Before leaving, he had stacked dishes of Staphylococcus, the germ behind boils and many wound infections.",
+          "visual": {
+            "type": "icons",
+            "headline": "Dishes of Staphylococcus",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "layers",
+              "bug"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "One dish had grown a fuzzy blue-green mould, and around it, the germ colonies had turned see-through and were breaking apart.",
+          "visual": {
+            "type": "model3d",
+            "headline": "The contaminated dish",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "glass petri dish with a blue-green mould patch and pale bacterial colonies",
+            "search": "petri dish",
+            "parts": [
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.9,
+                  0.06,
+                  0.9
+                ],
+                "position": [
+                  0.0,
+                  0.03,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#dfe9ee",
+                "material": "glass"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.86,
+                  0.04,
+                  0.86
+                ],
+                "position": [
+                  0.0,
+                  0.05,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#d9b45a",
+                "material": "glossy"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.24,
+                  0.05,
+                  0.24
+                ],
+                "position": [
+                  -0.15,
+                  0.08,
+                  0.05
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#5f8f7a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.12,
+                  0.12,
+                  0.12
+                ],
+                "position": [
+                  -0.15,
+                  0.1,
+                  0.05
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#7fae95",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.06,
+                  0.06,
+                  0.06
+                ],
+                "position": [
+                  0.3,
+                  0.08,
+                  -0.1
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#f2d98a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.06,
+                  0.06,
+                  0.06
+                ],
+                "position": [
+                  0.25,
+                  0.08,
+                  0.2
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#f2d98a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.06,
+                  0.06,
+                  0.06
+                ],
+                "position": [
+                  0.1,
+                  0.08,
+                  -0.3
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#f2d98a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.06,
+                  0.06,
+                  0.06
+                ],
+                "position": [
+                  0.33,
+                  0.08,
+                  0.05
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#f2d98a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.06,
+                  0.06,
+                  0.06
+                ],
+                "position": [
+                  -0.02,
+                  0.08,
+                  0.2
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#f5ecc8",
+                "material": "glass"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.06,
+                  0.06,
+                  0.06
+                ],
+                "position": [
+                  0.0,
+                  0.08,
+                  -0.08
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#f5ecc8",
+                "material": "glass"
+              }
+            ],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "He knew what that might mean. In 1921 he had found lysozyme, a germ-killer in tears, but it mostly killed harmless germs.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Lysozyme",
+            "sub": "Fleming's earlier germ-killer, found in 1921",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The spores had probably drifted up from a mould laboratory on the floor below.",
+          "visual": {
+            "type": "icons",
+            "headline": "Spores from the floor below",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "wind",
+              "building-2"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Fleming grew the mould in broth and found its juice killed many dangerous germs, yet did not seem to harm animals.",
+          "visual": {
+            "type": "steps",
+            "headline": "Fleming's first tests",
+            "sub": "",
+            "items": [
+              {
+                "label": "Grow",
+                "text": "mould in broth",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Test",
+                "text": "juice kills many germs",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Check",
+                "text": "no clear harm to animals",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "On the seventh of March, 1929, he named it penicillin, and that June he published his results.",
+          "visual": {
+            "type": "timeline",
+            "headline": "From dish to paper",
+            "sub": "",
+            "items": [
+              {
+                "label": "3 Sep 1928",
+                "text": "Mould found on the dish",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "7 Mar 1929",
+                "text": "Named it penicillin",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Jun 1929",
+                "text": "Paper published",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "His paper even suggested it might be used on infected wounds, yet almost nobody followed it up.",
+          "visual": {
+            "type": "icons",
+            "headline": "A hint nobody followed",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "bandage",
+              "file-text"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The trouble was that the substance was fragile and hard to purify, and it lost its strength quickly.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Too Fragile",
+            "sub": "hard to purify, quick to weaken",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "His two young assistants tried to extract it, then both left for other jobs.",
+          "visual": {
+            "type": "icons",
+            "headline": "The assistants moved on",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "users",
+              "door-open"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So Fleming kept the mould alive, but used it mostly as a laboratory tool for sorting one germ from another.",
+          "visual": {
+            "type": "keyword",
+            "headline": "A Lab Tool",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The cure sat in Fleming's cultures, and the world walked past it for ten years.",
+          "visual": {
+            "type": "title",
+            "headline": "Ten Lost Years",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Then a refugee chemist in Oxford came across Fleming's old paper while searching the journals.",
+          "visual": {
+            "type": "icons",
+            "headline": "An old paper resurfaces",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "book-open",
+              "library"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        }
+      ]
+    },
+    {
+      "title": "Rescued at Oxford",
+      "beats": [
+        {
+          "narration": "Why would anyone dig up an old paper that its own author had set aside?",
+          "visual": {
+            "type": "title",
+            "headline": "A Paper Set Aside",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Ernst Chain had left Germany in 1933, and by 1935 he was working in Howard Florey's pathology department at Oxford.",
+          "visual": {
+            "type": "icons",
+            "headline": "Ernst Chain reaches Oxford",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "plane",
+              "flask-conical"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The two were studying natural substances that kill bacteria, and penicillin looked like a puzzle worth solving.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Natural Germ Killers",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "By 1939, the Oxford team had taken up penicillin, soon backed by a grant from America's Rockefeller Foundation.",
+          "visual": {
+            "type": "timeline",
+            "headline": "Penicillin comes back",
+            "sub": "",
+            "items": [
+              {
+                "label": "1929",
+                "text": "Fleming publishes his paper",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "1939",
+                "text": "Oxford team takes it up",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "May 1940",
+                "text": "The mouse test",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "A young biochemist, Norman Heatley, built the equipment to coax the fragile drug out of the broth.",
+          "visual": {
+            "type": "icons",
+            "headline": "Norman Heatley's equipment",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "wrench",
+              "flask-conical"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Then, on Saturday the twenty-fifth of May, 1940, they infected eight mice with deadly streptococcus bacteria.",
+          "visual": {
+            "type": "stat",
+            "headline": "8 mice",
+            "sub": "infected with streptococcus, 25 May 1940",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Four of the mice received penicillin. The other four were given nothing at all.",
+          "visual": {
+            "type": "compare",
+            "headline": "Treated vs untreated",
+            "sub": "",
+            "items": [
+              {
+                "label": "Given penicillin",
+                "text": "",
+                "value": 4.0,
+                "display": "4 mice"
+              },
+              {
+                "label": "No penicillin",
+                "text": "",
+                "value": 4.0,
+                "display": "4 mice"
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Heatley stayed up through the night to watch, and by the early hours of Sunday, the untreated mice were dead.",
+          "visual": {
+            "type": "icons",
+            "headline": "A night of watching",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "moon",
+              "clock"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "By morning, all four treated mice were still alive. The drug had worked inside a living body.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Still Alive",
+            "sub": "all four treated mice, that morning",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "ding",
+              "word": "alive",
+              "volume": "soft"
+            }
+          ]
+        },
+        {
+          "narration": "The results appeared in The Lancet in August 1940. But a mouse weighs about twenty grams, and a man is roughly three thousand times heavier.",
+          "visual": {
+            "type": "stat",
+            "headline": "3,000 times",
+            "sub": "how much heavier a man is than a mouse",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Treating people would need vast amounts of mould broth, and British drug companies, stretched by the war, would not take it on.",
+          "visual": {
+            "type": "icons",
+            "headline": "No company would make it",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "factory",
+              "ban"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So Florey made a bold decision: he would turn his university department into a factory.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Build a Factory",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        }
+      ]
+    },
+    {
+      "title": "A Factory of Bedpans",
+      "beats": [
+        {
+          "narration": "Oxford's first penicillin factory ran on pie dishes, biscuit tins, milk churns and hospital bedpans.",
+          "visual": {
+            "type": "icons",
+            "headline": "Whatever was at hand",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "cooking-pot",
+              "cookie",
+              "milk"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Around one hundred and fifty flasks of culture were needed for just one small sample of the drug.",
+          "visual": {
+            "type": "stat",
+            "headline": "150 flasks",
+            "sub": "of culture for one small sample",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Bedpans turned out to work well, giving the mould a wide, shallow surface of broth to grow on.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Wide and Shallow",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So Heatley designed a stackable ceramic vessel, and a Staffordshire pottery firm, James Macintyre, made seven hundred of them.",
+          "visual": {
+            "type": "model3d",
+            "headline": "Heatley's culture vessel",
+            "sub": "700 made by James Macintyre and Co.",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "flat rectangular white ceramic culture vessel with a short spout on top",
+            "search": "ceramic vessel",
+            "parts": [
+              {
+                "shape": "box",
+                "size": [
+                  0.9,
+                  0.16,
+                  0.6
+                ],
+                "position": [
+                  0.0,
+                  0.08,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#efe9dc",
+                "material": "glossy"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.12,
+                  0.12,
+                  0.12
+                ],
+                "position": [
+                  0.32,
+                  0.22,
+                  0.18
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#efe9dc",
+                "material": "glossy"
+              },
+              {
+                "shape": "torus",
+                "size": [
+                  0.13,
+                  0.03,
+                  0.13
+                ],
+                "position": [
+                  0.32,
+                  0.28,
+                  0.18
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#e3dccb",
+                "material": "glossy"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.92,
+                  0.02,
+                  0.62
+                ],
+                "position": [
+                  0.0,
+                  0.005,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#cfc6b2",
+                "material": "matte"
+              }
+            ],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The first batch was seeded with mould spores on Christmas Day, 1940.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Christmas Day 1940",
+            "sub": "the first batch is seeded",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "To tend them, the team hired six young women, later known as the penicillin girls, for two pounds a week.",
+          "visual": {
+            "type": "icons",
+            "headline": "The penicillin girls",
+            "sub": "two pounds a week",
+            "items": [],
+            "icons": [
+              "users",
+              "coins"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "They seeded the vessels, waited days for the mould to grow, and drained off broth that held only a trace of the drug.",
+          "visual": {
+            "type": "steps",
+            "headline": "Making penicillin by hand",
+            "sub": "",
+            "items": [
+              {
+                "label": "Seed",
+                "text": "spores onto the broth",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Wait",
+                "text": "days for mould to grow",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Drain",
+                "text": "broth with a trace of drug",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Heatley's clever trick then pulled penicillin out of that broth by changing the acidity of the liquid.",
+          "visual": {
+            "type": "icons",
+            "headline": "Heatley's acidity trick",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "flask-conical",
+              "arrow-left-right"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Months earlier, in the summer of 1940, Britain had feared a German invasion, and the team needed a plan in case they had to flee.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Plan B",
+            "sub": "summer 1940",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "They rubbed mould spores into the fabric of their coats, so the mould could survive even if the lab did not.",
+          "visual": {
+            "type": "icons",
+            "headline": "Spores in their coats",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "shirt"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "By early 1941, they had just enough of the drug to try it on a patient with a serious infection.",
+          "visual": {
+            "type": "keyword",
+            "headline": "A Real Patient",
+            "sub": "early 1941",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "What happened next proved penicillin worked, and showed exactly why it was not enough.",
+          "visual": {
+            "type": "title",
+            "headline": "It Worked. It Wasn't Enough.",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        }
+      ]
+    },
+    {
+      "title": "Too Little Penicillin",
+      "beats": [
+        {
+          "narration": "Albert Alexander was an Oxford police constable in his forties, gravely ill with a severe bacterial infection.",
+          "visual": {
+            "type": "icons",
+            "headline": "Albert Alexander",
+            "sub": "Oxford police constable",
+            "items": [],
+            "icons": [
+              "shield",
+              "thermometer"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "On the twelfth of February, 1941, at the Radcliffe Infirmary, he received his first injection of penicillin.",
+          "visual": {
+            "type": "keyword",
+            "headline": "12 February 1941",
+            "sub": "Radcliffe Infirmary, Oxford",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Within twenty-four hours his fever had dropped, his appetite had returned, and the infection had begun to heal.",
+          "visual": {
+            "type": "icons",
+            "headline": "Within 24 hours",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "thermometer",
+              "utensils",
+              "heart-pulse"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "It was working. But each day of treatment was draining a tiny supply.",
+          "visual": {
+            "type": "keyword",
+            "headline": "It Was Working",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So the team collected his urine, because around eighty percent of a dose leaves the body that way and could be recovered.",
+          "visual": {
+            "type": "stat",
+            "headline": "80%",
+            "sub": "of a penicillin dose leaves the body in urine",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The Oxford team carried every drop back to the laboratory, determined not to waste a single dose.",
+          "visual": {
+            "type": "icons",
+            "headline": "Every drop recovered",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "flask-conical",
+              "droplets",
+              "recycle"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "The drug was extracted and injected again. Even that was not enough.",
+          "visual": {
+            "type": "steps",
+            "headline": "Recycling every drop",
+            "sub": "",
+            "items": [
+              {
+                "label": "Collect",
+                "text": "the patient's urine",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Extract",
+                "text": "the penicillin",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Inject",
+                "text": "it again",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "After several days the supply ran out, the infection returned, and on the fifteenth of March, 1941, Albert Alexander died.",
+          "visual": {
+            "type": "title",
+            "headline": "The Supply Ran Out",
+            "sub": "15 March 1941",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "That was the turn in the story: the medicine had not failed. The supply had.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Supply, Not Science",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "drone",
+              "word": "supply",
+              "volume": "soft"
+            }
+          ]
+        },
+        {
+          "narration": "Penicillin was not the problem. Fleming's mould, growing on the surface of shallow vessels, simply could not make enough of it.",
+          "visual": {
+            "type": "icons",
+            "headline": "The mould was the limit",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "sprout",
+              "trending-down"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Britain, at war and short of everything, could not build the factories it needed.",
+          "visual": {
+            "type": "keyword",
+            "headline": "No Factories",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So in the summer of 1941, Florey and Heatley packed their mould and set off for a country not yet at war.",
+          "visual": {
+            "type": "title",
+            "headline": "Across the Atlantic",
+            "sub": "summer 1941",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        }
+      ]
+    },
+    {
+      "title": "Corn in Illinois",
+      "beats": [
+        {
+          "narration": "On the second of July, 1941, Florey and Heatley landed in New York carrying a precious mould.",
+          "visual": {
+            "type": "model3d",
+            "headline": "New York, 2 July 1941",
+            "sub": "Florey and Heatley arrive",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "vintage four-engine propeller plane",
+            "search": "propeller plane",
+            "parts": [
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.6,
+                  4.0
+                ],
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#c9ccd1",
+                "material": "metal"
+              },
+              {
+                "shape": "cone",
+                "size": [
+                  0.6,
+                  0.5
+                ],
+                "position": [
+                  0.0,
+                  0.0,
+                  2.25
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#c9ccd1",
+                "material": "metal"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.5,
+                  0.12,
+                  0.3
+                ],
+                "position": [
+                  0.0,
+                  0.25,
+                  1.7
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#9fc5e8",
+                "material": "glass"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  6.0,
+                  0.08,
+                  0.9
+                ],
+                "position": [
+                  0.0,
+                  0.0,
+                  0.3
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#b8bcc2",
+                "material": "metal"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  2.0,
+                  0.06,
+                  0.5
+                ],
+                "position": [
+                  0.0,
+                  0.1,
+                  -1.8
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#b8bcc2",
+                "material": "metal"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.06,
+                  0.8,
+                  0.6
+                ],
+                "position": [
+                  0.0,
+                  0.45,
+                  -1.8
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#b8bcc2",
+                "material": "metal"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.25,
+                  0.6
+                ],
+                "position": [
+                  1.2,
+                  -0.05,
+                  0.7
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#8a8f96",
+                "material": "metal"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.25,
+                  0.6
+                ],
+                "position": [
+                  -1.2,
+                  -0.05,
+                  0.7
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#8a8f96",
+                "material": "metal"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.25,
+                  0.6
+                ],
+                "position": [
+                  2.2,
+                  -0.05,
+                  0.7
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#8a8f96",
+                "material": "metal"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.25,
+                  0.6
+                ],
+                "position": [
+                  -2.2,
+                  -0.05,
+                  0.7
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#8a8f96",
+                "material": "metal"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.9,
+                  0.08,
+                  0.03
+                ],
+                "position": [
+                  1.2,
+                  -0.05,
+                  1.02
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#2b2b2b",
+                "material": "matte"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.9,
+                  0.08,
+                  0.03
+                ],
+                "position": [
+                  -1.2,
+                  -0.05,
+                  1.02
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#2b2b2b",
+                "material": "matte"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.9,
+                  0.08,
+                  0.03
+                ],
+                "position": [
+                  2.2,
+                  -0.05,
+                  1.02
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#2b2b2b",
+                "material": "matte"
+              },
+              {
+                "shape": "box",
+                "size": [
+                  0.9,
+                  0.08,
+                  0.03
+                ],
+                "position": [
+                  -2.2,
+                  -0.05,
+                  1.02
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#2b2b2b",
+                "material": "matte"
+              }
+            ],
+            "scene": "sky"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "They had flown by way of Lisbon, one of the few routes out of wartime Europe.",
+          "visual": {
+            "type": "icons",
+            "headline": "By way of Lisbon",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "map",
+              "plane"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Within two weeks they were in Peoria, Illinois, at a government laboratory set up to find new uses for farm products.",
+          "visual": {
+            "type": "footage",
+            "headline": "Corn Belt",
+            "sub": "farmland like that around Peoria",
+            "items": [],
+            "icons": [],
+            "query": "cornfield farm",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Its fermentation team already knew how to grow microbes at scale, and Illinois had endless corn.",
+          "visual": {
+            "type": "icons",
+            "headline": "Microbes and corn",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "wheat",
+              "factory"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "A scientist there, Andrew Moyer, added corn steep liquor, a sticky leftover from making corn starch, to the mould's broth.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Corn Steep Liquor",
+            "sub": "a leftover from making corn starch",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "With that one change, the yield of penicillin jumped about ten times.",
+          "visual": {
+            "type": "stat",
+            "headline": "10 times",
+            "sub": "more penicillin with corn steep liquor",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "ding",
+              "word": "ten",
+              "volume": "soft"
+            }
+          ]
+        },
+        {
+          "narration": "Moyer also swapped the sugar in the recipe for lactose, and the numbers climbed again.",
+          "visual": {
+            "type": "steps",
+            "headline": "A better recipe",
+            "sub": "",
+            "items": [
+              {
+                "label": "Old broth",
+                "text": "the Oxford sugar recipe",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Add corn",
+                "text": "corn steep liquor",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Swap sugar",
+                "text": "lactose instead",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "But one limit remained: Fleming's mould grew as a mat on the surface of the broth.",
+          "visual": {
+            "type": "icons",
+            "headline": "Stuck on the surface",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "layers"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "To supply an army, the mould had to grow deep inside huge tanks, stirred and fed with air.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Deep Tanks",
+            "sub": "stirred and fed with air",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "That needed a mould that thrived when submerged and poured out far more penicillin than Fleming's ever could.",
+          "visual": {
+            "type": "icons",
+            "headline": "A better mould needed",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "droplets",
+              "sprout"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So a hunt began. Soil samples and moulds arrived from around the world to be tested.",
+          "visual": {
+            "type": "keyword",
+            "headline": "The Mould Hunt",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "But the winner, when it came, was not from a distant jungle or mountain. It was much closer to home.",
+          "visual": {
+            "type": "title",
+            "headline": "Closer to Home",
+            "sub": "",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "drone",
+              "word": "closer",
+              "volume": "soft"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "The Rotten Melon",
+      "beats": [
+        {
+          "narration": "Where do you look for a better mould in a Midwestern city? In its produce markets.",
+          "visual": {
+            "type": "keyword",
+            "headline": "The Market",
+            "sub": "Peoria, Illinois",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "A laboratory technician, Mary Hunt, helped collect mouldy fruit and vegetables from local markets and grow the specimens for testing.",
+          "visual": {
+            "type": "icons",
+            "headline": "Shopping for mould",
+            "sub": "Mary Hunt helped collect samples",
+            "items": [],
+            "icons": [
+              "shopping-basket",
+              "microscope"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "In 1943, a cantaloupe from a Peoria market reached the laboratory, a melon much like our kharbooja, covered in a golden mould.",
+          "visual": {
+            "type": "model3d",
+            "headline": "A mouldy cantaloupe",
+            "sub": "Peoria, 1943",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "cantaloupe melon with patches of green-gold mould",
+            "search": "melon",
+            "parts": [
+              {
+                "shape": "sphere",
+                "size": [
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#d9b77a",
+                "material": "matte"
+              },
+              {
+                "shape": "torus",
+                "size": [
+                  1.01,
+                  0.012,
+                  1.01
+                ],
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#efe2bf",
+                "material": "matte"
+              },
+              {
+                "shape": "torus",
+                "size": [
+                  1.01,
+                  0.012,
+                  1.01
+                ],
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#efe2bf",
+                "material": "matte"
+              },
+              {
+                "shape": "torus",
+                "size": [
+                  1.01,
+                  0.012,
+                  1.01
+                ],
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  90.0,
+                  0.0
+                ],
+                "color": "#efe2bf",
+                "material": "matte"
+              },
+              {
+                "shape": "torus",
+                "size": [
+                  1.01,
+                  0.012,
+                  1.01
+                ],
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  45.0,
+                  0.0
+                ],
+                "color": "#efe2bf",
+                "material": "matte"
+              },
+              {
+                "shape": "torus",
+                "size": [
+                  1.01,
+                  0.012,
+                  1.01
+                ],
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  -45.0,
+                  0.0
+                ],
+                "color": "#efe2bf",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.28,
+                  0.28,
+                  0.28
+                ],
+                "position": [
+                  0.3,
+                  0.78,
+                  0.25
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#8fa84a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.22,
+                  0.22,
+                  0.22
+                ],
+                "position": [
+                  -0.34,
+                  0.6,
+                  0.3
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#c9a93a",
+                "material": "matte"
+              },
+              {
+                "shape": "sphere",
+                "size": [
+                  0.2,
+                  0.2,
+                  0.2
+                ],
+                "position": [
+                  0.1,
+                  0.95,
+                  -0.15
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#7f9a45",
+                "material": "matte"
+              },
+              {
+                "shape": "cylinder",
+                "size": [
+                  0.06,
+                  0.08,
+                  0.06
+                ],
+                "position": [
+                  0.0,
+                  1.02,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "color": "#6b5a3a",
+                "material": "matte"
+              }
+            ],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "That was the answer. The mould behind almost all the world's penicillin was not Fleming's. It came from that rotten melon.",
+          "visual": {
+            "type": "title",
+            "headline": "A Rotten Melon",
+            "sub": "parent of all commercial penicillin strains",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": [
+            {
+              "sound": "hit",
+              "word": "melon",
+              "volume": "medium"
+            }
+          ]
+        },
+        {
+          "narration": "But who carried it in is disputed. Hunt later said she found it; scientist Kenneth Raper credited a local woman who handed it to a guard and left unnamed.",
+          "visual": {
+            "type": "icons",
+            "headline": "Who found it?",
+            "sub": "two accounts, no proof",
+            "items": [],
+            "icons": [
+              "user",
+              "shield"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Even the nickname Mouldy Mary is uncertain: a note on an old Abbott advertisement names a different woman as the original.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Mouldy Mary?",
+            "sub": "the nickname has more than one claimant",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Whoever found it, the melon mould thrived deep in tanks. Scientists then hit its spores with X-rays at Cold Spring Harbor and ultraviolet light at Wisconsin, keeping the best mutants.",
+          "visual": {
+            "type": "steps",
+            "headline": "Breeding a super mould",
+            "sub": "",
+            "items": [
+              {
+                "label": "Melon strain",
+                "text": "NRRL 1951",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "X-rays",
+                "text": "Cold Spring Harbor",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "Ultraviolet",
+                "text": "University of Wisconsin",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Yields rose from two hundred and fifty units per millilitre to five hundred, and ultraviolet nearly doubled that again.",
+          "visual": {
+            "type": "compare",
+            "headline": "Penicillin per millilitre",
+            "sub": "units of penicillin per millilitre",
+            "items": [
+              {
+                "label": "Best melon variant",
+                "text": "",
+                "value": 250.0,
+                "display": "250 units"
+              },
+              {
+                "label": "X-ray mutant",
+                "text": "",
+                "value": 500.0,
+                "display": "500 units"
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "In Brooklyn, Pfizer bought an old ice factory for its refrigeration and turned it into a penicillin plant with fourteen deep tanks, opening on the first of March, 1944.",
+          "visual": {
+            "type": "stat",
+            "headline": "14 tanks",
+            "sub": "Pfizer's Brooklyn plant, opened 1 March 1944",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "By June 1944, American factories had two point three million doses of penicillin ready for the Normandy landings.",
+          "visual": {
+            "type": "timeline",
+            "headline": "From dish to D-Day",
+            "sub": "",
+            "items": [
+              {
+                "label": "1928",
+                "text": "Fleming's mould appears",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "1941",
+                "text": "Oxford's supply runs out",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "1943",
+                "text": "A mouldy melon in Peoria",
+                "value": 0.0,
+                "display": ""
+              },
+              {
+                "label": "June 1944",
+                "text": "2.3 million doses for D-Day",
+                "value": 0.0,
+                "display": ""
+              }
+            ],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "In 1945, Fleming, Florey and Chain shared the Nobel Prize. Heatley, Moyer and whoever found the melon were not among the names.",
+          "visual": {
+            "type": "icons",
+            "headline": "Nobel Prize, 1945",
+            "sub": "Fleming, Florey and Chain",
+            "items": [],
+            "icons": [
+              "award",
+              "medal"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "In his Nobel lecture that December, Fleming warned: 'The time may come when penicillin can be bought by anyone in the shops,' and careless underdosing could make microbes resistant.",
+          "visual": {
+            "type": "quote",
+            "headline": "The time may come when penicillin can be bought by anyone in the shops.",
+            "sub": "Alexander Fleming, Nobel lecture, 1945",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "So Fleming's forgotten dish started the story, but it took a rotten melon from an Illinois market, carried in by someone history cannot name for sure, to finish it.",
+          "visual": {
+            "type": "icons",
+            "headline": "From a dish to a melon",
+            "sub": "",
+            "items": [],
+            "icons": [
+              "circle-dot",
+              "shopping-basket"
+            ],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        },
+        {
+          "narration": "Next, we follow how the nineteen seventies oil shock changed the cars we drive. Subscribe so you catch it.",
+          "visual": {
+            "type": "keyword",
+            "headline": "Next: Oil Shock",
+            "sub": "how 1970s oil changed our cars",
+            "items": [],
+            "icons": [],
+            "query": "",
+            "model": "",
+            "search": "",
+            "parts": [],
+            "scene": "studio"
+          },
+          "sounds": []
+        }
+      ]
+    }
+  ],
+  "music": "calm-documentary"
+}
