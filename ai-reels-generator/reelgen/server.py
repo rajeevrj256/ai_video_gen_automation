@@ -242,6 +242,7 @@ def import_samples(cfg: Config) -> None:
                 log.info("Added the sample video %s to the library", sample.name)
             except OSError as exc:
                 log.warning("Couldn't add sample video %s: %s", sample.name, exc)
+                shutil.rmtree(dest, ignore_errors=True)  # a half copy would show as a broken video
                 continue
         done.add(sample.name)
         done_file.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +298,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/videos")
     def videos():
+        import_samples(cfg)  # cheap when nothing is new; a refresh picks up samples a pull added
         return list_videos(cfg)
 
     @app.get("/api/videos/{video_id}")
