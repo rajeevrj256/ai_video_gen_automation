@@ -21,6 +21,7 @@ def _load_dotenv(path: Path) -> None:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_VOICE = "en-US-AndrewMultilingualNeural"  # Shorts and long videos alike
 _load_dotenv(PROJECT_ROOT / ".env")
 
 # Hard limit on video length. Longer targets are clamped and verify.py fails
@@ -49,7 +50,7 @@ class Config:
     # Long videos (16:9, fully animated, reelgen/longform.py): length, narration language and voice.
     long_minutes: float = field(default_factory=lambda: float(_env("REEL_LONG_MINUTES", "8")))
     long_language: str = field(default_factory=lambda: _env("REEL_LONG_LANGUAGE", "Indian English"))
-    long_voice: str = field(default_factory=lambda: _env("REEL_LONG_VOICE", "en-IN-PrabhatNeural"))
+    long_voice: str = field(default_factory=lambda: _env("REEL_LONG_VOICE", DEFAULT_VOICE))
     claude_effort: str = field(default_factory=lambda: _env("REEL_CLAUDE_EFFORT", "high"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
@@ -64,7 +65,7 @@ class Config:
     # Content settings.
     geo: str = field(default_factory=lambda: _env("REEL_GEO", "IN"))
     language: str = field(default_factory=lambda: _env("REEL_LANGUAGE", "English"))
-    voice: str = field(default_factory=lambda: _env("REEL_VOICE", "en-US-AndrewMultilingualNeural"))
+    voice: str = field(default_factory=lambda: _env("REEL_VOICE", DEFAULT_VOICE))
     # "auto" (Microsoft online voice, offline Kokoro if that's refused), "edge" or "kokoro".
     tts_engine: str = field(default_factory=lambda: _env("REEL_TTS", "auto"))
     # Kokoro voice override, e.g. af_heart, am_michael, bm_george, hf_alpha. Empty = match REEL_VOICE.
@@ -113,13 +114,22 @@ def settings_path(cfg: Config) -> Path:
     return cfg.output_dir / "settings.json"
 
 
+# Settings files from before Andrew became the default voice everywhere get it once;
+# a voice picked after that is kept.
+VOICE_MARK = "_voice_default_andrew"
+
+
 def load_settings(cfg: Config) -> Config:
     """Apply settings saved from the app on top of env/.env values."""
     import json
 
     path = settings_path(cfg)
     if path.exists():
-        for key, value in json.loads(path.read_text(encoding="utf-8")).items():
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        if not saved.get(VOICE_MARK):
+            saved.update({"voice": DEFAULT_VOICE, "long_voice": DEFAULT_VOICE, VOICE_MARK: True})
+            path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+        for key, value in saved.items():
             if key in EDITABLE and not (key in ("claude_model", "claude_effort") and value == ""):
                 setattr(cfg, key, _typed(cfg, key, value))  # blank model/effort = default
     return cfg
@@ -140,5 +150,6 @@ def save_settings(cfg: Config, updates: dict) -> Config:
         if key in EDITABLE:
             setattr(cfg, key, _typed(cfg, key, value))
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    settings_path(cfg).write_text(json.dumps({k: getattr(cfg, k) for k in EDITABLE}, indent=2), encoding="utf-8")
+    settings_path(cfg).write_text(json.dumps({**{k: getattr(cfg, k) for k in EDITABLE}, VOICE_MARK: True}, indent=2),
+                                  encoding="utf-8")
     return cfg
