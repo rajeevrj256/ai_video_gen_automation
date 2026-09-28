@@ -594,18 +594,20 @@ async function openVideo(id) {
       : v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
     <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px">
       ${v.youtube_description ? "↻ Rewrite title, description &amp; hashtags" : "✍️ Write title, description &amp; hashtags"}</button>
+    <div ${v.format === "long" ? "hidden" : ""}>
     <h4 class="section">Instagram Reels</h4>
     <div class="copyhead"><label for="f-caption">Caption</label><button class="mini" data-copy="ig">Copy caption + hashtags</button></div>
     <textarea class="edit" id="f-caption" rows="5">${esc(v.caption)}</textarea>
     <label for="f-hashtags">Hashtags</label>
     <textarea class="edit" id="f-hashtags" rows="3">${esc(tags)}</textarea>
-    <h4 class="section">YouTube Shorts</h4>
+    </div>
+    <h4 class="section">${v.format === "long" ? "YouTube" : "YouTube Shorts"}</h4>
     <div class="copyhead"><label for="f-yttitle">Title</label><button class="mini" data-copy="ytTitle">Copy</button></div>
     <input class="edit" id="f-yttitle" maxlength="100" value="${esc(v.youtube_title)}">
     <div class="copyhead"><label for="f-ytdesc">Description</label><button class="mini" data-copy="ytDesc">Copy description + hashtags</button></div>
-    <textarea class="edit" id="f-ytdesc" rows="5">${esc(v.youtube_description || v.caption)}</textarea>
+    <textarea class="edit" id="f-ytdesc" rows="${v.format === "long" ? 14 : 5}">${esc(v.youtube_description || v.caption)}</textarea>
     <label for="f-ythash">Description hashtags (first 3 show above the title)</label>
-    <input class="edit" id="f-ythash" value="${esc((v.youtube_hashtags || ["shorts"]).map((h) => "#" + h).join(" "))}">
+    <input class="edit" id="f-ythash" value="${esc((v.youtube_hashtags || (v.format === "long" ? [] : ["shorts"])).map((h) => "#" + h).join(" "))}">
     <div class="copyhead"><label for="f-yttags">Tags (YouTube Tags field, comma separated)</label><button class="mini" data-copy="ytTags">Copy</button></div>
     <textarea class="edit" id="f-yttags" rows="3">${esc((v.youtube_tags || []).join(", "))}</textarea>
     <button class="primary" id="savePost" disabled>💾 Save changes</button>

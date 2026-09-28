@@ -66,6 +66,13 @@ def post_text(report: dict) -> str:
     """The contents of post.txt: everything to paste when uploading."""
     ig_tags = " ".join(f"#{h}" for h in report.get("hashtags", []))
     yt_tags = " ".join(f"#{h}" for h in report.get("youtube_hashtags", []))
+    if report.get("format") == "long":  # long 16:9 videos go on YouTube only
+        return (
+            "=== YOUTUBE ===\n"
+            f"Title:\n{report.get('youtube_title', '')}\n\n"
+            f"Description:\n{report.get('youtube_description', '')}\n\n{yt_tags}\n\n"
+            f"Tags (paste into YouTube's Tags field):\n{', '.join(report.get('youtube_tags', []))}\n"
+        )
     return (
         "=== INSTAGRAM REELS ===\n"
         f"{report.get('caption', '')}\n\n{ig_tags}\n\n"

@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from .fsutil import move
 from .config import Config
 from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
-from .post_copy import PostCopy, clean_tags, save_post_text
+from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
@@ -85,7 +85,7 @@ class LBeat(BaseModel):
 
 
 class LChapter(BaseModel):
-    title: str = Field(description="Chapter title for the title card and YouTube chapters, 2-5 words. Chapter 1 (the cold open) is 'Intro'.")
+    title: str = Field(description="Chapter title for the title card and YouTube chapters, 2-5 words. YouTube shows chapters as 'key moments' in search, so make it a clear, searchable phrase about what the chapter covers ('How Oxford Mass-Produced It', not 'A New Hope'). Chapter 1 (the cold open) is 'Intro'.")
     beats: list[LBeat] = Field(description="6-14 beats. Each beat's visual shows what its narration says.")
 
 
@@ -479,28 +479,66 @@ def review_long(video: Path, script: LongScript, props: dict, cfg: Config) -> tu
 
 # ---------- post text ----------
 
-POST_SYSTEM = """You are a YouTube channel manager. Write the text that goes with a finished long video so it \
-gets found and clicked: a search-friendly title, a description whose first two lines hook the reader and \
-contain the main keywords, and tags and hashtags that are really used for this topic now (check with web \
-search). Never promise what the video doesn't deliver; keep facts identical to the script."""
+POST_SYSTEM = """You are a YouTube SEO specialist for a documentary channel. Your job is the text that makes \
+YouTube recommend a finished long video and makes searchers click it, without misleading anyone.
+
+Research first (web search): what people actually search for this subject (YouTube and Google autocomplete \
+style phrases, "how/why/what" questions, the names and terms they use), which titles of the videos ranking \
+for it now look like, and which hashtags are really used for it. Build everything around one main keyword \
+(the phrase with the most search intent that the video truly answers) and 3-5 related phrases.
+
+Rules YouTube's ranking rewards:
+- Title: the main keyword in the first 40 characters, then the curiosity or promise that earns the click. \
+50-70 characters. Specific beats vague (names, numbers, places). No clickbait the video doesn't pay off, no \
+ALL CAPS, at most one emoji (usually none).
+- Description: the first 150 characters decide the search snippet and the "more" click, so they hold the \
+main keyword and the hook. Then 150-300 words in natural sentences that use the related phrases the way a \
+person would, never a keyword list (stuffing gets a video demoted). Then one line inviting viewers to \
+subscribe and to comment an answer to a question from the video, which drives engagement.
+- Hashtags: 3 that people really follow for this subject (they show above the title), main one first.
+- Tags: 15-25, main keyword first, then close variants, then broader topic phrases, then long-tail \
+questions. Under 500 characters in total.
+
+Keep every fact identical to the script. Never promise what the video doesn't deliver."""
+
+
+class LongPost(BaseModel):
+    main_keyword: str = Field(description="The one search phrase the video is optimised for, e.g. 'history of penicillin'.")
+    youtube_title: str = Field(description="50-70 characters, the main keyword in the first 40, then the curiosity or promise. No hashtags, no '#shorts', no ALL CAPS.")
+    youtube_description: str = Field(description="First 150 characters: the main keyword plus the hook (this is the search snippet). Then 150-300 words of natural sentences that use the related search phrases, covering what the video explores without giving the answer away. End with one line inviting viewers to subscribe and to comment an answer to a question from the video. No hashtags, no chapter list, no keyword lists.")
+    youtube_hashtags: list[str] = Field(description="Exactly 3 hashtags without '#', really used for this subject, main one first (they show above the title). Never 'shorts'.")
+    youtube_tags: list[str] = Field(description="15-25 tags without '#', main keyword first, then close variants, broader topic phrases and long-tail questions people search. Under 500 characters in total.")
+    hashtag_notes: str = Field(description="One or two sentences: what you searched and why you chose the main keyword, or 'not verified' if you couldn't check.")
 
 
 def write_long_post(script: LongScript, props: dict, cfg: Config) -> dict:
+    """YouTube text only: a long 16:9 video goes on YouTube, not Instagram Reels or Shorts."""
     summary = " ".join(b.narration for c in script.chapters for b in c.beats)[:6000]
     prompt = (f"Topic: {script.topic}\nDraft title: {script.youtube_title}\nThe big question: {script.hook_question}\n"
-              f"Narration (start): {summary}\n\nWrite the YouTube (and Instagram) post text for this "
+              f"Chapters: {', '.join(c.title for c in script.chapters)}\n"
+              f"Narration (start): {summary}\n\nResearch the search terms, then write the YouTube post text for this long "
               f"{'fiction story' if cfg.video_style == 'story' else 'documentary'} video.")
-    post = ask(cfg.ai_backend, cfg.claude_model, POST_SYSTEM, prompt, PostCopy, allow_web=True, effort=cfg.claude_effort)
-    description = post.youtube_description.strip() + "\n\nChapters:\n" + youtube_chapters(props)
+    post = ask(cfg.ai_backend, cfg.claude_model, POST_SYSTEM, prompt, LongPost, allow_web=True, effort=cfg.claude_effort)
     return {
-        "caption": post.instagram_caption,
-        "hashtags": clean_tags(post.instagram_hashtags),
+        "caption": "",
+        "hashtags": [],
         "youtube_title": post.youtube_title,
-        "youtube_description": description,
+        "youtube_description": post.youtube_description.strip() + "\n\nChapters:\n" + youtube_chapters(props),
         "youtube_hashtags": [t for t in clean_tags(post.youtube_hashtags) if t.lower() != "shorts"],
-        "youtube_tags": [t.strip().lstrip("#") for t in post.youtube_tags if t.strip()],
-        "hashtag_notes": post.hashtag_notes,
+        "youtube_tags": _fit_tags(post.youtube_tags),
+        "hashtag_notes": f"Main keyword: {post.main_keyword}. {post.hashtag_notes}",
     }
+
+
+def _fit_tags(tags: list[str], limit: int = 500) -> list[str]:
+    """YouTube rejects more than 500 characters of tags (commas count; a tag with spaces counts its quotes)."""
+    out, used = [], 0
+    for t in (t.strip().lstrip("#") for t in tags):
+        cost = len(t) + (2 if " " in t else 0) + (1 if out else 0)
+        if t and t.lower() not in {o.lower() for o in out} and used + cost <= limit:
+            out.append(t)
+            used += cost
+    return out
 
 
 # ---------- the run ----------
@@ -697,7 +735,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             report.update(write_long_post(script, props, cfg))
         except Exception as exc:
             log.warning("Post text step failed: %s", exc)
-            report.update({"caption": script.youtube_title, "hashtags": [], "youtube_title": script.youtube_title,
+            report.update({"caption": "", "hashtags": [], "youtube_title": script.youtube_title,
                            "youtube_description": "Chapters:\n" + youtube_chapters(props), "youtube_hashtags": [],
                            "youtube_tags": [], "post_text_error": str(exc)[:300]})
         save_post_text(report, final_dir)
