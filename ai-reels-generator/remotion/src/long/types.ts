@@ -18,7 +18,8 @@ export type VisualType =
   | 'keyword' // one word or short phrase slammed on screen
   | 'chart' // 3-6 points over time
   | 'footage' // a real stock clip of a place or scene, full screen (src = clip)
-  | 'model3d'; // a 3D model animated in its own world (src = .glb)
+  | 'model3d' // a 3D model animated in its own world (src = .glb)
+  | 'scene'; // 1-4 icon actors acting the line out
 
 export type Visual = {
   type: VisualType;
@@ -30,7 +31,40 @@ export type Visual = {
   length?: number; // footage: the clip's length in seconds
   scene?: 'sky' | 'space' | 'studio'; // model3d: the world it's shown in
   parts?: Part[]; // model3d without a file: build it from these shapes
+  actors?: Actor[]; // scene: who acts, in order
+  camera?: Camera; // how the camera moves during the beat
+  impact?: boolean; // the chapter's biggest moment: punch-in, freeze + flash, shake
+  impactAt?: number; // seconds into the beat
 };
+
+export type Camera = 'push' | 'pull' | 'pan-left' | 'pan-right' | 'rise' | 'dutch' | 'orbit' | 'still';
+
+export type ActorAction =
+  | 'enter-left' | 'enter-right' | 'drop-in' | 'rise' | 'walk-across' | 'approach' | 'flee'
+  | 'shake' | 'pulse' | 'spin' | 'fall' | 'grow' | 'shrink' | 'orbit' | 'multiply';
+
+export type Actor = {icon: string; action: ActorAction; label: string; at: number}; // at: seconds into the beat
+
+// This video's own look (reelgen/variety.py): colours, backdrop and transition style.
+export type Look = {
+  palette: string;
+  worlds: [string, string][];
+  accents: string[];
+  backdrop: 'blobs' | 'grid' | 'rays' | 'waves' | 'dots' | 'paper';
+  transition: 'smooth' | 'whip' | 'zoom' | 'glitch' | 'flash' | 'slide';
+  seed: number;
+};
+
+export type HookShot = {
+  start: number;
+  duration: number;
+  beat: 'curiosity' | 'unexpected' | 'tension' | 'problem' | 'gap';
+  text: string;
+  audio: string | null;
+  visual: Visual;
+};
+
+export type Hook = {duration: number; shots: HookShot[]; music: string | null; style: string};
 
 // One simple shape of a 3D object Claude designed (reelgen/models3d.py Part). Metres, +Y up, front +Z.
 export type Part = {
@@ -44,7 +78,7 @@ export type Part = {
 
 export type Beat = {start: number; duration: number; chapter: number; audio: string | null; visual: Visual};
 
-export type Chapter = {index: number; title: string; start: number; card: number}; // card: seconds of title card
+export type Chapter = {index: number; title: string; start: number; card: number; end?: number; intensity?: number; drop?: boolean}; // card: seconds of title card
 
 export type LongProps = {
   title: string;
@@ -57,4 +91,8 @@ export type LongProps = {
   sfx: {whoosh: string; impact: string; swish: string; glitch: string; shimmer: string; pop: string} | null;
   cues?: Cue[];
   speech?: Span[];
+  look?: Look;
+  hook?: Hook;
+  musicFrom?: number; // the main track starts after the hook
+  ambience?: {src: string; from: number; to: number}[];
 };

@@ -395,7 +395,9 @@ def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: di
             chunk.append(SceneAudio(dst, scenes[k].words))
             k += 1
         voices.append(chunk)
-    props = build_long(ls, cfg, work, progress, voices=voices)
+    old = folder / "props.json"
+    look = json.loads(old.read_text(encoding="utf-8")).get("look") if old.exists() else None
+    props = build_long(ls, cfg, work, progress, voices=voices, look=look)
     cli = _remotion_cli()
     if cli is None:
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")

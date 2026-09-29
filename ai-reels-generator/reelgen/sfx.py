@@ -226,6 +226,37 @@ def _typing(duration: float = 1.2) -> np.ndarray:
     return out
 
 
+def _click(duration: float = 0.05) -> np.ndarray:
+    """A crisp UI click: text landing, a counter ticking."""
+    t = np.arange(int(RATE * duration)) / RATE
+    return (np.sin(2 * np.pi * 2600 * t) + 0.6 * np.sin(2 * np.pi * 5200 * t)) * np.exp(-t * 160)
+
+
+def _rise(duration: float = 0.9) -> np.ndarray:
+    """A rising whoosh into a zoom or a reveal: air getting brighter and louder."""
+    t = np.arange(int(RATE * duration)) / RATE
+    x = t / duration
+    noise = np.random.default_rng(21).standard_normal(len(t))
+    bright = noise - _lowpass(noise, 400 + 5000 * x ** 2)
+    return (bright * 0.8 + _lowpass(noise, 800) * 0.6) * x ** 2 * (1 - np.clip((x - 0.92) / 0.08, 0, 1))
+
+
+def _rumble(duration: float = 1.2) -> np.ndarray:
+    """A low trembling rumble: something shaking, fear, a building threat."""
+    t = np.arange(int(RATE * duration)) / RATE
+    noise = _lowpass(np.random.default_rng(22).standard_normal(len(t)), 120)
+    return noise * (0.6 + 0.4 * np.sin(2 * np.pi * 9 * t)) * np.sin(np.pi * t / duration)
+
+
+def _flyby(duration: float = 1.6) -> np.ndarray:
+    """Something passing the camera: a swelling then fading rush with a falling pitch."""
+    t = np.arange(int(RATE * duration)) / RATE
+    x = t / duration
+    noise = np.random.default_rng(23).standard_normal(len(t))
+    tone = np.sin(2 * np.pi * np.cumsum(220 - 90 * x) / RATE) * 0.4
+    return (_lowpass(noise, 600 + 1800 * np.sin(np.pi * x)) + tone) * np.sin(np.pi * x) ** 2
+
+
 # name -> (make, peak, seconds the sound should lead its word by, what it's for)
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
@@ -238,6 +269,10 @@ CUE_SOUNDS = {
     "drone": (_drone, 0.22, 0.0, "low uneasy pad under a line: mystery, something is off"),
     "ding": (_ding, 0.3, 0.0, "clean ding: a fact or idea landing, a lightbulb moment"),
     "typing": (_typing, 0.25, 0.0, "keyboard clicks: searching, messaging, hacking, writing"),
+    "click": (_click, 0.3, 0.0, "a crisp click: text or a counter landing"),
+    "rise": (_rise, 0.35, 0.8, "a rising whoosh INTO the word: a zoom, a reveal"),
+    "rumble": (_rumble, 0.5, 0.0, "a low rumble: shaking, a threat, fear"),
+    "flyby": (_flyby, 0.4, 0.5, "something rushing past the camera: a plane, a car, a crowd"),
 }
 
 

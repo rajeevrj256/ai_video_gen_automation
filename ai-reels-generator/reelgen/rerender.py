@@ -108,7 +108,12 @@ def _same_voice_props(folder: Path, work: Path, cfg: Config, music_name: str) ->
     if cfg.captions and not captions:
         return None  # made with subtitles off and no saved lines: record again to get word timings
     files = [b["audio"] for b in props.get("beats", []) if b.get("audio")] + [c["src"] for c in props.get("cues", [])]
-    files += [v for v in (props.get("sfx") or {}).values()]
+    files += [v for v in (props.get("sfx") or {}).values()] + [a["src"] for a in props.get("ambience", [])]
+    files += [x for x in ((props.get("hook") or {}).get("music"),) if x]
+    files += [x["audio"] for x in (props.get("hook") or {}).get("shots", []) if x.get("audio")]
+    files += [x["visual"]["src"] for x in (props.get("hook") or {}).get("shots", []) if x["visual"].get("src")]
+    if props.get("musicFrom") is not None and props.get("music"):
+        files.append(props["music"])  # composed tracks are kept with the video
     files += [b["visual"]["src"] for b in props.get("beats", []) if b["visual"].get("src")]
     if not all((folder / f).exists() for f in files):
         return None
@@ -167,7 +172,9 @@ def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progres
     script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
     props = _same_voice_props(folder, work, cfg, script.music) if same_voice else None
     if props is None:
-        props = build_long(script, cfg, work, progress)
+        old = folder / "props.json"
+        look = json.loads(old.read_text(encoding="utf-8")).get("look") if old.exists() else None
+        props = build_long(script, cfg, work, progress, look=look)  # same look and music, new voice
     else:
         progress("Same voice: keeping the recorded voiceover and timings, only the subtitles change")
     cli = _remotion_cli()

@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import uuid
+import zlib
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +30,8 @@ from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
-from .sfx import write_sfx
+from . import music, sound_design, variety
+from .sfx import write_cue_sounds, write_sfx
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
 from .verify import FactCheck, VerifyResult, Review, probe
 from .video import FFMPEG, _remotion_cli, _render_remotion, media_seconds
@@ -47,7 +49,10 @@ MIN_MINUTES, MAX_MINUTES = 6.5, 11.0
 FACT_FIXES = 2
 LLM_TIMEOUT = 2400  # a 1,300-word script with research at high effort can take well over 15 minutes
 LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
-VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart")
+VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart", "footage",
+                "model3d", "scene")
+TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
+HOOK_SECONDS = (15.0, 25.0)
 
 
 # ---------- the script ----------
@@ -59,14 +64,23 @@ class LItem(BaseModel):
     display: str = Field(description="compare/chart: how the number is written, e.g. '₹2.4 lakh crore', '46,000'. Empty otherwise.")
 
 
+class SceneActor(BaseModel):
+    icon: str = Field(description="A Lucide icon name in kebab-case that is the actor, e.g. 'user', 'ship', 'factory', 'microscope', 'truck', 'banknote'.")
+    action: Literal["enter-left", "enter-right", "drop-in", "rise", "walk-across", "approach", "flee", "shake",
+                    "pulse", "spin", "fall", "grow", "shrink", "orbit", "multiply"] = Field(
+        description="What it does. enter-left/right: slides in. drop-in: falls in and bounces. rise: comes up from below. walk-across: crosses the frame. approach: comes close to the camera. flee: rushes away. shake: trembles (fear, alarm). pulse: beats like a heart. spin: turns. fall: topples and drops. grow: swells huge. shrink: dwindles. orbit: circles the first actor. multiply: becomes a crowd of copies.")
+    label: str = Field(default="", description="At most 2 words under it, or empty (usually empty: the narration says it).")
+
+
 class LVisual(BaseModel):
     type: Literal["title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart",
-                  "footage", "model3d"] = Field(
+                  "footage", "model3d", "scene"] = Field(
         description="title: a big headline. stat: one striking number. timeline: 2-5 dated moments. compare: "
                     "exactly 2 things side by side. steps: 2-4 steps of how something works. icons: 1-3 icons "
                     "that picture the line. quote: a real, verified quote. keyword: one word or short phrase. "
                     "chart: 3-6 real data points over time. footage: a real video clip of a place or scene, "
-                    "full screen. model3d: an object from the story as an animated 3D model.")
+                    "full screen. model3d: an object from the story as an animated 3D model. scene: a small "
+                    "animated scene of 1-4 icon 'actors' that act the line out (enter, chase, fall, grow...).")
     headline: str = Field(description="title/keyword: the text (keyword max 3 words). stat: the number exactly as shown, e.g. '₹1.2 lakh'. quote: the quote. icons/timeline/compare/steps/chart: a short heading (max 7 words).")
     sub: str = Field(description="A short supporting line (max 10 words): what the stat is, who said the quote, the chart's unit. Can be empty.")
     items: list[LItem] = Field(description="timeline: 2-5, compare: exactly 2, steps: 2-4, chart: 3-6. Empty for the other types.")
@@ -76,6 +90,10 @@ class LVisual(BaseModel):
     search: str = Field(default="", description="model3d only: 1-3 English words to find a ready-made model, the main noun LAST, e.g. 'oil barrel', 'propeller plane', 'coin'. Empty otherwise.")
     parts: list[Part] = Field(default_factory=list, description="model3d only: how to build the object from 4-24 simple shapes if no ready-made model is found, in metres, +Y up, front facing +Z. Make it recognisable: proportions and colours matter more than detail. Empty otherwise.")
     scene: Literal["sky", "space", "studio"] = Field(default="studio", description="model3d only: where it's shown. sky: flying through clouds. space: drifting among stars. studio: turning on a dark stage.")
+    actors: list[SceneActor] = Field(default_factory=list, description="scene only: 1-4 icon actors, in the order they act. Empty otherwise.")
+    camera: Literal["push", "pull", "pan-left", "pan-right", "rise", "dutch", "orbit", "still"] = Field(
+        default="push", description="How the camera moves during this beat. Vary it; never the same move three beats in a row. 'still' only for a calm pause.")
+    impact: bool = Field(default=False, description="True only for the few biggest moments (a reveal, the twist, a shocking number): a punch-in, a short freeze with a flash, a screen shake and a bass hit. At most one per chapter.")
 
 
 class LBeat(BaseModel):
@@ -84,9 +102,21 @@ class LBeat(BaseModel):
     sounds: list[SoundCue] = Field(default_factory=list, description="Sound effects on words of this line: up to 4 layered in the cold open's first beats, otherwise usually none.")
 
 
+class HookShot(BaseModel):
+    beat: Literal["curiosity", "unexpected", "tension", "problem", "gap"] = Field(
+        description="Which part of the trailer this shot is: curiosity (0-3 s: a strong visual and an instant question), unexpected (3-7 s: the surprising situation), tension (7-12 s: build the mystery), problem (12-18 s: show part of the problem), gap (18-22 s: the curiosity gap, the question left hanging).")
+    line: str = Field(description="What the narrator says, trailer style: a short, punchy line of 3-12 words, or empty for a shot carried by sound and picture alone. Never reveals the answer.")
+    text: str = Field(default="", description="On-screen text slammed in for this shot: 1-3 words (a date, a number, a place, 'WAIT...'), or empty. Most shots have none.")
+    visual: LVisual = Field(description="What we see. Prefer motion: scene, model3d, footage, icons, stat. The camera move should be dramatic (push, dutch, orbit, pan).")
+
+
 class LChapter(BaseModel):
     title: str = Field(description="Chapter title for the title card and YouTube chapters, 2-5 words. YouTube shows chapters as 'key moments' in search, so make it a clear, searchable phrase about what the chapter covers ('How Oxford Mass-Produced It', not 'A New Hope'). Chapter 1 (the cold open) is 'Intro'.")
     beats: list[LBeat] = Field(description="6-14 beats. Each beat's visual shows what its narration says.")
+    intensity: int = Field(default=3, ge=1, le=5, description="How intense the music is under this chapter, 1 (quiet, reflective) to 5 (peak). Build toward the twist and the ending; drop low after a peak so the next build is felt.")
+    drop: bool = Field(default=False, description="True for the one or two chapters that open on the twist or the big turn: the music cuts to silence for a moment, then hits.")
+    ambience: Literal["none", "room", "city", "rain", "wind", "crowd", "night", "lab", "sea", "fire"] = Field(
+        default="none", description="A quiet background sound bed for where this chapter takes place, or 'none'.")
 
 
 class LongScript(BaseModel):
@@ -100,6 +130,11 @@ class LongScript(BaseModel):
     hook_question: str = Field(description="The one big question the cold open plants; the video answers it only in the last chapter.")
     answer: str = Field(description="The answer or twist the last chapter delivers, in one sentence.")
     youtube_title: str = Field(description="YouTube title, max 70 characters: curiosity plus the main search keyword, no clickbait the video doesn't deliver.")
+    hook: list[HookShot] = Field(default_factory=list, description="The 15-25 second cinematic hook before the video starts: 5-8 shots in trailer order (curiosity, unexpected, tension, problem, gap). A teaser, not the story starting: it makes the viewer think 'wait, what happened?' and never gives away the answer.")
+    mood: Literal["mystery", "suspense", "emotional", "uplifting", "curious", "dark", "energetic", "calm"] = Field(
+        default="curious", description="The music's mood for the main video, chosen from the story.")
+    hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
+        default="spy-pulse", description="The hook's own trailer track: spy-pulse (ticking spy/action energy), ticking-clock (a race against time), dark-pulse (dread, mystery), glitch-drive (tech, chaos).")
     chapters: list[LChapter] = Field(description="6-8 chapters in order. The first is the cold open ('Intro').")
     music: str = Field(default="", description="Background track name from the music list, or 'none'.")
 
@@ -143,13 +178,36 @@ worry or push the story forward, or it goes.
 - The call to action names a concrete next story, not a generic "subscribe for more".
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
+The hook (15-25 seconds, before chapter 1): a cinematic trailer for this video, NOT the story \
+starting. It has its own look and its own music. 5-8 fast shots in this order: curiosity (0-3 s, a \
+strong visual and an instant question), unexpected (3-7 s, the surprising situation), tension (7-12 \
+s, build the mystery), problem (12-18 s, show part of the problem), gap (18-22 s, the question left \
+hanging); then it cuts to the video. Lines are short and punchy (3-12 words; some shots have no line \
+at all and let picture and sound carry them). It must make the viewer think "wait... what happened?" \
+and must never give away the answer or the punchline. The cold open (chapter 1) then starts the story.
+
+Show, don't write (very important): the story is told by motion, camera and sound; text only \
+supports it. The weak version is "big text, then another big text". The strong version: an actor \
+enters, the camera pushes in, something falls, a number counts up, a sound hits, then two short words.
+- 'keyword' and 'title' beats (mostly words) are at most 1 in 7 beats and never two in a row. Keyword \
+text is at most 3 words, a headline at most 6.
+- Use 'scene' often: 1-4 icon actors that act the line out (a ship enters and a storm icon shakes \
+above it; coins multiply; a factory grows; a person flees). Pick concrete icons and actions that \
+match the words.
+- Pick a camera move for every visual and vary them (push, pull, pans, rise, dutch, orbit); save \
+'impact' for the one biggest moment of a chapter.
+
+Music and sound: set the music mood from the story, and give every chapter an intensity (1-5) that \
+follows the tension: build toward the twist and the ending, fall back after a peak, and mark the \
+chapter that opens on the twist with a drop. Pick an ambience only where a place matters.
+
 Visuals:
 - Every visual must match its line. Numbers on screen must be real, sourced and identical to what \
 the narration says; no made-up, rounded-up or "illustrative" data. A chart needs real figures; \
 otherwise use a stat or a keyword. A quote must be a real, verified quote with its speaker; if you \
 can't verify one, don't use a quote.
-- Vary the types; never the same type twice in a row. Use 'title' sparingly, mostly for turns in \
-the story. Prefer icons, timelines, steps, compares and stats that make the idea visual.
+- Vary the types; never the same type twice in a row. Prefer scene, icons, timelines, steps, \
+compares, charts, stats, footage and 3D that make the idea visual.
 - 'footage' (at most one per chapter, only in a true story): when the viewer needs to SEE a real \
 place or scene the line talks about (a city, a landscape, a busy street, rain on a road). Only what \
 stock video can show truthfully: a city or country by name, nature, everyday scenes. Never a named \
@@ -179,7 +237,8 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     prompt = (f"Candidate topics trending now (region {cfg.geo}):\n{trends_as_json(candidates)}\n\n{task}\n"
               f"- Length: about {words} words of narration in total ({minutes:g} minutes), no less than "
               f"{int(words * 0.9)} and no more than {int(words * 1.1)}.\n"
-              f"- 6 to 8 chapters, 6 to 14 beats each.\n\n" + media.prompt_block(cfg, long=True)
+              f"- 6 to 8 chapters, 6 to 14 beats each." + variety.recent_block(cfg) + "\n\n"
+              + media.prompt_block(cfg, long=True)
               + media.models_block(cfg))
     if len(candidates) == 1 and candidates[0].source == "manual":
         prompt += f"\n- The user asked for this topic: {candidates[0].title}. Use it."
@@ -253,9 +312,34 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
     result.checks["hook"] = hook
     if len(hook.split()) > 14:
         result.fail(f"The opening sentence is {len(hook.split())} words ('{hook}'); make the hook 12 words or fewer.")
+    # The hook: a 15-25 s trailer of 5-8 shots with short lines.
+    if not 5 <= len(script.hook) <= 8:
+        result.fail(f"The hook has {len(script.hook)} shots; write 5-8 (curiosity, unexpected, tension, problem, gap).")
+    hook_words = sum(len(h.line.split()) for h in script.hook)
+    result.checks["hook_words"] = hook_words
+    if hook_words > 48:
+        result.fail(f"The hook's lines have {hook_words} words; keep them under 48 so the hook stays within 25 seconds.")
+    for hi, h in enumerate(script.hook, 1):
+        if len(h.line.split()) > 13:
+            result.fail(f"Hook shot {hi}: the line is {len(h.line.split())} words; trailer lines are 3-12 words.")
+        if len(h.text.split()) > 3:
+            result.fail(f"Hook shot {hi}: on-screen text '{h.text}' is more than 3 words.")
+    # Show, don't write: few text-only beats, never two in a row.
+    all_beats = [b for c in script.chapters for b in c.beats]
+    texty = [b.visual.type in TEXT_TYPES for b in all_beats]
+    result.checks["text_beats"] = f"{sum(texty)}/{len(texty)}"
+    if texty and sum(texty) > len(texty) / 7 + 1:
+        result.fail(f"{sum(texty)} of {len(texty)} beats are keyword/title slides; at most 1 in 7. Show the idea with "
+                    "scene, icons, stat, chart, timeline, compare, steps, footage or 3D instead.")
+    if any(a and b for a, b in zip(texty, texty[1:])):
+        result.fail("Two keyword/title slides in a row; put a moving visual between them.")
     for ci, chapter in enumerate(script.chapters, 1):
         for bi, beat in enumerate(chapter.beats, 1):
             v = beat.visual
+            if v.type == "keyword" and len(v.headline.split()) > 3:
+                result.fail(f"Chapter {ci} beat {bi}: keyword '{v.headline}' is more than 3 words.")
+            if v.type == "scene" and not 1 <= len(v.actors) <= 4:
+                result.fail(f"Chapter {ci} beat {bi}: a scene needs 1-4 actors, it has {len(v.actors)}.")
             need = {"timeline": (2, 5), "compare": (2, 2), "steps": (2, 4), "chart": (3, 6)}.get(v.type)
             if need and not need[0] <= len(v.items) <= need[1]:
                 result.fail(f"Chapter {ci} beat {bi}: a {v.type} needs {need[0]}-{need[1]} items, it has {len(v.items)}.")
@@ -310,17 +394,86 @@ def _group_words(words: list[dict], max_words: int = 9, pause: float = 0.22) -> 
     return groups
 
 
+HOOK_TAIL = 0.8  # the cut into the video: a beat of glitch and black, carried by the trailer's final hit
+
+
+def _seed(script: LongScript) -> int:
+    """Stable per video, so a re-make gets the same music and look."""
+    return zlib.crc32((script.topic + script.youtube_title).encode("utf-8")) & 0x7FFFFFFF
+
+
+def _hook_timing(lengths: list[float | None]) -> list[float]:
+    """Shot lengths for the hook: each line plus a breath, silent shots a short hold, and the
+    whole hook stretched or tightened into 15-25 s (the cut into the video included)."""
+    base = [(ln + 0.45) if ln else 2.0 for ln in lengths]
+    floor = [(ln + 0.15) if ln else 1.4 for ln in lengths]
+    lo, hi = HOOK_SECONDS[0] - HOOK_TAIL, HOOK_SECONDS[1] - HOOK_TAIL
+    total = sum(base)
+    if total < lo:  # hold the shots longer
+        base = [b * lo / total for b in base]
+    elif total > hi:  # tighten the holds, never cutting into a line
+        spare = sum(b - f for b, f in zip(base, floor))
+        cut = min(spare, total - hi)
+        base = [b - (b - f) * (cut / spare if spare else 0) for b, f in zip(base, floor)]
+    return [round(b, 3) for b in base]
+
+
+def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int], duration: float) -> dict:
+    v = _media_visual(v, cfg, work, index, clip_ids)
+    v["icons"] = [i.strip().lower().replace(" ", "-") for i in v.get("icons") or []]
+    times = sound_design.actor_times(len(v.get("actors") or []), duration)
+    for a, at in zip(v.get("actors") or [], times):
+        a["icon"] = a["icon"].strip().lower().replace(" ", "-")
+        a["at"] = at
+    if v.get("impact"):
+        v["impactAt"] = sound_design.impact_time(duration)
+    return v
+
+
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
-               voices: list[list[SceneAudio]] | None = None) -> dict:
-    """Record the voice (one take per chapter) and lay out every beat on the timeline.
-    `voices`: recordings to use instead (the user's own voiceover), one list per chapter."""
+               voices: list[list[SceneAudio]] | None = None, look: dict | None = None) -> dict:
+    """Record the voice (one take per chapter) and lay out the hook and every beat on the timeline,
+    with this video's look, music, ambience and sound design.
+    `voices`: recordings to use instead (the user's own voiceover), one list per chapter.
+    `look`: the look to keep (a re-make); a new video gets a fresh one."""
+    seed = _seed(script)
+    new_look = look is None
+    look = look or variety.pick_look(cfg, seed)
     beats, chapters, lines, cues, spoken = [], [], [], [], []
     used: dict[str, str] = {}
     clip_ids: set[int] = set()  # never the same stock clip twice
-    t = 0.0
+
+    # The hook: a trailer before the video, with its own lines, look and music.
+    hook = {"duration": 0.0, "shots": [], "music": None, "style": ""}
+    if script.hook:
+        progress("Recording the hook")
+        said = [h.line.strip() for h in script.hook]
+        takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook",
+                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate) if any(said) else [])
+        audios = [next(takes) if x else None for x in said]
+        lengths = _hook_timing([media_seconds(a.path) if a else None for a in audios])
+        t = 0.0
+        for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
+            shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": h.text.strip(),
+                    "audio": sa.path.relative_to(work).as_posix() if sa else None,
+                    "visual": _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)}
+            if sa:
+                lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
+                                       for w in sa.words])
+                spoken += [(t + w.start, t + w.end) for w in sa.words]
+            hook["shots"].append(shot)
+            t += d
+        hook["duration"] = round(t + HOOK_TAIL, 3)
+        hook["style"] = variety.fresh_trailer(cfg, script.hook_music, seed)
+        cuts = [s["start"] for s in hook["shots"][1:]] + [hook["duration"] - 0.05]
+        hook["music"] = music.trailer(hook["style"], hook["duration"] - 0.05, cuts, seed,
+                                      work / "music" / "hook.wav").relative_to(work).as_posix()
+
+    t = hook["duration"]
     for ci, chapter in enumerate(script.chapters):
         card = CARD_SECONDS if ci > 0 else 0.0
-        chapters.append({"index": ci, "title": chapter.title, "start": round(t, 3), "card": card})
+        chapters.append({"index": ci, "title": chapter.title, "start": round(t, 3), "card": card,
+                         "intensity": chapter.intensity, "drop": chapter.drop, "ambience": chapter.ambience})
         t += card
         if voices is not None:
             audio = voices[ci]
@@ -330,8 +483,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
         for beat, sa in zip(chapter.beats, audio):
             duration = media_seconds(sa.path)
-            v = _media_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids)
-            v["icons"] = [i.strip().lower().replace(" ", "-") for i in v["icons"]]
+            v = _prep_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids, duration)
             beats.append({"start": round(t, 3), "duration": round(duration, 3), "chapter": ci,
                           "audio": sa.path.relative_to(work).as_posix(), "visual": v})
             lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
@@ -341,27 +493,60 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                                        lambda p: p.relative_to(work).as_posix(),
                                        media.HOOK_CUES if ci == 0 else 1, used)
             t += duration
+        chapters[-1]["end"] = round(t + CHAPTER_GAP, 3)
         t += CHAPTER_GAP
     captions = []
     for g in lines:
         captions.append({"start": g[0]["start"], "end": round(g[-1]["end"] + 0.25, 3), "words": g})
     for a, b in zip(captions, captions[1:]):  # never two subtitle lines at once
         a["end"] = min(a["end"], b["start"])
-    music = media.pick_music(cfg, script.music, work, t)
+
+    # Music: the user's own track if Claude picked one, else composed for this story's mood,
+    # following each chapter's intensity. It starts where the hook ends.
+    progress("Composing the music")
+    main_start = hook["duration"]
+    track = None
+    if script.music and script.music != "none" and any(m.name == script.music and m.path for m in media.music(cfg)):
+        track = media.pick_music(cfg, script.music, work / "music", t - main_start)
+    if track is None and script.music != "none":
+        sections = [music.Section(c["start"] - main_start, c["end"] - main_start, (c["intensity"] - 1) / 4,
+                                  bool(c["drop"])) for c in chapters]
+        track = music.compose(script.mood, sections, t - main_start, seed, work / "music" / "main.wav")
+    ambience = []
+    for c in chapters:
+        if c["ambience"] != "none":
+            bed = music.ambience(c["ambience"], c["end"] - c["start"], seed + c["index"],
+                                 work / "music" / f"ambience{c['index']:02d}.wav")
+            if bed:
+                ambience.append({"src": bed.relative_to(work).as_posix(), "from": c["start"], "to": c["end"]})
+
     sfx = write_sfx(work / "sfx")
-    return {
+    props = {
         "title": script.youtube_title,
         "fps": cfg.fps,
         "duration": round(t, 3),
+        "look": look,
+        "hook": hook,
         "chapters": chapters,
         "beats": beats,
         "captions": captions if cfg.captions else [],  # off: the visuals use the space instead
         "all_captions": captions,  # kept either way, so subtitles can be switched later without re-recording
-        "music": music.relative_to(work).as_posix() if music else None,
+        "music": track.relative_to(work).as_posix() if track else None,
+        "musicFrom": main_start,
+        "ambience": ambience,
         "sfx": {k: p.relative_to(work).as_posix() for k, p in sfx.items()},
         "cues": cues,
         "speech": media.speech_spans(spoken),
     }
+    # Sound for every visual action, on top of Claude's word cues.
+    auto = sound_design.design(props, look["transition"])
+    extra = write_cue_sounds(work / "sfx", {n for n, _, _ in auto} - set(sfx))
+    files = {**{k: p.relative_to(work).as_posix() for k, p in sfx.items()},
+             **{k: p.relative_to(work).as_posix() for k, p in extra.items()}}
+    props["cues"] = cues + [{"src": files[n], "at": at, "volume": vol, "name": n} for n, at, vol in auto if n in files]
+    if new_look:
+        variety.remember(cfg, look, script.mood, hook["style"])
+    return props
 
 
 def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) -> dict:
@@ -399,7 +584,8 @@ def youtube_chapters(props: dict) -> str:
     def stamp(s: float) -> str:
         s = int(s)
         return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
-    return "\n".join(f"{stamp(c['start'])} {c['title']}" for c in props["chapters"])
+    # YouTube needs the first chapter at 0:00; the hook plays inside the intro.
+    return "\n".join(f"{stamp(0 if i == 0 else c['start'])} {c['title']}" for i, c in enumerate(props["chapters"]))
 
 
 # ---------- checks and review ----------
@@ -424,7 +610,8 @@ def check_long_video(video: Path) -> VerifyResult:
 
 def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
     """Two frames from every chapter (a third and two thirds in), 4 per row."""
-    times = []
+    hook = props.get("hook") or {}
+    times = [hook["duration"] * 0.3, hook["duration"] * 0.75] if hook.get("shots") else []  # the hook first
     for i, c in enumerate(props["chapters"]):
         end = props["chapters"][i + 1]["start"] if i + 1 < len(props["chapters"]) else props["duration"]
         body = c["start"] + c["card"]
@@ -448,9 +635,12 @@ def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
 LONG_REVIEW_SYSTEM = """You are a strict YouTube editor reviewing an 8-10 minute fully animated video before \
 it is posted. You judge whether viewers would stay to the end: a cold open that plants one big question, \
 chapters that each open with a mini-hook and end on an open loop, one subject explored in depth rather than \
-a list, a twist near the middle and a payoff that answers the opening question. You also check that each \
-animated visual matches its line and that nothing is inaccurate, exaggerated or unverifiable. Be honest and \
-specific; don't pass mediocre work."""
+a list, a twist near the middle and a payoff that answers the opening question. It opens with a 15-25 \
+second cinematic hook (a trailer: curiosity, the unexpected, tension, part of the problem, a curiosity gap) \
+that must not give the answer away. The story should be told by motion, camera and sound, with text only \
+supporting it: a video that is mostly big words on backgrounds is a slideshow and fails. You also check \
+that each animated visual matches its line and that nothing is inaccurate, exaggerated or unverifiable. \
+Be honest and specific; don't pass mediocre work."""
 
 
 def review_long(video: Path, script: LongScript, props: dict, cfg: Config) -> tuple[Review, VerifyResult]:
@@ -459,7 +649,9 @@ def review_long(video: Path, script: LongScript, props: dict, cfg: Config) -> tu
     for ci, c in enumerate(script.chapters, 1):
         lines.append(f"\nChapter {ci}: {c.title}")
         lines += [f"{ci}.{bi} {b.narration}  {_visual_text(b.visual)}" for bi, b in enumerate(c.beats, 1)]
-    prompt = (f"The image shows two frames from every chapter, left to right, top to bottom.\n\n"
+    hook_lines = " / ".join(f"[{h.beat}] {h.line or '(no line)'} {_visual_text(h.visual)}" for h in script.hook)
+    prompt = (f"The image shows two frames from the hook, then two frames from every chapter, left to right, top to "
+              f"bottom.\n\nHook: {hook_lines}\n"
               f"Title: {script.youtube_title}\nThe big question: {script.hook_question}\n"
               f"Style: {'fiction story' if cfg.video_style == 'story' else 'true story, fact-checked'}\n"
               + "\n".join(lines) + "\n\nScore it and list what to fix. For 'visuals_match', judge the animated "

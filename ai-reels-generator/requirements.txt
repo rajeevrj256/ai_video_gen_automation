@@ -5,6 +5,7 @@ edge-tts>=7.0
 moviepy>=2.1,<3
 pillow>=10
 numpy>=1.26
+scipy>=1.11   # filters for the music composer and ambience
 fastapi>=0.110
 uvicorn>=0.29
 qrcode>=7.4
