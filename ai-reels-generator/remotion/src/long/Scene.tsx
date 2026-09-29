@@ -1,6 +1,7 @@
 import React from 'react';
 import {Easing, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import {icons, type LucideIcon} from 'lucide-react';
+import {type LucideIcon} from 'lucide-react';
+import {iconFor} from './icon';
 import {COLORS, FONT, clamp} from '../theme';
 import type {Actor, Visual} from './types';
 
@@ -11,10 +12,6 @@ import type {Actor, Visual} from './types';
 const W = 1920;
 const FLOOR = 700;
 
-const toPascal = (name: string) =>
-  name.trim().split(/[-_\s]+/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1).toLowerCase()).join('');
-const iconFor = (name: string): LucideIcon =>
-  ((icons as Record<string, LucideIcon>)[toPascal(name)] ?? icons.Sparkles) as LucideIcon;
 
 export const SceneView: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const actors = (v.actors ?? []).slice(0, 4);

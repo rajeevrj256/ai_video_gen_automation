@@ -245,6 +245,8 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
     for env, flag in (("REEL_CONCURRENCY", "--concurrency"), ("REEL_GL", "--gl"),
                       ("REEL_HWACCEL", "--hardware-acceleration")):
         value = os.environ.get(env, "").strip()
+        if value.startswith("#"):  # a comment read as a value
+            value = ""
         if env == "REEL_CONCURRENCY" and not value:
             # Remotion's default uses half the cores; only one render runs at a time (the render
             # slot), so give it all of them. Measured ~1.6x faster on 4 cores.

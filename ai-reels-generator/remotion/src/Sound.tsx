@@ -8,7 +8,7 @@ import type {Cue, Span} from './types';
 
 const DUCK_RAMP = 0.35; // seconds to dip or recover
 
-export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: number}> = ({src, speech, full, duck}) => {
+export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: number; loop?: boolean}> = ({src, speech, full, duck, loop = true}) => {
   const {fps, durationInFrames} = useVideoConfig();
   const level = (frame: number) => {
     const t = frame / fps;
@@ -25,7 +25,7 @@ export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: n
     const fade = interpolate(frame, [0, 15, durationInFrames - 45, durationInFrames], [0, 1, 1, 0], clamp);
     return (duck + (full - duck) * k) * fade;
   };
-  return <Html5Audio src={staticFile(src)} loop loopVolumeCurveBehavior="extend" volume={level} />;
+  return <Html5Audio src={staticFile(src)} loop={loop} loopVolumeCurveBehavior="extend" volume={level} />;
 };
 
 export const Cues: React.FC<{cues: Cue[]}> = ({cues}) => {

@@ -16,8 +16,12 @@ def _load_dotenv(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        value = value.split(" #", 1)[0]  # allow trailing comments
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        value = value.split(" #", 1)[0].strip().strip('"').strip("'")  # allow trailing comments
+        key = key.strip()
+        # A real environment variable wins, except a value some other .env reader (moviepy's
+        # python-dotenv) took from a comment: "REEL_GL=   # GPU for..." must mean empty.
+        if key not in os.environ or os.environ[key].lstrip().startswith("#"):
+            os.environ[key] = value
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

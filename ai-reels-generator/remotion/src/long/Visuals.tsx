@@ -1,6 +1,7 @@
 import React from 'react';
 import {Easing, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import {icons, type LucideIcon} from 'lucide-react';
+import {type LucideIcon} from 'lucide-react';
+import {iconFor} from './icon';
 import {COLORS, FONT, clamp, exitProgress, fitSize, float, formatNumber, parseNumber, payoffPop} from '../theme';
 import type {Item, Visual} from './types';
 
@@ -109,17 +110,7 @@ const Underline: React.FC<{accent: string; delay?: number; width?: number}> = ({
   return <div style={{height: 10, width: width * p, borderRadius: 5, background: accent, marginTop: 22, boxShadow: `0 0 24px ${accent}`}} />;
 };
 
-const toPascal = (name: string) =>
-  name
-    .trim()
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((p) => p[0].toUpperCase() + p.slice(1).toLowerCase())
-    .join('');
 
-// Claude names icons in lucide's kebab-case ("cloud-rain"); unknown names fall back.
-const iconFor = (name: string): LucideIcon =>
-  ((icons as Record<string, LucideIcon>)[toPascal(name)] ?? icons.Sparkles) as LucideIcon;
 
 // ---------- templates ----------
 
@@ -155,7 +146,9 @@ const Stat: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   const parsed = parseNumber(text);
   const t = interpolate(frame, [4, 4 + fps * 1.1], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   // Only count when there are enough steps to look like counting (never "0 billion").
-  const counts = parsed !== null && Math.abs(parsed.value) * 10 ** parsed.decimals >= 20;
+  // A year ("1928", "1940s") is a date, not an amount: it lands, it never counts up.
+  const year = /^(1[0-9]|20)\d{2}s?$/.test(text.trim());
+  const counts = !year && parsed !== null && Math.abs(parsed.value) * 10 ** parsed.decimals >= 20;
   const shown = counts ? formatNumber(parsed.value * t, parsed) : text;
   const landed = Math.round(4 + fps * 1.1);
   const e = useEnter(0);

@@ -362,6 +362,9 @@ const Slam: React.FC<{text: string; accent: string}> = ({text, accent}) => {
   const shake = frame - at >= 0 && frame - at < 8 ? Math.sin(frame * 3) * (8 - (frame - at)) * 2 : 0;
   if (frame < at) return null;
   return (
+    <>
+    {/* the picture dims behind the word, so it reads over any actor */}
+    <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.55), rgba(0,0,0,0.25) 70%)', opacity: Math.min(1, e)}} />
     <div
       style={{
         position: 'absolute',
@@ -382,5 +385,6 @@ const Slam: React.FC<{text: string; accent: string}> = ({text, accent}) => {
     >
       {text}
     </div>
+    </>
   );
 };
