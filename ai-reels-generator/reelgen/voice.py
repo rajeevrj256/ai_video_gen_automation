@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 import subprocess
 import threading
 import ssl
@@ -89,13 +90,26 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     pct = int(re.sub(r"[^\d-]", "", rate) or 0)
+    edge_error = None
     if engine in ("auto", "edge"):
-        try:
-            return _edge_scenes(narrations, voice, out_dir, f"{pct:+d}%")
-        except Exception as exc:
-            if engine == "edge":
-                raise
-            log.warning("Microsoft voice unavailable (%s); using the offline Kokoro voice", exc)
+        for attempt in range(3):  # a long narration is a lot of text; one network hiccup shouldn't end it
+            try:
+                return _edge_scenes(narrations, voice, out_dir, f"{pct:+d}%")
+            except Exception as exc:
+                edge_error = exc
+                log.warning("Microsoft voice failed (try %d of 3): %s", attempt + 1, exc)
+                time.sleep(3 * (attempt + 1))
+        if engine == "edge":
+            raise edge_error
+        log.warning("Microsoft voice unavailable (%s); using the offline Kokoro voice", edge_error)
+    try:
+        import kokoro_onnx  # noqa: F401
+    except ImportError:
+        raise RuntimeError(
+            f"The Microsoft voice failed ({edge_error}) and the offline backup voice isn't installed. "
+            "Install it with: .venv\\Scripts\\python -m pip install kokoro-onnx  (Mac/Linux: .venv/bin/python -m pip ...)"
+            if edge_error else
+            "The offline Kokoro voice isn't installed: run  .venv\\Scripts\\python -m pip install kokoro-onnx") from None
     return _kokoro_scenes(narrations, kokoro_voice or KOKORO_FOR_EDGE.get(voice) or _kokoro_default(voice),
                           out_dir, 1 + pct / 100)
 
