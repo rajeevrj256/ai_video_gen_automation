@@ -254,8 +254,8 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
 
 
 class BeatFix(BaseModel):
-    chapter: int = Field(description="Chapter number, 1-based, as in the numbered script (3.4 = chapter 3).")
-    beat: int = Field(description="Beat number within the chapter, 1-based (3.4 = beat 4).")
+    chapter: int = Field(description="Chapter number, 1-based, as in the numbered script (3.4 = chapter 3). 0 for a hook line (H2 = chapter 0, beat 2).")
+    beat: int = Field(description="Beat number within the chapter, 1-based (3.4 = beat 4); for a hook line its number (H2 = 2).")
     narration: str = Field(description="The corrected line, same length and flow as before.")
     visual: LVisual = Field(description="The corrected visual; unchanged if only the words were wrong.")
 
@@ -269,25 +269,52 @@ flagged, keep each line's length, tone and place in the story, and keep every nu
 its narration. If a claim can't be stated accurately, replace it with a nearby fact you are sure of, or make \
 the line less specific. Use web search when you need to confirm the corrected fact."""
 
+STRICT_FIX = ("These lines were already corrected before and are still flagged. Don't try another version of "
+              "the same claim: drop the disputed detail or say only what every source agrees on (less specific "
+              "is fine: 'one of the country's bestselling office products' instead of 'top five'). Visuals must "
+              "match: no number or ranking on screen that the sources don't all confirm.")
 
-def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instructions: str) -> LongScript:
-    """Rewrite only the flagged beats. Regenerating the whole script to fix one figure
-    brought new small errors each time; a targeted fix leaves everything else untouched."""
-    numbered = "\n".join(f"{ci}.{bi} {b.narration}  {_visual_text(b.visual)}"
-                         for ci, c in enumerate(script.chapters, 1) for bi, b in enumerate(c.beats, 1))
-    prompt = (f"The script, numbered chapter.beat:\n{numbered}\n\nThe fact-check flagged:\n" + "\n".join(issues)
-              + (f"\n\nSuggested fixes: {instructions}" if instructions else "")
-              + "\n\nReturn the corrected lines only.")
+Line = tuple  # (chapter, beat); chapter 0 = the hook
+
+
+def _numbered(script: LongScript, mark: set | None = None) -> str:
+    """The script with line numbers (H1.. for the hook, 3.4 for chapter 3 beat 4); `mark` puts >> on lines."""
+    out = []
+    for hi, h in enumerate(script.hook, 1):
+        m = ">> " if mark and (0, hi) in mark else ""
+        out.append(f"{m}H{hi} {h.line}  {_visual_text(h.visual)}" + (f" [text: {h.text}]" if h.text else ""))
+    for ci, c in enumerate(script.chapters, 1):
+        out.append(f"\nChapter {ci}: {c.title}")
+        for bi, b in enumerate(c.beats, 1):
+            m = ">> " if mark and (ci, bi) in mark else ""
+            out.append(f"{m}{ci}.{bi} {b.narration}  {_visual_text(b.visual)}")
+    return "\n".join(out)
+
+
+def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instructions: str,
+                    strict: bool = False) -> tuple[LongScript, set]:
+    """Rewrite only the flagged lines. Regenerating the whole script to fix one figure
+    brought new small errors each time; a targeted fix leaves everything else untouched.
+    Returns the fixed script and which lines changed (so only those are checked again)."""
+    prompt = (f"The script, numbered (H = hook line, chapter.beat):\n{_numbered(script)}\n\nThe fact-check flagged:\n"
+              + "\n".join(issues) + (f"\n\nSuggested fixes: {instructions}" if instructions else "")
+              + (f"\n\n{STRICT_FIX}" if strict else "") + "\n\nReturn the corrected lines only.")
     result = ask(cfg.ai_backend, cfg.claude_model, FIX_SYSTEM, prompt, ScriptFixes, allow_web=True,
                  effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     fixed = script.model_copy(deep=True)
+    changed = set()
     for f in result.fixes:
-        if 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
+        if f.chapter == 0 and 1 <= f.beat <= len(fixed.hook):
+            h = fixed.hook[f.beat - 1]
+            fixed.hook[f.beat - 1] = HookShot(beat=h.beat, line=f.narration, text=h.text, visual=f.visual)
+            changed.add((0, f.beat))
+        elif 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
             old = fixed.chapters[f.chapter - 1].beats[f.beat - 1]
             fixed.chapters[f.chapter - 1].beats[f.beat - 1] = LBeat(narration=f.narration, visual=f.visual,
                                                                     sounds=old.sounds)
-    log.info("Fixed %d line(s): %s", len(result.fixes), ", ".join(f"{f.chapter}.{f.beat}" for f in result.fixes))
-    return fixed
+            changed.add((f.chapter, f.beat))
+    log.info("Fixed %d line(s): %s", len(changed), ", ".join(f"{c}.{b}" if c else f"H{b}" for c, b in sorted(changed)))
+    return fixed, changed
 
 
 def narration_words(script: LongScript) -> int:
@@ -359,14 +386,15 @@ def _visual_text(v: LVisual) -> str:
     return f"[{v.type}: {v.headline}" + (f" | {v.sub}" if v.sub else "") + (f" | {items}" if items else "") + "]"
 
 
-def fact_check_long(script: LongScript, cfg: Config) -> VerifyResult:
-    lines = []
-    for ci, c in enumerate(script.chapters, 1):
-        lines.append(f"\nChapter {ci}: {c.title}")
-        for bi, b in enumerate(c.beats, 1):
-            lines.append(f"{ci}.{bi} {b.narration}  {_visual_text(b.visual)}")
-    prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n" + "\n".join(lines)
-              + "\n\nFact-check this script. Refer to lines by their numbers (e.g. 3.4).")
+def fact_check_long(script: LongScript, cfg: Config, only: set | None = None) -> VerifyResult:
+    """Check every claim, or with `only`, just the lines marked >> (the ones just corrected):
+    the rest was already checked, so it is there as context and not searched again."""
+    if only:
+        ask_for = ("Fact-check ONLY the lines marked >> (they were just corrected); the other lines were already "
+                   "checked and are context. Refer to lines by their numbers (e.g. 3.4, H2).")
+    else:
+        ask_for = "Fact-check this script, the hook lines (H1...) included. Refer to lines by their numbers (e.g. 3.4, H2)."
+    prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n{_numbered(script, only)}\n\n{ask_for}")
     check = ask(cfg.ai_backend, cfg.claude_model, FACT_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.claude_effort,
                 timeout=LLM_TIMEOUT)
     result = VerifyResult()
@@ -788,6 +816,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     resume = resume or {}
     feedback = resume.get("feedback", "")
     script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
+    open_facts: list[str] = resume.get("open_facts", [])
     best = _dec_long_best(resume.get("best"))
     start = resume.get("attempt", 1)
     meter_add_earlier(resume.get("usage"))
@@ -808,29 +837,41 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             else:
                 progress(f"{tag} Claude is picking the topic and writing the script (long video, a few minutes)")
                 script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
-            for fix in range(0 if stage else FACT_FIXES + 1):
+            changed: set | None = None  # None = check everything; a set = only the lines just corrected
+            for fix in range(0 if stage else FACT_FIXES + 2):
                 basic = check_long_script(script, minutes)
-                if basic.passed and cfg.video_style != "story":
-                    progress(f"{tag} Claude is fact-checking the script")
-                facts = fact_check_long(script, cfg) if basic.passed and cfg.video_style != "story" else VerifyResult()
+                checking = basic.passed and cfg.video_style != "story"
+                if checking:
+                    progress(f"{tag} Claude is fact-checking the " + ("script" if changed is None else f"{len(changed)} corrected line(s)"))
+                facts = fact_check_long(script, cfg, changed) if checking else VerifyResult()
                 if basic.passed and facts.passed:
                     break
                 problems = basic.issues + facts.issues
-                if fix == FACT_FIXES:
-                    progress(f"{tag} Still has problems after rewriting: {'; '.join(problems)}")
+                if fix == FACT_FIXES + 1 or (not basic.passed and fix == FACT_FIXES):  # 2 rewrites for structure
+                    progress(f"{tag} Still has problems after the strict fix: {'; '.join(problems)}")
                     break
-                progress(f"{tag} Fixing the script: {'; '.join(problems)}")
                 fixes = facts.checks.get("fact_check", {}).get("fix_instructions", "")
-                if basic.passed:  # only facts are wrong: correct just those lines
-                    script = fix_long_script(script, cfg, facts.issues, fixes)
-                else:  # structure or length is off: that needs a real rewrite
+                if basic.passed:  # only facts are wrong: correct just those lines, never the whole script
+                    strict = fix >= FACT_FIXES
+                    progress(f"{tag} {'Removing what the sources do not all confirm' if strict else 'Fixing the script'}: "
+                             f"{'; '.join(problems)}")
+                    script, changed = fix_long_script(script, cfg, facts.issues, fixes, strict=strict)
+                    if not changed:  # nothing was changed: another check would find the same
+                        break
+                else:  # structure or length is off: that needs a real rewrite (and a full check)
+                    progress(f"{tag} Fixing the script: {'; '.join(problems)}")
                     script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
-            if not stage and not (basic.passed and facts.passed) and attempt < LONG_ATTEMPTS:
+                    changed = None
+            if not stage:  # claims still disputed after the strict fix: the video must be checked by hand
+                open_facts = [] if facts.passed else list(facts.issues)
+            # Only a script whose structure is still wrong starts over; facts are fixed in place.
+            if not stage and not basic.passed and attempt < LONG_ATTEMPTS:
                 feedback = "\n".join(problems)
                 save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
                 continue
             if not stage:
-                save(attempt=attempt, stage="scripted", script=script.model_dump(), feedback=feedback)
+                save(attempt=attempt, stage="scripted", script=script.model_dump(), feedback=feedback,
+                     open_facts=open_facts)
 
             if stage in ("voiced", "rendered") and not all(
                     (work / b["audio"]).exists() for b in resume["props"]["beats"] if b.get("audio")):
@@ -913,9 +954,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "facts_checked": script.facts_checked,
             "chapters": [{"title": c["title"], "start": c["start"]} for c in props["chapters"]],
             "created_at": stamp,
-            "verified": verdict.passed,
+            "verified": verdict.passed and not open_facts,
             "score": verdict.score,
-            "issues": verdict.issues,
+            "issues": verdict.issues + [f"Unconfirmed after fact-checking, check before posting: {x}" for x in open_facts],
             "checks": verdict.checks,
             "attempts": best["attempt"],
             "video": str(final_dir / "reel.mp4"),
