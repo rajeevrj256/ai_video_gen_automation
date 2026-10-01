@@ -326,6 +326,8 @@ def narration_words(script: LongScript) -> int:
     return sum(len(b.narration.split()) for c in script.chapters for b in c.beats)
 
 
+LENGTH_FIX = ("For the length: shorten (or lengthen) the longest (or shortest) lines by a few words each, "
+              "keeping every fact and the story; change as few lines as needed.")
 GLOBAL_ISSUES = ("Narration is", "chapters; use", "The hook has")  # need a real rewrite; the rest is line-level
 
 
@@ -854,16 +856,17 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     voice and every render, so a stopped video can carry on instead of starting again."""
     from .pipeline import CHECKPOINT, STAGE_DONE, _history_lock, _render_slot, pause_point, slugify
 
-    minutes = cfg.long_minutes
-    history_path = cfg.output_dir / "history.json"
     resume = resume or {}
+    # The length it was written for: a resume under other settings must not call it too long or short.
+    minutes = resume.get("minutes") or cfg.long_minutes
+    history_path = cfg.output_dir / "history.json"
     feedback = resume.get("feedback", "")
     script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
     open_facts: list[str] = resume.get("open_facts", [])
     best = _dec_long_best(resume.get("best"))
     start = resume.get("attempt", 1)
     meter_add_earlier(resume.get("usage"))
-    state = {"length": "long", "topic": topic, "stamp": stamp, "style": cfg.video_style,
+    state = {"length": "long", "minutes": minutes, "topic": topic, "stamp": stamp, "style": cfg.video_style,
              "candidates": [asdict(c) for c in candidates], "best": resume.get("best")}
 
     def save(**changes) -> None:
@@ -909,6 +912,10 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                     break
                 fixes = facts.checks.get("fact_check", {}).get("fix_instructions", "")
                 whole = [p for p in basic.issues if p.startswith(GLOBAL_ISSUES)]
+                if changed is not None and all(p.startswith("Narration is") for p in whole):
+                    # Corrected lines pushed the length off: trim or extend lines, never write it again.
+                    whole = []
+                    fixes = (fixes + " " if fixes else "") + LENGTH_FIX
                 if whole:  # length, chapters or hook size is off: that needs a real rewrite (and a full check)
                     progress(f"{tag} Rewriting the script: {'; '.join(problems)}")
                     script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
