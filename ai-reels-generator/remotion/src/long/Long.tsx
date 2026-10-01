@@ -98,7 +98,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
       {/* music: the hook's trailer track, then the main track from where the hook ends */}
       {hook?.music ? (
         <Sequence name="hook music" durationInFrames={f(hook.duration + 1.8)}>
-          <Music src={hook.music} speech={speech.filter(([a]) => a < hook.duration)} full={0.55} duck={0.24} loop={false} />
+          <Music src={hook.music} speech={speech.filter(([a]) => a < hook.duration)} full={0.62} duck={0.3} loop={false} />
         </Sequence>
       ) : null}
       {music ? (

@@ -6,9 +6,10 @@ is copied or needs a licence.
   that adds or removes layers (pad -> bass -> ticks -> arps -> drums), and a section can
   start with a drop (a moment of silence, then a hit). The seed changes key, tempo,
   progression and patterns, so two videos in the same mood still differ.
-- `trailer(style, seconds, cuts, seed)`: the hook's own track, a cinematic pulse (a ticking
-  "ti-ti-ti-ti" spy-style rhythm, a minor bass ostinato, stabs, a riser, hits on the cuts and
-  a silence before the final cut). Original: it only shares the energy of spy/action intros.
+- `trailer(style, seconds, cuts, seed)`: the hook's own energetic track: a short build, then a
+  driving groove (four-on-the-floor kick, backbeat clap, the ticking "ti-ti-ti-ti" spy rhythm, a
+  minor bass ostinato, stabs, a lead in the second half), a snare roll and a riser into the final
+  cut, silence and a big hit. Original: it only shares the energy of spy/action intros.
 - `ambience(kind, seconds, seed)`: a quiet background bed (city, rain, room, wind, crowd,
   night, lab, sea, fire) under a chapter.
 
@@ -339,84 +340,116 @@ def compose(mood: str, sections: list[Section], seconds: float, seed: int, out: 
 
 # ---------- the hook's trailer track ----------
 
+def clap() -> np.ndarray:
+    def make():
+        t = _t(0.25)
+        n = _filt(np.random.default_rng(13).standard_normal(len(t)), "band", [900, 3500])
+        env = sum(np.exp(-np.clip(t - d, 0, None) * 60) * (t >= d) for d in (0, 0.012, 0.024)) + np.exp(-t * 14) * 0.5
+        return n * env
+    return _cached("clap", make)
+
+
+def tom(freq: float = 110) -> np.ndarray:
+    def make():
+        t = _t(0.6)
+        f = freq * (1 + 0.6 * np.exp(-t * 18))
+        return np.sin(2 * np.pi * np.cumsum(f) / RATE) * np.exp(-t * 6)
+    return _cached(("tom", freq), make)
+
+
+TRAILER_SPECS = {
+    # bpm range, hats (tick = the 'ti-ti-ti' spy rhythm), bass pattern (scale degrees per 8th), stab voice, lead voice
+    "spy-pulse": ((132, 142), "tick", (0, 0, 3, 0, 5, 0, 3, 7), "stab", "pluck"),
+    "glitch-drive": ((138, 150), "glitch", (0, 0, 0, 3, 0, 0, 5, 3), "stab", "bell"),
+    "ticking-clock": ((122, 130), "clock", (0, 7, 0, 5, 0, 3, 0, 5), "piano", "piano"),
+    "dark-pulse": ((112, 124), "tom", (0, 0, 1, 0, 0, 0, 6, 5), "stab", "bell"),
+}
+
+
 def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path) -> Path:
-    """Cinematic pulse for the hook. `cuts` are the shot changes (hits land on them); the
-    last one is the final cut into the video, preceded by a moment of silence."""
+    """An energetic, original trailer track for the hook, built like an action/spy intro:
+    a short build, then a driving groove (four-on-the-floor kick, backbeat clap, ticking hats,
+    a minor bass ostinato, stabs), a lead that joins for the second half, a snare roll and a
+    riser into the final cut, a moment of silence and a big hit. `cuts` are the shot changes."""
+    bpm_range, hats, riff, stab_voice, lead_voice = TRAILER_SPECS.get(style, TRAILER_SPECS["spy-pulse"])
     rng = np.random.default_rng(seed)
-    n = int(RATE * (seconds + 2.5))
-    x = np.zeros(n)
-    root = int(rng.integers(38, 45))
+    bpm = int(rng.integers(bpm_range[0], bpm_range[1] + 1))
+    s16 = 60 / bpm / 4
+    root = int(rng.integers(38, 44))
     minor = SCALES["harmonic" if rng.random() < 0.5 else "minor"]
+    prog = [(0, 5, 3, 4), (0, 6, 5, 4), (0, 3, 5, 4)][int(rng.integers(3))]
     final = seconds
-    if style == "ticking-clock":
-        bpm = int(rng.integers(100, 116))
-        beat = 60 / bpm
-        t = 0.0
-        k = 0
-        while t < final - 0.4:
-            _add(x, tick(2400 if k % 2 else 1800), t, 0.55)  # tick-tock
-            if (t / final) > 0.35 and k % 2 == 0:  # heartbeat joins, then speeds up
-                _add(x, kick(0.7), t, 0.5)
-                _add(x, kick(0.6), t + beat * 0.28, 0.35)
-            t += beat * (1 - 0.35 * (t / final))
-            k += 1
-        _add(x, pad([_mtof(root), _mtof(root + 7)], final, dark=True), 0, 0.35)
-    elif style == "dark-pulse":
-        bpm = int(rng.integers(84, 100))
-        e = 60 / bpm / 2
-        t = 0.0
-        while t < final - 0.4:
-            _add(x, bass(_mtof(root - 12), e * 0.8, 300), t, 0.8)
-            if int(t / e) % 4 == 3:
-                _add(x, bell(_mtof(root + 24 + minor[int(rng.integers(7))])), t, 0.25)
-            t += e
-        _add(x, pad([_mtof(root), _mtof(root + 3), _mtof(root + 7)], final, dark=True), 0, 0.35)
-    elif style == "glitch-drive":
-        bpm = int(rng.integers(128, 142))
-        s16 = 60 / bpm / 4
-        t = 0.0
-        i = 0
-        while t < final - 0.4:
-            if i % 16 in (0, 6, 10):
-                _add(x, kick(), t, 0.7)
-            if rng.random() < 0.35:
-                for r in range(int(rng.integers(2, 5))):  # stutter
-                    _add(x, tick(4000 + 800 * r), t + r * s16 / 4, 0.3)
-            _add(x, bass(_mtof(root + (0 if i % 8 < 6 else 3)), s16 * 0.9, 900), t, 0.45)
-            t += s16
-            i += 1
-    else:  # spy-pulse: the ticking "ti-ti-ti-ti" rhythm, a bass ostinato and brass stabs
-        bpm = int(rng.integers(128, 142))
-        s16 = 60 / bpm / 4
-        accents = [(1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1), (1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1)][int(rng.integers(2))]
-        riff = [(0, 0, 3, 0, 5, 0, 3, 7), (0, 0, 1, 0, 3, 0, 1, 5), (0, 3, 0, 5, 0, 6, 5, 3)][int(rng.integers(3))]
-        t = 0.0
-        i = 0
-        while t < final - 0.35:
-            p = t / final
-            if accents[i % 16]:
-                _add(x, tick(3000 if i % 4 else 3600), t, 0.25 + 0.3 * p)
-            if i % 2 == 0 and p > 0.12:
-                deg = riff[(i // 2) % 8]
-                _add(x, bass(_mtof(root + minor[deg % 7] + 12 * (deg // 7)), s16 * 1.6, 600 + 800 * p), t, 0.6)
-            if p > 0.3 and i % 32 in (0, 10):
-                _add(x, stab([_mtof(root + 12 + minor[d]) for d in (0, 2, 4)], 0.22), t, 0.35 + 0.2 * p)
-            if p > 0.55 and i % 8 == 0:
-                _add(x, kick(), t, 0.6)
-            t += s16
-            i += 1
+    groove_in = min(3.2, final * 0.12)  # the build before the beat drops in
+    roll_from = final - min(3.5, final * 0.15)
+    n = int(RATE * (final + 2.5))
+    drums, bass_buf, music_buf, fx = (np.zeros(n) for _ in range(4))
+    note = lambda deg, octave=0: _mtof(root + 12 * octave + minor[deg % 7] + 12 * (deg // 7))
+    lead_fn = {"pluck": pluck, "bell": bell, "piano": piano}[lead_voice]
+    arp = [(0, 2, 4, 2), (0, 4, 2, 4), (4, 2, 0, 2)][int(rng.integers(3))]
+
+    # The build: a riser and a ticking pulse into the drop of the beat.
+    _add(fx, riser(groove_in), 0, 0.5)
+    t, i = 0.0, 0
+    while t < final - 0.32:
+        p = t / final
+        step, beat = i % 16, (i // 4) % 4
+        bar = i // 16
+        chord_deg = prog[bar % len(prog)]
+        grooving = t >= groove_in and t < roll_from
+        # hats / the ticking rhythm (all the way, louder as it goes)
+        if hats == "tick" and (step % 2 == 0 or rng.random() < 0.55):
+            _add(drums, tick(3000 if step % 4 else 3700), t, 0.28 + 0.25 * p)
+        elif hats == "glitch":
+            _add(drums, hat(), t, 0.22 + 0.2 * p)
+            if rng.random() < 0.12:
+                for r in range(3):
+                    _add(drums, tick(4200 + 600 * r), t + r * s16 / 3, 0.25)
+        elif hats == "clock" and step % 4 == 0:
+            _add(drums, tick(2400 if beat % 2 else 1800), t, 0.5)
+        elif hats == "tom" and step in (0, 3, 6, 10, 12, 14):
+            _add(drums, tom(98 if step < 8 else 82), t, 0.55)
+        if hats != "tick" and step % 2 == 1 and t >= groove_in:
+            _add(drums, hat(), t, 0.16 + 0.15 * p)
+        if grooving:
+            if step % 4 == 0:
+                _add(drums, kick(), t, 0.85)
+            if step in (4, 12):
+                _add(drums, clap(), t, 0.55)
+                _add(drums, snare(), t, 0.25)
+            if step == 14 and bar % 2:
+                _add(drums, hat(True), t, 0.22)
+            # driving bass: every 8th, the riff over the chord root
+            if step % 2 == 0:
+                deg = chord_deg + riff[(step // 2) % 8]
+                _add(bass_buf, bass(note(deg, -1), s16 * 1.8, 500 + 1500 * p), t, 0.7)
+            # stabs on the downbeat and the 'and' of 2, every bar after the first
+            if step in (0, 6) and bar % 2 == 0:
+                chord = [note(chord_deg + k, 1) for k in (0, 2, 4)]
+                _add(music_buf, stab(chord, 0.22) if stab_voice == "stab" else sum(piano(f) for f in chord), t, 0.4)
+            # the lead joins for the second half
+            if p > 0.45 and step % 2 == 0:
+                _add(music_buf, lead_fn(note(chord_deg + arp[(step // 2) % 4], 2)), t, 0.22)
+        if step == 0 and t >= groove_in:  # a pad under it all, for harmony
+            _add(music_buf, pad([note(chord_deg + k, 0) for k in (0, 2, 4)], s16 * 16, dark=True), t, 0.22)
+        if t >= roll_from:  # snare roll speeding up into the cut
+            roll = 1 if (t - roll_from) / (final - roll_from) > 0.5 else 2
+            if i % roll == 0:
+                _add(drums, snare(), t, 0.25 + 0.45 * (t - roll_from) / (final - roll_from))
+        t += s16
+        i += 1
     # Hits on the shot changes, a riser into the final cut, silence, then the big hit.
     for c in cuts[:-1]:
-        _add(x, boom(0.5), c, 0.35)
-        _add(x, swell_reverse(0.6), c - 0.6, 0.25)
-    _add(x, riser(min(4.5, final * 0.3)), final - min(4.5, final * 0.3) - 0.3, 0.45)
-    i, j = int((final - 0.3) * RATE), int(final * RATE)
-    x[i:j] *= np.linspace(1, 0.02, j - i) ** 2
-    x[j:] = 0
-    _add(x, boom(1.0), final, 1.0)
+        _add(fx, boom(0.45), c, 0.3)
+    _add(fx, riser(min(4.0, final * 0.2)), final - min(4.0, final * 0.2) - 0.3, 0.55)
+    x = drums * 0.9 + bass_buf * 0.75 + _reverb(music_buf, 0.3) * 0.8 + fx
+    i0, i1 = int((final - 0.3) * RATE), int(final * RATE)
+    x[i0:i1] *= np.linspace(1, 0.02, i1 - i0) ** 2
+    x[i1:] = 0
+    _add(x, boom(1.0), final, 1.1)
+    _add(x, stab([note(0, 0), note(2, 0), note(4, 0)], 0.6), final, 0.6)
     x = x[: int(RATE * (final + 1.8))]
     x[-int(RATE * 0.8):] *= np.linspace(1, 0, int(RATE * 0.8))
-    return _write(out, np.tanh(x / (np.abs(x).max() or 1) * 1.3), peak=0.7)
+    return _write(out, np.tanh(x / (np.abs(x).max() or 1) * 1.6), peak=0.75)
 
 
 # ---------- ambience beds ----------

@@ -52,7 +52,7 @@ LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
 VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart", "footage",
                 "model3d", "scene")
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
-HOOK_SECONDS = (15.0, 25.0)
+HOOK_SECONDS = (25.0, 30.0)
 
 
 # ---------- the script ----------
@@ -104,7 +104,7 @@ class LBeat(BaseModel):
 
 class HookShot(BaseModel):
     beat: Literal["curiosity", "unexpected", "tension", "problem", "gap"] = Field(
-        description="Which part of the trailer this shot is: curiosity (0-3 s: a strong visual and an instant question), unexpected (3-7 s: the surprising situation), tension (7-12 s: build the mystery), problem (12-18 s: show part of the problem), gap (18-22 s: the curiosity gap, the question left hanging).")
+        description="Which part of the trailer this shot is: curiosity (0-4 s: a strong visual and an instant question), unexpected (4-9 s: the surprising situation), tension (9-15 s: build the stakes), problem (15-22 s: show part of the problem), gap (22-27 s: the curiosity gap, the question left hanging).")
     line: str = Field(description="What the narrator says, trailer style: a short, punchy line of 3-12 words, or empty for a shot carried by sound and picture alone. Never reveals the answer.")
     text: str = Field(default="", description="On-screen text slammed in for this shot: 1-3 words (a date, a number, a place, 'WAIT...'), or empty. Most shots have none.")
     visual: LVisual = Field(description="What we see. Prefer motion: scene, model3d, footage, icons, stat. The camera move should be dramatic (push, dutch, orbit, pan).")
@@ -130,7 +130,7 @@ class LongScript(BaseModel):
     hook_question: str = Field(description="The one big question the cold open plants; the video answers it only in the last chapter.")
     answer: str = Field(description="The answer or twist the last chapter delivers, in one sentence.")
     youtube_title: str = Field(description="YouTube title, max 70 characters: curiosity plus the main search keyword, no clickbait the video doesn't deliver.")
-    hook: list[HookShot] = Field(default_factory=list, description="The 15-25 second cinematic hook before the video starts: 5-8 shots in trailer order (curiosity, unexpected, tension, problem, gap). A teaser, not the story starting: it makes the viewer think 'wait, what happened?' and never gives away the answer.")
+    hook: list[HookShot] = Field(default_factory=list, description="The 25-30 second energetic cinematic hook before the video starts: 6-9 shots in trailer order (curiosity, unexpected, tension, problem, gap). A teaser, not the story starting: it makes the viewer think 'wait, what happened?' and never gives away the answer.")
     mood: Literal["mystery", "suspense", "emotional", "uplifting", "curious", "dark", "energetic", "calm"] = Field(
         default="curious", description="The music's mood for the main video, chosen from the story.")
     hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
@@ -178,11 +178,12 @@ worry or push the story forward, or it goes.
 - The call to action names a concrete next story, not a generic "subscribe for more".
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
-The hook (15-25 seconds, before chapter 1): a cinematic trailer for this video, NOT the story \
-starting. It has its own look and its own music. 5-8 fast shots in this order: curiosity (0-3 s, a \
-strong visual and an instant question), unexpected (3-7 s, the surprising situation), tension (7-12 \
-s, build the mystery), problem (12-18 s, show part of the problem), gap (18-22 s, the question left \
-hanging); then it cuts to the video. Lines are short and punchy (3-12 words; some shots have no line \
+The hook (25-30 seconds, before chapter 1): an energetic cinematic trailer for this video, NOT the \
+story starting. It has its own look and its own driving music. 6-9 fast shots in this order: curiosity \
+(0-4 s, a strong visual and an instant question), unexpected (4-9 s, the surprising situation), tension \
+(9-15 s, build the stakes), problem (15-22 s, show part of the problem), gap (22-27 s, the question left \
+hanging); then it cuts to the video. Keep the energy high: quick shots, punchy lines, a word slammed in \
+on the big moments. Lines are short and punchy (3-12 words; some shots have no line \
 at all and let picture and sound carry them). It must make the viewer think "wait... what happened?" \
 and must never give away the answer or the punchline. The cold open (chapter 1) then starts the story.
 
@@ -373,13 +374,13 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
     result.checks["hook"] = hook
     if len(hook.split()) > 14:
         result.fail(f"The opening sentence is {len(hook.split())} words ('{hook}'); make the hook 12 words or fewer.")
-    # The hook: a 15-25 s trailer of 5-8 shots with short lines.
-    if not 5 <= len(script.hook) <= 8:
-        result.fail(f"The hook has {len(script.hook)} shots; write 5-8 (curiosity, unexpected, tension, problem, gap).")
+    # The hook: a 25-30 s trailer of 6-9 shots with short lines.
+    if not 6 <= len(script.hook) <= 9:
+        result.fail(f"The hook has {len(script.hook)} shots; write 6-9 (curiosity, unexpected, tension, problem, gap).")
     hook_words = sum(len(h.line.split()) for h in script.hook)
     result.checks["hook_words"] = hook_words
-    if hook_words > 48:
-        result.fail(f"The hook's lines have {hook_words} words; keep them under 48 so the hook stays within 25 seconds.")
+    if hook_words > 62:
+        result.fail(f"The hook's lines have {hook_words} words; keep them under 62 so the hook stays within 30 seconds.")
     for hi, h in enumerate(script.hook, 1):
         if len(h.line.split()) > 13:
             result.fail(f"Hook shot {hi}: the line is {len(h.line.split())} words; trailer lines are 3-12 words.")
@@ -466,7 +467,7 @@ def _seed(script: LongScript) -> int:
 
 def _hook_timing(lengths: list[float | None]) -> list[float]:
     """Shot lengths for the hook: each line plus a breath, silent shots a short hold, and the
-    whole hook stretched or tightened into 15-25 s (the cut into the video included)."""
+    whole hook stretched or tightened into 25-30 s (the cut into the video included)."""
     base = [(ln + 0.45) if ln else 2.0 for ln in lengths]
     floor = [(ln + 0.15) if ln else 1.4 for ln in lengths]
     lo, hi = HOOK_SECONDS[0] - HOOK_TAIL, HOOK_SECONDS[1] - HOOK_TAIL
@@ -697,7 +698,7 @@ def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
 LONG_REVIEW_SYSTEM = """You are a strict YouTube editor reviewing an 8-10 minute fully animated video before \
 it is posted. You judge whether viewers would stay to the end: a cold open that plants one big question, \
 chapters that each open with a mini-hook and end on an open loop, one subject explored in depth rather than \
-a list, a twist near the middle and a payoff that answers the opening question. It opens with a 15-25 \
+a list, a twist near the middle and a payoff that answers the opening question. It opens with a 25-30 \
 second cinematic hook (a trailer: curiosity, the unexpected, tension, part of the problem, a curiosity gap) \
 that must not give the answer away. The story should be told by motion, camera and sound, with text only \
 supporting it: a video that is mostly big words on backgrounds is a slideshow and fails. You also check \
