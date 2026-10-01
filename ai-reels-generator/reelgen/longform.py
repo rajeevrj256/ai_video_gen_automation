@@ -259,6 +259,7 @@ class BeatFix(BaseModel):
     beat: int = Field(description="Beat number within the chapter, 1-based (3.4 = beat 4); for a hook line its number (H2 = 2).")
     narration: str = Field(description="The corrected line, same length and flow as before.")
     visual: LVisual = Field(description="The corrected visual; unchanged if only the words were wrong.")
+    text: str | None = Field(default=None, description="Hook lines only: the corrected on-screen word slam (1-3 words), or '' to remove it. Leave null to keep it.")
 
 
 class ScriptFixes(BaseModel):
@@ -309,7 +310,8 @@ def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instruct
     for f in result.fixes:
         if f.chapter == 0 and 1 <= f.beat <= len(fixed.hook):
             h = fixed.hook[f.beat - 1]
-            fixed.hook[f.beat - 1] = HookShot(beat=h.beat, line=f.narration, text=h.text, visual=f.visual)
+            fixed.hook[f.beat - 1] = HookShot(beat=h.beat, line=f.narration, visual=f.visual,
+                                              text=h.text if f.text is None else f.text)
             changed.add((0, f.beat))
         elif 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
             old = fixed.chapters[f.chapter - 1].beats[f.beat - 1]
