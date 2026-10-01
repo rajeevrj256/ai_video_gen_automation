@@ -95,4 +95,5 @@ export type LongProps = {
   hook?: Hook;
   musicFrom?: number; // the main track starts after the hook
   ambience?: {src: string; from: number; to: number}[];
+  currency?: string; // rupee | euro | pound: money icons show this symbol
 };

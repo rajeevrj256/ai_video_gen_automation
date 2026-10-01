@@ -10,12 +10,28 @@ const KEYS = Object.keys(ALL);
 const SYNONYMS: Record<string, string> = {help: 'question-mark', question: 'question-mark', dollar: 'dollar-sign', money: 'banknote', person: 'user', people: 'users', warning: 'triangle-alert', alert: 'triangle-alert', delete: 'trash', bin: 'trash', danger: 'skull', love: 'heart', time: 'clock', world: 'globe', earth: 'earth', doctor: 'stethoscope', medicine: 'pill', lab: 'flask-conical', science: 'flask-conical', car: 'car', gun: 'crosshair', war: 'swords', soldier: 'shield'};
 const cache = new Map<string, LucideIcon>();
 
+// Money icons follow the video's currency: a "receipt" in a rupee story must not show a $.
+const CURRENCY: Record<string, Record<string, string>> = {
+  rupee: {DollarSign: 'IndianRupee', CircleDollarSign: 'IndianRupee', BadgeDollarSign: 'BadgeIndianRupee', Receipt: 'ReceiptIndianRupee', ReceiptCent: 'ReceiptIndianRupee', Euro: 'IndianRupee', PoundSterling: 'IndianRupee', ReceiptEuro: 'ReceiptIndianRupee', ReceiptPoundSterling: 'ReceiptIndianRupee'},
+  euro: {DollarSign: 'Euro', CircleDollarSign: 'CircleEuro', BadgeDollarSign: 'BadgeEuro', Receipt: 'ReceiptEuro'},
+  pound: {DollarSign: 'PoundSterling', CircleDollarSign: 'CirclePoundSterling', BadgeDollarSign: 'BadgePoundSterling', Receipt: 'ReceiptPoundSterling'},
+};
+let currency = '';
+export const setCurrency = (c?: string) => {
+  currency = c && CURRENCY[c] ? c : '';
+};
+const NAME = new Map<LucideIcon, string>(KEYS.map((k) => [ALL[k], k]));
+const inCurrency = (icon: LucideIcon): LucideIcon => {
+  const swap = currency ? CURRENCY[currency][NAME.get(icon) ?? ''] : undefined;
+  return swap ? ALL[swap] : icon;
+};
+
 const pascal = (words: string[]) => words.map((w) => w[0].toUpperCase() + w.slice(1)).join('');
 
 export const iconFor = (name: string): LucideIcon => {
   const key = name.trim().toLowerCase();
   const hit = cache.get(key);
-  if (hit) return hit;
+  if (hit) return inCurrency(hit);
   let words = key.split(/[-_\s]+/).filter(Boolean);
   const tries: string[][] = [words, words.filter((w) => !/^\d+$/.test(w))];
   words = tries[1].flatMap((w) => (SYNONYMS[w] ?? w).split('-'));
@@ -36,5 +52,5 @@ export const iconFor = (name: string): LucideIcon => {
   }
   const icon = found ?? ALL.Sparkles;
   cache.set(key, icon);
-  return icon;
+  return inCurrency(icon);
 };

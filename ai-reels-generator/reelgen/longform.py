@@ -604,6 +604,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         "sfx": {k: p.relative_to(work).as_posix() for k, p in sfx.items()},
         "cues": cues,
         "speech": media.speech_spans(spoken),
+        "currency": currency_of(script),
     }
     # Sound for every visual action, on top of Claude's word cues.
     auto = sound_design.design(props, look["transition"])
@@ -618,7 +619,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
 
 def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) -> dict:
     """Fetch a footage beat's clip or copy a model3d beat's model into the render folder.
-    Without one (no Pexels key, no matching clip, model deleted) the beat becomes a title card."""
+    Without one (no Pexels key, no matching clip, no real model) the beat becomes an animated scene."""
     if v["type"] == "footage":
         clip = None
         if cfg.pexels_api_key and v.get("query"):
@@ -637,8 +638,15 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
             v["src"] = path.relative_to(work).as_posix()
             v["parts"] = []
             return v
-        if len(v.get("parts") or []) >= 2:  # built from Claude's shapes in the editor
-            return v
+        # Nothing real to show: an object built from primitive shapes read as a grey pile of
+        # cylinders (review of the Budget video), so it becomes an icon actor acting the line out.
+        v["type"] = "scene"
+        name = (v.get("model") or v.get("search") or "box").strip().lower().replace(" ", "-")
+        v["actors"] = [{"icon": name, "action": "rise" if v.get("scene") != "space" else "orbit",
+                        "label": v.get("headline", "")[:24]}]
+        v["headline"] = ""
+        v["parts"] = []
+        return v
     else:
         return v
     if v["type"] == "footage":  # no clip (no Pexels key or no match): a small animated place scene, never a bare name
@@ -651,6 +659,18 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
     v["headline"] = v.get("headline") or (v.get("model") or "").split(" ")[0].title()
     return v
 
+
+
+def currency_of(script: LongScript) -> str:
+    """The money the story is about, so the editor's money icons show ₹/€/£ instead of $."""
+    text = " ".join([h.line for h in script.hook] + [b.narration + " " + b.visual.headline
+                                                      for c in script.chapters for b in c.beats]).lower()
+    counts = {"rupee": text.count("₹") + len(re.findall(r"\brupees?\b|\blakh\b|\bcrore\b", text)),
+              "euro": text.count("€") + len(re.findall(r"\beuros?\b", text)),
+              "pound": text.count("£") + len(re.findall(r"\bpounds? sterling\b|\bsterling\b", text)),
+              "dollar": text.count("$") + len(re.findall(r"\bdollars?\b", text))}
+    best = max(counts, key=counts.get)
+    return best if counts[best] >= 2 and best != "dollar" else ""
 
 
 def youtube_chapters(props: dict) -> str:

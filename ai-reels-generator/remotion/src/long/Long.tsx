@@ -7,6 +7,7 @@ import {VisualView} from './Visuals';
 import {Cues, Music} from '../Sound';
 import {Footage, Model3D} from './Media';
 import {SceneView} from './Scene';
+import {setCurrency} from './icon';
 import {Backdrop, HookView, Shot, lookOf, worldFor} from './Cinematic';
 import type {Chapter, Look, LongProps, Visual} from './types';
 
@@ -34,8 +35,9 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   );
 };
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = []}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], currency}) => {
   useFonts();
+  setCurrency(currency);
   const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const look = lookOf(rawLook);

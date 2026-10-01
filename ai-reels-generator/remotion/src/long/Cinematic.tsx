@@ -365,8 +365,8 @@ const Slam: React.FC<{text: string; accent: string}> = ({text, accent}) => {
   if (frame < at) return null;
   return (
     <>
-    {/* the picture dims behind the word, so it reads over any actor */}
-    <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.55), rgba(0,0,0,0.25) 70%)', opacity: Math.min(1, e)}} />
+    {/* the picture steps back (blurred and dark) behind the word, so the two never overlap */}
+    <div style={{position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.62)', backdropFilter: `blur(${16 * Math.min(1, e)}px)`, opacity: Math.min(1, e)}} />
     <div
       style={{
         position: 'absolute',

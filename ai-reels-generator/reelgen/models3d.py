@@ -7,7 +7,8 @@ in order, for:
 1. a model in the user's library (assets/models3d, e.g. from Pixabay),
 2. a free CC0 model on Poly Haven (polyhaven.com, about 500 real-world objects: furniture,
    tools, food, plants, rocks, props), downloaded once into assets/models3d/polyhaven/,
-3. nothing: the Remotion editor then builds the object from Claude's recipe of parts.
+3. nothing: the beat becomes an icon scene (longform._media_visual); objects built from
+   primitive shapes read as grey piles of cylinders in review.
 
 A match needs the object's main noun (the last search word) in the model's name or tags,
 so "oil barrel" never becomes an armchair.
@@ -129,8 +130,18 @@ def find_model(cfg: Config, obj: str, search: str, out_dir: Path) -> Path | None
     index = _index(cfg)
     # The main noun must be in the model's own name ("Arm Chair"), not only a tag: tags are loose
     # ("rocket" on a spacecraft instrument). Tags then rank the matches.
+    names = {k: _words(re.sub(r"(?<=[a-z])(?=[A-Z])", " ", v["name"])) for k, v in index.items()}
+    heads = {w[-1] for w in names.values() if w}  # words that name an object on their own (chair, crane)
+    want = _words(search)
+
     def score(k: str, v: dict) -> int:
         name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", f"{v['name']} {k}").replace("_", " ")
+        words = names[k]
+        # The noun used as a modifier names another object: "gold bars" is not a "bar chair".
+        if want and want[-1] in words:
+            i = words.index(want[-1])
+            if i + 1 < len(words) and words[i + 1] in heads and words[i + 1] not in want:
+                return 0
         return _score(search, name) and _score(search, " ".join([name, *v["tags"], *v["categories"]]))
     ranked = sorted(((score(k, v), k) for k, v in index.items()), key=lambda x: -x[0])
     if ranked and ranked[0][0] > 0:
@@ -142,5 +153,5 @@ def find_model(cfg: Config, obj: str, search: str, out_dir: Path) -> Path | None
                 shutil.copytree(gltf.parent, dest, ignore=shutil.ignore_patterns(".complete"))
             log.info("3D %r: Poly Haven %s", obj, asset)
             return dest / gltf.name
-    log.info("3D %r: built from shapes", obj)
+    log.info("3D %r: no model found", obj)
     return None

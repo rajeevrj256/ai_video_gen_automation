@@ -20,6 +20,9 @@ export const SceneView: React.FC<{v: Visual; frames: number; accent: string}> = 
   return (
     <div style={{position: 'absolute', inset: 0, fontFamily: FONT, color: COLORS.text}}>
       <Stage accent={accent} />
+      {actors.slice(1).map((a, i) => (
+        <Link key={`l${i}`} from={slot(i)} to={slot(i + 1)} at={a.at} accent={accent} />
+      ))}
       {actors.map((a, i) => (
         <ActorView key={i} a={a} x={slot(i)} lead={{x: slot(0)}} frames={frames} accent={accent} size={n > 2 ? 230 : 290} />
       ))}
@@ -52,6 +55,26 @@ const Stage: React.FC<{accent: string}> = ({accent}) => {
         />
       ))}
     </>
+  );
+};
+
+// A dashed arrow from one actor to the next, drawn when the second one arrives: the scene reads
+// as cause and effect (A leads to B), and a still frame shows how the actors relate.
+const Link: React.FC<{from: number; to: number; at: number; accent: string}> = ({from, to, at, accent}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const p = interpolate(frame - Math.round((at + 0.35) * fps), [0, 0.5 * fps], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  if (p <= 0 || to - from < 260) return null;
+  const x0 = from + 150;
+  const x1 = to - 150;
+  const y = FLOOR - 190;
+  const flow = (frame * 2) % 40;
+  return (
+    <svg style={{position: 'absolute', left: 0, top: 0, width: W, height: 1080, overflow: 'visible'}}>
+      <path d={`M ${x0} ${y} Q ${(x0 + x1) / 2} ${y - 90} ${x0 + (x1 - x0) * p} ${y}`} fill="none" stroke={accent} strokeWidth={6}
+        strokeDasharray="22 18" strokeDashoffset={-flow} strokeLinecap="round" opacity={0.85} />
+      {p > 0.95 ? <path d={`M ${x1 - 26} ${y - 20} L ${x1} ${y} L ${x1 - 26} ${y + 20}`} fill="none" stroke={accent} strokeWidth={6} strokeLinecap="round" /> : null}
+    </svg>
   );
 };
 
@@ -143,6 +166,13 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
     // everyone else pops in at their time
     scale *= Math.min(1, e * 1.05);
   }
+  if (local > 0 && orbitAngle === null && a.action !== 'walk-across' && a.action !== 'flee') {
+    // after its action an actor never freezes: it breathes and bobs (a still slide reads as a slideshow)
+    const settle = interpolate(local, [0.8 * fps, 1.4 * fps], [0, 1], clamp);
+    dy += settle * Math.sin((frame + start) / 11) * 10;
+    scale *= 1 + settle * 0.035 * Math.sin((frame + start) / 17);
+    rot += settle * Math.sin((frame + start) / 23) * 2.5;
+  }
   let ax = x + dx;
   let ay = FLOOR - size / 2 - 30 + dy;
   if (orbitAngle !== null) {
@@ -160,7 +190,7 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
         height: size * s,
         opacity: opacity * alpha,
         transform: `rotate(${rot}deg)`,
-        filter: `drop-shadow(0 0 22px ${accent}66)`,
+        filter: `drop-shadow(0 0 ${22 + 10 * Math.sin(frame / 14)}px ${accent}77)`,
       }}
     >
       <Icon size={size * s} color={COLORS.text} strokeWidth={1.6} />
@@ -193,7 +223,7 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
       })}
       {disc(ax, ay, scale)}
       {a.label ? (
-        <div style={{position: 'absolute', left: ax - 300, width: 600, top: FLOOR + 30, textAlign: 'center', fontSize: 40, fontWeight: 800, opacity: opacity * Math.min(1, e)}}>
+        <div style={{position: 'absolute', left: ax - 300, width: 600, top: Math.max(FLOOR + 30, ay + (size * scale) / 2 + 24), textAlign: 'center', fontSize: 40, fontWeight: 800, opacity: opacity * Math.min(1, e)}}>
           {a.label}
         </div>
       ) : null}
