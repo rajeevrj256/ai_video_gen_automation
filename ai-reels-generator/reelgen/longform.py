@@ -296,8 +296,10 @@ def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instruct
     """Rewrite only the flagged lines. Regenerating the whole script to fix one figure
     brought new small errors each time; a targeted fix leaves everything else untouched.
     Returns the fixed script and which lines changed (so only those are checked again)."""
-    prompt = (f"The script, numbered (H = hook line, chapter.beat):\n{_numbered(script)}\n\nThe fact-check flagged:\n"
+    prompt = (f"The script, numbered (H = hook line, chapter.beat):\n{_numbered(script)}\n\nProblems flagged:\n"
               + "\n".join(issues) + (f"\n\nSuggested fixes: {instructions}" if instructions else "")
+              + "\n\nFor a rule about the script's form (a visual type, text length, two slides in a row, a phrase to "
+                "avoid, a hook line), change only the lines involved."
               + (f"\n\n{STRICT_FIX}" if strict else "") + "\n\nReturn the corrected lines only.")
     result = ask(cfg.ai_backend, cfg.claude_model, FIX_SYSTEM, prompt, ScriptFixes, allow_web=True,
                  effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
@@ -319,6 +321,38 @@ def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instruct
 
 def narration_words(script: LongScript) -> int:
     return sum(len(b.narration.split()) for c in script.chapters for b in c.beats)
+
+
+GLOBAL_ISSUES = ("Narration is", "chapters; use", "The hook has")  # need a real rewrite; the rest is line-level
+
+
+def repair_long_script(script: LongScript) -> LongScript:
+    """Fix line-level rule breaks in code, without a Claude call: a 4-word keyword becomes a title
+    (titles allow 6 words), surplus items/actors are trimmed, a hook word slam over 3 words is
+    dropped. A whole rewrite for one word cost ~500k tokens."""
+    s = script.model_copy(deep=True)
+    limits = {"timeline": 5, "compare": 2, "steps": 4, "chart": 6}
+
+    def fix(v: LVisual) -> None:
+        if v.type == "keyword" and len(v.headline.split()) > 3:
+            v.type = "title"
+        if v.type == "title" and len(v.headline.split()) > 6:
+            v.headline = " ".join(v.headline.split()[:6])
+        if v.type in limits and len(v.items) > limits[v.type]:
+            v.items = v.items[:limits[v.type]]
+        if v.type == "scene" and len(v.actors) > 4:
+            v.actors = v.actors[:4]
+        if v.type == "scene" and not v.actors and v.icons:
+            v.type = "icons"
+
+    for h in s.hook:
+        fix(h.visual)
+        if len(h.text.split()) > 3:
+            h.text = ""
+    for c in s.chapters:
+        for b in c.beats:
+            fix(b.visual)
+    return s
 
 
 def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
@@ -838,12 +872,16 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 progress(f"{tag} Claude is picking the topic and writing the script (long video, a few minutes)")
                 script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
             changed: set | None = None  # None = check everything; a set = only the lines just corrected
+            checked_all = False  # has the whole script been fact-checked once?
             for fix in range(0 if stage else FACT_FIXES + 2):
+                script = repair_long_script(script)  # free fixes first
                 basic = check_long_script(script, minutes)
                 checking = basic.passed and cfg.video_style != "story"
                 if checking:
-                    progress(f"{tag} Claude is fact-checking the " + ("script" if changed is None else f"{len(changed)} corrected line(s)"))
-                facts = fact_check_long(script, cfg, changed) if checking else VerifyResult()
+                    progress(f"{tag} Claude is fact-checking the " + ("script" if not checked_all or changed is None
+                                                                       else f"{len(changed)} corrected line(s)"))
+                facts = fact_check_long(script, cfg, changed if checked_all else None) if checking else VerifyResult()
+                checked_all = checked_all or checking
                 if basic.passed and facts.passed:
                     break
                 problems = basic.issues + facts.issues
@@ -851,17 +889,19 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                     progress(f"{tag} Still has problems after the strict fix: {'; '.join(problems)}")
                     break
                 fixes = facts.checks.get("fact_check", {}).get("fix_instructions", "")
-                if basic.passed:  # only facts are wrong: correct just those lines, never the whole script
-                    strict = fix >= FACT_FIXES
+                whole = [p for p in basic.issues if p.startswith(GLOBAL_ISSUES)]
+                if whole:  # length, chapters or hook size is off: that needs a real rewrite (and a full check)
+                    progress(f"{tag} Rewriting the script: {'; '.join(problems)}")
+                    script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
+                    changed, checked_all = None, False
+                else:  # line-level: correct just those lines, never the whole script
+                    strict = basic.passed and fix >= FACT_FIXES
                     progress(f"{tag} {'Removing what the sources do not all confirm' if strict else 'Fixing the script'}: "
                              f"{'; '.join(problems)}")
-                    script, changed = fix_long_script(script, cfg, facts.issues, fixes, strict=strict)
-                    if not changed:  # nothing was changed: another check would find the same
+                    script, now = fix_long_script(script, cfg, basic.issues + facts.issues, fixes, strict=strict)
+                    changed = (changed or set()) | now if not basic.passed else now
+                    if not now:  # nothing was changed: another check would find the same
                         break
-                else:  # structure or length is off: that needs a real rewrite (and a full check)
-                    progress(f"{tag} Fixing the script: {'; '.join(problems)}")
-                    script = write_long_script(cfg, candidates, minutes, "\n".join(problems + ([fixes] if fixes else [])), script)
-                    changed = None
             if not stage:  # claims still disputed after the strict fix: the video must be checked by hand
                 open_facts = [] if facts.passed else list(facts.issues)
             # Only a script whose structure is still wrong starts over; facts are fixed in place.
