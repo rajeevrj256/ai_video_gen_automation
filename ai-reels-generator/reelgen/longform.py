@@ -24,7 +24,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from .fsutil import move
-from .config import Config
+from .config import PROJECT_ROOT, Config
 from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
 from .post_copy import clean_tags, save_post_text
 from . import media
@@ -641,7 +641,7 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
         # Nothing real to show: an object built from primitive shapes read as a grey pile of
         # cylinders (review of the Budget video), so it becomes an icon actor acting the line out.
         v["type"] = "scene"
-        name = (v.get("model") or v.get("search") or "box").strip().lower().replace(" ", "-")
+        name = object_icon(f'{v.get("search", "")} {v.get("model", "")}')
         v["actors"] = [{"icon": name, "action": "rise" if v.get("scene") != "space" else "orbit",
                         "label": v.get("headline", "")[:24]}]
         v["headline"] = ""
@@ -659,6 +659,25 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
     v["headline"] = v.get("headline") or (v.get("model") or "").split(" ")[0].title()
     return v
 
+
+
+_ICONS: set[str] = set()
+OBJECT_ICONS = {"ledger": "book", "law": "scale", "gold": "coins", "money": "banknote", "cash": "banknote",
+                "spring": "activity", "barrel": "fuel", "oil": "droplet", "tower": "building-2", "ship": "ship"}
+
+
+def object_icon(text: str) -> str:
+    """The lucide icon for an object Claude named ("stack of gold coins" -> coins): its main noun
+    (the last word) first, then the other words, then a synonym; a cube when nothing fits."""
+    if not _ICONS:
+        folder = PROJECT_ROOT / "remotion" / "node_modules" / "lucide-react" / "dist" / "esm" / "icons"
+        _ICONS.update(f.name[:-4] for f in folder.glob("*.mjs")) if folder.is_dir() else None
+    words = [w for w in re.findall(r"[a-z]+", text.lower()) if len(w) > 2 and w not in ("the", "and", "with")]
+    for w in reversed(words):
+        for cand in (w, w[:-1] if w.endswith("s") else w + "s", OBJECT_ICONS.get(w), OBJECT_ICONS.get(w.rstrip("s"))):
+            if cand and (cand in _ICONS or not _ICONS):
+                return cand
+    return "box"
 
 
 def currency_of(script: LongScript) -> str:
