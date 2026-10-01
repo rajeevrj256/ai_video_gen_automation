@@ -639,8 +639,14 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
             return v
     else:
         return v
+    if v["type"] == "footage":  # no clip (no Pexels key or no match): a small animated place scene, never a bare name
+        v["type"] = "scene"
+        v["actors"] = [{"icon": "building-2", "action": "rise", "label": ""},
+                       {"icon": "map-pin", "action": "drop-in", "label": v.get("headline", "")[:20]}]
+        v["headline"] = ""
+        return v
     v["type"] = "title" if v.get("headline") else "keyword"
-    v["headline"] = v.get("headline") or (v.get("query") or v.get("model") or "").split(" ")[0].title()
+    v["headline"] = v.get("headline") or (v.get("model") or "").split(" ")[0].title()
     return v
 
 
@@ -866,16 +872,26 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         pause_point()
 
     try:
+        revise: dict | None = None  # set after a failed review: fix those lines next round
         for attempt in range(start, LONG_ATTEMPTS + 1):
             tag = f"[attempt {attempt}/{LONG_ATTEMPTS}]"
             stage = resume.get("stage") if attempt == start else None
-            if stage:
+            changed: set | None = None  # None = check everything; a set = only the lines just corrected
+            checked_all = False  # has the whole script been fact-checked once?
+            if stage == "revise":  # resumed after a failed review
+                revise = {"issues": resume.get("review_issues") or [feedback], "fix": resume.get("review_fix", "")}
+                stage = None
+            if revise:
+                # A failed review revises the flagged lines instead of writing a new script: a rewrite
+                # costs ~1.5M tokens and brings new errors; the facts already checked stay checked.
+                progress(f"{tag} Revising the lines the reviewer flagged (keeping the rest of the script)")
+                script, changed = fix_long_script(script, cfg, revise["issues"], revise["fix"])
+                checked_all, revise = True, None
+            elif stage:
                 progress(f"{tag} Resuming: {STAGE_DONE.get(stage, stage)} already done")
             else:
                 progress(f"{tag} Claude is picking the topic and writing the script (long video, a few minutes)")
                 script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
-            changed: set | None = None  # None = check everything; a set = only the lines just corrected
-            checked_all = False  # has the whole script been fact-checked once?
             for fix in range(0 if stage else FACT_FIXES + 2):
                 script = repair_long_script(script)  # free fixes first
                 basic = check_long_script(script, minutes)
@@ -965,7 +981,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             progress(f"{tag} Failed verification: {'; '.join(verdict.issues)}")
             review_fix = verdict.checks.get("review", {}).get("fix_instructions", "")
             feedback = "\n".join(verdict.issues + ([review_fix] if review_fix else []))
-            save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
+            revise = {"issues": list(verdict.issues), "fix": review_fix}
+            save(attempt=attempt + 1, stage="revise", feedback=feedback, script=script.model_dump(),
+                 review_issues=list(verdict.issues), review_fix=review_fix)
 
         if best is None:
             raise RuntimeError(f"No usable long script after {LONG_ATTEMPTS} attempts: {feedback}")

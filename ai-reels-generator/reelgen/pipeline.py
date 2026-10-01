@@ -323,7 +323,7 @@ def done_line(report: dict) -> str:
 # ---- checkpoints: resume a failed video from its last finished step ----
 
 CHECKPOINT = "checkpoint.json"
-STAGE_DONE = {"scripted": "script and fact-check", "voiced": "script and voiceover",
+STAGE_DONE = {"revise": "script (revising after review)", "scripted": "script and fact-check", "voiced": "script and voiceover",
               "footage": "script, voiceover and footage", "rendered": "script, voiceover, footage and edit"}
 
 

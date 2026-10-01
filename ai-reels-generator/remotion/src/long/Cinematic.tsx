@@ -60,7 +60,9 @@ export const Shot: React.FC<{
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const cam = cameraAt(v.camera ?? 'push', frame / Math.max(1, frames), frame);
-  const k = intense ? 1.8 : 1;
+  // Wide layouts (a timeline, a comparison, steps, a chart) use the whole frame: a big move would crop them.
+  const wide = ['timeline', 'compare', 'steps', 'chart'].includes(v.type);
+  const k = (intense ? 1.8 : 1) * (wide ? 0.35 : 1);
   // Transition in.
   const tin = interpolate(frame, [0, 9], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   let tx = 0;

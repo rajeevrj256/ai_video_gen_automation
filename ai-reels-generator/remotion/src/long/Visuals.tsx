@@ -144,13 +144,13 @@ const Stat: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   const {fps} = useVideoConfig();
   const text = v.headline || v.items[0]?.display || '';
   const parsed = parseNumber(text);
-  const t = interpolate(frame, [4, 4 + fps * 1.1], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  const t = interpolate(frame, [4, 4 + fps * 0.8], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   // Only count when there are enough steps to look like counting (never "0 billion").
   // A year ("1928", "1940s") is a date, not an amount: it lands, it never counts up.
   const year = /^(1[0-9]|20)\d{2}s?$/.test(text.trim());
   const counts = !year && parsed !== null && Math.abs(parsed.value) * 10 ** parsed.decimals >= 20;
   const shown = counts ? formatNumber(parsed.value * t, parsed) : text;
-  const landed = Math.round(4 + fps * 1.1);
+  const landed = Math.round(4 + fps * 0.8);
   const e = useEnter(0);
   const glow = interpolate(frame, [landed, landed + 8, landed + 30], [0, 1, 0.4], clamp);
   return (
@@ -271,7 +271,7 @@ const Quote: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
 const Timeline: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const frame = useCurrentFrame();
   const items = v.items.slice(0, 5);
-  const span = Math.max(20, frames * 0.6); // everything is on screen by 60% of the beat
+  const span = Math.min(Math.max(20, frames * 0.6), 75); // all items on screen within ~2.5 s, never half-built
   const line = interpolate(frame, [4, span], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
   const gap = INNER / items.length;
   return (
@@ -340,7 +340,7 @@ const CompareColumn: React.FC<{item: Item; color: string; height: number; grow: 
 
 const Steps: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const items = v.items.slice(0, 4);
-  const span = Math.max(20, frames * 0.55);
+  const span = Math.min(Math.max(20, frames * 0.55), 75);
   const w = Math.min(470, (INNER - (items.length - 1) * 70) / items.length);
   return (
     <>

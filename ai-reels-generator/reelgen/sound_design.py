@@ -45,15 +45,15 @@ def _visual_events(v: dict, start: float, duration: float) -> list[tuple[str, fl
     out: list[tuple[str, float, float]] = []
     items = v.get("items") or []
     if kind == "timeline" and items:
-        span = max(20, frames * 0.6)
+        span = min(max(20, frames * 0.6), 75)
         out += [("pop", start + (4 + (span - 4) * ((i + 0.5) / len(items))) / FPS, 0.3) for i in range(len(items))]
     elif kind == "steps" and items:
-        span = max(20, frames * 0.55)
+        span = min(max(20, frames * 0.55), 75)
         out += [("pop", start + (4 + span * i / len(items)) / FPS, 0.3) for i in range(len(items))]
     elif kind == "icons":
         out += [("pop", start + i * 6 / FPS, 0.28) for i in range(len(v.get("icons") or [1]))]
     elif kind == "stat":
-        out += [("click", start + 0.15 + i * 0.22, 0.22) for i in range(4)] + [("ding", start + 1.2, 0.3)]
+        out += [("click", start + 0.15 + i * 0.16, 0.22) for i in range(4)] + [("ding", start + 0.95, 0.3)]
     elif kind == "chart":
         out.append(("rise", start + 0.1, 0.22))
     elif kind == "compare":

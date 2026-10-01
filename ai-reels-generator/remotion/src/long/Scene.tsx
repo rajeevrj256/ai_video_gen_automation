@@ -121,8 +121,9 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
       break;
     case 'fall': {
       const f = interpolate(local, [0, 0.5 * fps], [0, 1], {...clamp, easing: Easing.in(Easing.quad)});
-      rot = f * 90;
-      dy = f * 120;
+      rot = f * 28; // tips and drops; a symbol turned sideways (₹, $) stops being readable
+      dy = f * 170;
+      scale = 1 - 0.12 * f;
       break;
     }
     case 'grow':
