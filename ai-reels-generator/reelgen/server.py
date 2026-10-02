@@ -446,6 +446,23 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(404)
         return FileResponse(path)  # supports Range requests, which iPhone video playback needs
 
+    @app.get("/api/videos/{video_id}/used")
+    def video_media_used(video_id: str):
+        from .used import media_used
+
+        return media_used(load_settings(Config()), video_dir(cfg, video_id))
+
+    @app.get("/media/{video_id}/sound/{path:path}")
+    def video_sound(video_id: str, path: str):
+        """A music or sound-effect file of a video, to preview it from the effects list."""
+        folder = video_dir(cfg, video_id).resolve()
+        file = (folder / path).resolve()
+        if file.parent not in (folder, folder / "sfx", folder / "music") or file.suffix.lower() not in (".wav", ".mp3", ".ogg", ".m4a"):
+            raise HTTPException(404)
+        if not file.is_file():
+            raise HTTPException(404)
+        return FileResponse(file)
+
     @app.get("/media/{video_id}/thumb/{name}")
     def thumb_media(video_id: str, name: str):
         from .thumbnail import FOLDER
