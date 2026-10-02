@@ -720,6 +720,19 @@ def check_long_video(video: Path) -> VerifyResult:
     return result
 
 
+SETTLE = 1.8  # seconds into a beat when its animation (count-ups, reveals) has finished
+
+
+def _settled(t: float, props: dict) -> float:
+    """Move a review frame past its beat's opening animation. A frame mid count-up showed
+    '22 paise' for a line saying 24, and the reviewer failed the video for a wrong figure."""
+    shots = [(s["start"], s["duration"]) for s in (props.get("hook") or {}).get("shots", [])]
+    for start, length in shots + [(b["start"], b["duration"]) for b in props["beats"]]:
+        if start <= t < start + length:
+            return max(t, start + min(SETTLE, length * 0.75))
+    return t
+
+
 def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
     """Two frames from every chapter (a third and two thirds in), 4 per row."""
     hook = props.get("hook") or {}
@@ -728,6 +741,7 @@ def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
         end = props["chapters"][i + 1]["start"] if i + 1 < len(props["chapters"]) else props["duration"]
         body = c["start"] + c["card"]
         times += [body + (end - body) * 0.33, body + (end - body) * 0.7]
+    times = [_settled(t, props) for t in times]
     tiles = []
     for k, t in enumerate(times):
         tile = out.with_name(f"_frame{k}.jpg")
