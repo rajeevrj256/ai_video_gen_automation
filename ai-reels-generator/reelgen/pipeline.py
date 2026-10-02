@@ -27,6 +27,7 @@ from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
 from .script_writer import STYLE_NAMES, STYLES as MIX, ReelScript, write_script
 from .trends import Trend, collect_trends, load_history, save_history
+from .shortfix import fact_check_scenes, fix_scenes
 from .verify import VerifyResult, check_script, check_video, fact_check_script, review_with_claude
 from .video import render_video, voice_seconds
 from .visuals import fetch_backgrounds
@@ -104,12 +105,23 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         (run_dir / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         pause_point()
 
+    revise: dict | None = None  # after a failed review: fix the flagged scenes, never a new script
     for attempt in range(start, cfg.max_attempts + 1):
         tag = f"[attempt {attempt}/{cfg.max_attempts}]"
         stage = resume.get("stage") if attempt == start else None
+        changed: set[int] | None = None  # scenes corrected this attempt (None = a new script)
+        if stage == "revise":
+            revise = {"issues": resume.get("review_issues") or [feedback], "fix": resume.get("review_fix", "")}
+            stage = None
         if stage:
             progress(f"{tag} Resuming: {STAGE_DONE[stage]} already done")
             facts = _dec_result(resume.get("facts"))
+        elif revise and script is not None:
+            # A failed review fixes the flagged scenes only: a new script cost ~400k tokens plus a
+            # full fact-check, and brought new errors.
+            progress(f"{tag} Fixing the scenes the reviewer flagged (keeping the rest of the script)")
+            script, changed = fix_scenes(script, cfg, revise["issues"], revise["fix"], web=cfg.video_style == "facts")
+            revise = None
         elif attempt == 1 and first_script is not None:
             script = first_script  # already written while holding the topic lock
         else:
@@ -120,36 +132,48 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
                 candidates = [c for c in candidates if c.title.lower() == script.topic.lower()] or candidates
 
             verdict = check_script(script, cfg)
+            if not verdict.passed:  # a rule break in a few lines: fix those lines first, no rewrite
+                progress(f"{tag} Fixing the script: {'; '.join(verdict.issues)}")
+                fixed, now = fix_scenes(script, cfg, verdict.issues, web=False)
+                if now and check_script(fixed, cfg).passed:
+                    script, changed = fixed, (changed or set()) | now
+                    verdict = check_script(script, cfg)
             if not verdict.passed:
                 progress(f"{tag} Script rejected: {'; '.join(verdict.issues)}")
                 feedback = "\n".join(verdict.issues)
                 save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
                 continue
 
-            # Fact-check the words before paying for voice, footage and a render. A
-            # flagged script is fixed here (up to FACT_FIXES times) without using up
-            # an attempt; the final review then mostly judges the finished video.
-            # Fiction and comedy have no factual claims to check; the review still guards them.
+            # Fact-check the words before paying for voice, footage and a render: the whole
+            # script once, then only the scenes corrected since (marked >>). Fixes change only
+            # the flagged scenes. Fiction and comedy have no factual claims; the review guards them.
             facts = VerifyResult()  # passes unless the fact-check below finds something
             for fix in range(FACT_FIXES + 1 if cfg.video_style == "facts" else 0):
-                progress(f"{tag} Claude is fact-checking the script")
-                facts = fact_check_script(script, cfg)
+                if changed:
+                    progress(f"{tag} Claude is fact-checking the {len(changed)} corrected scene(s)")
+                    facts = fact_check_scenes(script, cfg, changed)
+                elif changed is None:
+                    progress(f"{tag} Claude is fact-checking the script")
+                    facts = fact_check_script(script, cfg)
+                else:  # revised, but nothing changed: the old check stands
+                    facts = _dec_result(resume.get("facts")) if resume.get("facts") else VerifyResult()
                 if facts.passed or fix == FACT_FIXES:
                     break
                 progress(f"{tag} Fixing facts: {'; '.join(facts.issues)}")
                 fixes = facts.checks["fact_check"].get("fix_instructions", "")
-                fixed = write_script(cfg, candidates, "\n".join(facts.issues + ([fixes] if fixes else [])),
-                                     previous=script)
-                if not check_script(fixed, cfg).passed:
+                fixed, now = fix_scenes(script, cfg, facts.issues, fixes)
+                if not now or not check_script(fixed, cfg).passed:
                     break  # keep the last script that passed the basic checks
-                script = fixed
+                script, changed = fixed, now
             if cfg.video_style == "facts" and not facts.passed:
-                progress(f"{tag} Still has unconfirmed facts after rewriting: {'; '.join(facts.issues)}")
+                progress(f"{tag} Still has unconfirmed facts after fixing: {'; '.join(facts.issues)}")
                 if attempt < cfg.max_attempts:
-                    # A render takes minutes and the review would fail on these same facts,
-                    # so rewrite now. The last attempt is rendered anyway so there is a video.
+                    # A render takes minutes and the review would fail on these same facts:
+                    # fix those scenes again next attempt (no new script).
                     feedback = "\n".join(facts.issues)
-                    save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
+                    revise = {"issues": list(facts.issues), "fix": facts.checks["fact_check"].get("fix_instructions", "")}
+                    save(attempt=attempt + 1, stage="revise", feedback=feedback, script=script.model_dump(),
+                         review_issues=revise["issues"], review_fix=revise["fix"])
                     continue
 
             save(attempt=attempt, stage="scripted", script=script.model_dump(), facts=_enc_result(facts),
@@ -170,6 +194,26 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             scenes = synthesize_scenes([s.narration for s in script.scenes], cfg.voice, run_dir / "audio",
                                        cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
             spoken = voice_seconds(scenes)
+            for _ in range(2):  # too long: trim the longest scenes and re-record, no new script
+                if spoken <= MAX_SECONDS - 1:
+                    break
+                words = sum(len(s.narration.split()) for s in script.scenes)
+                target = int(words * (MAX_SECONDS - 3) / spoken)
+                progress(f"{tag} Voiceover runs {spoken:.1f}s: trimming to about {target} words")
+                trimmed, now = fix_scenes(script, cfg, [f"The voiceover runs {spoken:.1f}s; the video must stay under "
+                                                        f"{MAX_SECONDS}s. Cut the narration from {words} to about {target} "
+                                                        "words by shortening the longest scenes; keep every fact and the hook."],
+                                          web=False)
+                if not now or not check_script(trimmed, cfg).passed:
+                    break
+                if cfg.video_style == "facts":
+                    trimmed_facts = fact_check_scenes(trimmed, cfg, now)
+                    if not trimmed_facts.passed:
+                        break
+                script = trimmed
+                scenes = synthesize_scenes([s.narration for s in script.scenes], cfg.voice, run_dir / "audio",
+                                           cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
+                spoken = voice_seconds(scenes)
             if spoken > MAX_SECONDS - 1 and attempt < cfg.max_attempts:
                 # Too long to fit: skip the render and ask for a shorter script. (On the last
                 # attempt it's rendered anyway, so there's still a video to look at.)
@@ -223,7 +267,10 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         progress(f"{tag} Failed verification: {'; '.join(verdict.issues)}")
         review = verdict.checks.get("review", {})
         feedback = "\n".join(verdict.issues + ([review["fix_instructions"]] if review.get("fix_instructions") else []))
-        save(attempt=attempt + 1, stage=None, feedback=feedback, script=script.model_dump())
+        # Next attempt fixes the flagged scenes (and their footage queries) instead of a new script.
+        revise = {"issues": list(verdict.issues), "fix": review.get("fix_instructions", "")}
+        save(attempt=attempt + 1, stage="revise", feedback=feedback, script=script.model_dump(),
+             review_issues=revise["issues"], review_fix=revise["fix"], facts=_enc_result(facts))
 
     if best is None:
         shutil.rmtree(run_dir, ignore_errors=True)
