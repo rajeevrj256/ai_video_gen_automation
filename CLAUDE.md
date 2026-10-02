@@ -122,8 +122,8 @@ review about 1 min. A failed review costs a whole extra try.
 - **Videos must not look AI-made:** creator voice, no AI clichés (list in
   `script_writer.py`), real footage, varied pacing.
 - **Max 30 seconds**, faster voice.
-- **No built-in boom, hit or rise sounds** (removed from `sfx.CUE_SOUNDS` and `sound_design.py`: they played on
-  every video and sounded bad). Other built-ins and the user's uploads are used as before.
+- **Claude never puts the built-in boom, hit or rise on words** (`media.NOT_WORD_CUES`: they sounded bad on every
+  video). The automatic sound design (`sound_design.py`) still uses them; other built-ins and uploads as before.
 - **Verify, don't assert.** After changing the editor, render a still and look at it;
   after pipeline changes, make one real video and read its `report.json`.
 - **Only one session should edit a branch at a time.** Fetch before you push, and never
