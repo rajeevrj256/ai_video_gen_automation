@@ -4,12 +4,12 @@ is copied or needs a licence.
 - `compose(mood, sections, seconds, seed)`: the main track. The mood picks tempo, scale,
   chord progressions and instruments; each section (a chapter) has an intensity from 0 to 1
   that adds or removes layers (pad -> bass -> ticks -> arps -> drums), and a section can
-  start with a drop (a moment of silence, then a hit). The seed changes key, tempo,
+  start with a drop (a riser, then a moment of silence). The seed changes key, tempo,
   progression and patterns, so two videos in the same mood still differ.
 - `trailer(style, seconds, cuts, seed)`: the hook's own energetic track: a short build, then a
   driving groove (four-on-the-floor kick, backbeat clap, the ticking "ti-ti-ti-ti" spy rhythm, a
   minor bass ostinato, stabs, a lead in the second half), a snare roll and a riser into the final
-  cut, silence and a big hit. Original: it only shares the energy of spy/action intros.
+  cut, silence and a stab. Original: it only shares the energy of spy/action intros.
 - `ambience(kind, seconds, seed)`: a quiet background bed (city, rain, room, wind, crowd,
   night, lab, sea, fire) under a chapter.
 
@@ -227,16 +227,6 @@ def riser(seconds: float) -> np.ndarray:
     return noise * 0.7 + tone
 
 
-def boom(size: float = 1.0) -> np.ndarray:
-    def make():
-        t = _t(2.2)
-        f = 30 + 70 * np.exp(-t * 5)
-        body = np.tanh(2.4 * np.sin(2 * np.pi * np.cumsum(f) / RATE)) * np.exp(-t * 1.8)
-        crack = _filt(np.random.default_rng(9).standard_normal(len(t)), "low", 3000) * np.exp(-t * 18) * 0.5
-        return (body + crack) * size
-    return _cached(("boom", size), make)
-
-
 def swell_reverse(seconds: float = 1.2) -> np.ndarray:
     t = _t(seconds)
     x = _filt(np.random.default_rng(11).standard_normal(len(t)), "band", [300, 4000]) * np.exp(-t * 3)
@@ -250,7 +240,7 @@ class Section:
     start: float
     end: float
     intensity: float  # 0..1
-    drop: bool = False  # silence just before the start, then a hit
+    drop: bool = False  # a riser and silence just before the start
 
 
 def _chord(scale: list[int], degree: int, root: int, octave: int = 0) -> list[float]:
@@ -324,10 +314,9 @@ def compose(mood: str, sections: list[Section], seconds: float, seed: int, out: 
             if nxt > lv + 0.2:
                 for i in range(12, 16):
                     _add(drums, snare(), t0 + i * step, 0.2 + 0.08 * (i - 11))
-    # Drops: a riser into it, silence just before, then a hit.
+    # Drops: a riser into it, then silence just before (the boom was removed at the user's request).
     for d in drops:
         _add(fx, riser(min(4.0, bar * 2)), d - min(4.0, bar * 2) - 0.35, 0.35)
-        _add(fx, boom(), d, 0.9)
     mix = _reverb(pads + lead * 0.8, 0.3) + low + drums * 0.9 + fx
     for d in drops:  # the silence before the drop
         i, j = int((d - 0.35) * RATE), int(d * RATE)
@@ -370,7 +359,7 @@ def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path)
     """An energetic, original trailer track for the hook, built like an action/spy intro:
     a short build, then a driving groove (four-on-the-floor kick, backbeat clap, ticking hats,
     a minor bass ostinato, stabs), a lead that joins for the second half, a snare roll and a
-    riser into the final cut, a moment of silence and a big hit. `cuts` are the shot changes."""
+    riser into the final cut, a moment of silence and a stab. `cuts` are the shot changes."""
     bpm_range, hats, riff, stab_voice, lead_voice = TRAILER_SPECS.get(style, TRAILER_SPECS["spy-pulse"])
     rng = np.random.default_rng(seed)
     bpm = int(rng.integers(bpm_range[0], bpm_range[1] + 1))
@@ -437,15 +426,12 @@ def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path)
                 _add(drums, snare(), t, 0.25 + 0.45 * (t - roll_from) / (final - roll_from))
         t += s16
         i += 1
-    # Hits on the shot changes, a riser into the final cut, silence, then the big hit.
-    for c in cuts[:-1]:
-        _add(fx, boom(0.45), c, 0.3)
+    # A riser into the final cut, silence, then a stab (no booms: removed at the user's request).
     _add(fx, riser(min(4.0, final * 0.2)), final - min(4.0, final * 0.2) - 0.3, 0.55)
     x = drums * 0.9 + bass_buf * 0.75 + _reverb(music_buf, 0.3) * 0.8 + fx
     i0, i1 = int((final - 0.3) * RATE), int(final * RATE)
     x[i0:i1] *= np.linspace(1, 0.02, i1 - i0) ** 2
     x[i1:] = 0
-    _add(x, boom(1.0), final, 1.1)
     _add(x, stab([note(0, 0), note(2, 0), note(4, 0)], 0.6), final, 0.6)
     x = x[: int(RATE * (final + 1.8))]
     x[-int(RATE * 0.8):] *= np.linspace(1, 0, int(RATE * 0.8))

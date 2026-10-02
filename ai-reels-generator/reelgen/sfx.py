@@ -2,7 +2,7 @@
 files to ship or license.
 
 - whoosh: a soft swell of filtered air (flash transition and the hook title).
-- impact: a short low boom (zoom transition).
+- impact: a short low thud (zoom transition).
 - swish: a fast, bright air swipe (slide transition).
 - glitch: a digital stutter of clicks and noise bursts (glitch transition).
 - shimmer: a soft rising chime (fade transition).
@@ -152,14 +152,6 @@ def _riser(duration: float = 1.8) -> np.ndarray:
     return (noise + tone * 0.5) * x ** 2.2
 
 
-def _boom(duration: float = 1.6) -> np.ndarray:
-    """A deep cinematic sub drop: felt more than heard."""
-    t = np.arange(int(RATE * duration)) / RATE
-    freq = 32 + 60 * np.exp(-t * 6)
-    body = np.tanh(2.2 * np.sin(2 * np.pi * np.cumsum(freq) / RATE)) * np.exp(-t * 2.4)
-    crack = np.random.default_rng(9).standard_normal(len(t)) * np.exp(-t * 40) * 0.4
-    return (body + crack) * np.minimum(t / 0.002, 1)
-
 
 def _heartbeat(duration: float = 1.1) -> np.ndarray:
     """Lub-dub, once."""
@@ -179,13 +171,6 @@ def _tick(duration: float = 2.0) -> np.ndarray:
         out += np.sin(2 * np.pi * (3200 if k % 2 else 2600) * u) * np.exp(-u * 260) * (t >= k * 0.5)
     return out
 
-
-def _hit(duration: float = 1.4) -> np.ndarray:
-    """A trailer 'braam' hit: low punch plus a burst of noise with a long tail."""
-    t = np.arange(int(RATE * duration)) / RATE
-    low = np.tanh(3 * np.sin(2 * np.pi * np.cumsum(55 + 90 * np.exp(-t * 10)) / RATE)) * np.exp(-t * 3)
-    noise = _lowpass(np.random.default_rng(2).standard_normal(len(t)), 1800) * np.exp(-t * 5)
-    return low + noise * 0.8
 
 
 def _cash(duration: float = 0.9) -> np.ndarray:
@@ -232,14 +217,6 @@ def _click(duration: float = 0.05) -> np.ndarray:
     return (np.sin(2 * np.pi * 2600 * t) + 0.6 * np.sin(2 * np.pi * 5200 * t)) * np.exp(-t * 160)
 
 
-def _rise(duration: float = 0.9) -> np.ndarray:
-    """A rising whoosh into a zoom or a reveal: air getting brighter and louder."""
-    t = np.arange(int(RATE * duration)) / RATE
-    x = t / duration
-    noise = np.random.default_rng(21).standard_normal(len(t))
-    bright = noise - _lowpass(noise, 400 + 5000 * x ** 2)
-    return (bright * 0.8 + _lowpass(noise, 800) * 0.6) * x ** 2 * (1 - np.clip((x - 0.92) / 0.08, 0, 1))
-
 
 def _rumble(duration: float = 1.2) -> np.ndarray:
     """A low trembling rumble: something shaking, fear, a building threat."""
@@ -258,7 +235,7 @@ def _flyby(duration: float = 1.6) -> np.ndarray:
 
 
 # name -> (make, peak, seconds the sound should lead its word by, what it's for)
-# boom, hit and rise were removed at the user's request (they sounded bad on every video).
+# boom, hit and rise were deleted at the user's request (they sounded bad on every video).
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
     "riser": (_riser, 0.35, 1.7, "tension rising INTO the word it's placed on: builds up to a reveal"),
