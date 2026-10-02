@@ -37,7 +37,8 @@ log = logging.getLogger(__name__)
 WEB_DIR = PROJECT_ROOT / "web"
 MAX_BATCH = 15  # videos per Generate click
 MAX_LONG_BATCH = 5  # long videos take much longer to make
-MEDIA_FILES = {"reel.mp4", "thumbnail.jpg", "review_frames.jpg", "reel-myvoice.mp4"}
+MEDIA_FILES = {"reel.mp4", "thumbnail.jpg", "review_frames.jpg", "reel-myvoice.mp4", "thumbnail-youtube.jpg"}
+THUMB_FILES = {"frames.jpg", "picture.jpg", "with-words.jpg"}
 
 
 # ---------- background jobs ----------
@@ -444,6 +445,40 @@ def create_app(cfg: Config) -> FastAPI:
         if not path.exists():
             raise HTTPException(404)
         return FileResponse(path)  # supports Range requests, which iPhone video playback needs
+
+    @app.get("/media/{video_id}/thumb/{name}")
+    def thumb_media(video_id: str, name: str):
+        from .thumbnail import FOLDER
+
+        path = video_dir(cfg, video_id) / FOLDER / name
+        if name not in THUMB_FILES or not path.exists():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    # ---- YouTube thumbnail (reelgen/thumbnail.py): Claude plans, Gemini draws, Claude checks ----
+    @app.post("/api/videos/{video_id}/thumbnail/plan")
+    def plan_thumbnail(video_id: str):
+        from . import thumbnail
+
+        try:
+            return thumbnail.plan(load_settings(Config()), video_dir(cfg, video_id))
+        except Exception as exc:
+            raise HTTPException(502, f"Couldn't design the thumbnail: {exc}")
+
+    @app.post("/api/videos/{video_id}/thumbnail/upload")
+    async def upload_thumbnail(video_id: str, request: Request, words: bool = True):
+        from starlette.concurrency import run_in_threadpool
+
+        from . import thumbnail
+
+        folder = video_dir(cfg, video_id)
+        data = await request.body()
+        try:
+            return await run_in_threadpool(thumbnail.upload, load_settings(Config()), folder, data, words)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"Couldn't check the thumbnail: {exc}")
 
     @app.post("/api/generate")
     def generate(body: GenerateRequest):

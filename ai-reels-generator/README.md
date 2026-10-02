@@ -78,6 +78,21 @@ python -m reelgen serve                  # the app (what start.bat/start.sh run)
 
 Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `report.json` (caption, hashtags, verification result, which editor made it), `script.json` and `review_frames.jpg` (the frames Claude reviewed).
 
+## YouTube thumbnails (with Gemini, no API key)
+
+On a video's page, **Thumbnail → Design thumbnail**. Claude looks at the video and designs a
+thumbnail that makes people stop scrolling: one bold subject from the video, 2-4 huge words taken
+from it that pair with the YouTube title (the title carries the search keyword, the thumbnail the
+curiosity), in the video's colours. You get a prompt for Gemini plus two other ideas to A/B test.
+
+1. Open the Gemini app → **Images**, set the aspect ratio to 16:9 (9:16 for a Short), paste the prompt.
+2. Download the picture you like and upload it on the video page.
+3. Reel Studio adds the words in big outlined type (exact spelling; untick the box if Gemini
+   already wrote them) and Claude checks it against the video: right subject, right words,
+   readable at phone size, a click-worthiness score, and a better prompt if it falls short.
+
+The result is saved as `thumbnail-youtube.jpg` (1280x720, under YouTube's 2 MB limit).
+
 ## Optional: run in the cloud with GitHub Actions
 
 `.github/workflows/ai-reels.yml` (at the repo root) makes a video every day with no computer needed. It uses an API key instead of Claude Code. Add these under **Settings → Secrets and variables → Actions**: `ANTHROPIC_API_KEY` (required), plus optionally `PEXELS_API_KEY`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Videos appear under each run's **Artifacts**.

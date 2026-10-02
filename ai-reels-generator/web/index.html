@@ -560,6 +560,57 @@ document.querySelectorAll("#libTools [data-ok]").forEach((b) => b.onclick = () =
   libOk = b.dataset.ok; document.querySelectorAll("#libTools [data-ok]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
 });
 
+// The thumbnail made for this video (reelgen/thumbnail.py) and Claude's check of it.
+function thumbHtml(id, v) {
+  const d = v.thumbnail_design;
+  if (!d || !d.made) return "";
+  const c = d.check || {};
+  const url = `/media/${encodeURIComponent(id)}/thumbnail-youtube.jpg?${d.made}`;
+  return `<img src="${url}" alt="Thumbnail" style="width:${v.format === "long" ? "100%" : "60%"};border-radius:8px;display:block;margin:0 auto">
+    <div class="hint">${c.passed ? "✅ Checked: matches the video" : "⚠️ " + esc((c.issues || []).join(" · ") || "Not checked")}
+      · click-worthy ${esc(c.clickable ?? "?")}/10 · ${esc(d.made_by || "")} · <a href="${url}" download="${esc(id)}-thumbnail.jpg">save it</a></div>
+    ${c.better_prompt ? `<div class="copyhead"><label>Better prompt for Gemini</label><button class="mini" data-gem="${esc(c.better_prompt)}">Copy</button></div>
+      <div class="copybox">${esc(c.better_prompt)}</div>` : ""}`;
+}
+
+// The steps for making the picture in the Gemini app with Claude's prompt.
+function thumbSteps(p, format) {
+  const ratio = format === "long" ? "16:9" : "9:16";
+  const alt = (p.alternatives || []).map((a, i) => `<div class="copyhead"><label>Option ${i + 2}: ${esc(a.idea)}</label>
+    <button class="mini" data-gem="${esc(a.gemini_prompt)}">Copy</button></div>`).join("");
+  return `
+    <div class="copybox"><b>${esc(p.text)}</b>${p.sub ? " · " + esc(p.sub) : ""}<br>${esc(p.idea)}<br><i>${esc(p.why)}</i><br>${esc(p.title_pairing)}</div>
+    <ol class="hint" style="padding-left:18px">
+      <li>Open the Gemini app → <b>Images</b>, set <b>Aspect ratio ${ratio}</b>.</li>
+      <li>Copy a prompt and paste it there. Make a few, keep the best.</li>
+      <li>Download the image and upload it below. Reel Studio adds the words "${esc(p.text)}" in the video's colours, and Claude checks it.</li>
+    </ol>
+    <div class="copyhead"><label>Prompt (no text in the picture: Reel Studio adds the words)</label><button class="mini" data-gem="${esc(p.gemini_prompt)}">Copy</button></div>
+    <div class="copybox">${esc(p.gemini_prompt)}</div>
+    <div class="copyhead"><label>Or: Gemini writes the words itself</label><button class="mini" data-gem="${esc(p.gemini_prompt_with_text)}">Copy</button></div>
+    ${alt}
+    <label for="thumbFile">Upload the Gemini image</label>
+    <input type="file" id="thumbFile" accept="image/*">
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="thumbWords" checked style="width:auto"> Add the words for me (turn off if Gemini already wrote them)</label>`;
+}
+
+function wireThumb(id) {
+  document.querySelectorAll("[data-gem]").forEach((b) => b.onclick = () => copy(b.dataset.gem));
+  const file = $("#thumbFile");
+  if (!file) return;
+  file.onchange = async () => {
+    const f = file.files[0]; if (!f) return;
+    file.disabled = true; toast("Adding the words and checking it against the video… (1–2 min)");
+    try {
+      const res = await fetch(`/api/videos/${encodeURIComponent(id)}/thumbnail/upload?words=${$("#thumbWords").checked}`,
+        { method: "POST", body: f, credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+      toast("Thumbnail saved");
+      const top = $("#player").scrollTop; await openVideo(id); $("#player").scrollTop = top;
+    } catch (e) { toast(e.message); file.disabled = false; }
+  };
+}
+
 async function openVideo(id) {
   const v = await api("/api/videos/" + encodeURIComponent(id));
   const src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
@@ -587,6 +638,11 @@ async function openVideo(id) {
     <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
       <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
+    <h4 class="section">Thumbnail</h4>
+    <p class="hint">Claude designs a click-worthy thumbnail from this video (its subject, colours and words), you make the picture in the Gemini app, and Claude checks it matches the video.</p>
+    ${thumbHtml(id, v)}
+    <button id="thumbPlan" style="width:100%;margin-top:8px">🎨 ${v.thumbnail_design && v.thumbnail_design.plan ? "Design a new thumbnail" : "Design thumbnail"}</button>
+    <div id="thumbBox">${v.thumbnail_design && v.thumbnail_design.plan ? thumbSteps(v.thumbnail_design.plan, v.format) : ""}</div>
     <div class="actions">
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
@@ -658,6 +714,17 @@ async function openVideo(id) {
   document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
   if (v.voice) $("#rv-voice").value = v.voice;
   $("#rv-cc").value = String(v.captions !== false);
+  $("#thumbPlan").onclick = async () => {
+    const btn = $("#thumbPlan");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Claude is watching the video and designing it… (1–2 min)';
+    try {
+      const d = await api(`/api/videos/${encodeURIComponent(id)}/thumbnail/plan`, { method: "POST" });
+      $("#thumbBox").innerHTML = thumbSteps(d.plan, v.format); wireThumb(id);
+      btn.disabled = false; btn.textContent = "🎨 Design a new thumbnail";
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Try again"; }
+  };
+  wireThumb(id);
   $("#myVoice").onclick = () => { $("#video").pause(); openVoiceStudio(id, v.title); };
   if ($("#playMine")) $("#playMine").onclick = (e) => { e.preventDefault(); $("#video").src = "/media/" + encodeURIComponent(id) + "/reel-myvoice.mp4?" + v.my_voice.made; $("#video").play(); };
   $("#rvGo").onclick = async () => {

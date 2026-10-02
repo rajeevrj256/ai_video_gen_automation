@@ -9,6 +9,7 @@ import type {LongProps} from './long/types';
 import {Stick} from './stick/Stick';
 import {stickDemoProps} from './stick/demo';
 import type {StickProps} from './stick/types';
+import {Thumbnail, thumbSize, type ThumbProps} from './Thumbnail';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
@@ -24,6 +25,10 @@ const calculateLongMetadata: CalculateMetadataFunction<LongProps> = ({props}) =>
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
 });
+
+const calculateThumbMetadata: CalculateMetadataFunction<ThumbProps> = ({props}) => thumbSize(props.wide);
+const thumbDemo: ThumbProps = {src: 'thumb/frame.jpg', text: 'Why no tax cut', highlight: 'tax cut', side: 'left',
+  focusX: 0.6, focusY: 0.5, zoom: 1.1, accent: '#ffd23f', accent2: '#ffd23f', wide: true};
 
 export const RemotionRoot: React.FC = () => (
   <>
@@ -58,6 +63,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={stickDemoProps}
     calculateMetadata={calculateStickMetadata}
+  />
+  {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
+  <Composition
+    id="Thumbnail"
+    component={Thumbnail}
+    width={1280}
+    height={720}
+    fps={30}
+    durationInFrames={1}
+    defaultProps={thumbDemo}
+    calculateMetadata={calculateThumbMetadata}
   />
   </>
 );
