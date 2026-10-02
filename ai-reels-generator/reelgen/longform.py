@@ -945,30 +945,35 @@ PREVIEW_FIXES = 1  # rounds of "fix the flagged lines, re-record, preview again"
 
 
 def _preview_review(script: LongScript, props: dict, cfg: Config, work: Path, tag: str, progress: Progress,
-                    save) -> tuple[LongScript, dict]:
+                    save) -> tuple[LongScript, dict, dict | None]:
     """Review ~18 frames drawn from the timeline before the full render, and fix the flagged lines
-    first. A review that failed after the render cost a whole second render (about an hour)."""
+    first. A review that failed after the render cost a whole second render (about an hour).
+    Returns the script, props and the review of the frames as they will be rendered (None if the
+    frames couldn't be drawn): it is the video's review, since the finished video shows the same frames."""
+    def result(pre: VerifyResult) -> dict:
+        return {"passed": pre.passed, "score": pre.score, "issues": list(pre.issues), "checks": pre.checks}
+
     for round_ in range(PREVIEW_FIXES + 1):
         progress(f"{tag} Previewing the edit: drawing the review frames before the full render")
         try:
             sheet = preview_sheet(props, work, work / "review_frames.jpg")
         except Exception as exc:  # the preview is a shortcut; without it the full render is reviewed as before
             log.warning("Preview frames failed, reviewing after the render instead: %s", exc)
-            return script, props
+            return script, props, None
         progress(f"{tag} Claude is reviewing the preview frames")
         _, pre = review_long(None, script, props, cfg, sheet=sheet)
         if pre.passed:
             progress(f"{tag} Preview passed (score {pre.score}); rendering the full video")
-            return script, props
+            return script, props, result(pre)
         if round_ == PREVIEW_FIXES:
-            progress(f"{tag} Preview still has issues; rendering anyway (the final review decides): {'; '.join(pre.issues)}")
-            return script, props
+            progress(f"{tag} Preview still has issues; rendering once anyway, they go in the report: {'; '.join(pre.issues)}")
+            return script, props, result(pre)
         progress(f"{tag} Preview flagged: {'; '.join(pre.issues)}")
         fix = pre.checks.get("review", {}).get("fix_instructions", "")
         progress(f"{tag} Fixing the flagged lines before the full render")
         fixed, changed = fix_long_script(script, cfg, list(pre.issues), fix)
         if not changed:
-            return script, props
+            return script, props, result(pre)
         if cfg.video_style != "story":
             progress(f"{tag} Claude is fact-checking the {len(changed)} corrected line(s)")
             facts = fact_check_long(fixed, cfg, changed)
@@ -980,7 +985,7 @@ def _preview_review(script: LongScript, props: dict, cfg: Config, work: Path, ta
             shutil.rmtree(work / old, ignore_errors=True)
         props = build_long(script, cfg, work, progress)
         save(stage="voiced", props=props, script=script.model_dump())
-    return script, props
+    return script, props, None
 
 
 def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, stamp: str, progress: Progress,
@@ -1083,9 +1088,10 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                     shutil.rmtree(work / old, ignore_errors=True)
                 props = build_long(script, cfg, work, progress)
                 save(stage="voiced", props=props)
+            preview = resume.get("preview") if attempt == start else None
             if stage != "rendered" and resume.get("previewed") != attempt:
-                script, props = _preview_review(script, props, cfg, work, tag, progress, save)
-                save(previewed=attempt)
+                script, props, preview = _preview_review(script, props, cfg, work, tag, progress, save)
+                save(previewed=attempt, preview=preview)
             progress(f"{tag} Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
             cli = _remotion_cli()
             if cli is None:
@@ -1102,7 +1108,18 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
 
             progress(f"{tag} Verifying video quality")
             verdict = check_long_video(out)
-            if verdict.passed:
+            # Resolution, audio, a broken file: what a preview can't see and a new render can fix.
+            # A length outside 8-10 minutes comes from the voiceover, so rendering again can't change it.
+            tech_ok = all(i.startswith("Video is ") for i in verdict.issues)
+            if tech_ok and preview is not None:
+                # The preview already reviewed these same frames: a second opinion on the same
+                # pictures disagreed now and then and cost another full render (and ~$2 of review).
+                verdict.score = preview["score"]
+                verdict.checks.update(preview["checks"])
+                if not preview["passed"]:
+                    verdict.passed = False
+                    verdict.issues += preview["issues"]
+            elif verdict.passed:
                 progress(f"{tag} Claude is reviewing the finished video")
                 _, review = review_long(out, script, props, cfg)
                 verdict.checks.update(review.checks)
@@ -1120,6 +1137,11 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             save(best=_enc_long_best(best))
             if verdict.passed:
                 progress(f"{tag} Passed verification (score {verdict.score})")
+                break
+            if preview is not None and tech_ok:
+                # Only review issues are left, and the preview already had its fix round: keep this
+                # render and list them in the report instead of rendering the whole video again.
+                progress(f"{tag} Done; still flagged by the review (see the report): {'; '.join(verdict.issues)}")
                 break
             progress(f"{tag} Failed verification: {'; '.join(verdict.issues)}")
             review_fix = verdict.checks.get("review", {}).get("fix_instructions", "")
