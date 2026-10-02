@@ -258,19 +258,17 @@ def _flyby(duration: float = 1.6) -> np.ndarray:
 
 
 # name -> (make, peak, seconds the sound should lead its word by, what it's for)
+# boom, hit and rise were removed at the user's request (they sounded bad on every video).
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
     "riser": (_riser, 0.35, 1.7, "tension rising INTO the word it's placed on: builds up to a reveal"),
-    "boom": (_boom, 0.6, 0.0, "deep cinematic sub drop: a huge number, a shocking fact"),
     "heartbeat": (_heartbeat, 0.55, 0.0, "a heartbeat: suspense, fear, a life-or-death moment"),
     "tick": (_tick, 0.3, 0.0, "a clock ticking: deadlines, time running out, countdowns"),
-    "hit": (_hit, 0.5, 0.0, "trailer hit: the key line of the hook, a twist"),
     "cash": (_cash, 0.35, 0.0, "coins and a till bell: money, prices, profit"),
     "drone": (_drone, 0.22, 0.0, "low uneasy pad under a line: mystery, something is off"),
     "ding": (_ding, 0.3, 0.0, "clean ding: a fact or idea landing, a lightbulb moment"),
     "typing": (_typing, 0.25, 0.0, "keyboard clicks: searching, messaging, hacking, writing"),
     "click": (_click, 0.3, 0.0, "a crisp click: text or a counter landing"),
-    "rise": (_rise, 0.35, 0.8, "a rising whoosh INTO the word: a zoom, a reveal"),
     "rumble": (_rumble, 0.5, 0.0, "a low rumble: shaking, a threat, fear"),
     "flyby": (_flyby, 0.4, 0.5, "something rushing past the camera: a plane, a car, a crowd"),
 }

@@ -1,7 +1,7 @@
 """The media library: sound effects, background music and 3D models the editor can use.
 
 Built in (synthesised in code, always there):
-- sound effects in `sfx.CUE_SOUNDS` (sword, riser, boom, heartbeat, ...)
+- sound effects in `sfx.CUE_SOUNDS` (sword, riser, heartbeat, ...)
 - three quiet music beds (calm, tension, playful), used only when no music was added
 
 Added by the user (from the app's Settings > Media library, or copied into the folder):
@@ -126,14 +126,14 @@ def prompt_block(cfg: Config, long: bool = False) -> str:
     tracks = "\n".join(f"  - {m.name}: {m.about}" for m in music(cfg))
     where = ("the cold open (up to 4 layered cues) and at most 1 cue in a later beat, only on its key word, "
              "and no more than one cue every few beats" if long else
-             "scene 1, the hook (2 to 4 cues layered on its words, e.g. a riser into the key word, a sword or "
-             "hit on it, a low drone underneath), and 0 to 2 in each later scene, only on the words that deserve "
+             "scene 1, the hook (2 to 4 cues layered on its words, e.g. a riser into the key word, a sword "
+             "on it, a low drone underneath), and 0 to 2 in each later scene, only on the words that deserve "
              "them (the twist, a big number, the punchline)")
     return (
         "Sound design: sound effects land on single words of the narration, like a trailer editor would place "
         f"them. Put them in {where}. Each cue names the exact word it lands on, copied from that line's "
         "narration. Pick a sound whose meaning matches the words (money: cash; time running out: tick; a "
-        "reveal: sword or hit; a dark mystery: drone or heartbeat). Never a sound that jokes about something "
+        "reveal: sword; a dark mystery: drone or heartbeat). Never a sound that jokes about something "
         "serious (death, a crash, a disaster, illness): there use only drone, heartbeat or none. Less is more: "
         "most lines get no sound, and 'soft' is the usual volume.\n"
         f"Sound effects you can use:\n{fx}\n"

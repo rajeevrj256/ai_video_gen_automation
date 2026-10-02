@@ -6,11 +6,10 @@ an editor would: each thing that moves on screen gets its sound, timed to the an
   beat changes         -> the transition sound of this video's look (whoosh, glitch, swish...)
   items appearing      -> pops (timeline points, steps, icons)
   a number counting up -> clicks, then a ding when it lands
-  scene actors         -> whoosh (enter/flee), impact (drop/fall), rumble (shake), rise (grow),
+  scene actors         -> whoosh (enter/flee), impact (drop/fall), rumble (shake),
                           heartbeat (pulse), pops (multiply), swish (spin/orbit)
   3D objects           -> a flyby when something flies, a whoosh otherwise
-  the chapter's biggest moment (impact) -> a bass boom and a hit
-  the hook             -> a hit on every cut, a hit under each slammed word, a glitch into the video
+  the hook             -> a whoosh/glitch on every cut, a glitch into the video
 
 Timings mirror the animations in remotion/src/long (Visuals.tsx, Scene.tsx); scene actor
 times are computed here and passed to the editor, so they can't drift apart.
@@ -19,11 +18,11 @@ times are computed here and passed to the editor, so they can't drift apart.
 from __future__ import annotations
 
 FPS = 30
-TRANSITION_SOUND = {"smooth": ("shimmer", 0.2), "whip": ("whoosh", 0.3), "zoom": ("rise", 0.28),
+TRANSITION_SOUND = {"smooth": ("shimmer", 0.2), "whip": ("whoosh", 0.3), "zoom": (None, 0.0),
                     "glitch": ("glitch", 0.22), "flash": ("swish", 0.3), "slide": ("swish", 0.28)}
-ACTOR_SOUND = {"enter-left": "whoosh", "enter-right": "whoosh", "walk-across": "swish", "approach": "rise",
-               "flee": "whoosh", "drop-in": "impact", "fall": "impact", "shake": "rumble", "grow": "rise",
-               "shrink": "swish", "pulse": "heartbeat", "spin": "swish", "orbit": "swish", "rise": "rise",
+ACTOR_SOUND = {"enter-left": "whoosh", "enter-right": "whoosh", "walk-across": "swish", "approach": None,
+               "flee": "whoosh", "drop-in": "impact", "fall": "impact", "shake": "rumble", "grow": None,
+               "shrink": "swish", "pulse": "heartbeat", "spin": "swish", "orbit": "swish", "rise": None,
                "multiply": "pop"}
 MIN_GAP = 0.18  # two sounds of the same kind closer than this sound like one smeared sound
 
@@ -54,8 +53,6 @@ def _visual_events(v: dict, start: float, duration: float) -> list[tuple[str, fl
         out += [("pop", start + i * 6 / FPS, 0.28) for i in range(len(v.get("icons") or [1]))]
     elif kind == "stat":
         out += [("click", start + 0.15 + i * 0.16, 0.22) for i in range(4)] + [("ding", start + 0.95, 0.3)]
-    elif kind == "chart":
-        out.append(("rise", start + 0.1, 0.22))
     elif kind == "compare":
         out += [("swish", start + 0.1, 0.25), ("swish", start + 0.45, 0.25)]
     elif kind in ("keyword", "title"):
@@ -67,12 +64,11 @@ def _visual_events(v: dict, start: float, duration: float) -> list[tuple[str, fl
     elif kind == "scene":
         for a in v.get("actors") or []:
             sound = ACTOR_SOUND.get(a.get("action", ""), "pop")
-            out.append((sound, start + float(a.get("at", 0.3)), 0.32 if sound != "impact" else 0.4))
+            if sound:  # None: that action's sound was removed
+                out.append((sound, start + float(a.get("at", 0.3)), 0.32 if sound != "impact" else 0.4))
             if a.get("action") == "multiply":
                 out += [("pop", start + float(a.get("at", 0.3)) + k * 0.12, 0.2) for k in range(1, 4)]
-    if v.get("impact"):
-        at = start + impact_time(duration)
-        out += [("boom", at, 0.55), ("hit", at, 0.35)]
+    # The impact's boom and hit sounds were removed at the user's request (silent now).
     return out
 
 
@@ -84,14 +80,12 @@ def design(props: dict, transition: str) -> list[tuple[str, float, float]]:
     for i, shot in enumerate(hook.get("shots", [])):
         if i:
             events.append(("whoosh" if i % 2 else "glitch", shot["start"] - 0.05, 0.3))
-        if shot.get("text"):
-            events.append(("hit", shot["start"] + 0.35, 0.3))
         events += _visual_events(shot["visual"], shot["start"], shot["duration"])
     if hook.get("shots"):
         events.append(("glitch", hook["duration"] - 0.45, 0.3))
     prev_chapter = None
     for b in props["beats"]:
-        if b["chapter"] == prev_chapter:  # chapter cards bring their own whoosh
+        if b["chapter"] == prev_chapter and t_sound:  # chapter cards bring their own whoosh
             events.append((t_sound, b["start"] - 0.08, t_vol))
         prev_chapter = b["chapter"]
         events += _visual_events(b["visual"], b["start"], b["duration"])
