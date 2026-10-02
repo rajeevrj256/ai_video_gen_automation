@@ -235,8 +235,12 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
            "--jpeg-quality=95"]
     # Remotion downloads its own headless Chrome on first render. Where that
     # download is blocked, REEL_CHROME can point at an installed Chrome/Chromium.
+    # REEL_CHROME=chrome-for-testing uses Remotion's full test browser instead of the headless
+    # shell: on a Windows laptop with a GTX 1650 only that one (with REEL_GL empty) drew on the GPU.
     chrome = os.environ.get("REEL_CHROME", "").strip()
-    if chrome:
+    if chrome.lower() == "chrome-for-testing":
+        cmd += ["--chrome-mode=chrome-for-testing"]
+    elif chrome:
         cmd += [f"--browser-executable={chrome}", "--chrome-mode=chrome-for-testing"]
     # Speed knobs for a strong local machine (see CLAUDE.md at the repo root):
     # REEL_CONCURRENCY = frames rendered in parallel (default here: every core),

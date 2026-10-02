@@ -12,7 +12,9 @@ const job = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const chrome = (process.env.REEL_CHROME || '').trim();
 const gl = (process.env.REEL_GL || '').trim();
-const browser = chrome ? {browserExecutable: chrome, chromeMode: 'chrome-for-testing'} : {};
+// REEL_CHROME=chrome-for-testing: Remotion's own test browser (the one that can use the GPU on Windows).
+const browser = chrome.toLowerCase() === 'chrome-for-testing' ? {chromeMode: 'chrome-for-testing'}
+  : chrome ? {browserExecutable: chrome, chromeMode: 'chrome-for-testing'} : {};
 const chromiumOptions = gl && !gl.startsWith('#') ? {gl} : {};
 
 const serveUrl = await bundle({entryPoint: path.join(root, 'src', 'index.ts'), publicDir: job.publicDir});

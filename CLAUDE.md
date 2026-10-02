@@ -69,8 +69,12 @@ Set these in `ai-reels-generator/.env`. They're read by `video.py`:
   across all jobs (a shared semaphore in `pipeline.run`; every job gets its own thread in `server.py`). Claude and download waits overlap; renders still queue on a
   semaphore of `REEL_PARALLEL_RENDERS` (default 1), because two renders fight for the same cores.
   Batch log lines are tagged `[V<n>] `; the app splits them into one row per video.
-- `REEL_GL=angle` (Windows) / `egl` (Linux): GPU for the headless browser. If renders
-  come out black or crash, remove it.
+- **GPU on Windows: `REEL_CHROME=chrome-for-testing` with `REEL_GL` empty.** On the user's laptop (GTX 1650)
+  Remotion's default headless shell and every `--gl` value (angle, angle-egl, vulkan) drew in software
+  (`npx remotion gpu ...` showed "Software only", WebGL disabled); only the full test browser without `--gl`
+  was hardware accelerated (`npx remotion gpu --chrome-mode=chrome-for-testing`). `video.py` and
+  `scripts/stills.mjs` then pass only `--chrome-mode=chrome-for-testing`. Check a machine with that command.
+- `REEL_GL=egl` (Linux): GPU for the headless browser. If renders come out black or crash, remove it.
 - `REEL_HWACCEL=if-possible`: NVENC encoding on NVIDIA GPUs. On machines without a
   usable NVIDIA GPU, Remotion fails instead of falling back, so `video.py` retries once
   without it.
