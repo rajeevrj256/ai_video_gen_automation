@@ -1179,10 +1179,23 @@ $("#clearJobs").onclick = async () => {
 async function loadJobs() {
   loadUnfinished().catch(() => {});
   const jobs = await api("/api/jobs");
-  const open = new Set([...document.querySelectorAll("details.log[open]")].map((d) => d.dataset.job));
+  // Keep each open log where the reader left it across refreshes: at the bottom it follows new
+  // lines live, anywhere else it stays put (it used to jump back to the first line every refresh).
+  const open = new Map([...document.querySelectorAll("#jobs details.log[open]")].map((d) => {
+    const ol = d.querySelector("ol");
+    return [d.dataset.job, ol ? { top: ol.scrollTop, bottom: ol.scrollHeight - ol.scrollTop - ol.clientHeight < 12 } : null];
+  }));
+  const pageY = window.scrollY;
   $("#jobs").innerHTML = jobs.map(jobCard).join("");
   $("#clearJobs").hidden = !jobs.some((j) => !["queued", "running"].includes(j.status));
-  open.forEach((id) => { const d = document.querySelector(`details.log[data-job="${id}"]`); if (d) d.open = true; });
+  open.forEach((pos, id) => {
+    const d = document.querySelector(`#jobs details.log[data-job="${id}"]`);
+    if (!d) return;
+    d.open = true;
+    const ol = d.querySelector("ol");
+    if (ol && pos) ol.scrollTop = pos.bottom ? ol.scrollHeight : pos.top;
+  });
+  window.scrollTo(0, pageY);
 }
 
 // ---- Automations: several daily jobs, each with its own settings ----
