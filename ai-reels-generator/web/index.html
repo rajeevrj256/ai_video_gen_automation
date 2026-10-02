@@ -993,7 +993,8 @@ async function copy(text) {
 // Turn the job's log into a friendly progress view.
 const STEPS = [
   ["Script", /writing the script|picking the topic/], ["Fact-check", /fact-check|Fixing facts/],
-  ["Voice", /voiceover/], ["Footage", /footage/], ["Editing", /Editing/], ["Review", /Verifying|reviewing|title, description/],
+  ["Voice", /voiceover/], ["Footage", /footage/], ["Preview", /Previewing the edit|preview frames|^(\[V\d+\] )?\[attempt \d+\/\d+\] Preview/],
+  ["Editing", /Editing/], ["Review", /Verifying|reviewing the finished|title, description/],
 ];
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -34,7 +35,7 @@ from . import music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
 from .verify import FactCheck, VerifyResult, Review, probe
-from .video import FFMPEG, _remotion_cli, _render_remotion, media_seconds
+from .video import FFMPEG, REMOTION_DIR, _remotion_cli, _render_remotion, media_seconds
 from .visuals import pexels_video
 from .voice import SceneAudio, synthesize_scenes
 
@@ -733,23 +734,58 @@ def _settled(t: float, props: dict) -> float:
     return t
 
 
-def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
-    """Two frames from every chapter (a third and two thirds in), 4 per row."""
+def sheet_times(props: dict) -> list[float]:
+    """The review frames: two from the hook, then two from every chapter (a third and two thirds in)."""
     hook = props.get("hook") or {}
     times = [hook["duration"] * 0.3, hook["duration"] * 0.75] if hook.get("shots") else []  # the hook first
     for i, c in enumerate(props["chapters"]):
         end = props["chapters"][i + 1]["start"] if i + 1 < len(props["chapters"]) else props["duration"]
         body = c["start"] + c["card"]
         times += [body + (end - body) * 0.33, body + (end - body) * 0.7]
-    times = [_settled(t, props) for t in times]
+    return [_settled(t, props) for t in times]
+
+
+def contact_sheet_long(video: Path, out: Path, props: dict) -> Path:
+    """The review frames of the finished video, 4 per row."""
     tiles = []
-    for k, t in enumerate(times):
+    for k, t in enumerate(sheet_times(props)):
         tile = out.with_name(f"_frame{k}.jpg")
         subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1",
                         "-vf", "scale=480:270", str(tile)], check=False)
         if tile.exists():
             tiles.append(Image.open(tile).convert("RGB"))
             tile.unlink()
+    return _sheet(tiles, out)
+
+
+def preview_sheet(props: dict, work: Path, out: Path) -> Path:
+    """The same review frames, drawn straight from the timeline before anything is rendered
+    (remotion/scripts/stills.mjs: one bundle, ~18 stills at quarter size, about 2 minutes instead of an
+    hour for the whole video)."""
+    import tempfile
+
+    fps = props.get("fps", 30)
+    frames_dir = work / "_preview"
+    shutil.rmtree(frames_dir, ignore_errors=True)
+    frames_dir.mkdir()
+    stills = [{"frame": round(t * fps), "out": str((frames_dir / f"f{k:02d}.jpg").resolve()), "scale": 0.25}
+              for k, t in enumerate(sheet_times(props))]
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({"composition": "Long", "props": props, "publicDir": str(work.resolve()), "stills": stills}, f)
+        job = f.name
+    try:
+        done = subprocess.run(["node", str(REMOTION_DIR / "scripts" / "stills.mjs"), job], cwd=REMOTION_DIR,
+                              capture_output=True, text=True, timeout=1800)
+        if done.returncode != 0:
+            raise RuntimeError((done.stderr or done.stdout).strip()[-500:])
+        tiles = [Image.open(f).convert("RGB").resize((480, 270)) for f in sorted(frames_dir.glob("f*.jpg"))]
+    finally:
+        os.unlink(job)
+        shutil.rmtree(frames_dir, ignore_errors=True)
+    return _sheet(tiles, out)
+
+
+def _sheet(tiles: list, out: Path) -> Path:
     rows = (len(tiles) + 3) // 4
     sheet = Image.new("RGB", (480 * 4, 270 * max(rows, 1)), "black")
     for k, tile in enumerate(tiles):
@@ -769,8 +805,10 @@ that each animated visual matches its line and that nothing is inaccurate, exagg
 Be honest and specific; don't pass mediocre work."""
 
 
-def review_long(video: Path, script: LongScript, props: dict, cfg: Config) -> tuple[Review, VerifyResult]:
-    sheet = contact_sheet_long(video, video.with_name("review_frames.jpg"), props)
+def review_long(video: Path | None, script: LongScript, props: dict, cfg: Config,
+                sheet: Path | None = None) -> tuple[Review, VerifyResult]:
+    """Review the finished video, or (with `sheet`) the preview frames drawn before rendering."""
+    sheet = sheet or contact_sheet_long(video, video.with_name("review_frames.jpg"), props)
     lines = []
     for ci, c in enumerate(script.chapters, 1):
         lines.append(f"\nChapter {ci}: {c.title}")
@@ -903,6 +941,48 @@ def _dec_long_best(d: dict | None) -> dict | None:
                                "props": d["props"], "attempt": d["attempt"], "file": Path(d["file"])}
 
 
+PREVIEW_FIXES = 1  # rounds of "fix the flagged lines, re-record, preview again" before the full render
+
+
+def _preview_review(script: LongScript, props: dict, cfg: Config, work: Path, tag: str, progress: Progress,
+                    save) -> tuple[LongScript, dict]:
+    """Review ~18 frames drawn from the timeline before the full render, and fix the flagged lines
+    first. A review that failed after the render cost a whole second render (about an hour)."""
+    for round_ in range(PREVIEW_FIXES + 1):
+        progress(f"{tag} Previewing the edit: drawing the review frames before the full render")
+        try:
+            sheet = preview_sheet(props, work, work / "review_frames.jpg")
+        except Exception as exc:  # the preview is a shortcut; without it the full render is reviewed as before
+            log.warning("Preview frames failed, reviewing after the render instead: %s", exc)
+            return script, props
+        progress(f"{tag} Claude is reviewing the preview frames")
+        _, pre = review_long(None, script, props, cfg, sheet=sheet)
+        if pre.passed:
+            progress(f"{tag} Preview passed (score {pre.score}); rendering the full video")
+            return script, props
+        if round_ == PREVIEW_FIXES:
+            progress(f"{tag} Preview still has issues; rendering anyway (the final review decides): {'; '.join(pre.issues)}")
+            return script, props
+        progress(f"{tag} Preview flagged: {'; '.join(pre.issues)}")
+        fix = pre.checks.get("review", {}).get("fix_instructions", "")
+        progress(f"{tag} Fixing the flagged lines before the full render")
+        fixed, changed = fix_long_script(script, cfg, list(pre.issues), fix)
+        if not changed:
+            return script, props
+        if cfg.video_style != "story":
+            progress(f"{tag} Claude is fact-checking the {len(changed)} corrected line(s)")
+            facts = fact_check_long(fixed, cfg, changed)
+            if not facts.passed:  # one targeted fix; what's still disputed goes into the report as before
+                fixes = facts.checks.get("fact_check", {}).get("fix_instructions", "")
+                fixed, _ = fix_long_script(fixed, cfg, list(facts.issues), fixes, strict=True)
+        script = repair_long_script(fixed)
+        for old in ("audio", "sfx"):
+            shutil.rmtree(work / old, ignore_errors=True)
+        props = build_long(script, cfg, work, progress)
+        save(stage="voiced", props=props, script=script.model_dump())
+    return script, props
+
+
 def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, stamp: str, progress: Progress,
                resume: dict | None = None) -> dict:
     """The attempt loop for one long video. Saves checkpoint.json after the script, the
@@ -1003,6 +1083,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                     shutil.rmtree(work / old, ignore_errors=True)
                 props = build_long(script, cfg, work, progress)
                 save(stage="voiced", props=props)
+            if stage != "rendered" and resume.get("previewed") != attempt:
+                script, props = _preview_review(script, props, cfg, work, tag, progress, save)
+                save(previewed=attempt)
             progress(f"{tag} Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
             cli = _remotion_cli()
             if cli is None:

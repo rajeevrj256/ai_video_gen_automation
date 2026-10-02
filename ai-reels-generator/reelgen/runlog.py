@@ -44,6 +44,7 @@ STEP_WORDS = [
     ("Music", ("composing the music",)),
     ("Editing", ("editing the video",)),
     ("Checks", ("verifying video quality",)),
+    ("Preview", ("previewing the edit", "reviewing the preview")),
     ("Review", ("reviewing",)),
     ("Post text", ("title, description", "writing the title")),
     (None, ("passed verification", "failed verification", "done", "error", "script rejected", "still has")),
