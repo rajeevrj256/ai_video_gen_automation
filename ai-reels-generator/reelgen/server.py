@@ -658,7 +658,8 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(WEB_DIR / "index.html")
+        # Always ask for the page again: after an update the browser must not show the old one.
+        return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/{name}")
     def static_file(name: str):
