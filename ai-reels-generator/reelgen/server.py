@@ -250,6 +250,20 @@ def import_samples(cfg: Config) -> None:
         done_file.write_text(json.dumps(sorted(done)), encoding="utf-8")
 
 
+def _renderer() -> str:
+    """Which browser draws the video frames, as this running app read it from .env at start."""
+    chrome = os.environ.get("REEL_CHROME", "").strip()
+    gl = os.environ.get("REEL_GL", "").strip()
+    gl = "" if gl.startswith("#") else gl
+    if chrome.lower() == "chrome-for-testing":
+        browser = "Chrome for Testing (can use the GPU)"
+    elif chrome:
+        browser = f"Chrome at {chrome}"
+    else:
+        browser = "headless shell (draws on the CPU on Windows)"
+    return f"{browser} · REEL_GL={gl or 'empty'}"
+
+
 def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Reel Studio", docs_url=None, redoc_url=None)
     jobs = JobManager(cfg)
@@ -295,6 +309,7 @@ def create_app(cfg: Config) -> FastAPI:
             "busy": jobs.busy(),
             "storage": str(current.output_dir),
             "version": running_version,
+            "renderer": _renderer(),
         }
 
     @app.get("/api/videos")

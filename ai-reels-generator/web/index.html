@@ -1329,6 +1329,7 @@ async function loadSettings() {
     missing: "NOT SET UP — install Claude Code and run `claude` once" }[st.backend];
   $("#statusList").innerHTML = [
     ["Running version", st.version || "unknown"],
+    ["Video renderer", st.renderer || "unknown (update the app)"],
     ["AI in use", ai],
     ["Claude Code installed", st.claude_code_installed ? "Yes" : "No"],
     ["Stock footage (Pexels)", st.pexels ? "On" : "Off — add PEXELS_API_KEY for real footage"],
