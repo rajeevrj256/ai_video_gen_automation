@@ -77,7 +77,7 @@
   .job.paused { border-left-color: var(--muted); } .pill.paused { background: var(--panel-2); color: var(--text); }
   .tokens { margin-top: 10px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .tokens b { color: var(--text); }
-  .tok { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; }
+  .tok { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; white-space: nowrap; display: inline-block; margin: 2px 0; }
   .vtok { font-size: 12px; color: var(--muted); margin-left: 6px; }
   .vrow .vname { min-width: 80px; }
   @media (max-width: 480px) { .vrow .mini-steps { display: none; } }
@@ -218,6 +218,8 @@
   details.used details > summary { cursor: pointer; font-weight: 600; }
   .usedrow { padding: 8px 0; border-top: 1px solid var(--line, #2a2a2a); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
   .usedrow .times { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .histvid { cursor: pointer; padding: 6px 4px; border-radius: 8px; }
+  .histvid:hover { background: rgba(255,255,255,0.06); }
   .pill { display: inline-block; padding: 0 7px; border-radius: 9px; background: rgba(255,255,255,0.1); font-size: 12px; }
 </style>
 </head>
@@ -1245,6 +1247,13 @@ $("#autoList").onclick = async (e) => {
 
 // ---- History: every run (manual, automation, resume) with its Claude tokens ----
 const TRIGGER = (t) => t.startsWith("automation: ") ? "⏰ " + t.slice(12) : t === "resume" ? "↻ Resume" : t === "schedule" ? "⏰ Daily" : "👆 Manual";
+// One chip per step with its time and tokens, slowest first: "Editing 1:28", "Script 2:27 · 218k".
+function stepChips(times, tokens) {
+  const names = [...new Set([...Object.keys(times), ...Object.keys(tokens)])]
+    .sort((a, b) => (times[b] || 0) - (times[a] || 0) || (tokens[b] || 0) - (tokens[a] || 0));
+  return names.map((n) => `<span class="tok">${esc(n)} ${times[n] ? mmss(times[n]) : ""}${times[n] && tokens[n] ? " · " : ""}${tokens[n] ? fmtTok(tokens[n]) : ""}</span>`).join(" ");
+}
+
 async function loadHistory() {
   const h = await api("/api/history");
   $("#histTotal").innerHTML = h.total.runs
@@ -1264,11 +1273,16 @@ async function loadHistory() {
         <div class="sub">${new Date(r.created * 1000).toLocaleString()}${mins ? " · took " + mins : ""} · ${r.made} of ${r.count} made</div></div>
         <span class="pill ${esc(r.status)}">${LABEL[r.status] || esc(r.status)}</span></div>
       ${usageHtml({ steps, total: r.usage.total.tokens, cost: r.usage.total.cost_usd }, "Total")}
-      ${r.videos.length ? `<details class="log"><summary>Tokens per video (${r.videos.length})</summary><ol>${r.videos.map((v) => `
-        <li>${v.made ? (v.id ? `<a href="#" onclick="openVideo('${esc(v.id)}');return false">${esc(v.title || v.id)}</a>` : esc(v.title)) : "Not finished"}
-          · 🪙 <b>${fmtTok(v.tokens)}</b> ${Object.entries(v.steps).map(([s, n]) => `<span class="tok">${esc(s)} ${fmtTok(n)}</span>`).join(" ")}</li>`).join("")}</ol></details>` : ""}
+      ${r.times && Object.keys(r.times).length ? `<div class="hint">⏱ Time per step: ${stepChips(r.times, steps)}</div>` : ""}
+      ${r.videos.length ? `<details class="log" ${r.videos.length === 1 ? "open" : ""}><summary>Each video: time and tokens (${r.videos.length})</summary><ol>${r.videos.map((v) => `
+        <li class="${v.id ? "histvid" : ""}" ${v.id ? `data-open="${esc(v.id)}" title="Open this video"` : ""}>
+          ${v.made ? `<b>${esc(v.title || v.id || "")}</b>${v.id ? " ▶" : ""}` : "Not finished"}
+          ${v.seconds ? ` · ⏱ <b>${mmss(v.seconds)}</b>` : ""} · 🪙 <b>${fmtTok(v.tokens)}</b>
+          <div>${stepChips(v.times || {}, v.steps)}</div></li>`).join("")}</ol></details>` : ""}
     </div>`;
   }).join("");
+  // Click a video: go to the Videos tab and open it.
+  document.querySelectorAll("#histRuns [data-open]").forEach((el) => el.onclick = () => { show("videos"); openVideo(el.dataset.open); });
 }
 
 // ---- Media library: sound effects, music and 3D models (assets/sfx, assets/music, assets/models3d) ----
