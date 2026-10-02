@@ -73,13 +73,8 @@ def _files(cfg: Config, kind: str) -> list[Item]:
     return items
 
 
-# Built-in sounds Claude may not put on words (they sounded bad); the automatic sound design
-# (sound_design.py) still uses them. Uploaded files with these names are allowed.
-NOT_WORD_CUES = {"boom", "hit", "rise"}
-
-
 def sounds(cfg: Config) -> list[Item]:
-    built = [Item(n, about, None) for n, (_, _, _, about) in CUE_SOUNDS.items() if n not in NOT_WORD_CUES]
+    built = [Item(n, about, None) for n, (_, _, _, about) in CUE_SOUNDS.items()]
     return [*_files(cfg, "sfx"), *[b for b in built if b.name not in {f.name for f in _files(cfg, "sfx")}]]
 
 
@@ -95,7 +90,7 @@ def listing(cfg: Config) -> list[dict]:
     """Everything in the library, for the app."""
     out = []
     for kind in KINDS:
-        builtin = {"sfx": [Item(n, a, None) for n, (_, _, _, a) in CUE_SOUNDS.items() if n not in NOT_WORD_CUES],
+        builtin = {"sfx": [Item(n, a, None) for n, (_, _, _, a) in CUE_SOUNDS.items()],
                    "music": [Item(n, a, None) for n, (a, _) in BEDS.items()], "models3d": []}[kind]
         for item in [*_files(cfg, kind), *builtin]:
             out.append({"kind": kind, "name": item.name, "about": item.about, "builtin": item.path is None,
