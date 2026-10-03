@@ -80,7 +80,8 @@ export type Part = {
 
 export type Beat = {start: number; duration: number; chapter: number; audio: string | null; visual: Visual};
 
-export type Chapter = {index: number; title: string; start: number; card: number; end?: number; intensity?: number; drop?: boolean}; // card: seconds of title card
+export type Chapter = {index: number; title: string; start: number; card: number; end?: number; intensity?: number; drop?: boolean;
+  style?: 'blackout' | 'lowerthird' | 'trailer' | 'split' | 'cut'; text?: string}; // card: seconds of the break into it (long/Breaks.tsx)
 
 export type LongProps = {
   title: string;

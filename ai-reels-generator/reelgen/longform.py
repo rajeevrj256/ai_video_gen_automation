@@ -43,7 +43,21 @@ log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
 
 WIDTH, HEIGHT = 1920, 1080
-CARD_SECONDS = 2.4  # chapter title card
+CARD_SECONDS = 2.4  # chapter title card (older videos)
+# The break into each chapter (long/Breaks.tsx) and how long it holds. Every chapter used to get the
+# same "CHAPTER N OF M" card; now the styles rotate so neighbours never match and a video doesn't
+# open its breaks like the one before.
+BREAKS = {"blackout": 2.8, "lowerthird": 2.4, "trailer": 2.4, "split": 2.4, "cut": 1.3}
+
+
+def break_styles(count: int, seed: int, avoid_first: str = "") -> list[str]:
+    import random
+
+    order = list(BREAKS)
+    random.Random(seed).shuffle(order)
+    if order[0] == avoid_first:
+        order = order[1:] + order[:1]
+    return [order[i % len(order)] for i in range(count)]
 CHAPTER_GAP = 0.5  # breath at the end of each chapter
 WORDS_PER_SECOND = 2.5  # measured presenter pace at +10%, pauses included
 MIN_MINUTES, MAX_MINUTES = 6.5, 11.0
@@ -166,6 +180,7 @@ class LChapter(BaseModel):
     drop: bool = Field(default=False, description="True for the one or two chapters that open on the twist or the big turn: the music cuts to silence for a moment, then hits.")
     ambience: Literal["none", "room", "city", "rain", "wind", "crowd", "night", "lab", "sea", "fire"] = Field(
         default="none", description="A quiet background sound bed for where this chapter takes place, or 'none'.")
+    card_text: str = Field(default="", description="The line shown on the break into this chapter: the question this chapter answers or a sharp phrase that pulls the viewer in, max 9 words, in your own words for this story (not the title, not 'Chapter 2'). Empty for the cold open.")
     backdrop: str = Field(default="", description="The background photo behind this chapter's visuals: a 2-4 word English stock-photo search for the real place, setting or material this chapter is about, concrete and filmable (no named people, brands or logos). Different for every chapter.")
 
 
@@ -258,6 +273,8 @@ things), steps (the mechanism), footage (the real place), model3d (the actual ob
 sourced quote). Pick the type from what this story's evidence is, so each video looks like its subject.
 - 'keyword' and 'title' beats (mostly words) are at most 1 in 7 beats and never two in a row. Keyword \
 text is at most 3 words, a headline at most 6.
+- Chapter breaks: give every chapter after the cold open a card_text, the line on the break into it: \
+the question it answers or a sharp phrase, in your own words, never the title again.
 - Backgrounds: give every chapter a backdrop (a stock-photo search for the real place, setting or \
 material that chapter is about) and the hook a hook_backdrop. They are photos behind the visuals, so \
 each chapter and each video looks like its own subject; never the same search twice.
@@ -363,7 +380,7 @@ def _numbered(script: LongScript, mark: set | None = None) -> str:
         m = ">> " if mark and (0, hi) in mark else ""
         out.append(f"{m}H{hi} {h.line}  {_visual_text(h.visual)}" + (f" [text: {h.text}]" if h.text else ""))
     for ci, c in enumerate(script.chapters, 1):
-        out.append(f"\nChapter {ci}: {c.title}")
+        out.append(f"\nChapter {ci}: {c.title}" + (f" | on the break: {c.card_text}" if c.card_text else ""))
         for bi, b in enumerate(c.beats, 1):
             m = ">> " if mark and (ci, bi) in mark else ""
             out.append(f"{m}{ci}.{bi} {b.narration}  {_visual_text(b.visual)}")
@@ -596,6 +613,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     new_look = look is None
     look = look or variety.pick_look(cfg, seed)
     look = _plates(script, cfg, work, dict(look), progress)
+    if not look.get("breaks"):  # a re-make keeps its breaks
+        last = (variety.recent(cfg)[-1:] or [{}])[0].get("break", "")
+        look["breaks"] = break_styles(max(0, len(script.chapters) - 1), seed, last)
     beats, chapters, lines, cues, spoken = [], [], [], [], []
     used: dict[str, str] = {}
     clip_ids: set[int] = set()  # never the same stock clip twice
@@ -645,9 +665,11 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
 
     t = hook["duration"]
     for ci, chapter in enumerate(script.chapters):
-        card = CARD_SECONDS if ci > 0 else 0.0
+        style = look["breaks"][(ci - 1) % len(look["breaks"])] if ci > 0 and look["breaks"] else None
+        card = BREAKS.get(style, CARD_SECONDS) if ci > 0 else 0.0
         chapters.append({"index": ci, "title": chapter.title, "start": round(t, 3), "card": card,
-                         "intensity": chapter.intensity, "drop": chapter.drop, "ambience": chapter.ambience})
+                         "intensity": chapter.intensity, "drop": chapter.drop, "ambience": chapter.ambience,
+                         "style": style, "text": chapter.card_text.strip()})
         t += card
         if voices is not None:
             audio = voices[ci]
@@ -744,7 +766,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     voice = [b["audio"] for b in beats if b.get("audio")] + [s["audio"] for s in hook["shots"] if s.get("audio")]
     props["sfxLevels"] = media.level_sounds(props, work, voice)
     if new_look:
-        variety.remember(cfg, look, script.mood, hook["style"], script.story_form)
+        variety.remember(cfg, look, script.mood, hook["style"], script.story_form,
+                         (look.get("breaks") or [""])[0])
     return props
 
 
@@ -977,7 +1000,7 @@ def review_long(video: Path | None, script: LongScript, props: dict, cfg: Config
     sheet = sheet or contact_sheet_long(video, video.with_name("review_frames.jpg"), props)
     lines = []
     for ci, c in enumerate(script.chapters, 1):
-        lines.append(f"\nChapter {ci}: {c.title}")
+        lines.append(f"\nChapter {ci}: {c.title}" + (f" | on the break: {c.card_text}" if c.card_text else ""))
         lines += [f"{ci}.{bi} {b.narration}  {_visual_text(b.visual)}" for bi, b in enumerate(c.beats, 1)]
     hook_lines = " / ".join(f"[{h.beat}] {h.line or '(no line)'} {_visual_text(h.visual)}" for h in script.hook)
     prompt = (f"The image shows two frames from the hook, then two frames from every chapter, left to right, top to "
