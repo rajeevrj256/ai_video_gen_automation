@@ -60,6 +60,9 @@ MOOD_SPECS = {
     "curious": Mood((104, 122), ("major", "dorian"), ((0, 3, 4, 3), (0, 5, 3, 4), (1, 4, 0, 5)), "pluck", "walk", "soft", (45, 52)),
     "dark": Mood((66, 80), ("phrygian", "minor"), ((0, 1, 0, 6), (0, 5, 1, 0), (0, 6, 1, 0)), "bell", "drone", "soft", (36, 43)),
     "energetic": Mood((128, 146), ("minor", "dorian"), ((0, 5, 3, 6), (0, 3, 6, 5), (0, 6, 3, 4)), "pluck", "drive", "trap", (40, 47)),
+    # Comedy (the stick stories): bouncy plucks over a walking bass, and a lighter, stop-start one.
+    "playful": Mood((108, 124), ("major", "lydian"), ((0, 3, 4, 0), (0, 5, 3, 4), (3, 4, 0, 0)), "pluck", "walk", "pop", (45, 52)),
+    "quirky": Mood((92, 108), ("dorian", "major"), ((0, 1, 0, 4), (0, 3, 1, 4), (5, 4, 1, 0)), "bell", "walk", "soft", (43, 50)),
     "calm": Mood((80, 94), ("major", "lydian", "dorian"), ((0, 3, 0, 4), (0, 5, 3, 4), (3, 0, 4, 0)), "piano", "walk", "none", (45, 52)),
 }
 

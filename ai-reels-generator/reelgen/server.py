@@ -253,6 +253,7 @@ class StickRequestBody(BaseModel):
     minutes: float = 5
     language: str = "english"
     speed: float = 1.5
+    style: str = "comedy"  # comedy | fiction | facts
     cast: str = ""
     count: int = 1
 
@@ -600,8 +601,10 @@ def create_app(cfg: Config) -> FastAPI:
         fmt = "short" if body.format == "short" else "long"
         given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))),
                  "language": body.language if body.language in ("english", "hindi") else "english",
-                 "speed": min(2.0, max(0.8, float(body.speed))), "cast": body.cast.strip() or DEFAULT_CAST}
-        return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick", "comedy",
+                 "speed": min(2.0, max(0.8, float(body.speed))), "cast": body.cast.strip() or DEFAULT_CAST,
+                 "style": body.style if body.style in ("comedy", "fiction", "facts") else "comedy"}
+        return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick",
+                           {"facts": "facts", "fiction": "story"}.get(given["style"], "comedy"),
                            "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False)
 
     @app.post("/api/script-video")

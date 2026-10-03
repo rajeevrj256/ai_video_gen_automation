@@ -4,7 +4,9 @@ import {Easing, Html5Audio, Sequence, continueRender, delayRender, interpolate, 
 import {FONT, clamp, useFonts} from '../theme';
 import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
-import type {ActorState, CastMember, Emote, Face, Look, Pose, Prop, Setting, Shot, StoryProps, Word} from './types';
+import {iconFor} from '../long/icon';
+import {PieceView, STOOL_SEAT, Stool, TABLE_TOP, TableUnder, defaultFurniture, seatAt, surfaceAt} from './furniture';
+import type {ActorState, CastMember, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
 
 // A stick-figure comedy episode in the channel's style: light grey sets drawn in grey tones with
 // ink outlines, white round heads, thin stick bodies, speech bubbles. One Sequence per shot (one
@@ -44,7 +46,7 @@ const STAND: Rig = {
   lK: [-18, -84], lF: [-28, 0], rK: [18, -84], rF: [28, 0],
 };
 
-const rig = (pose: Pose, t: number): Rig => {
+const rig = (pose: Pose, t: number, SEAT: number): Rig => {
   const s = {...STAND};
   const swing = Math.sin(t * 9);
   switch (pose) {
@@ -56,9 +58,11 @@ const rig = (pose: Pose, t: number): Rig => {
         lE: [-30 - 18 * swing * k, -255], lH: [-34 - 34 * swing * k, -192], rE: [30 + 18 * swing * k, -255], rH: [34 + 34 * swing * k, -192]};
     }
     case 'sit':
-      return {...s, hip: [0, -120], neck: [0, -272], head: [0, -272 - HEAD + 4],
-        lE: [-30, -212], lH: [22, -170], rE: [32, -212], rH: [52, -168],
-        lK: [62, -122], lF: [64, 0], rK: [80, -118], rF: [86, 0]};
+      // Seen from the front, on the seat under them (SEAT px high, from the scene's furniture): thighs
+      // out to the knees, shins straight down, hands resting on the knees.
+      return {...s, hip: [0, -SEAT], neck: [0, -SEAT - 150], head: [0, -SEAT - 150 - HEAD + 4],
+        lE: [-44, -SEAT - 70], lH: [-50, -SEAT + 8], rE: [44, -SEAT - 70], rH: [50, -SEAT + 8],
+        lK: [-54, -SEAT + 10], lF: [-56, 0], rK: [54, -SEAT + 10], rF: [56, 0]};
     case 'point':
       return {...s, rE: [62, -282], rH: [136, -300]};
     case 'arms-up':
@@ -140,13 +144,20 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   const floorY = (FLOOR - (shot.setting === 'kitchen' ? COUNTER : 0) - cy) * total + OH / 2;
   const flash = newScene ? interpolate(frame, [0, 5], [0.9, 0], clamp) : 0;
   const speaker = shot.actors.find((a) => a.id === shot.speaker);
+  const furniture = shot.furniture ?? defaultFurniture(shot.setting);
+  const seat = (a: ActorState) => seatAt(furniture, a.x) ?? STOOL_SEAT;
   return (
     <Layer name="shot">
       <svg width={OW} height={OH} viewBox={`0 0 ${OW} ${OH}`} style={{position: 'absolute', inset: 0}}>
         <g transform={`translate(${OW / 2 + shake} ${OH / 2}) scale(${total}) translate(${-cx} ${-cy})`}>
           <SetView setting={shot.setting} sign={shot.sign} />
+          {furniture.map((p, i) => <PieceView key={`f${i}`} p={p} floor={FLOOR} />)}
+          {shot.actors.filter((a) => a.pose === 'sit' && !a.action.startsWith('walk') && seatAt(furniture, a.x) === null).map((a) => (
+            <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} />
+          ))}
+          {(shot.things ?? []).map((th, i) => <ThingView key={`th${i}`} th={th} furniture={furniture} t={t} />)}
           {shot.actors.map((a) => (
-            <Figure key={a.id} a={a} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
+            <Figure key={a.id} a={a} seat={seat(a)} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
           <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} />
@@ -157,7 +168,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
       ) : null}
       {speaker && shot.text && dialogue === 'bubble' ? (
         <Bubble text={shot.text} words={shot.words} lead={shot.lead} x={(speaker.x - cx) * total + OW / 2}
-          y={(FLOOR - 470 - (speaker.pose === 'sit' ? -46 : 0) - cy) * total + OH / 2} big={vertical} />
+          y={(FLOOR - 470 - (speaker.pose === 'sit' ? -(165 - seat(speaker)) : 0) - cy) * total + OH / 2} big={vertical} />
       ) : null}
       {!speaker && shot.text ? <Narration text={shot.text} /> : null}
       {shot.caption ? <Caption text={shot.caption} top={vertical ? 230 : 36} /> : null}
@@ -203,32 +214,59 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
   return {dx, dy, rot, walking};
 };
 
-const Figure: React.FC<{a: ActorState; look: Look; t: number; frame: number; frames: number; talking: Word[]}> = ({a, look, t, frame, frames, talking}) => {
+// Small body movements that carry an emotion (pixels and degrees; lean is toward where they look).
+const acting = (face: Face, talking: boolean, t: number) => {
+  const none = {dx: 0, dy: 0, lean: 0, head: 0};
+  switch (face) {
+    case 'laugh':
+      return {...none, dy: -Math.abs(Math.sin(t * 13)) * 12, head: -8 + Math.sin(t * 13) * 3};
+    case 'cry':
+    case 'sad':
+      return {...none, head: 9, dy: face === 'cry' ? Math.sin(t * 20) * 2 : 0, lean: talking ? 3 : 2};
+    case 'nervous':
+      return {...none, dx: Math.sin(t * 55) * 2.2};
+    case 'shock':
+      return {...none, dy: talking ? -Math.max(0, Math.sin(Math.min(t, 0.35) * 9)) * 18 : 0, lean: -4};
+    case 'angry':
+      return talking ? {dx: Math.sin(t * 48) * 3, dy: 0, lean: 7, head: 0} : {...none, lean: 3};
+    case 'happy':
+    case 'love':
+      return talking ? {...none, dy: -Math.abs(Math.sin(t * 8)) * 6, head: Math.sin(t * 4) * 3} : none;
+    default:
+      return talking ? {...none, head: Math.sin(t * 3) * 2} : none;
+  }
+};
+
+const Figure: React.FC<{a: ActorState; seat: number; look: Look; t: number; frame: number; frames: number; talking: Word[]}> = ({a, seat, look, t, frame, frames, talking}) => {
   const {fps} = useVideoConfig();
   const {dx, dy, rot, walking} = actionOffset(a, t, frames, fps);
   const pose: Pose = walking ? 'walk' : a.pose;
   const small = look === 'kid' ? 0.78 : 1;
-  const r = rig(pose, t);
+  const r = rig(pose, t, seat);
   const breathe = pose === 'lie' ? 0 : Math.sin(t * 2.4 + a.x) * 3;
   const speakingNow = talking.some((w) => t >= w.start && t <= w.end);
   const mouthOpen = speakingNow && frame % 6 < 3;
   const lying = pose === 'lie' || a.action === 'fall';
+  // Acting the feeling: laughing and crying and fear show all the time, anger and joy while talking.
+  const act = acting(a.face, speakingNow || talking.length > 0, t);
   const limb = (p: Pt, k: Pt, e: Pt) => `M ${p[0]} ${p[1]} Q ${k[0]} ${k[1]} ${e[0]} ${e[1]}`;
+  // A sitting leg bends at the knee instead of curving.
+  const leg = (p: Pt, k: Pt, e: Pt) => (pose === 'sit' ? `M ${p[0]} ${p[1]} L ${k[0]} ${k[1]} L ${e[0]} ${e[1]}` : limb(p, k, e));
   return (
-    <g transform={`translate(${a.x + dx} ${FLOOR + dy}) rotate(${pose === 'lie' ? 0 : rot}) scale(${a.facing * small} ${small})`}>
+    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * a.facing}) scale(${a.facing * small} ${small})`}>
       <g transform={pose === 'lie' ? 'translate(-150 -40) rotate(-90 0 0)' : `translate(0 ${breathe})`}>
         <ellipse cx={0} cy={4} rx={60} ry={9} fill="rgba(0,0,0,0.18)" stroke="none" />
         <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
-          <path d={limb(r.hip, r.lK, r.lF)} />
-          <path d={limb(r.hip, r.rK, r.rF)} />
+          <path d={leg(r.hip, r.lK, r.lF)} />
+          <path d={leg(r.hip, r.rK, r.rF)} />
           <line x1={r.hip[0]} y1={r.hip[1]} x2={r.neck[0]} y2={r.neck[1]} />
           {look === 'girl' || look === 'woman' || look === 'old-woman' ? (
             <path d={`M ${r.neck[0] - 4} ${r.neck[1] + 70} L ${r.hip[0] - 46} ${r.hip[1] + 40} L ${r.hip[0] + 46} ${r.hip[1] + 40} Z`} fill={LIGHT} strokeWidth={7} />
           ) : null}
           <path d={limb(r.neck, r.lE, r.lH)} />
           <path d={limb(r.neck, r.rE, r.rH)} />
-          <PropView prop={a.prop} text={a.propText} at={r.rH} />
-          <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt})`}>
+          <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />
+          <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head})`}>
             <g transform={`scale(${FACE})`}><Hair look={look} back /></g>
             <circle r={HEAD} fill="#FFFFFF" />
             <g transform={`scale(${FACE})`} strokeWidth={LINE / FACE}>
@@ -284,12 +322,29 @@ const FaceView: React.FC<{face: Face; frame: number; mouthOpen: boolean; look: L
       </>
     );
   const brows = <path d={`M ${ex - 25} -22 q 9 -6 18 -2 M ${ex + 9} -24 q 9 -4 18 2`} strokeWidth={4} />;
-  const talk = mouthOpen ? (
+  // The talking mouth keeps the feeling: a shouting square with teeth when angry, a wobbling frown
+  // when sad, a wide open grin when happy (one neutral oval for every face made them all look calm).
+  const talk = !mouthOpen ? null : face === 'angry' ? (
+    <g>
+      <path d={`M ${ex - 20} 16 h 40 l -6 24 h -28 Z`} fill={INK} stroke="none" />
+      <rect x={ex - 16} y={16} width={32} height={6} fill="#fff" stroke="none" />
+      <rect x={ex - 12} y={34} width={24} height={5} fill="#fff" stroke="none" />
+    </g>
+  ) : face === 'sad' || face === 'cry' ? (
+    <path d={`M ${ex - 16} 36 Q ${ex} ${12 + (frame % 4)} ${ex + 16} 36 Z`} fill={INK} stroke="none" />
+  ) : face === 'happy' || face === 'love' || face === 'smirk' ? (
+    <g>
+      <path d={`M ${ex - 20} 16 Q ${ex} 46 ${ex + 20} 16 Z`} fill={INK} stroke="none" />
+      <rect x={ex - 13} y={16} width={26} height={5} rx={2} fill="#fff" stroke="none" />
+    </g>
+  ) : face === 'nervous' ? (
+    <ellipse cx={ex + Math.sin(frame) * 2} cy={26} rx={10} ry={8} fill={INK} stroke="none" />
+  ) : (
     <g>
       <ellipse cx={ex} cy={26} rx={15} ry={12} fill={INK} stroke="none" />
       <rect x={ex - 9} y={15} width={18} height={5} rx={2} fill="#fff" stroke="none" />
     </g>
-  ) : null;
+  );
   switch (face) {
     case 'happy':
       return <g strokeWidth={4.2}>{brows}{eyes()}{talk ?? <path d={`M ${ex - 18} 18 Q ${ex} 36 ${ex + 18} 18`} />}</g>;
@@ -297,7 +352,7 @@ const FaceView: React.FC<{face: Face; frame: number; mouthOpen: boolean; look: L
       return (
         <g strokeWidth={4.2}>
           <path d={`M ${ex - 24} -6 l 8 -8 l 8 8 M ${ex + 10} -6 l 8 -8 l 8 8`} />
-          <path d={`M ${ex - 22} 12 Q ${ex} 50 ${ex + 22} 12 Z`} fill={INK} />
+          <path d={`M ${ex - 22} 12 Q ${ex} ${mouthOpen ? 56 : 44} ${ex + 22} 12 Z`} fill={INK} />
         </g>
       );
     case 'shock':
@@ -368,9 +423,12 @@ const FaceView: React.FC<{face: Face; frame: number; mouthOpen: boolean; look: L
   }
 };
 
-const PropView: React.FC<{prop: Prop; text?: string; at: Pt}> = ({prop, text, at}) => {
+const PropView: React.FC<{prop: Prop; text?: string; thing?: string; t: number; at: Pt}> = ({prop, text, thing, t, at}) => {
   const [x, y] = at;
   switch (prop) {
+    case 'thing':
+      // Held in the hand, beside it.
+      return <g transform={`translate(${x + 30} ${y - 46})`}><ThingArt name={thing || 'box'} size={110} t={t} effect="none" /></g>;
     case 'phone':
       return (
         <g transform={`translate(${x} ${y - 26})`}>
@@ -445,6 +503,91 @@ const EmoteView: React.FC<{emote: Emote; t: number; head: Pt}> = ({emote, t, hea
   }
 };
 
+// ---------- objects: a hand-drawn volcano, anything else from lucide ----------
+
+const LAVA = '#e4572e';
+
+// A science-fair volcano: a lumpy cone with a crater and lava dripping down; 'erupt' throws lava up.
+const Volcano: React.FC<{size: number; t: number; erupt: boolean}> = ({size, t, erupt}) => {
+  const w = size;
+  const h = size * 0.78;
+  const blobs = erupt
+    ? Array.from({length: 10}, (_, i) => {
+        const p = ((t * 1.3 + i / 10) % 1);
+        const dir = ((i * 37) % 11) / 10 - 0.5;
+        return [dir * w * 1.1 * p, -h - (h * 1.5) * p + h * 1.7 * p * p, 9 + (i % 3) * 5, 1 - p] as const;
+      })
+    : [];
+  return (
+    <g stroke={INK} strokeWidth={4} strokeLinejoin="round" strokeLinecap="round">
+      <path d={`M ${-w / 2} 0 Q ${-w / 3} ${-h * 0.4} ${-w * 0.14} ${-h} H ${w * 0.14} Q ${w / 3} ${-h * 0.4} ${w / 2} 0 Z`} fill="#8d7966" />
+      <path d={`M ${-w * 0.15} ${-h} q ${w * 0.05} ${h * 0.28} ${w * 0.1} ${h * 0.12} q ${w * 0.04} ${h * 0.3} ${w * 0.1} ${h * 0.05} q ${w * 0.04} ${h * 0.2} ${w * 0.1} ${-h * 0.17} L ${w * 0.15} ${-h} Z`} fill={LAVA} />
+      <ellipse cx={0} cy={-h} rx={w * 0.15} ry={w * 0.04} fill="#5a3a2a" />
+      {blobs.map(([bx, by, r, o], i) => <circle key={i} cx={bx} cy={by} r={r} fill={i % 3 ? LAVA : '#f6a623'} opacity={o} strokeWidth={2.5} />)}
+      {erupt ? <Puffs y={-h - 40} t={t} /> : null}
+    </g>
+  );
+};
+
+const Puffs: React.FC<{y: number; t: number}> = ({y, t}) => (
+  <g fill="#ececec" stroke={INK} strokeWidth={3}>
+    {[0, 1, 2, 3].map((i) => {
+      const p = (t * 0.7 + i / 4) % 1;
+      return <circle key={i} cx={Math.sin(i * 2.1 + t) * 26} cy={y - p * 150} r={16 + p * 26} opacity={1 - p} />;
+    })}
+  </g>
+);
+
+const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect}> = ({name, size, t, effect}) => {
+  const wiggle = effect === 'shake' ? Math.sin(t * 40) * 5 : 0;
+  if (/volcano|lava/.test(name)) {
+    return <g transform={`rotate(${wiggle})`}><Volcano size={size * 1.5} t={t} erupt={effect === 'erupt'} /></g>;
+  }
+  const Icon = iconFor(name);
+  const s = size / 24;
+  return (
+    <g transform={`rotate(${wiggle})`}>
+      {/* lucide draws in a 24 px box, lines only: a white disc behind it keeps it readable on grey sets */}
+      <g transform={`translate(${-size / 2} ${-size}) scale(${s})`}>
+        <Icon width={24} height={24} color={INK} strokeWidth={2.2 / Math.max(1, s / 4)} fill="#fff" />
+      </g>
+      {effect === 'smoke' || effect === 'erupt' ? <Puffs y={-size - 10} t={t} /> : null}
+      {effect === 'fire' ? (
+        <g stroke={INK} strokeWidth={3} strokeLinejoin="round">
+          {[-1, 0, 1].map((k) => {
+            const f = 1 + Math.sin(t * 18 + k * 2) * 0.15;
+            return <path key={k} d={`M ${k * 26 - 18} ${-size * 0.85} q 18 ${-60 * f} 18 ${-90 * f} q 4 ${40 * f} 18 ${90 * f} Z`} fill={k ? '#f6a623' : LAVA} />;
+          })}
+        </g>
+      ) : null}
+      {effect === 'sparkle' ? (
+        <g fill="#ffd23f" stroke={INK} strokeWidth={2.5}>
+          {[0, 1, 2, 3].map((i) => {
+            const a = i * 1.6 + t * 2;
+            const k = 0.6 + 0.4 * Math.abs(Math.sin(t * 6 + i));
+            return <path key={i} transform={`translate(${Math.cos(a) * size * 0.7} ${-size / 2 + Math.sin(a) * size * 0.6}) scale(${k})`}
+              d="M 0 -16 L 4 -4 L 16 0 L 4 4 L 0 16 L -4 4 L -16 0 L -4 -4 Z" />;
+          })}
+        </g>
+      ) : null}
+    </g>
+  );
+};
+
+const ThingView: React.FC<{th: Thing; furniture: Piece[]; t: number}> = ({th, furniture, t}) => {
+  const ink = {stroke: INK, strokeWidth: SET_LINE, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const};
+  const size = th.big ? 190 : 120;
+  // On the table or desk at its spot; on a table brought in when there's none.
+  const desk = th.table ? surfaceAt(furniture, th.x) : null;
+  const top = FLOOR - (desk ?? (th.table ? TABLE_TOP : 0));
+  return (
+    <g>
+      {th.table && desk === null ? <TableUnder x={th.x} floor={FLOOR} /> : null}
+      <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} /></g>
+    </g>
+  );
+};
+
 // ---------- the sets ----------
 
 const COUNTER = 190; // the kitchen counter's height: it hides the legs, the scene reads as a mid shot
@@ -487,10 +630,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
           {base}
           <rect x={1280} y={240} width={300} height={240} fill={LIGHT} {...ink} />
           <line x1={1430} y1={240} x2={1430} y2={480} {...ink} />
-          <path d={`M 520 ${FLOOR - 4} v -150 q 0 -40 40 -40 h 520 q 40 0 40 40 v 150`} fill={GREY} {...ink} />
-          <rect x={470} y={FLOOR - 160} width={90} height={156} rx={20} fill={DARK} {...ink} />
-          <rect x={1080} y={FLOOR - 160} width={90} height={156} rx={20} fill={DARK} {...ink} />
-          <rect x={1660} y={560} width={150} height={FLOOR - 560} fill={GREY} {...ink} />
           {floor}
         </g>
       );
@@ -501,13 +640,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
           {base}
           <rect x={420} y={150} width={1080} height={300} fill="#3d4a3f" {...ink} />
           {sign ? <text x={960} y={320} fontSize={64} textAnchor="middle" fill="#f1f1f1" fontFamily={FONT}>{sign}</text> : null}
-          {[260, 960, 1660].map((x) => (
-            <g key={x}>
-              <rect x={x - 130} y={FLOOR - 170} width={260} height={30} fill={GREY} {...ink} />
-              <line x1={x - 110} y1={FLOOR - 140} x2={x - 110} y2={FLOOR} {...ink} />
-              <line x1={x + 110} y1={FLOOR - 140} x2={x + 110} y2={FLOOR} {...ink} />
-            </g>
-          ))}
           {floor}
         </g>
       );
@@ -517,9 +649,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
           {base}
           <rect x={200} y={180} width={600} height={180} fill={GREY} {...ink} />
           <line x1={500} y1={180} x2={500} y2={360} {...ink} />
-          <rect x={120} y={FLOOR - 300} width={1100} height={300} fill={GREY} {...ink} />
-          <rect x={300} y={FLOOR - 300} width={320} height={40} fill={LIGHT} {...ink} />
-          <path d={`M 470 ${FLOOR - 300} v -70 h 60 v 20`} fill="none" {...ink} />
           <rect x={1400} y={260} width={260} height={FLOOR - 260} fill={LIGHT} {...ink} />
           <line x1={1400} y1={520} x2={1660} y2={520} {...ink} />
           {floor}
@@ -530,10 +659,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
         <g>
           {base}
           <rect x={300} y={230} width={260} height={230} fill="#f4f4f4" {...ink} />
-          <rect x={980} y={FLOOR - 190} width={760} height={110} rx={16} fill={LIGHT} {...ink} />
-          <rect x={980} y={FLOOR - 330} width={60} height={330} rx={14} fill={GREY} {...ink} />
-          <line x1={1010} y1={FLOOR - 80} x2={1010} y2={FLOOR} {...ink} />
-          <line x1={1710} y1={FLOOR - 80} x2={1710} y2={FLOOR} {...ink} />
           {floor}
         </g>
       );
@@ -554,11 +679,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
         <g>
           {base}
           <rect x={300} y={200} width={420} height={260} fill={LIGHT} {...ink} />
-          <rect x={1100} y={FLOOR - 240} width={600} height={40} fill={GREY} {...ink} />
-          <line x1={1130} y1={FLOOR - 200} x2={1130} y2={FLOOR} {...ink} />
-          <line x1={1670} y1={FLOOR - 200} x2={1670} y2={FLOOR} {...ink} />
-          <rect x={1300} y={FLOOR - 420} width={240} height={160} rx={8} fill={DARK} {...ink} />
-          <line x1={1420} y1={FLOOR - 260} x2={1420} y2={FLOOR - 240} {...ink} />
           {floor}
         </g>
       );
@@ -570,9 +690,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
           <rect x={760} y={230} width={400} height={FLOOR - 230} fill="none" {...ink} />
           {signText(960, 216, 40) ?? <text x={960} y={216} fontSize={40} fontWeight={800} textAnchor="middle" fill={INK} fontFamily={FONT}>TOILET</text>}
           <circle cx={1120} cy={560} r={12} fill={INK} />
-          <rect x={200} y={FLOOR - 320} width={260} height={60} fill={LIGHT} {...ink} />
-          <path d={`M 330 ${FLOOR - 320} v -50 h 40 v 16`} fill="none" {...ink} />
-          <line x1={330} y1={FLOOR - 260} x2={330} y2={FLOOR} {...ink} />
           {floor}
         </g>
       );
@@ -582,10 +699,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
           {base}
           <rect x={250} y={540} width={50} height={FLOOR - 540} fill={DARK} {...ink} />
           <circle cx={275} cy={420} r={180} fill={GREY} {...ink} />
-          <rect x={1200} y={FLOOR - 140} width={460} height={30} fill={DARK} {...ink} />
-          <line x1={1230} y1={FLOOR - 110} x2={1230} y2={FLOOR} {...ink} />
-          <line x1={1630} y1={FLOOR - 110} x2={1630} y2={FLOOR} {...ink} />
-          <rect x={1200} y={FLOOR - 230} width={460} height={24} fill={DARK} {...ink} />
           {floor}
         </g>
       );
@@ -597,7 +710,6 @@ const SetView: React.FC<{setting: Setting; sign?: string}> = ({setting, sign}) =
           {signText(960, 195, 56) ?? <text x={960} y={195} fontSize={56} fontWeight={800} textAnchor="middle" fill={INK} fontFamily={FONT}>SHOP</text>}
           {[320, 460, 600].map((y) => <line key={y} x1={160} y1={y} x2={560} y2={y} {...ink} />)}
           {[320, 460, 600].map((y) => <line key={`r${y}`} x1={1360} y1={y} x2={1760} y2={y} {...ink} />)}
-          <rect x={700} y={FLOOR - 220} width={520} height={220} fill={GREY} {...ink} />
           {floor}
         </g>
       );

@@ -12,12 +12,18 @@ export type Face =
   | 'neutral' | 'happy' | 'laugh' | 'shock' | 'angry' | 'sad' | 'smirk' | 'cry'
   | 'nervous' | 'confused' | 'sleepy' | 'love' | 'dead';
 export type Emote = 'none' | '!' | '?' | '!?' | 'sweat' | 'anger' | 'hearts' | 'zzz' | 'sparkle' | 'lines';
-export type Prop = 'none' | 'phone' | 'book' | 'paper' | 'cup' | 'bag' | 'laptop' | 'ball' | 'plate' | 'remote';
+export type Prop = 'none' | 'phone' | 'book' | 'paper' | 'cup' | 'bag' | 'laptop' | 'ball' | 'plate' | 'remote' | 'thing';
+export type Effect = 'none' | 'erupt' | 'smoke' | 'fire' | 'sparkle' | 'shake';
+// An object in the scene: 'volcano' (drawn by hand) or a lucide icon name; on a small table or the floor.
+export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect};
 export type Setting =
   | 'living-room' | 'classroom' | 'kitchen' | 'bedroom' | 'street' | 'office' | 'bathroom'
   | 'park' | 'shop' | 'exam-hall' | 'blank';
 export type Camera = 'wide' | 'close' | 'punch' | 'shake';
 export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right';
+
+// A piece of furniture in the scene (kinds in sets.json): centre x and width on the 1920 px set.
+export type Piece = {kind: string; x: number; width: number};
 
 export type CastMember = {id: string; name: string; look: Look};
 
@@ -30,6 +36,7 @@ export type ActorState = {
   emote: Emote;
   prop: Prop;
   propText?: string; // text on a paper / phone screen ("F", "₹93")
+  propThing?: string; // with prop 'thing': what they hold ('volcano' or a lucide icon name)
   action: Action;
 };
 
@@ -41,12 +48,15 @@ export type Shot = {
   scene: number; // a new scene number = a new place (a cut with a whoosh)
   setting: Setting;
   sign?: string; // a word on the set (a door sign, a board, a shop name)
+  furniture?: Piece[]; // the scene's furniture; missing = the setting's usual pieces (sets.json)
+  things?: Thing[]; // objects standing in the scene (not held)
   washing?: boolean; // kitchen: running water and soap foam in the sink (only when someone washes dishes)
   caption?: string; // meme caption at the top ("POV: ...")
   camera: Camera;
   focus?: string; // actor id the camera frames on 'close'
   actors: ActorState[];
   speaker?: string; // actor id speaking (or 'narrator')
+  emotion?: string; // how the line is said (the voice follows it; the speaker's body acts it)
   text?: string; // the line, shown in a speech bubble
   words: Word[];
   audio?: string | null; // the line's voice file

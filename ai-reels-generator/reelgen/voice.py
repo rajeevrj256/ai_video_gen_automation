@@ -79,14 +79,16 @@ class SceneAudio:
 
 
 def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: str = "auto",
-                      kokoro_voice: str = "", rate: str = "+10%") -> list[SceneAudio]:
+                      kokoro_voice: str = "", rate: str = "+10%", pitch: str = "+0Hz",
+                      volume: str = "+0%") -> list[SceneAudio]:
     """One audio file per scene, so each scene's duration follows its voiceover.
 
     The whole narration is spoken in one take and then cut between scenes. Speaking
     each scene on its own restarts the intonation every few seconds (every scene ends
     on the same falling "full stop" tone), which is what makes TTS sound like someone
     reading lines off a card. One take flows like a presenter explaining. `rate` is a
-    steady pace for the whole take, e.g. "+10%".
+    steady pace for the whole take, e.g. "+10%"; `pitch` ("+20Hz") and `volume` ("+30%") colour it
+    (the stick stories record each character's lines per emotion with them). Kokoro only follows the pace.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     pct = int(re.sub(r"[^\d-]", "", rate) or 0)
@@ -94,7 +96,7 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     if engine in ("auto", "edge"):
         for attempt in range(3):  # a long narration is a lot of text; one network hiccup shouldn't end it
             try:
-                return _edge_scenes(narrations, voice, out_dir, f"{pct:+d}%")
+                return _edge_scenes(narrations, voice, out_dir, f"{pct:+d}%", pitch, volume)
             except Exception as exc:
                 edge_error = exc
                 log.warning("Microsoft voice failed (try %d of 3): %s", attempt + 1, exc)
@@ -161,8 +163,9 @@ def _write_wav(path: Path, samples: np.ndarray, rate: int) -> None:
 
 # ---------- edge (online) ----------
 
-async def _edge_synthesize(text: str, voice: str, rate: str, pitch: str, out_path: Path) -> list[Word]:
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, boundary="WordBoundary")
+async def _edge_synthesize(text: str, voice: str, rate: str, pitch: str, out_path: Path,
+                           volume: str = "+0%") -> list[Word]:
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume, boundary="WordBoundary")
     words: list[Word] = []
     with open(out_path, "wb") as fh:
         async for chunk in communicate.stream():
@@ -174,9 +177,10 @@ async def _edge_synthesize(text: str, voice: str, rate: str, pitch: str, out_pat
     return words
 
 
-def _edge_scenes(narrations: list[str], voice: str, out_dir: Path, rate: str) -> list[SceneAudio]:
+def _edge_scenes(narrations: list[str], voice: str, out_dir: Path, rate: str, pitch: str = "+0Hz",
+                 volume: str = "+0%") -> list[SceneAudio]:
     full = out_dir / "narration.mp3"
-    words = asyncio.run(_edge_synthesize(" ".join(t.strip() for t in narrations), voice, rate, "+0Hz", full))
+    words = asyncio.run(_edge_synthesize(" ".join(t.strip() for t in narrations), voice, rate, pitch, full, volume))
     scene_of = _scene_of_words(narrations, words)
     if sorted(set(scene_of)) != list(range(len(narrations))):
         raise RuntimeError("could not match the spoken words to the scenes")

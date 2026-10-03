@@ -1,0 +1,34 @@
+{
+  "_about": "Shared by reelgen/stickstory.py and the StickStory editor. Spots are x positions on the 1920 px set; furniture kinds are drawn by furniture.tsx; 'defaults' is the furniture a setting gets when a scene lists none. Add a kind here and in furniture.tsx, and both the writer and the editor know it.",
+  "spots": {"far-left": 320, "left": 640, "center": 960, "right": 1280, "far-right": 1600},
+  "spacing": 320,
+  "furniture": {
+    "sofa": {"seat": 130, "about": "a sofa; seats 2-3 side by side"},
+    "armchair": {"seat": 130, "about": "one big chair"},
+    "chair": {"seat": 130, "about": "a plain chair"},
+    "stool": {"seat": 130, "about": "a stool"},
+    "bench": {"seat": 130, "about": "a park or waiting bench; seats 2-3"},
+    "bed": {"seat": 190, "surface": 190, "about": "a bed (sit or lie on it)"},
+    "desk": {"surface": 170, "about": "a school desk"},
+    "table": {"surface": 150, "about": "a table; things can stand on it"},
+    "work-desk": {"surface": 240, "about": "an office desk with a computer screen"},
+    "counter": {"surface": 300, "about": "a kitchen counter with a sink; 2-3 wide"},
+    "shop-counter": {"surface": 220, "about": "a shop's till counter; 2 wide"},
+    "washbasin": {"surface": 260, "about": "a bathroom washbasin"},
+    "tv": {"about": "a TV on a low stand"},
+    "plant": {"about": "a potted plant"}
+  },
+  "defaults": {
+    "living-room": [{"kind": "sofa", "spot": "center", "seats": 3}, {"kind": "plant", "spot": "far-right", "seats": 1}],
+    "classroom": [{"kind": "desk", "spot": "far-left", "seats": 1}, {"kind": "desk", "spot": "center", "seats": 1}, {"kind": "desk", "spot": "far-right", "seats": 1}],
+    "exam-hall": [{"kind": "desk", "spot": "far-left", "seats": 1}, {"kind": "desk", "spot": "center", "seats": 1}, {"kind": "desk", "spot": "far-right", "seats": 1}],
+    "kitchen": [{"kind": "counter", "spot": "left", "seats": 3}],
+    "bedroom": [{"kind": "bed", "spot": "right", "seats": 2}],
+    "office": [{"kind": "work-desk", "spot": "right", "seats": 2}],
+    "bathroom": [{"kind": "washbasin", "spot": "far-left", "seats": 1}],
+    "park": [{"kind": "bench", "spot": "right", "seats": 2}],
+    "shop": [{"kind": "shop-counter", "spot": "center", "seats": 2}],
+    "street": [],
+    "blank": []
+  }
+}

@@ -23,10 +23,12 @@ from pydantic import BaseModel, Field
 from . import media
 from .config import Config
 from .llm import ask
+from .categories import CATEGORIES
+from .longform import LSource, verify_sources, with_sources
 from .script_writer import AI_CLICHES, SoundCue
 from .sfx import write_sfx
 from .verify import probe
-from .video import FFMPEG, _remotion_cli, _render_remotion, media_seconds
+from .video import FFMPEG, REMOTION_DIR, _remotion_cli, _render_remotion, media_seconds
 from .voice import Word as _Word, synthesize_scenes
 
 log = logging.getLogger(__name__)
@@ -38,16 +40,52 @@ Pose = Literal["stand", "walk", "run", "sit", "point", "arms-up", "facepalm", "s
 Face = Literal["neutral", "happy", "laugh", "shock", "angry", "sad", "smirk", "cry", "nervous", "confused", "sleepy",
                "love", "dead"]
 Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "sparkle", "lines"]
-Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote"]
+Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
                   "exam-hall", "blank"]
 Camera = Literal["wide", "close", "punch", "shake"]
 Action = Literal["none", "jump", "shake", "fall", "spin", "walk-in-left", "walk-in-right", "walk-out-left",
                  "walk-out-right"]
-Spot = Literal["far-left", "left", "center", "right", "far-right"]
+# The sets' furniture and the spots, shared with the editor (remotion/src/story/sets.json): a new kind of
+# furniture goes there (and gets a drawing in furniture.tsx); the writer's schema and prompt follow it.
+SETS = json.loads((REMOTION_DIR / "src" / "story" / "sets.json").read_text(encoding="utf-8"))
+Spot = Literal[tuple(SETS["spots"])]
+FurnitureKind = Literal[tuple(SETS["furniture"])]
+# How a line is said: the voice's pace (added to the chosen speed), pitch and loudness for edge-tts,
+# which takes no emotion styles. Each character's lines are recorded in one take per emotion.
+EMOTIONS = {
+    "neutral": (0, 0, 0), "happy": (6, 18, 5), "excited": (12, 30, 15), "laughing": (8, 35, 10),
+    "angry": (10, -12, 35), "shouting": (14, 10, 50), "sad": (-22, -25, -15), "crying": (-18, -10, -5),
+    "scared": (16, 25, -5), "nervous": (10, 12, -10), "whisper": (-12, -8, -45), "shocked": (4, 45, 20),
+    "sarcastic": (-14, -18, 0), "confused": (-6, 12, 0), "proud": (-4, -6, 15),
+}
+Emotion = Literal[tuple(EMOTIONS)]
+StickMood = Literal["playful", "quirky", "curious", "uplifting", "emotional", "mystery", "suspense", "energetic", "calm"]
+Effect = Literal["none", "erupt", "smoke", "fire", "sparkle", "shake"]
+THING_HELP = ("'volcano' (a science-project volcano, drawn by hand) or a lucide icon name in kebab-case for anything "
+              "else: trophy, cake, pizza, tv, gift, rocket, dog, cat, guitar, gamepad-2, lamp, plant, alarm-clock, "
+              "microscope, flask-conical, bomb, crown, car, bike, briefcase...")
+
+
+class SThing(BaseModel):
+    name: str = Field(description="What it is: " + THING_HELP)
+    spot: Spot = Field(description="Where it stands: a spot no one stands on, next to who uses it.")
+    on_table: bool = Field(default=True, description="On a small table (true) or on the floor (false).")
+    big: bool = False
+    effect: Effect = Field(default="none", description="What it does during this line: erupt (a volcano's lava), smoke, fire, sparkle, shake.")
+
+class SPiece(BaseModel):
+    kind: FurnitureKind
+    spot: Spot = Field(description="Its centre. Someone sitting on it stands on its spot or, when it seats several, "
+                       "on the spots next to it that it covers.")
+    seats: int = Field(default=1, ge=1, le=3, description="How many spots wide (a sofa or bench 2-3, a counter 2-3).")
+
+
+NARRATORS = {"english": ["en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural", "en-US-ChristopherNeural"],
+             "hindi": ["hi-IN-MadhurNeural", "hi-IN-SwaraNeural"]}
 
 DEFAULT_CAST = "Ben - boy\nLily - girl\nMom - woman\nDad - man\nMr. Carter - man"
-SPOTS = {"far-left": 320, "left": 640, "center": 960, "right": 1280, "far-right": 1600}
+SPOTS: dict[str, int] = SETS["spots"]
 SHORT_GAP = 230  # 9:16: the cast stands this far apart, centred (heads are 168 px wide)
 VOICES = {
     "english": {"boy": "en-US-AndrewMultilingualNeural", "kid": "en-US-AnaNeural", "girl": "en-US-AvaMultilingualNeural",
@@ -87,6 +125,7 @@ class StickRequest:
     minutes: float = 5.0
     language: str = "english"
     speed: float = 1.5  # how fast everyone talks: 1.5 = 50% faster than normal (snappy comedy timing)
+    style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked)
     cast: str = DEFAULT_CAST
 
 
@@ -107,25 +146,36 @@ class SActor(BaseModel):
     emote: Emote = "none"
     prop: Prop = "none"
     prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
+    prop_thing: str = Field(default="", description="With prop 'thing': what they hold, " + THING_HELP)
     action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, shake, fall, spin.")
 
 
 class SLine(BaseModel):
-    speaker: str = Field(description="The cast id saying this line, or 'none' for a silent beat (a reaction, a look, a pause).")
+    speaker: str = Field(description="The cast id saying this line, 'narrator' for a voice-over (facts and stories), "
+                         "or 'none' for a silent beat (a reaction, a look, a pause).")
     line: str = Field(default="", description="What they say, spoken naturally, max 22 words. Empty for a silent beat.")
+    emotion: Emotion = Field(default="neutral", description="How it's said (the voice changes pace, pitch and loudness); "
+                             "match the speaker's face.")
     pause_before: float = Field(default=0.2, ge=0, le=1.5, description="Seconds of silence before it: 0.6-1.2 before a punchline or a reaction.")
     camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a punchline, 'shake' on a shock.")
     focus: str = Field(default="", description="Cast id the camera frames on 'close' (default: the speaker).")
     caption: str = Field(default="", description="A meme caption at the top ('POV: ...', 'Meanwhile...', '5 minutes later'), usually empty.")
     actors: list[SActor] = Field(description="Everyone on screen during this line, with their pose, face and position now.")
+    things: list[SThing] = Field(default_factory=list, description="Objects standing in the scene during this line (not "
+                                 "held); repeat them on every line of the scene while they're there.")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects on a word of the line (or word '*' for a silent beat).")
 
 
 class SScene(BaseModel):
     setting: Setting
     sign: str = Field(default="", description="A word on the set (a door sign, the board, a shop name), or empty.")
+    furniture: list[SPiece] = Field(default_factory=list, description="The furniture this scene needs, placed so the "
+                                    "staging works (a sofa under the people sitting, a table under the project). Empty = "
+                                    "the setting's usual furniture.")
     washing: bool = Field(default=False, description="Kitchen only: true only when someone in this scene is washing "
                           "dishes at the sink (draws running water and soap foam in front of them). Otherwise false.")
+    intensity: float = Field(default=0.5, ge=0, le=1, description="How full the music is in this scene: 0.2 quiet, "
+                             "0.5 normal, 0.9 chaos or the climax.")
     lines: list[SLine]
 
 
@@ -135,41 +185,73 @@ class Episode(BaseModel):
     youtube_description: str = Field(description="2-3 natural sentences about the episode, then one line inviting viewers to subscribe. No hashtags.")
     tags: list[str] = Field(description="8-15 search tags.")
     hashtags: list[str] = Field(description="3 hashtags without '#'.")
-    music: str = Field(default="light-playful", description="Background music name from the music list (the user's own track when one fits), or 'none'.")
+    music: str = Field(default="compose", description="'compose' (a new track made for this video in your mood: the "
+                       "usual choice), one of the user's own tracks from the music list only when it truly fits, or 'none'.")
+    mood: StickMood = Field(default="playful", description="The composed track's mood; not the same as the recent videos'.")
     cast: list[SCast] = Field(description="The characters in this episode (from the given cast; add a minor one only if needed).")
+    category: str = Field(default="", description="The library shelf: one of " + ", ".join(CATEGORIES) + ".")
+    sources: list[LSource] = Field(default_factory=list, description="Facts only: 2-6 pages you opened with web search "
+                                   "that confirm every figure, date and name. Empty for comedy and stories.")
     scenes: list[SScene]
 
 
-def _system(short: bool, minutes: float, language: str) -> str:
+def _system(short: bool, minutes: float, language: str, style: str = "comedy") -> str:
     lang = ("natural, casual American English, the way kids, teens and parents really talk (no Indian or British "
             "words, no rupees: dollars, US schools, US homes)" if language == "english"
             else "everyday Hindi in Devanagari script, as families really talk")
+    payoff = {"comedy": "punchline", "fiction": "twist", "facts": "answer"}.get(style, "punchline")
+    hook = {"comedy": "with a 'POV:' caption", "fiction": "with someone already in trouble",
+            "facts": "with a surprising question or a wrong belief someone holds"}.get(style, "")
     if short:
-        form = """a YouTube Short (9:16), 25-50 seconds: ONE situation, 5-12 lines. The first line (with a 'POV:' \
-caption) hooks in under 2 seconds; the punchline lands in the last 5 seconds, and the ending can loop back to \
-the start. At most 3 characters, standing close together (spots left, center, right)."""
+        form = f"""a YouTube Short (9:16), 25-50 seconds: ONE situation, 5-12 lines. The first line ({hook}) \
+hooks in under 2 seconds; the {payoff} lands in the last 5 seconds, and the ending can loop back to the start. \
+At most 3 characters, standing close together (spots left, center, right)."""
     else:
         words = int(minutes * 60 * WORDS_PER_SECOND)
         form = f"""a {minutes:g}-minute YouTube episode (16:9), about {words} words of dialogue in 4-8 scenes. One \
-story: a relatable setup, an escalating problem with two or three complications, a twist, and a payoff that \
-calls back to the start. Running gags and callbacks across scenes. Every scene ends on a laugh, and there is \
-a laugh at least every 3-4 lines."""
-    return f"""You write stick-figure comedy for the channel Stickcident: relatable everyday moments (school, \
+story: a setup that pulls the viewer in ({hook}), a problem that grows with two or three complications, a turn, \
+and a {payoff} that pays off the start."""
+    if style == "facts":
+        brief = f"""You make stick-figure explainers of TRUE facts for the channel Stickcident: one real, surprising, \
+checkable fact (science, the human body, animals, history, money, how everyday things work) that the small \
+recurring cast acts out. You write {form}
+
+The cast lives it: a character believes the myth or asks the question, another shows what really happens, and a \
+'narrator' voice-over can explain the key fact in plain words while the cast reacts and demonstrates with real \
+objects. Keep it light and character-driven, with a joke where it fits, but every claim is true. Accuracy rules: \
+search the web and open the pages; every figure, date, name and cause in a line, a sign or a caption must be on \
+a page you opened, and those pages go in 'sources'. If the sources disagree or you can't confirm it, leave it \
+out. No rumours, no medical or money advice, nothing about living people's private lives."""
+    elif style == "fiction":
+        brief = f"""You write stick-figure short stories for the channel Stickcident: mystery, suspense, \
+heartwarming, revenge-served-sweetly or "you won't believe how this ended" stories about everyday people, told \
+with a small recurring cast. You write {form}
+
+Story first: a character we care about wants something, something stands in the way, the stakes rise, and an \
+ending the viewer didn't see coming but that was set up from the first scene (a detail planted early pays off). \
+Emotion matters more than jokes: fear, hope, guilt, relief, a lump in the throat; a little humour only where \
+real people would joke. A 'narrator' line can set the time or place ('Three years later...'). It is fiction: no \
+real people, brands or events."""
+    else:
+        brief = f"""You write stick-figure comedy for the channel Stickcident: relatable everyday moments (school, \
 exams, parents, siblings, friends, phones, food, chores) told with a small recurring cast. You write {form}
 
-Comedy first: this is a comedy channel, so every scene is built from jokes. Use what makes these Shorts go \
-viral: a painfully relatable setup, misunderstandings, a confident character being wrong, deadpan replies, \
-sarcasm, absurd escalation, a reveal that recontextualises everything, visual gags (a prop, a sign, a phone \
-screen), reaction shots, and a callback for the final punchline. Cut every line that isn't a setup or a \
-punchline. Sounds help the joke: a pop on a reveal, the sad trombone ('sad') on a fail, a click or ding on a \
-phone, a whoosh on a fast exit.
+Comedy first: this is a comedy channel, so every scene is built from jokes, every scene ends on a laugh and \
+there's a laugh at least every 3-4 lines. Use what makes these Shorts go viral: a painfully relatable setup, \
+misunderstandings, a confident character being wrong, deadpan replies, sarcasm, absurd escalation, a reveal \
+that recontextualises everything, visual gags (a prop, a sign, a phone screen), reaction shots, running gags \
+and a callback for the final punchline. Cut every line that isn't a setup or a punchline. Sounds help the joke: \
+a pop on a reveal, the sad trombone ('sad') on a fail, a click or ding on a phone, a whoosh on a fast exit."""
+    return f"""{brief}
 
 The dialogue is in {lang}. The cast talks fast (about 1.5x normal speed), so write snappy lines; let silence and reactions do work (silent beats with \
 speaker 'none', a 0.6-1.2 s pause before a punchline, the camera punching in or closing on a reaction). Show \
 emotion with poses, faces and emotes: a facepalm, a shocked face with '!', sweat when nervous, a jump for joy, \
-someone falling over when stunned.
+someone falling over when stunned. Every spoken line has an emotion (the voice follows it) that matches the \
+speaker's face: angry and shouting lines with '!', sad ones slower with '...', laughing, excited, scared, sarcastic, \
+whispering. Vary it: a scene where everyone is neutral is flat.
 
-Clean, family-friendly humour that anyone can relate to. No politics, religion, real people, brands, insults \
+Clean and family-friendly, something anyone can relate to. No politics, religion, real people, brands, insults \
 about groups, or anything mean-spirited. Never use these phrases: {", ".join(AI_CLICHES)}.
 
 The lines appear as small subtitles under the scene, so keep each one short (a few words to one sentence). \
@@ -178,13 +260,65 @@ bathroom, kitchen) and vary it between episodes: don't open in the same place as
 Washing dishes at the sink is one situation among many, only when the story is about it (set 'washing').
 
 Staging: every line lists everyone on screen with their spot, pose, face and facing (toward who they talk \
-to). Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
+to). Whoever is sitting in the story (on the couch, watching TV, at a desk, waiting) has pose 'sit' on every line \
+until they stand up, on a spot covered by a seat (or a stool is drawn under them). {_furniture_help()}
+
+Show the real object, never a paper with its name: a science project is a 'volcano' thing (effect 'erupt' when it \
+goes off), a birthday has a cake, a prize a trophy. Use things for objects in the scene and prop 'thing' with \
+prop_thing for something held. Paper is only for a test, a note or a report card. Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
 setting for a new scene."""
 
 
-def _rate(speed: float) -> str:
-    """1.5 -> '+50%' (the voices' speaking rate)."""
-    return f"{round((min(2.0, max(0.8, speed)) - 1) * 100):+d}%"
+def _furniture_help() -> str:
+    kinds = "; ".join(f"{k} ({v['about']})" for k, v in SETS["furniture"].items())
+    usual = "; ".join(f"{s}: " + (", ".join(f"{p['kind']} at {p['spot']}" for p in ps) or "nothing")
+                      for s, ps in SETS["defaults"].items())
+    return (f"Each scene's furniture is yours to arrange (list it in 'furniture'; empty = the usual). Kinds: {kinds}. "
+            f"Usual furniture: {usual}. A piece seating 3 at center covers left, center and right.")
+
+
+def _scene_x(scene: SScene, short: bool) -> dict[str, float]:
+    """Each spot's x for this scene. Episodes use the fixed spots; a Short packs the spots people and
+    objects use next to each other, SHORT_GAP apart around the centre, so the close 9:16 frame holds
+    them and a spot stays put through the scene. Spots nobody uses (a sofa's middle, a plant) fall
+    between or beyond them."""
+    if not short:
+        return {k: float(v) for k, v in SPOTS.items()}
+    names = list(SPOTS)
+    used = sorted({names.index(a.spot) for ln in scene.lines for a in [*ln.actors, *ln.things]})
+    x = {i: 960 + (k - (len(used) - 1) / 2) * SHORT_GAP for k, i in enumerate(used)}
+    for i in range(len(names)):
+        if i in x:
+            continue
+        lo = max((j for j in used if j < i), default=None)
+        hi = min((j for j in used if j > i), default=None)
+        if lo is not None and hi is not None:
+            x[i] = x[lo] + (x[hi] - x[lo]) * (i - lo) / (hi - lo)
+        elif lo is not None:
+            x[i] = x[lo] + (i - lo) * SHORT_GAP
+        elif hi is not None:
+            x[i] = x[hi] - (hi - i) * SHORT_GAP
+        else:
+            x[i] = 960 + (i - 2) * SHORT_GAP
+    return {n: x[i] for i, n in enumerate(names)}
+
+
+def _default_pieces(setting: str) -> list[SPiece]:
+    return [SPiece(**p) for p in SETS["defaults"].get(setting, [])]
+
+
+def _piece_width(kind: str, seats: int, spacing: float) -> int:
+    """The same widths as widthOf in furniture.tsx."""
+    one = {"sofa": 300, "bench": 300, "bed": 380, "counter": 360, "shop-counter": 300, "work-desk": 300,
+           "table": 260, "desk": 260}.get(kind, 0)
+    if not one:
+        return {"armchair": 230, "chair": 160, "stool": 160, "washbasin": 240, "tv": 260, "plant": 140}.get(kind, 200)
+    return round(max(one, (max(1, seats) - 1) * spacing + one))
+
+
+def _rate(speed: float, extra: int = 0) -> str:
+    """1.5 -> '+50%' (the voices' speaking rate), plus an emotion's change of pace in points."""
+    return f"{round((min(2.0, max(0.8, speed)) - 1) * 100) + extra:+d}%"
 
 
 def parse_cast(text: str) -> list[dict]:
@@ -222,22 +356,96 @@ def assign_voices(cast: list[dict], language: str = "english") -> dict[str, str]
     return out
 
 
+def _recent_line(r) -> str:
+    if isinstance(r, str):  # older history entries were plain titles
+        return r
+    return f"{r.get('title')} (places: {', '.join(r.get('places', []))}; music: {r.get('music', '?')})"
+
+
 def write_episode(cfg: Config, req: StickRequest, recent: list[str]) -> Episode:
     short = req.format == "short"
     cast = parse_cast(req.cast)
     prompt = ("The cast (use these ids and looks):\n" + "\n".join(f"- {c['id']}: {c['name']} ({c['look']})" for c in cast)
               + (f"\n\nThe idea: {req.idea}" if req.idea.strip() else "\n\nPick a fresh, relatable situation yourself.")
-              + ("\n\nRecent episodes (don't repeat their premise):\n" + "\n".join(f"- {t}" for t in recent[-20:]) if recent else "")
+              + ("\n\nRecent episodes (don't repeat their premise, opening place or music mood):\n"
+                 + "\n".join(f"- {_recent_line(r)}" for r in recent[-20:]) if recent else "")
               + "\n\n" + media.prompt_block(cfg))
-    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language), prompt, Episode,
-               allow_web=False, effort=cfg.claude_effort, timeout=1800)
+    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style), prompt, Episode,
+               allow_web=req.style == "facts", effort=cfg.claude_effort, timeout=1800)
+
+
+# ---------- facts: checked before anything is recorded ----------
+
+class LineCheck(BaseModel):
+    ref: str = Field(description="The line's reference, e.g. 'S1L3'.")
+    verdict: Literal["confirmed", "wrong", "unsupported"]
+    note: str = Field(default="", description="What the sources say, briefly.")
+    fix: str = Field(default="", description="For wrong/unsupported: the same line rewritten so it is true (same speaker, "
+                     "same length, same tone), or empty to cut the claim.")
+
+
+class EpisodeCheck(BaseModel):
+    lines: list[LineCheck] = Field(description="Only lines that state a fact (figures, dates, names, causes); skip pure reactions.")
+
+
+def _refs(ep: Episode) -> dict[str, SLine]:
+    return {f"S{si + 1}L{li + 1}": ln for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines)}
+
+
+def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None) -> EpisodeCheck:
+    """Every factual line checked against the web on the fact-check model (`only`: just these refs)."""
+    rows = [f"{r}{' >>' if only and r in only else ''} [{ln.speaker}] {ln.line}"
+            + (f" (caption: {ln.caption})" if ln.caption else "")
+            + "".join(f" (on screen: {a.prop_text})" for a in ln.actors if a.prop_text)
+            for r, ln in _refs(ep).items() if ln.line.strip() or ln.caption]
+    signs = [f"Scene {i + 1} sign: {sc.sign}" for i, sc in enumerate(ep.scenes) if sc.sign]
+    system = ("You fact-check a short educational stick-figure video. Search the web and open reliable pages. A line "
+              "is confirmed only if a source you opened says the same; a figure must match (rounding is fine if the "
+              "line says 'about'). Jokes, reactions and obvious fiction about the characters aren't claims.")
+    prompt = (f"Title: {ep.title}\nThe writer's sources: " + "; ".join(f"{x.title} {x.url}" for x in ep.sources)
+              + ("\n\nCheck only the lines marked >> (the rest was checked before)." if only else "")
+              + "\n\n" + "\n".join(rows + signs))
+    return ask(cfg.ai_backend, cfg.fact_model, system, prompt, EpisodeCheck, allow_web=True,
+               effort=cfg.fact_effort, timeout=1200)
+
+
+def check_facts(cfg: Config, ep: Episode, progress: Progress) -> tuple[Episode, list[str], list[dict]]:
+    """Check, fix what's wrong (a fixed line is checked once more), cut what still can't be confirmed.
+    Returns the episode, the issues left for the report, and every finding."""
+    findings: list[dict] = []
+    refs = _refs(ep)
+    progress("Fact-checking every claim")
+    check = fact_check_episode(cfg, ep)
+    changed = set()
+    for c in check.lines:
+        findings.append(c.model_dump())
+        ln = refs.get(c.ref)
+        if ln is None or c.verdict == "confirmed":
+            continue
+        ln.line = c.fix.strip()  # a true line, or nothing: an unconfirmed claim is never spoken
+        changed.add(c.ref)
+    issues = []
+    rewritten = {r for r in changed if refs[r].line}
+    if rewritten:
+        progress(f"Re-checking the {len(rewritten)} corrected line(s)")
+        for c in fact_check_episode(cfg, ep, only=rewritten).lines:
+            if c.ref not in rewritten:
+                continue
+            findings.append({**c.model_dump(), "round": 2})
+            if c.verdict != "confirmed":
+                issues.append(f"{c.ref}: still not confirmed ({c.note}); the line was cut.")
+                refs[c.ref].line = ""
+    for sc in ep.scenes:  # a cut line becomes a silent beat (the reaction stays)
+        for ln in sc.lines:
+            if not ln.line.strip() and ln.speaker not in ("none", ""):
+                ln.speaker = "none"
+    return ep, issues, findings
 
 
 # ---------- from the episode to the editor's props ----------
 
 def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress) -> dict:
     short = req.format == "short"
-    spots = SPOTS
     looks = {c.id: c.look for c in ep.cast}
     voices = VOICES.get(req.language, VOICES["english"])  # fallback for a character nobody assigned
     lines = [(si, li, ln) for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines)]
@@ -248,10 +456,18 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     given = {c["id"]: c for c in parse_cast(req.cast)}
     cast = [{"id": c.id, "look": c.look, "voice": given.get(c.id, {}).get("voice", "")} for c in ep.cast]
     voice_of = assign_voices(cast, req.language)
-    for cid in sorted({ln.speaker for _, _, ln in lines if ln.speaker in looks and ln.line.strip()}):
-        mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.line.strip()]
+    # The narrator: a voice none of the cast has.
+    voice_of["narrator"] = next((v for v in NARRATORS.get(req.language, NARRATORS["english"]) if v not in voice_of.values()),
+                                NARRATORS.get(req.language, NARRATORS["english"])[0])
+    speakers = set(looks) | {"narrator"}
+    # One take per character and emotion, cut per line: a character keeps one voice, and an angry line
+    # is louder and lower while a sad one is slower and quieter.
+    for cid, emo in sorted({(ln.speaker, ln.emotion) for _, _, ln in lines if ln.speaker in speakers and ln.line.strip()}):
+        mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.emotion == emo and ln.line.strip()]
+        pace, pitch, loud = EMOTIONS.get(emo, (0, 0, 0))
         takes = synthesize_scenes([ln.line for _, _, ln in mine], voice_of.get(cid, voices["man"]),
-                                  work / "audio" / cid, cfg.tts_engine, cfg.kokoro_voice, _rate(req.speed))
+                                  work / "audio" / cid / emo, cfg.tts_engine, cfg.kokoro_voice,
+                                  _rate(req.speed, pace), f"{pitch:+d}Hz", f"{loud:+d}%")
         for (si, li, _), sa in zip(mine, takes):
             audio[(si, li)] = sa
 
@@ -259,6 +475,10 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     shots, cues, spoken, used = [], [], [], {}
+    place = [_scene_x(sc, short) for sc in ep.scenes]
+    spacing = SHORT_GAP if short else SETS["spacing"]
+    furniture = [[{"kind": p.kind, "x": round(place[si][p.spot]), "width": _piece_width(p.kind, p.seats, spacing)}
+                  for p in (sc.furniture or _default_pieces(sc.setting))] for si, sc in enumerate(ep.scenes)]
     t = 0.0
     for si, li, ln in lines:
         scene = ep.scenes[si]
@@ -267,19 +487,18 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         talk = media_seconds(sa.path) if sa else 0.0
         duration = round(lead + (talk + 0.3 if sa else max(1.1, 0.9)), 3)
         words = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in (sa.words if sa else [])]
-        # A Short frames the cast close: whoever is on screen stands evenly spaced around the centre, in
-        # the order of their spots, so big heads never overlap.
-        order = sorted([a for a in ln.actors if a.id in looks], key=lambda a: list(SPOTS).index(a.spot))
-        xs = {a.id: (960 + (k - (len(order) - 1) / 2) * SHORT_GAP if short else spots.get(a.spot, 960))
-              for k, a in enumerate(order)}
-        actors = [{"id": a.id, "x": round(xs[a.id]), "pose": a.pose, "face": a.face,
+        xs = place[si]
+        things = [{"name": th.name.strip().lower()[:40] or "box", "x": round(xs[th.spot]), "table": th.on_table,
+                   "big": th.big, "effect": th.effect} for th in ln.things]
+        actors = [{"id": a.id, "x": round(xs[a.spot]), "pose": a.pose, "face": a.face,
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
-                   "propText": a.prop_text[:6], "action": a.action} for a in ln.actors if a.id in looks]
+                   "propText": a.prop_text[:6],
+                   "propThing": a.prop_thing.strip().lower()[:40], "action": a.action} for a in ln.actors if a.id in looks]
         shots.append({"start": round(t, 3), "duration": duration, "scene": si, "setting": scene.setting,
                       "sign": scene.sign or None,
-                      "washing": scene.setting == "kitchen" and scene.washing, "caption": ln.caption or None, "camera": ln.camera,
+                      "washing": scene.setting == "kitchen" and scene.washing, "furniture": furniture[si], "things": things, "caption": ln.caption or None, "camera": ln.camera,
                       "focus": ln.focus or None, "actors": actors,
-                      "speaker": ln.speaker if sa else None, "text": ln.line if sa else None, "words": words,
+                      "speaker": ln.speaker if sa else None, "emotion": ln.emotion, "text": ln.line if sa else None, "words": words,
                       "audio": rel(sa.path) if sa else None, "lead": lead})
         if sa:
             spoken += [(t + lead + w.start, t + lead + w.end) for w in sa.words]
@@ -292,11 +511,26 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
             cues.append({"src": rel(sfx["whoosh"]), "at": round(max(0.0, t - 0.1), 3), "volume": 0.4, "name": "whoosh"})
         t += duration
     t += 0.6
-    track = media.pick_music(cfg, ep.music or "light-playful", work / "music", t)
+    # A track of its own for every video: composed in the mood Claude picked, from a fresh seed (key,
+    # tempo, chords), following each scene's intensity; one of the user's tracks only when Claude picked it.
+    choice = (ep.music or "compose").strip()
+    mine = {m.name for m in media.music(cfg) if m.path is not None}
+    if choice in mine:
+        track = media.pick_music(cfg, choice, work / "music", t)
+    elif choice == "none":
+        track = None
+    else:
+        from . import music as composer
+
+        starts = [next(s["start"] for s in shots if s["scene"] == si) for si in range(len(ep.scenes)) if any(s["scene"] == si for s in shots)]
+        sections = [composer.Section(a, b, ep.scenes[si].intensity) for si, (a, b) in enumerate(zip(starts, [*starts[1:], t]))]
+        (work / "music").mkdir(parents=True, exist_ok=True)
+        track = composer.compose(ep.mood, sections, t, int(uuid.uuid4().int % 2**31), work / "music" / "score.wav")
+        choice = f"composed ({ep.mood})"
     props = {
         "fps": cfg.fps, "duration": round(t, 3), "title": ep.title, "vertical": short,
         "cast": [{"id": c.id, "name": c.name, "look": c.look} for c in ep.cast],
-        "shots": shots, "music": rel(track) if track else None, "cues": cues,
+        "shots": shots, "music": rel(track) if track else None, "musicChoice": choice, "cues": cues,
         "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()},
     }
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
@@ -321,8 +555,13 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
     progress(f"Saving progress in {work.name}")
     try:
         recent = json.loads(_history(cfg).read_text(encoding="utf-8")) if _history(cfg).exists() else []
-        progress("Claude is writing the episode" if not short else "Claude is writing the Short")
+        progress(("Claude is researching and writing" if req.style == "facts" else "Claude is writing")
+                 + (" the Short" if short else " the episode"))
         ep = write_episode(cfg, req, recent)
+        fact_issues, findings, sources, dropped = [], [], [], []
+        if req.style == "facts":
+            ep, fact_issues, findings = check_facts(cfg, ep, progress)
+            sources, dropped = verify_sources(ep.sources)
         (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
         props = build(ep, req, cfg, work, progress)
         progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
@@ -337,7 +576,9 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         progress("Verifying video quality")
         info = probe(out)
         want = (1080, 1920) if short else (1920, 1080)
-        issues = []
+        issues = list(fact_issues)
+        if req.style == "facts" and not sources:
+            issues.append("No source link could be opened; check the facts before posting.")
         if (info.get("width"), info.get("height")) != want:
             issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
         if not info.get("has_audio"):
@@ -346,20 +587,26 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         move(work, final)
         report = {
             "id": final.name, "format": "short" if short else "long", "length": "short" if short else "stick",
-            "source": "stick", "topic": ep.title, "topic_source": "stick story", "style": "comedy", "category": "Comedy",
+            "source": "stick", "topic": ep.title, "topic_source": "stick story",
+            "style": {"facts": "facts", "fiction": "story"}.get(req.style, "comedy"),
+            "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
+            else {"fiction": "Stories", "facts": "Science & Space"}.get(req.style, "Comedy"),
             "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
             "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
             "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
             "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)", "captions": False,
             "voice": req.language, "youtube_title": ep.title[:100],
-            "youtube_description": ep.youtube_description.strip(), "youtube_hashtags": ep.hashtags[:3],
+            "youtube_description": with_sources(ep.youtube_description.strip(), sources, []), "youtube_hashtags": ep.hashtags[:3],
             "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
         }
+        if req.style == "facts":
+            report.update({"fact_check": findings, "sources": sources, "sources_unreachable": dropped})
         (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         report["usage"] = summarize_usage(meter_records())
         (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        places = ", ".join(dict.fromkeys(sc.setting for sc in ep.scenes))
-        _history(cfg).write_text(json.dumps((recent + [f"{ep.title} (in: {places})"])[-60:], ensure_ascii=False), encoding="utf-8")
+        entry = {"title": ep.title, "style": req.style, "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)),
+                 "music": props.get("musicChoice", "")}
+        _history(cfg).write_text(json.dumps((recent + [entry])[-60:], ensure_ascii=False), encoding="utf-8")
         progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
         return report
     except Exception:

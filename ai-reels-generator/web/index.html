@@ -372,8 +372,13 @@
   <section class="view" id="view-stick">
     <div class="panel">
       <h2>Stick Stories</h2>
-      <p class="hint">Stick-figure comedy in your channel's style: grey sets, round heads, subtitles under the scene, a recurring cast with
-        their own voices. Claude writes the episode (no web search, no fact-check: it's fiction) and the editor animates it.</p>
+      <p class="hint">Stick-figure videos in your channel's style: grey sets, round heads, subtitles under the scene, a recurring cast with
+        their own voices. Claude writes the episode and the editor animates it.</p>
+      <label>Type</label>
+      <div class="segmented" id="stStyle">
+        <button data-style="comedy" class="on">😂 Comedy</button><button data-style="fiction">📖 Story</button><button data-style="facts">🔬 Facts</button>
+      </div>
+      <p class="hint" id="stStyleHint"></p>
       <label>Format</label>
       <div class="segmented" id="stFormat">
         <button data-format="long" class="on">🎬 Episode · 16:9</button><button data-format="short">📱 Short · 9:16</button>
@@ -1697,6 +1702,23 @@ $("#stCastRows").addEventListener("click", (e) => {
     a.play().catch(() => {});
   }
 });
+let stStyle = "comedy";
+const ST_STYLE_HINT = {
+  comedy: "Relatable everyday jokes. Fiction: no web search, no fact-check.",
+  fiction: "A short story with stakes and a twist ending (mystery, suspense, heartwarming). Fiction: no fact-check.",
+  facts: "One true, surprising fact the cast acts out, with a narrator. Claude researches it on the web, every claim is fact-checked " +
+         "(a wrong line is fixed and checked again, an unconfirmed one is cut) and the sources go in the description.",
+};
+const stStyleSet = (v) => {
+  stStyle = ST_STYLE_HINT[v] ? v : "comedy";
+  document.querySelectorAll("#stStyle button").forEach((x) => x.classList.toggle("on", x.dataset.style === stStyle));
+  $("#stStyleHint").textContent = ST_STYLE_HINT[stStyle];
+  $("#stIdea").placeholder = { comedy: "e.g. Ben hides his report card from Mom.", fiction: "e.g. Lily finds a note in a library book that predicts tomorrow.",
+    facts: "e.g. Why does popcorn pop? / Can you really see the Great Wall from space?" }[stStyle] + " Leave empty and Claude picks one.";
+  try { localStorage.setItem("stickStyle", stStyle); } catch (e) {}
+};
+document.querySelectorAll("#stStyle button").forEach((b) => b.onclick = () => stStyleSet(b.dataset.style));
+try { stStyleSet(localStorage.getItem("stickStyle") || "comedy"); } catch (e) { stStyleSet("comedy"); }
 $("#stAdd").onclick = () => { stCast.push({ name: "", look: "man", voice: "" }); stRender(); };
 document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
   stFormat = b.dataset.format;
@@ -1705,7 +1727,7 @@ document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
 });
 $("#stBtn").onclick = async () => {
   const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), language: "english", speed: Number($("#stSpeed").value),
-                 cast: stSerialize(), count: Number($("#stCount").value) };
+                 style: stStyle, cast: stSerialize(), count: Number($("#stCount").value) };
   $("#stBtn").disabled = true;
   try {
     await api("/api/stick", { method: "POST", body: JSON.stringify(body) });
