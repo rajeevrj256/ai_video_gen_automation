@@ -91,11 +91,11 @@ def recent_block(cfg: Config) -> str:
                "material clearly fits only one of those." if forms else ""))
 
 
-def remember(cfg: Config, look: dict, mood: str, hook_music: str, form: str = "") -> None:
+def remember(cfg: Config, look: dict, mood: str, hook_music: str, form: str = "", first_break: str = "") -> None:
     with _lock:
         past = recent(cfg)
         past.append({"palette": look["palette"], "backdrop": look["backdrop"], "transition": look["transition"],
-                     "mood": mood, "hook_music": hook_music, "form": form})
+                     "mood": mood, "hook_music": hook_music, "form": form, "break": first_break})
         path = _path(cfg)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(past[-KEEP:], indent=1), encoding="utf-8")
