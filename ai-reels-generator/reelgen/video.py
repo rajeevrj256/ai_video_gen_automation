@@ -209,7 +209,7 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
     music = media.pick_music(cfg, music_name, public_dir, timeline.total)
     sfx = write_sfx(public_dir / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), public_dir / "sfx"))  # the user's whoosh/pop/... where one matches
-    return {
+    props = {
         "title": title,
         "fps": cfg.fps,
         "duration": round(timeline.total, 3),
@@ -221,6 +221,9 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
         "cues": cues,
         "speech": media.speech_spans(spoken),
     }
+    # Every effect quieter than the narrator, measured, whatever file it came from.
+    props["sfxLevels"] = media.level_sounds(props, public_dir, [sp["audio"] for sp in scene_props])
+    return props
 
 
 def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = "Reel", crf: int = 18,
