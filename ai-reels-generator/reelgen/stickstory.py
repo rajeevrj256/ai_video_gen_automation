@@ -46,13 +46,13 @@ Action = Literal["none", "jump", "shake", "fall", "spin", "walk-in-left", "walk-
                  "walk-out-right"]
 Spot = Literal["far-left", "left", "center", "right", "far-right"]
 
-DEFAULT_CAST = "Raju - boy\nPriya - girl\nMom - woman\nDad - man\nTeacher - man"
+DEFAULT_CAST = "Ben - boy\nLily - girl\nMom - woman\nDad - man\nMr. Carter - man"
 SPOTS = {"far-left": 320, "left": 640, "center": 960, "right": 1280, "far-right": 1600}
 SHORT_GAP = 230  # 9:16: the cast stands this far apart, centred (heads are 168 px wide)
 VOICES = {
-    "english": {"boy": "en-US-AndrewMultilingualNeural", "kid": "en-US-AnaNeural", "girl": "en-US-AnaNeural",
-                "man": "en-IN-PrabhatNeural", "woman": "en-IN-NeerjaExpressiveNeural",
-                "old-man": "en-GB-RyanNeural", "old-woman": "en-IN-NeerjaNeural"},
+    "english": {"boy": "en-US-AndrewMultilingualNeural", "kid": "en-US-AnaNeural", "girl": "en-US-AvaMultilingualNeural",
+                "man": "en-US-GuyNeural", "woman": "en-US-JennyNeural",
+                "old-man": "en-US-ChristopherNeural", "old-woman": "en-US-AriaNeural"},
     "hindi": {"boy": "hi-IN-MadhurNeural", "kid": "hi-IN-SwaraNeural", "girl": "hi-IN-SwaraNeural",
               "man": "hi-IN-MadhurNeural", "woman": "hi-IN-SwaraNeural",
               "old-man": "hi-IN-MadhurNeural", "old-woman": "hi-IN-SwaraNeural"},
@@ -66,6 +66,7 @@ class StickRequest:
     format: str = "long"  # long (16:9 episode) | short (9:16)
     minutes: float = 5.0
     language: str = "english"
+    speed: float = 1.5  # how fast everyone talks: 1.5 = 50% faster than normal (snappy comedy timing)
     cast: str = DEFAULT_CAST
 
 
@@ -85,7 +86,7 @@ class SActor(BaseModel):
     facing: Literal["left", "right"] = Field(description="Who they look at: usually toward the person they talk to.")
     emote: Emote = "none"
     prop: Prop = "none"
-    prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '₹93'), or empty.")
+    prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
     action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, shake, fall, spin.")
 
 
@@ -118,7 +119,8 @@ class Episode(BaseModel):
 
 
 def _system(short: bool, minutes: float, language: str) -> str:
-    lang = ("natural Indian English, the way young Indians talk at home and school" if language == "english"
+    lang = ("natural, casual American English, the way kids, teens and parents really talk (no Indian or British "
+            "words, no rupees: dollars, US schools, US homes)" if language == "english"
             else "everyday Hindi in Devanagari script, as families really talk")
     if short:
         form = """a YouTube Short (9:16), 25-50 seconds: ONE situation, 5-12 lines. The first line (with a 'POV:' \
@@ -128,11 +130,19 @@ the start. At most 3 characters, standing close together (spots left, center, ri
         words = int(minutes * 60 * WORDS_PER_SECOND)
         form = f"""a {minutes:g}-minute YouTube episode (16:9), about {words} words of dialogue in 4-8 scenes. One \
 story: a relatable setup, an escalating problem with two or three complications, a twist, and a payoff that \
-calls back to the start. Running gags and callbacks across scenes. Every scene ends on a laugh."""
+calls back to the start. Running gags and callbacks across scenes. Every scene ends on a laugh, and there is \
+a laugh at least every 3-4 lines."""
     return f"""You write stick-figure comedy for the channel Stickcident: relatable everyday moments (school, \
 exams, parents, siblings, friends, phones, food, chores) told with a small recurring cast. You write {form}
 
-The dialogue is in {lang}. Short, punchy, natural lines; let silence and reactions do work (silent beats with \
+Comedy first: this is a comedy channel, so every scene is built from jokes. Use what makes these Shorts go \
+viral: a painfully relatable setup, misunderstandings, a confident character being wrong, deadpan replies, \
+sarcasm, absurd escalation, a reveal that recontextualises everything, visual gags (a prop, a sign, a phone \
+screen), reaction shots, and a callback for the final punchline. Cut every line that isn't a setup or a \
+punchline. Sounds help the joke: a pop on a reveal, the sad trombone ('sad') on a fail, a click or ding on a \
+phone, a whoosh on a fast exit.
+
+The dialogue is in {lang}. The cast talks fast (about 1.5x normal speed), so write snappy lines; let silence and reactions do work (silent beats with \
 speaker 'none', a 0.6-1.2 s pause before a punchline, the camera punching in or closing on a reaction). Show \
 emotion with poses, faces and emotes: a facepalm, a shocked face with '!', sweat when nervous, a jump for joy, \
 someone falling over when stunned.
@@ -147,6 +157,11 @@ everyday situations.
 Staging: every line lists everyone on screen with their spot, pose, face and facing (toward who they talk \
 to). Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
 setting for a new scene."""
+
+
+def _rate(speed: float) -> str:
+    """1.5 -> '+50%' (the voices' speaking rate)."""
+    return f"{round((min(2.0, max(0.8, speed)) - 1) * 100):+d}%"
 
 
 def parse_cast(text: str) -> list[dict]:
@@ -187,7 +202,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     for cid in sorted({ln.speaker for _, _, ln in lines if ln.speaker in looks and ln.line.strip()}):
         mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.line.strip()]
         takes = synthesize_scenes([ln.line for _, _, ln in mine], voices.get(looks[cid], voices["man"]),
-                                  work / "audio" / cid, cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
+                                  work / "audio" / cid, cfg.tts_engine, cfg.kokoro_voice, _rate(req.speed))
         for (si, li, _), sa in zip(mine, takes):
             audio[(si, li)] = sa
 

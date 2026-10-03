@@ -13,7 +13,7 @@ export const storyDemoProps: StoryProps = {
   fps: 30,
   duration: 18,
   title: 'Result day',
-  cast: [{id: 'raju', name: 'Raju', look: 'boy'}, {id: 'mom', name: 'Mom', look: 'woman'}],
+  cast: [{id: 'raju', name: 'Ben', look: 'boy'}, {id: 'mom', name: 'Mom', look: 'woman'}],
   shots: [
     shot(0, {caption: 'POV: result day', speaker: 'raju', text: 'Mom... I can explain.', words: words('Mom... I can explain.'),
       actors: [a('raju', 760, {face: 'nervous', emote: 'sweat', prop: 'paper', propText: 'F', pose: 'hold'}), a('mom', 1180, {facing: -1, pose: 'hands-on-hips', face: 'angry'})]}),

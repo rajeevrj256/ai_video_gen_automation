@@ -378,10 +378,10 @@
         <select id="stMinutes"><option value="3">About 3 min</option><option value="5" selected>About 5 min</option><option value="8">About 8 min</option></select>
       </div>
       <label for="stIdea">Idea (optional)</label>
-      <textarea class="edit" id="stIdea" rows="3" placeholder="e.g. Raju hides his report card on result day. Leave empty and Claude picks a fresh situation."></textarea>
+      <textarea class="edit" id="stIdea" rows="3" placeholder="e.g. Ben hides his report card from Mom. Leave empty and Claude picks a fresh situation."></textarea>
       <div class="grid2">
-        <div><label for="stLang">Language</label>
-          <select id="stLang"><option value="english">English (Indian)</option><option value="hindi">Hindi</option></select></div>
+        <div><label for="stSpeed">Speaking speed</label>
+          <select id="stSpeed"><option value="1.25">1.25×</option><option value="1.5" selected>1.5× (snappy)</option><option value="1.75">1.75×</option></select></div>
         <div><label for="stCount">How many</label>
           <select id="stCount"><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
       </div>
@@ -1617,17 +1617,17 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
 });
 // Stick Stories (reelgen/stickstory.py): stick-figure comedy episodes and Shorts with a recurring cast.
 let stFormat = "long";
-const ST_CAST = "Raju - boy\nPriya - girl\nMom - woman\nDad - man\nTeacher - man";
-try { $("#stCast").value = localStorage.getItem("stickCast") || ST_CAST; } catch (e) { $("#stCast").value = ST_CAST; }
+const ST_CAST = "Ben - boy\nLily - girl\nMom - woman\nDad - man\nMr. Carter - man";
+try { $("#stCast").value = localStorage.getItem("stickCast2") || ST_CAST; } catch (e) { $("#stCast").value = ST_CAST; }
 document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
   stFormat = b.dataset.format;
   document.querySelectorAll("#stFormat button").forEach((x) => x.classList.toggle("on", x === b));
   $("#stLenBox").hidden = stFormat === "short";
 });
 $("#stBtn").onclick = async () => {
-  const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), language: $("#stLang").value,
+  const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), language: "english", speed: Number($("#stSpeed").value),
                  cast: $("#stCast").value, count: Number($("#stCount").value) };
-  try { localStorage.setItem("stickCast", body.cast); } catch (e) {}
+  try { localStorage.setItem("stickCast2", body.cast); } catch (e) {}
   $("#stBtn").disabled = true;
   try {
     await api("/api/stick", { method: "POST", body: JSON.stringify(body) });
