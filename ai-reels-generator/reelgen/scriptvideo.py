@@ -132,6 +132,7 @@ class BoardChapter(BaseModel):
     intensity: int = LChapter.model_fields["intensity"]
     drop: bool = LChapter.model_fields["drop"]
     ambience: Ambience = LChapter.model_fields["ambience"]
+    backdrop: str = LChapter.model_fields["backdrop"]
 
 
 class BoardBeat(BaseModel):
@@ -147,6 +148,7 @@ class Storyboard(BaseModel):
     mood: Mood = LongScript.model_fields["mood"]
     hook_music: HookMusic = LongScript.model_fields["hook_music"]
     hook_track: str = LongScript.model_fields["hook_track"]
+    hook_backdrop: str = LongScript.model_fields["hook_backdrop"]
     music: str = LongScript.model_fields["music"]
     hook: list[BoardShot] = Field(description="The hook's shots in order: every hook line exactly once, in order, plus at most 3 silent shots.")
     chapters: list[BoardChapter] = Field(description="The chapters in order, by their first line.")
@@ -257,12 +259,14 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
             continue
         beats = [LBeat(narration=lines[i], visual=visuals[i + 1].visual if i + 1 in visuals else _fallback_visual(lines[i]),
                        sounds=visuals[i + 1].sounds if i + 1 in visuals else []) for i in range(first, last)]
-        extra = {"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience} if c else {}
+        extra = ({"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience, "backdrop": c.backdrop}
+                 if c else {})
         chapters.append(LChapter(title=title, beats=beats, **extra))
     script = LongScript(topic=given.title, why_chosen="Your own script.", facts_checked="Checked and approved by you.",
                         category=board.category, subject=board.subject, hook_question=board.hook_question, answer="",
                         youtube_title=given.title, hook=_hook_shots(board, hook) if hook else [], mood=board.mood,
-                        hook_music=board.hook_music, hook_track=board.hook_track, chapters=chapters, music=board.music)
+                        hook_music=board.hook_music, hook_track=board.hook_track, hook_backdrop=board.hook_backdrop,
+                        chapters=chapters, music=board.music)
     return repair_long_script(script)  # the long pipeline's own free visual fixes; never the words
 
 
