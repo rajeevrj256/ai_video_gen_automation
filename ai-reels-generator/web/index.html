@@ -54,6 +54,14 @@
 
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
   .panel h2 { font-size: 15px; margin: 0 0 12px; }
+  /* Settings: every section opens and closes from its heading (closed by default). */
+  #view-settings .panel > h2 { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; margin: 0; }
+  #view-settings .panel > h2 + * { margin-top: 12px; }
+  #view-settings .panel > h2 .fold { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; width: 34px; height: 30px;
+    padding: 0; display: grid; place-items: center; color: var(--text); font-size: 14px; transition: transform .15s; }
+  #view-settings .panel.collapsed > h2 .fold { transform: rotate(-90deg); }
+  #view-settings .panel.collapsed > :not(h2) { display: none !important; }
+  .save-row { width: 100%; margin: 0 0 14px; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
   input, select { width: 100%; padding: 12px; font-size: 16px; color: var(--text); background: var(--panel-2);
                   border: 1px solid var(--line); border-radius: 10px; outline: none; }
@@ -498,8 +506,8 @@
         <option value="medium">Medium (recommended)</option>
         <option value="high">High</option>
       </select>
-      <button class="primary" id="saveBtn">Save settings</button>
     </div>
+    <button class="primary save-row" id="saveBtn">Save settings</button>
     <div class="panel">
       <h2>Media library</h2>
       <p class="hint">Sound effects, background music and 3D models the editor can use. Download them from
@@ -1462,6 +1470,18 @@ $("#libList").addEventListener("click", async (e) => {
   await api("/api/library/" + b.dataset.libDel.split("/").map(encodeURIComponent).join("/"), { method: "DELETE" });
   loadLibrary();
 });
+
+// Settings sections: an arrow on each heading opens or closes it; all start closed.
+function foldSettings() {
+  document.querySelectorAll("#view-settings .panel").forEach((panel) => {
+    const h = panel.querySelector(":scope > h2");
+    if (!h || h.querySelector(".fold")) return;
+    h.insertAdjacentHTML("beforeend", `<button type="button" class="fold" aria-label="Open or close">▾</button>`);
+    panel.classList.add("collapsed");
+    h.onclick = () => panel.classList.toggle("collapsed");
+  });
+}
+foldSettings();
 
 async function loadSettings() {
   loadAutomations().catch(() => {});
