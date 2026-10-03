@@ -116,7 +116,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
 
 // ---------- one shot ----------
 
-const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble'}> = ({shot, looks, newScene, vertical, dialogue}) => {
+const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble'}> = ({shot, looks, cast, newScene, vertical, dialogue}) => {
   const frame = useCurrentFrame();
   const {fps, width: OW, height: OH} = useVideoConfig();
   // A Short frames the cast close (big heads, like the channel's Shorts): a slice of the 1920 px set
@@ -149,6 +149,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   const flash = newScene ? interpolate(frame, [0, 5], [0.9, 0], clamp) : 0;
   const speaker = shot.actors.find((a) => a.id === shot.speaker);
   const furniture = shot.furniture ?? defaultFurniture(shot.setting);
+  const outfits: Record<string, string | undefined> = Object.fromEntries(cast.map((c) => [c.id, c.outfit]));
   const seat = (a: ActorState) => seatAt(furniture, a.x) ?? STOOL_SEAT;
   return (
     <Layer name="shot">
@@ -160,7 +161,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
             <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} />
           ))}
           {shot.actors.map((a) => (
-            <Figure key={a.id} a={a} seat={seat(a)} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
+            <Figure key={a.id} a={a} seat={seat(a)} outfit={outfits[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
           <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} />
@@ -241,7 +242,47 @@ const acting = (face: Face, talking: boolean, t: number) => {
   }
 };
 
-const Figure: React.FC<{a: ActorState; seat: number; look: Look; t: number; frame: number; frames: number; talking: Word[]}> = ({a, seat, look, t, frame, frames, talking}) => {
+// Clothes, like the channel's characters: men and boys wear a shirt with a collar and short sleeves,
+// women and girls an A-line dress to the knee; each character keeps their own colour (cast.outfit).
+const dressed = (look: Look) => look === 'girl' || look === 'woman' || look === 'old-woman';
+const shoulder = (r: Rig, side: -1 | 1): Pt => [r.neck[0] + side * 36, r.neck[1] + 20];
+const Clothes: React.FC<{r: Rig; look: Look; colour?: string; sitting: boolean}> = ({r, look, colour, sitting}) => {
+  const [nx, ny] = r.neck;
+  const [hx, hy] = r.hip;
+  if (dressed(look)) {
+    const bottom = hy + (sitting ? 34 : 80);
+    const half = sitting ? 66 : 58;
+    return (
+      <path d={`M ${nx - 20} ${ny + 8} Q ${nx} ${ny + 2} ${nx + 20} ${ny + 8} L ${hx + half} ${bottom} Q ${hx} ${bottom + 8} ${hx - half} ${bottom} Z`}
+        fill={colour || DARK} strokeWidth={LINE} />
+    );
+  }
+  return (
+    <g>
+      <path d={`M ${nx - 44} ${ny + 22} Q ${nx - 40} ${ny + 6} ${nx} ${ny + 4} Q ${nx + 40} ${ny + 6} ${nx + 44} ${ny + 22} L ${hx + 38} ${hy + 16} L ${hx - 38} ${hy + 16} Z`}
+        fill={colour || '#FFFFFF'} strokeWidth={LINE} />
+      <path d={`M ${nx - 16} ${ny + 6} L ${nx} ${ny + 30} L ${nx + 16} ${ny + 6}`} strokeWidth={LINE - 1} />
+      <line x1={nx} y1={ny + 30} x2={hx} y2={hy + 12} strokeWidth={2.5} />
+    </g>
+  );
+};
+// Short sleeves: the top of each arm drawn thick in the shirt's colour with an ink edge.
+const Sleeves: React.FC<{r: Rig; colour?: string}> = ({r, colour}) => (
+  <>
+    {([[-1, r.lE], [1, r.rE]] as const).map(([side, e]) => {
+      const s = shoulder(r, side);
+      const end: Pt = [s[0] + (e[0] - s[0]) * 0.55, s[1] + (e[1] - s[1]) * 0.55];
+      return (
+        <g key={side}>
+          <line x1={s[0]} y1={s[1]} x2={end[0]} y2={end[1]} strokeWidth={28} />
+          <line x1={s[0]} y1={s[1]} x2={end[0]} y2={end[1]} strokeWidth={18} stroke={colour || '#FFFFFF'} />
+        </g>
+      );
+    })}
+  </>
+);
+
+const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; t: number; frame: number; frames: number; talking: Word[]}> = ({a, seat, look, outfit, t, frame, frames, talking}) => {
   const {fps} = useVideoConfig();
   const {dx, dy, rot, walking} = actionOffset(a, t, frames, fps);
   const pose: Pose = walking ? 'walk' : a.pose;
@@ -263,12 +304,10 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; t: number; fram
         <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
           <path d={leg(r.hip, r.lK, r.lF)} />
           <path d={leg(r.hip, r.rK, r.rF)} />
-          <line x1={r.hip[0]} y1={r.hip[1]} x2={r.neck[0]} y2={r.neck[1]} />
-          {look === 'girl' || look === 'woman' || look === 'old-woman' ? (
-            <path d={`M ${r.neck[0] - 4} ${r.neck[1] + 70} L ${r.hip[0] - 46} ${r.hip[1] + 40} L ${r.hip[0] + 46} ${r.hip[1] + 40} Z`} fill={LIGHT} strokeWidth={7} />
-          ) : null}
-          <path d={limb(r.neck, r.lE, r.lH)} />
-          <path d={limb(r.neck, r.rE, r.rH)} />
+          <Clothes r={r} look={look} colour={outfit} sitting={pose === 'sit'} />
+          <path d={limb(shoulder(r, -1), r.lE, r.lH)} />
+          <path d={limb(shoulder(r, 1), r.rE, r.rH)} />
+          {dressed(look) ? null : <Sleeves r={r} colour={outfit} />}
           <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />
           <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head})`}>
             <g transform={`scale(${FACE})`}><Hair look={look} back /></g>

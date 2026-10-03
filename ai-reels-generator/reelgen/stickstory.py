@@ -316,6 +316,23 @@ def _piece_width(kind: str, seats: int, spacing: float) -> int:
     return round(max(one, (max(1, seats) - 1) * spacing + one))
 
 
+# Clothes colours in the channel's greys: the first character (the lead) in a white shirt, the others
+# in turn; dresses start grey. Each character keeps theirs for the whole video.
+SHIRTS = ("#FFFFFF", "#E4E4E4", "#B4B4B4", "#FFFFFF", "#9C9C9C")
+DRESSES = ("#9C9C9C", "#E4E4E4", "#B4B4B4", "#FFFFFF")
+
+
+def _outfits(cast: list) -> dict[str, str]:
+    """Each character's colour: shirts and dresses each go through their own list in cast order."""
+    out, seen = {}, {"dress": 0, "shirt": 0}
+    for c in cast:
+        kind = "dress" if c.look in ("girl", "woman", "old-woman") else "shirt"
+        colours = DRESSES if kind == "dress" else SHIRTS
+        out[c.id] = colours[seen[kind] % len(colours)]
+        seen[kind] += 1
+    return out
+
+
 def _rate(speed: float, extra: int = 0) -> str:
     """1.5 -> '+50%' (the voices' speaking rate), plus an emotion's change of pace in points."""
     return f"{round((min(2.0, max(0.8, speed)) - 1) * 100) + extra:+d}%"
@@ -529,7 +546,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         choice = f"composed ({ep.mood})"
     props = {
         "fps": cfg.fps, "duration": round(t, 3), "title": ep.title, "vertical": short,
-        "cast": [{"id": c.id, "name": c.name, "look": c.look} for c in ep.cast],
+        "cast": [{"id": c.id, "name": c.name, "look": c.look, "outfit": _outfits(ep.cast)[c.id]} for c in ep.cast],
         "shots": shots, "music": rel(track) if track else None, "musicChoice": choice, "cues": cues,
         "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()},
     }

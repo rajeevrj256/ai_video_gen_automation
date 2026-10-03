@@ -25,7 +25,7 @@ export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left
 // A piece of furniture in the scene (kinds in sets.json): centre x and width on the 1920 px set.
 export type Piece = {kind: string; x: number; width: number};
 
-export type CastMember = {id: string; name: string; look: Look};
+export type CastMember = {id: string; name: string; look: Look; outfit?: string}; // outfit: shirt or dress colour
 
 export type ActorState = {
   id: string;
