@@ -364,6 +364,34 @@
     </div>
   </section>
 
+  <section class="view" id="view-stick">
+    <div class="panel">
+      <h2>Stick Stories</h2>
+      <p class="hint">Stick-figure comedy in your channel's style: grey sets, round heads, speech bubbles, a recurring cast with
+        their own voices. Claude writes the episode (no web search, no fact-check: it's fiction) and the editor animates it.</p>
+      <label>Format</label>
+      <div class="segmented" id="stFormat">
+        <button data-format="long" class="on">🎬 Episode · 16:9</button><button data-format="short">📱 Short · 9:16</button>
+      </div>
+      <div id="stLenBox">
+        <label for="stMinutes">Length</label>
+        <select id="stMinutes"><option value="3">About 3 min</option><option value="5" selected>About 5 min</option><option value="8">About 8 min</option></select>
+      </div>
+      <label for="stIdea">Idea (optional)</label>
+      <textarea class="edit" id="stIdea" rows="3" placeholder="e.g. Raju hides his report card on result day. Leave empty and Claude picks a fresh situation."></textarea>
+      <div class="grid2">
+        <div><label for="stLang">Language</label>
+          <select id="stLang"><option value="english">English (Indian)</option><option value="hindi">Hindi</option></select></div>
+        <div><label for="stCount">How many</label>
+          <select id="stCount"><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
+      </div>
+      <label for="stCast">Cast (one per line: Name - look; looks: boy, girl, man, woman, kid, old-man, old-woman)</label>
+      <textarea class="edit" id="stCast" rows="5"></textarea>
+      <button class="primary" id="stBtn">✨ Make it</button>
+      <p class="hint" id="stMsg"></p>
+    </div>
+  </section>
+
   <section class="view" id="view-history">
     <div class="panel">
       <h2>Generation history</h2>
@@ -539,6 +567,7 @@
   <button data-view="videos" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="9" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/></svg>Videos</button>
   <button data-view="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Create</button>
   <button data-view="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Script</button>
+  <button data-view="stick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><path d="M12 8v7M12 15l-4 6M12 15l4 6M7 11h10"/></svg>Stick</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
@@ -788,6 +817,7 @@ async function openVideo(id) {
     ${verdict}
     ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
+    <div ${v.source === "stick" ? "hidden" : ""}>
     <h4 class="section">Voice &amp; subtitles</h4>
     <p class="hint">Re-make this video with another voice or with subtitles on/off. Same script and footage, no Claude tokens.</p>
     <div class="row">
@@ -798,6 +828,7 @@ async function openVideo(id) {
     <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
       <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
+    </div>
     <details class="used" id="usedBox">
       <summary>🎛️ Effects &amp; media used <span class="hint">(music, sound effects, 3D models, footage, visual effects)</span></summary>
       <div id="usedList" class="hint">Loading…</div>
@@ -1116,7 +1147,9 @@ const STEPS = [
 // A Script Video skips writing, fact-checking and review: its own steps.
 const SCRIPT_STEPS = [["Storyboard", /storyboarding/], ["Voice", /voiceover|Recording the hook/], ["Editing", /Editing/],
   ["Checks", /Verifying/]];
-const stepsOf = (j) => j.length === "script" ? SCRIPT_STEPS : STEPS;
+const STICK_STEPS = [["Writing", /writing the (episode|Short)/], ["Voices", /Recording the voices/], ["Editing", /Editing/],
+  ["Checks", /Verifying/]];
+const stepsOf = (j) => j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
@@ -1185,7 +1218,8 @@ function jobCard(j) {
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
-    + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script" : "");
+    + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
+      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -1581,6 +1615,28 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
     ? "16:9 for YouTube, 5–6 minutes: the same animated style as long videos with 4–5 chapters. Faster to make and uses fewer tokens. Jokes become true stories at this length."
     : "Vertical 9:16 for Reels and Shorts, with real footage.";
 });
+// Stick Stories (reelgen/stickstory.py): stick-figure comedy episodes and Shorts with a recurring cast.
+let stFormat = "long";
+const ST_CAST = "Raju - boy\nPriya - girl\nMom - woman\nDad - man\nTeacher - man";
+try { $("#stCast").value = localStorage.getItem("stickCast") || ST_CAST; } catch (e) { $("#stCast").value = ST_CAST; }
+document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
+  stFormat = b.dataset.format;
+  document.querySelectorAll("#stFormat button").forEach((x) => x.classList.toggle("on", x === b));
+  $("#stLenBox").hidden = stFormat === "short";
+});
+$("#stBtn").onclick = async () => {
+  const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), language: $("#stLang").value,
+                 cast: $("#stCast").value, count: Number($("#stCount").value) };
+  try { localStorage.setItem("stickCast", body.cast); } catch (e) {}
+  $("#stBtn").disabled = true;
+  try {
+    await api("/api/stick", { method: "POST", body: JSON.stringify(body) });
+    $("#stMsg").textContent = "Started. Follow it on the Create tab.";
+    show("create");
+  } catch (e) { $("#stMsg").textContent = "Couldn't start it: " + e.message; }
+  finally { $("#stBtn").disabled = false; }
+};
+
 // Script Video: your own title, description, hook and script through the long-video pipeline.
 const SV_KEYS = { title: "#sv-title", description: "#sv-desc", hook: "#sv-hook", script: "#sv-script" };
 let svCc = false;

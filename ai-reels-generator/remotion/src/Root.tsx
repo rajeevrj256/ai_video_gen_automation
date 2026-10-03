@@ -10,6 +10,9 @@ import {Stick} from './stick/Stick';
 import {stickDemoProps} from './stick/demo';
 import type {StickProps} from './stick/types';
 import {Thumbnail, thumbSize, type ThumbProps} from './Thumbnail';
+import {StickStory} from './story/Story';
+import {storyDemoProps} from './story/demo';
+import type {StoryProps} from './story/types';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
@@ -26,6 +29,12 @@ const calculateLongMetadata: CalculateMetadataFunction<LongProps> = ({props}) =>
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
 });
 
+const calculateStoryMetadata: CalculateMetadataFunction<StoryProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920,
+  height: props.vertical ? 1920 : 1080,
+});
 const calculateThumbMetadata: CalculateMetadataFunction<ThumbProps> = ({props}) => thumbSize(props.wide);
 const thumbDemo: ThumbProps = {src: 'thumb/frame.jpg', text: 'Why no tax cut', highlight: 'tax cut', side: 'left',
   focusX: 0.6, focusY: 0.5, zoom: 1.1, accent: '#ffd23f', accent2: '#ffd23f', wide: true};
@@ -63,6 +72,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={stickDemoProps}
     calculateMetadata={calculateStickMetadata}
+  />
+  {/* 16:9 stick-figure comedy episode (3-8 min), a recurring cast: reelgen/stickstory.py */}
+  <Composition
+    id="StickStory"
+    component={StickStory}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={storyDemoProps}
+    calculateMetadata={calculateStoryMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition

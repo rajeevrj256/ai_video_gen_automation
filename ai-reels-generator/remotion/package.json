@@ -11,6 +11,7 @@
   "dependencies": {
     "@fontsource/montserrat": "^5.2.8",
     "@fontsource/noto-sans-devanagari": "^5.2.8",
+    "@fontsource/permanent-marker": "^5.3.0",
     "@react-three/fiber": "^9.8.1",
     "@remotion/cli": "4.0.529",
     "@remotion/three": "4.0.529",

@@ -127,7 +127,10 @@ class JobManager:
                 reports = resume_batch(cfg, job["resume"], progress)
                 fresh = job["count"] - len(job["resume"])  # videos that never started before the pause
                 if fresh > 0 and not job.get("pause"):
-                    if job.get("script_input"):  # stopped before its storyboard was saved: start it again
+                    if job.get("stick_input"):
+                        from .stickstory import StickRequest, run_stick_job
+                        reports += run_stick_job(cfg, StickRequest(**job["stick_input"]), fresh, progress)
+                    elif job.get("script_input"):  # stopped before its storyboard was saved: start it again
                         from .scriptvideo import ScriptInput, run_script_job
                         reports += run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
                     elif job.get("length") in ("long", "medium"):
@@ -135,6 +138,9 @@ class JobManager:
                         reports += run_long_batch(_long_cfg(cfg, job), fresh, job["topic"], progress)
                     else:
                         reports += run(cfg, fresh, job["topic"], progress)
+            elif job.get("stick_input"):  # Stick Stories: stick-figure comedy episodes and Shorts
+                from .stickstory import StickRequest, run_stick_job
+                reports = run_stick_job(cfg, StickRequest(**job["stick_input"]), job["count"], progress)
             elif job.get("script_input"):  # Script Video: the user's own script through the long pipeline
                 from .scriptvideo import ScriptInput, run_script_job
                 reports = run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
@@ -233,6 +239,16 @@ class GenerateRequest(BaseModel):
 class LicenceEdit(BaseModel):
     licence: str
     credit: str = ""
+
+
+class StickRequestBody(BaseModel):
+    """Stick Stories: a stick-figure comedy episode (16:9) or Short (9:16)."""
+    idea: str = ""
+    format: str = "long"
+    minutes: float = 5
+    language: str = "english"
+    cast: str = ""
+    count: int = 1
 
 
 class ScriptVideoRequest(BaseModel):
@@ -554,6 +570,17 @@ def create_app(cfg: Config) -> FastAPI:
                            "manual", style, length, captions=body.captions,
                            story_form=body.story_form if length != "short" else None)
 
+    @app.post("/api/stick")
+    def stick(body: StickRequestBody):
+        from .stickstory import DEFAULT_CAST
+
+        fmt = "short" if body.format == "short" else "long"
+        given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))),
+                 "language": body.language if body.language in ("english", "hindi") else "english",
+                 "cast": body.cast.strip() or DEFAULT_CAST}
+        return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick", "comedy",
+                           "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False)
+
     @app.post("/api/script-video")
     def script_video(body: ScriptVideoRequest):
         from .scriptvideo import parse_script
@@ -657,7 +684,8 @@ def create_app(cfg: Config) -> FastAPI:
         if not folders and not fresh:
             raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
         return jobs.submit(job["topic"], len(folders) + fresh, "resume", job.get("style"), job.get("length", "short"),
-                           resume=folders, script_input=job.get("script_input"), voice=job.get("voice"),
+                           resume=folders, script_input=job.get("script_input"), stick_input=job.get("stick_input"),
+                           voice=job.get("voice"),
                            captions=job.get("captions"), story_form=job.get("story_form"))
 
     @app.get("/api/automations")
