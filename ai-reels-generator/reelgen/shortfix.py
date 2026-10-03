@@ -129,8 +129,8 @@ def fact_check_scenes(script: ReelScript, cfg: Config, only: set[int], web: bool
     if not web:
         prompt += ("\n\nThe correction adds no new figure or name: check that the >> lines now fix what was found "
                    "and claim nothing the earlier findings and sources don't support. Don't search the web.")
-    check = ask(cfg.ai_backend, cfg.claude_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=web,
-                effort=cfg.claude_effort)
+    check = ask(cfg.ai_backend, cfg.fact_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=web,
+                effort=cfg.fact_effort)
     result = VerifyResult()
     result.checks["fact_check"] = check.model_dump()
     for issue in check.blocking_issues:

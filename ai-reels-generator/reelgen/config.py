@@ -58,6 +58,10 @@ class Config:
     long_language: str = field(default_factory=lambda: _env("REEL_LONG_LANGUAGE", "Indian English"))
     long_voice: str = field(default_factory=lambda: _env("REEL_LONG_VOICE", DEFAULT_VOICE))
     claude_effort: str = field(default_factory=lambda: _env("REEL_CLAUDE_EFFORT", "high"))
+    # Fact-checking (Shorts and long videos) runs on its own model: it searches and compares
+    # claims with sources rather than writing, and was ~45% of a long video's tokens.
+    fact_model: str = field(default_factory=lambda: _env("REEL_FACT_MODEL", "claude-sonnet-5-5"))
+    fact_effort: str = field(default_factory=lambda: _env("REEL_FACT_EFFORT", "medium"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
     # without it the video uses animated gradient backgrounds.
@@ -113,7 +117,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions"]
 
 
 def settings_path(cfg: Config) -> Path:
@@ -136,7 +140,7 @@ def load_settings(cfg: Config) -> Config:
             saved.update({"voice": DEFAULT_VOICE, "long_voice": DEFAULT_VOICE, VOICE_MARK: True})
             path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
         for key, value in saved.items():
-            if key in EDITABLE and not (key in ("claude_model", "claude_effort") and value == ""):
+            if key in EDITABLE and not (key in ("claude_model", "claude_effort", "fact_model", "fact_effort") and value == ""):
                 setattr(cfg, key, _typed(cfg, key, value))  # blank model/effort = default
     return cfg
 

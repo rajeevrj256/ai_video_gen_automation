@@ -427,6 +427,16 @@
         <option value="xhigh">Extra high (slower)</option>
         <option value="max">Max (slowest, uses the most of your limit)</option>
       </select>
+      <label for="s-fact_model">Fact-check model</label>
+      <select id="s-fact_model">
+        <option value="claude-sonnet-5-5">Sonnet 5.5 (recommended: checks against sources, costs less)</option>
+        <option value="claude-opus-5-5">Opus 5.5</option>
+      </select>
+      <label for="s-fact_effort">How hard the fact-check thinks</label>
+      <select id="s-fact_effort">
+        <option value="medium">Medium (recommended)</option>
+        <option value="high">High</option>
+      </select>
       <button class="primary" id="saveBtn">Save settings</button>
     </div>
     <div class="panel">

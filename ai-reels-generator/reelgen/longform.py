@@ -445,7 +445,7 @@ def fact_check_long(script: LongScript, cfg: Config, only: set | None = None) ->
     else:
         ask_for = "Fact-check this script, the hook lines (H1...) included. Refer to lines by their numbers (e.g. 3.4, H2)."
     prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n{_numbered(script, only)}\n\n{ask_for}")
-    check = ask(cfg.ai_backend, cfg.claude_model, FACT_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.claude_effort,
+    check = ask(cfg.ai_backend, cfg.fact_model, FACT_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.fact_effort,
                 timeout=LLM_TIMEOUT)
     result = VerifyResult()
     result.checks["fact_check"] = check.model_dump()

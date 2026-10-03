@@ -112,7 +112,7 @@ def fact_check_script(script: ReelScript, cfg: Config) -> VerifyResult:
             lines.append(f"Scene {i} graphic ({g.type}): {g.headline} | {g.label}" + (f" | {pts}" if pts else ""))
     prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n\n" + "\n".join(lines)
               + "\n\nFact-check this script.")
-    check = ask(cfg.ai_backend, cfg.claude_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.claude_effort)
+    check = ask(cfg.ai_backend, cfg.fact_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=True, effort=cfg.fact_effort)
     result = VerifyResult()
     result.checks["fact_check"] = check.model_dump()
     for issue in check.blocking_issues:
