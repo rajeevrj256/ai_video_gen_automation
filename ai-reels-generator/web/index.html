@@ -149,6 +149,9 @@
   /* next to the duration, so it never covers the title burned into the thumbnail */
   .card .postbadge { position: absolute; top: 8px; right: 52px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
   .card.wide .postbadge { right: 70px; }
+  .libitem .lic { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  .libitem .lic.warn { color: var(--warn); }
+  .libitem .lic select, .libitem .lic input { width: auto; max-width: 100%; padding: 6px 8px; font-size: 13px; }
   .lib-tools { display: grid; gap: 10px; margin-bottom: 14px; }
   .lib-tools input[type=search] { width: 100%; }
   .lib-tools .chips { margin-top: 0; }
@@ -276,6 +279,18 @@
         <button data-length="short" class="on">📱 Short · 30s</button><button data-length="medium">🎞️ Medium · 5–6 min</button><button data-length="long">🎬 Long · 8–10 min</button>
       </div>
       <p class="hint" id="lengthHint">Vertical 9:16 for Reels and Shorts, with real footage.</p>
+      <div id="formBox" hidden>
+        <label for="storyForm">Story form</label>
+        <select id="storyForm">
+          <option value="auto">✨ Auto: Claude picks what fits the material (and avoids the last few)</option>
+          <option value="investigation">🔎 Investigation: a puzzle, followed through the evidence</option>
+          <option value="chronicle">📜 Chronicle: turning points in time order</option>
+          <option value="mechanism">⚙️ How it works: a system, layer by layer</option>
+          <option value="comparison">⚖️ Two sides: two things measured the same way</option>
+          <option value="myth-vs-record">🧪 Myth vs the record: a belief tested against the evidence</option>
+          <option value="decision">🎯 One decision: the choice and its consequences</option>
+        </select>
+      </div>
       <label>Subtitles</label>
       <div class="segmented" id="cc">
         <button data-cc="true" class="on">💬 CC on</button><button data-cc="false">🚫 CC off</button>
@@ -445,11 +460,17 @@
         <a href="https://pixabay.com/sound-effects/" target="_blank" rel="noopener">pixabay.com/sound-effects</a> or
         <a href="https://pixabay.com/music/" target="_blank" rel="noopener">pixabay.com/music</a> and add them here.
         The file name is how Claude knows what it is, so keep names like “sword-slash” or “mysterious-ambient”.
-        Built-in sounds work without adding anything.</p>
+        Built-in sounds work without adding anything.<br><b>Set each file's licence:</b> a file whose licence is
+        unknown is never used in a video (an unlicensed track can bring copyright claims). For CC BY files, write
+        the credit the licence asks for; it is added to the description of every video that uses the file.</p>
       <div class="row">
         <div><label for="lib-kind">Add to</label>
           <select id="lib-kind"><option value="sfx">🔊 Sound effects</option><option value="music">🎵 Music</option><option value="models3d">🧊 3D models (.glb)</option></select></div>
         <div><label for="lib-file">Files</label><input id="lib-file" type="file" multiple accept=".mp3,.wav,.ogg,.m4a,.glb"></div>
+      </div>
+      <div class="row">
+        <div><label for="lib-licence">Licence of the files you add</label><select id="lib-licence"></select></div>
+        <div><label for="lib-credit">Credit (CC BY only)</label><input id="lib-credit" placeholder="e.g. Track by Artist, CC BY 4.0, link"></div>
       </div>
       <div id="libList"></div>
     </div>
@@ -1338,14 +1359,21 @@ async function loadHistory() {
 
 // ---- Media library: sound effects, music and 3D models (assets/sfx, assets/music, assets/models3d) ----
 const LIB_TITLE = { sfx: "🔊 Sound effects", music: "🎵 Music", models3d: "🧊 3D models" };
+let LICENCES = null;
+const licenceSelect = (value) => Object.entries(LICENCES || {}).map(([k, label]) =>
+  `<option value="${k}" ${k === value ? "selected" : ""}>${esc(label)}</option>`).join("");
 async function loadLibrary() {
+  if (!LICENCES) { LICENCES = await api("/api/library/licences"); $("#lib-licence").innerHTML = licenceSelect("unknown"); }
   const items = await api("/api/library");
   $("#libList").innerHTML = Object.keys(LIB_TITLE).map((k) => {
     const mine = items.filter((i) => i.kind === k && !i.builtin), built = items.filter((i) => i.kind === k && i.builtin);
     return `<h3>${LIB_TITLE[k]}</h3>${mine.map((i) => `
       <div class="libitem"><b>${esc(i.name)}</b> <span class="hint">${(i.size / 1048576).toFixed(1)} MB</span>
         ${k === "models3d" ? "" : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
-        <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button></div>`).join("")
+        <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button>
+        <div class="lic ${i.licence === "unknown" ? "warn" : ""}">${i.licence === "unknown" ? "⚠️ Not used until its licence is set · " : ""}
+          <select class="mini" data-lic="${k}/${esc(i.file)}">${licenceSelect(i.licence)}</select>
+          <input class="mini" data-credit="${k}/${esc(i.file)}" placeholder="Credit (CC BY)" value="${esc(i.credit || "")}" ${i.licence === "cc-by" ? "" : "hidden"}></div></div>`).join("")
       || `<p class="hint">None added yet.</p>`}${built.length ? `<p class="hint">Built in: ${built.map((i) => esc(i.name)).join(", ")}${k === "music" && mine.length ? " (used when none of yours fits a video)" : ""}</p>` : ""}`;
   }).join("");
 }
@@ -1353,12 +1381,26 @@ $("#lib-file").addEventListener("change", async (e) => {
   const kind = $("#lib-kind").value;
   for (const file of e.target.files) {
     try {
-      const res = await fetch(`/api/library/${kind}?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, credentials: "same-origin" });
+      const lic = `&licence=${encodeURIComponent($("#lib-licence").value || "unknown")}&credit=${encodeURIComponent($("#lib-credit").value)}`;
+      const res = await fetch(`/api/library/${kind}?name=${encodeURIComponent(file.name)}${lic}`, { method: "POST", body: file, credentials: "same-origin" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
       toast("Added " + file.name);
     } catch (err) { toast(file.name + ": " + err.message); }
   }
   e.target.value = ""; loadLibrary();
+});
+async function saveLicence(key) {
+  const sel = document.querySelector(`[data-lic="${CSS.escape(key)}"]`), credit = document.querySelector(`[data-credit="${CSS.escape(key)}"]`);
+  try {
+    await api("/api/library/" + key.split("/").map(encodeURIComponent).join("/") + "/licence",
+      { method: "PUT", body: JSON.stringify({ licence: sel.value, credit: credit.value }) });
+    toast("Licence saved");
+  } catch (err) { toast(err.message); }
+  loadLibrary();
+}
+$("#libList").addEventListener("change", (e) => {
+  const key = e.target.dataset.lic || e.target.dataset.credit;
+  if (key) saveLicence(key);
 });
 $("#libList").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-lib-del]"); if (!b || !confirm("Delete this file from the library?")) return;
@@ -1452,6 +1494,7 @@ function setCc(on) {
 document.querySelectorAll("#cc button").forEach((b) => b.onclick = () => setCc(b.dataset.cc === "true"));
 document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
   lengthValue = b.dataset.length;
+  $("#formBox").hidden = lengthValue === "short";
   document.querySelectorAll("#length button").forEach((x) => x.classList.toggle("on", x === b));
   $("#lengthHint").textContent = lengthValue === "long"
     ? "16:9 for YouTube, fully animated with chapters, Indian English (change in Settings). Takes about 30–90 minutes each; up to 5 at a time. Jokes become true stories at this length."
@@ -1464,7 +1507,7 @@ api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions !==
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;

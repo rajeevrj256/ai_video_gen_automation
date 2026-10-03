@@ -64,11 +64,44 @@ LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
 VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart", "footage",
                 "model3d", "scene")
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
+ICON_TYPES = ("scene", "icons")  # generic icon visuals
 SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx)
 HOOK_SECONDS = (25.0, 30.0)
 
 
 # ---------- the script ----------
+
+# How a video is told. Every video used to follow one skeleton (a five-beat trailer, a question,
+# a mid-video twist, open loops, the answer at the end): a templated storyline, which YouTube's
+# inauthentic-content policy names. The form now follows the material, and recent forms are avoided.
+STORY_FORMS = {
+    "investigation": ("Investigation", "Opens on a puzzle or anomaly the record shows. Each chapter follows one line "
+                      "of evidence, tests an explanation and rules it in or out. Ends on the explanation the evidence "
+                      "supports, and says plainly what is still unknown."),
+    "chronicle": ("Chronicle", "Told in time order from one vivid, dated moment. Each chapter is a turning point: what "
+                  "changed, who decided, what it caused. Ends on what that history explains now."),
+    "mechanism": ("How it works", "Explains a system layer by layer, from what everyone sees to what almost nobody "
+                  "knows. Each chapter opens one layer and shows it working with real numbers. No mystery or twist is "
+                  "needed: the payoff is understanding."),
+    "comparison": ("Two sides", "Two places, companies, choices or eras measured on the same questions. Chapters pair "
+                   "or alternate them with the same measures for both. Ends on a fair verdict and its limits."),
+    "myth-vs-record": ("Myth vs the record", "Starts from a belief many people hold. Each chapter tests one part of it "
+                       "against documents and data. Ends on what the record shows and why the belief survived."),
+    "decision": ("One decision", "Follows a single decision by a person, company or government: the pressures before "
+                 "it, the options, the choice, then its consequences chapter by chapter. Ends on what it reveals."),
+}
+StoryForm = Literal["investigation", "chronicle", "mechanism", "comparison", "myth-vs-record", "decision"]
+
+
+def forms_block() -> str:
+    return "\n".join(f"- {k} ({label}): {how}" for k, (label, how) in STORY_FORMS.items())
+
+
+class LSource(BaseModel):
+    publisher: str = Field(description="Who published it, e.g. the organisation, newspaper or journal.")
+    title: str = Field(description="The page or document title.")
+    url: str = Field(description="The exact URL you opened with web search (a deep link, never a guessed or home-page URL).")
+    date: str = Field(default="", description="Its publication date if shown, else empty.")
 
 class LItem(BaseModel):
     label: str = Field(description="timeline: the date or year. compare/chart: the side or the time point. steps: the step's short name.")
@@ -117,7 +150,7 @@ class LBeat(BaseModel):
 
 class HookShot(BaseModel):
     beat: Literal["curiosity", "unexpected", "tension", "problem", "gap"] = Field(
-        description="Which part of the trailer this shot is: curiosity (0-4 s: a strong visual and an instant question), unexpected (4-9 s: the surprising situation), tension (9-15 s: build the stakes), problem (15-22 s: show part of the problem), gap (22-27 s: the curiosity gap, the question left hanging).")
+        description="This shot's role in the trailer: curiosity (a strong visual and an instant question), unexpected (the surprising situation), tension (raise the stakes), problem (part of the problem), gap (what's left open). Use the roles this story needs, in the order it needs them.")
     line: str = Field(description="What the narrator says, trailer style: a short, punchy line of 3-12 words, or empty for a shot carried by sound and picture alone. Never reveals the answer.")
     text: str = Field(default="", description="On-screen text slammed in for this shot: 1-3 words (a date, a number, a place, 'WAIT...'), or empty. Most shots have none.")
     visual: LVisual = Field(description="What we see. Prefer motion: scene, model3d, footage, icons, stat. The camera move should be dramatic (push, dutch, orbit, pan).")
@@ -138,6 +171,8 @@ class LongScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list (fiction: the theme you used).")
     why_chosen: str = Field(description="One sentence: why this will hold viewers to the end, and the one story you will tell.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from.")
+    story_form: StoryForm = Field(default="chronicle", description="How this video is told: the story form from the list that fits this material best.")
+    sources: list[LSource] = Field(default_factory=list, description="3-10 sources you actually opened and relied on for the facts in the script, most important first. They are listed in the video's description, so only real pages you read.")
     category: Literal["Sports", "Money", "Science & Space", "Tech", "History", "Nature & Animals", "Weather",
                       "Entertainment", "India", "Life & People", "Stories", "Comedy"] = Field(
         description="The library shelf this video belongs on. Fiction is 'Stories', jokes are 'Comedy'; otherwise the subject area.")
@@ -145,7 +180,7 @@ class LongScript(BaseModel):
     hook_question: str = Field(description="The one big question the cold open plants; the video answers it only in the last chapter.")
     answer: str = Field(description="The answer or twist the last chapter delivers, in one sentence.")
     youtube_title: str = Field(description="YouTube title, max 70 characters: curiosity plus the main search keyword, no clickbait the video doesn't deliver.")
-    hook: list[HookShot] = Field(default_factory=list, description="The 25-30 second energetic cinematic hook before the video starts: 6-9 shots in trailer order (curiosity, unexpected, tension, problem, gap). A teaser, not the story starting: it makes the viewer think 'wait, what happened?' and never gives away the answer.")
+    hook: list[HookShot] = Field(default_factory=list, description="The 25-30 second energetic cinematic hook before the video starts: 6-9 shots that set up this video's story form. A teaser, not the story starting; it never gives away the payoff.")
     mood: Literal["mystery", "suspense", "emotional", "uplifting", "curious", "dark", "energetic", "calm"] = Field(
         default="curious", description="The music's mood for the main video, chosen from the story.")
     hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
@@ -169,56 +204,66 @@ crore with rupees for Indian money, metric units, and Indian comparisons (a Mumb
 cricket ground, the monsoon) where they genuinely make a number easier to picture. Read by \
 text-to-speech: no abbreviations, symbols or emojis in narration; write numbers as they are spoken.
 
-Retention structure (the most important rules):
-- Build the big question around the most surprising fact in the story (the paradox or twist), \
-not the obvious "how did they do it": e.g. "Sweden flipped every car to the other side of the \
-road, and crashes dropped. Why?" beats "How did Sweden switch sides?".
-- Chapter 1, the cold open ({sh['open_secs']} seconds): the first sentence (12 words or fewer) plants that \
-question. Then raise the stakes. It must NOT explain the method, the answer or the twist, not \
-even in passing; the viewer learns them where the story reaches them. No greeting, no "in this \
-video", no "by the end you'll know".
-- Never repeat the answer: reveal it once, late, then use it for the payoff.
-- {sh['more']} more chapters of {sh['chapter_secs']} seconds. Each opens with a mini-hook (a new question or surprise) \
-and ends on an open loop that pulls into the next ("But that created a bigger problem.").
-- Around the middle, a twist that changes how the story looks.
-- The big question is answered only in the last chapter, which ties back to the first line and ends \
-with one short, natural line asking viewers to subscribe. Never announce, name or tease a next \
-video or its topic ("next time...", "in the next video...", "coming up next").
+Story form (the most important choice): tell this story in the form that fits its material, from this list:
+{forms_block()}
+Set story_form to it. The form decides the arc: a puzzle needs a solution late, a chronicle needs \
+turning points, an explainer needs layers, not a hidden answer. Don't force a twist or a mystery onto a \
+story that has none.
+
+Retention (every form):
+- Chapter 1, the cold open ({sh['open_secs']} seconds): the first sentence (12 words or fewer) puts the \
+viewer straight into this form's tension (the anomaly, the dated moment, the everyday thing nobody \
+understands, the two sides, the belief, the decision). Then raise the stakes. No greeting, no "in this \
+video", no "by the end you'll know". Don't give away the payoff the form keeps for later.
+- Never repeat the payoff: deliver it once, where the form puts it.
+- {sh['more']} more chapters of {sh['chapter_secs']} seconds, each one step of the form. Each opens on \
+something new (a fact, a scene, a number, a document, a question) and hands over to the next in your \
+own words for this story; never a stock linking line.
+- The last chapter delivers the payoff and ends with one short, natural line asking viewers to \
+subscribe. Never announce, name or tease a next video or its topic.
+- Write every line fresh for this story: no catchphrases or formula sentences that could open or link \
+any video.
 - One subject, in depth: the whole video stays on the subject you name. Every chapter goes a level \
 deeper (how, why, the telling detail, what it caused, what nobody expects). Never a list of \
 separate examples.
-- Scenes are linked by "but" and "so", never "and also". Vary sentence length. No filler \
-("think about that", "their answer was brutal").
+- Scenes are linked by cause and consequence, never "and also". Vary sentence length. No filler lines \
+that tell the viewer how to feel instead of showing why.
 - Vary how chapters open: a question, a scene, a number, a quote, a contradiction. Never the \
 same pattern twice in a row.
-- No chapter is a list (logo, song, signs, buses...): every beat must raise the risk, answer a \
-worry or push the story forward, or it goes.
+- No chapter is a list of loosely related items: every beat must move the story or the explanation \
+forward, or it goes.
 - The call to action is a single plain line (subscribe, or comment an answer); it never names or teases another video.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
 The hook (25-30 seconds, before chapter 1): an energetic cinematic trailer for this video, NOT the \
-story starting. It has its own look and its own driving music. 6-9 fast shots in this order: curiosity \
-(0-4 s, a strong visual and an instant question), unexpected (4-9 s, the surprising situation), tension \
-(9-15 s, build the stakes), problem (15-22 s, show part of the problem), gap (22-27 s, the question left \
-hanging); then it cuts to the video. Keep the energy high: quick shots, punchy lines, a word slammed in \
+story starting. It has its own look and its own driving music. 6-9 fast shots that set up this video's \
+form: the anomaly for an investigation, the moment for a chronicle, the everyday thing for an explainer, \
+the two sides for a comparison, the belief for a myth, the dilemma for a decision. Tag each shot with its \
+role (curiosity, unexpected, tension, problem, gap) and use the roles in the order this story needs; \
+then it cuts to the video. Keep the energy high: quick shots, punchy lines, a word slammed in \
 on the big moments. Lines are short and punchy (3-12 words; some shots have no line \
-at all and let picture and sound carry them). It must make the viewer think "wait... what happened?" \
-and must never give away the answer or the punchline. The cold open (chapter 1) then starts the story.
+at all and let picture and sound carry them). It must make the viewer want the rest, and must never give \
+away the payoff. The cold open (chapter 1) then starts the story.
 
-Show, don't write (very important): the story is told by motion, camera and sound; text only \
-supports it. The weak version is "big text, then another big text". The strong version: an actor \
-enters, the camera pushes in, something falls, a number counts up, a sound hits, then two short words.
+Show, don't write (very important): the story is told by evidence in motion, camera and sound; text only \
+supports it. The weak version is "big text, then another big text", or generic icons with an arrow \
+between them. The strong version: the real number counts up, a date lands on a timeline, the chart line \
+turns, the camera pushes into the real place, the object turns in 3D, then two short words.
+- Evidence first: whenever a line states a figure, a date, a place, a process, a comparison or a quote, \
+show that evidence: stat, chart (real data over time), timeline (the real dates), compare (two measured \
+things), steps (the mechanism), footage (the real place), model3d (the actual object), quote (a real, \
+sourced quote). Pick the type from what this story's evidence is, so each video looks like its subject.
 - 'keyword' and 'title' beats (mostly words) are at most 1 in 7 beats and never two in a row. Keyword \
 text is at most 3 words, a headline at most 6.
-- Use 'scene' often: 1-4 icon actors that act the line out (a ship enters and a storm icon shakes \
-above it; coins multiply; a factory grows; a person flees). Pick concrete icons and actions that \
-match the words.
+- 'scene' (1-4 icon actors acting the line out) and 'icons' only for an action or relationship that \
+has no evidence to show; together at most 1 in 3 beats, never three in a row, and never just two icons \
+with an arrow as the whole idea: make the actors do what the line says.
 - Pick a camera move for every visual and vary them (push, pull, pans, rise, dutch, orbit); save \
 'impact' for the one biggest moment of a chapter.
 
 Music and sound: set the music mood from the story, and give every chapter an intensity (1-5) that \
-follows the tension: build toward the twist and the ending, fall back after a peak, and mark the \
-chapter that opens on the twist with a drop. Pick an ambience only where a place matters. Look at the \
+follows the tension: build toward the story's peak and the ending, fall back after a peak, and mark \
+the chapter that opens on the biggest turn with a drop. Pick an ambience only where a place matters. Look at the \
 user's own music and sound files first (marked in the lists): use one for the hook (hook_track), the \
 main music and the sound effects where it fits this video; where none fits, leave hook_track empty, \
 write 'compose' for the music, and use built-in sounds. Decide part by part: each chapter can take \
@@ -261,7 +306,10 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     prompt = (f"Candidate topics trending now (region {cfg.geo}):\n{trends_as_json(candidates)}\n\n{task}\n"
               f"- Length: about {words} words of narration in total ({minutes:g} minutes), no less than "
               f"{int(words * 0.9)} and no more than {int(words * 1.1)}.\n"
-              f"- {shape(minutes)['chapters'][0]} to {shape(minutes)['chapters'][1]} chapters, 6 to 14 beats each." + variety.recent_block(cfg) + "\n\n"
+              f"- {shape(minutes)['chapters'][0]} to {shape(minutes)['chapters'][1]} chapters, 6 to 14 beats each."
+              + (f"\n- Story form: {cfg.story_form} ({STORY_FORMS[cfg.story_form][0]}); the user chose it."
+                 if cfg.story_form in STORY_FORMS else "")
+              + variety.recent_block(cfg) + "\n\n"
               + media.prompt_block(cfg, long=True)
               + media.models_block(cfg))
     if len(candidates) == 1 and candidates[0].source == "manual":
@@ -423,6 +471,16 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
                     "scene, icons, stat, chart, timeline, compare, steps, footage or 3D instead.")
     if any(a and b for a, b in zip(texty, texty[1:])):
         result.fail("Two keyword/title slides in a row; put a moving visual between them.")
+    # Evidence first: generic icon visuals are an accent, not the video (the same icons-and-arrow
+    # look on every subject is what makes a channel look mass-produced).
+    iconish = [b.visual.type in ICON_TYPES for b in all_beats]
+    result.checks["icon_beats"] = f"{sum(iconish)}/{len(iconish)}"
+    if iconish and sum(iconish) > len(iconish) / 3 + 1:
+        result.fail(f"{sum(iconish)} of {len(iconish)} beats are icon scenes; at most 1 in 3. Where a line states a "
+                    "figure, date, place, process or comparison, show that evidence (stat, chart, timeline, compare, "
+                    "steps, footage, 3D) instead.")
+    if any(a and b and c for a, b, c in zip(iconish, iconish[1:], iconish[2:])):
+        result.fail("Three icon scenes in a row; show the evidence in between.")
     for ci, chapter in enumerate(script.chapters, 1):
         for bi, beat in enumerate(chapter.beats, 1):
             v = beat.visual
@@ -675,7 +733,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                              "volume": round(vol * (media.UPLOADED_GAIN * 1.6 if "/u-" in files[n] else 1), 3)}
                             for n, at, vol in auto if n in files]
     if new_look:
-        variety.remember(cfg, look, script.mood, hook["style"])
+        variety.remember(cfg, look, script.mood, hook["style"], script.story_form)
     return props
 
 
@@ -857,12 +915,13 @@ def _sheet(tiles: list, out: Path) -> Path:
 
 
 LONG_REVIEW_SYSTEM = """You are a strict YouTube editor reviewing a {range} minute fully animated video before \
-it is posted. You judge whether viewers would stay to the end: a cold open that plants one big question, \
-chapters that each open with a mini-hook and end on an open loop, one subject explored in depth rather than \
-a list, a twist near the middle and a payoff that answers the opening question. It opens with a 25-30 \
-second cinematic hook (a trailer: curiosity, the unexpected, tension, part of the problem, a curiosity gap) \
-that must not give the answer away. The story should be told by motion, camera and sound, with text only \
-supporting it: a video that is mostly big words on backgrounds is a slideshow and fails. You also check \
+it is posted. You judge whether viewers would stay to the end, by the story form named in the prompt: a \
+cold open that pulls the viewer into that form's tension, chapters that each move the story or the \
+explanation forward, one subject explored in depth rather than a list, and the payoff where the form puts \
+it. It opens with a 25-30 second cinematic hook (a trailer) that must not give the payoff away. The story \
+should be told by evidence in motion, camera and sound, with text only supporting it: a video that is \
+mostly big words on backgrounds is a slideshow and fails, and so is one where generic icons joined by \
+arrows stand in for the real numbers, dates, places and mechanisms the lines talk about. You also check \
 that each animated visual matches its line and that nothing is inaccurate, exaggerated or unverifiable. \
 Be honest and specific; don't pass mediocre work."""
 
@@ -879,6 +938,7 @@ def review_long(video: Path | None, script: LongScript, props: dict, cfg: Config
     prompt = (f"The image shows two frames from the hook, then two frames from every chapter, left to right, top to "
               f"bottom.\n\nHook: {hook_lines}\n"
               f"Title: {script.youtube_title}\nThe big question: {script.hook_question}\n"
+              f"Story form: {STORY_FORMS.get(script.story_form, ('?',))[0]}\n"
               f"Style: {'fiction story' if cfg.video_style == 'story' else 'true story, fact-checked'}\n"
               + "\n".join(lines) + "\n\nScore it and list what to fix. For 'visuals_match', judge the animated "
               "visuals against their lines. For 'story', judge retention across the whole video.")
@@ -929,6 +989,48 @@ class LongPost(BaseModel):
     youtube_hashtags: list[str] = Field(description="Exactly 3 hashtags without '#', really used for this subject, main one first (they show above the title). Never 'shorts'.")
     youtube_tags: list[str] = Field(description="15-25 tags without '#', main keyword first, then close variants, broader topic phrases and long-tail questions people search. Under 500 characters in total.")
     hashtag_notes: str = Field(description="One or two sentences: what you searched and why you chose the main keyword, or 'not verified' if you couldn't check.")
+
+
+def verify_sources(sources: list[LSource]) -> tuple[list[dict], list[dict]]:
+    """The writer's sources whose links actually open (a model can mistype or misremember a URL).
+    A site that refuses automated checks (401/403/405/429) counts as found; a 404 or a dead host
+    doesn't. Returns (kept, dropped)."""
+    from urllib.parse import urlparse
+
+    import requests
+
+    kept, dropped, seen = [], [], set()
+    for src in sources[:10]:
+        url = src.url.strip()
+        if not re.match(r"https?://[^/\s]+\.[^/\s]+", url) or url in seen:
+            continue
+        seen.add(url)
+        try:
+            with requests.get(url, timeout=12, stream=True, allow_redirects=True,
+                              headers={"User-Agent": "Mozilla/5.0 (source check)"}) as resp:
+                ok = resp.status_code < 400 or resp.status_code in (401, 403, 405, 429)
+                why = str(resp.status_code)
+                # A missing page that redirects to the site's home page answers 200 too.
+                if ok and urlparse(url).path.strip("/") and not urlparse(resp.url).path.strip("/"):
+                    ok, why = False, "redirected to the home page"
+        except requests.RequestException as exc:
+            ok, why = False, type(exc).__name__
+        (kept if ok else dropped).append({**src.model_dump(), **({} if ok else {"why": why})})
+    return kept, dropped
+
+
+def with_sources(description: str, sources: list[dict], credits: list[str]) -> str:
+    """The description with the sources and any credits the media licences ask for, placed before
+    the chapter list (a re-make replaces only what comes after 'Chapters:')."""
+    head, sep, chapters = description.partition("\n\nChapters:\n")
+    blocks = []
+    if sources:
+        blocks.append("Sources:\n" + "\n".join(
+            f"- {s['publisher']}: {s['title']}" + (f" ({s['date']})" if s.get("date") else "") + f" {s['url']}"
+            for s in sources))
+    if credits:
+        blocks.append("Credits:\n" + "\n".join(f"- {c}" for c in credits))
+    return "\n\n".join([head.rstrip(), *blocks]) + (sep + chapters if sep else "")
 
 
 def write_long_post(script: LongScript, props: dict, cfg: Config) -> dict:
@@ -1281,6 +1383,15 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             report.update({"caption": "", "hashtags": [], "youtube_title": script.youtube_title,
                            "youtube_description": "Chapters:\n" + youtube_chapters(props), "youtube_hashtags": [],
                            "youtube_tags": [], "post_text_error": str(exc)[:300]})
+        # Sources the writer relied on (links checked) and credits for CC BY media, in the description.
+        from .used import library_files
+        kept, dropped = verify_sources(script.sources) if cfg.video_style != "story" else ([], [])
+        credit_lines = media.credits(cfg, library_files(cfg, final_dir))
+        report.update({"sources": kept, "credits": credit_lines})
+        if dropped:
+            report["sources_unreachable"] = dropped
+            log.warning("Dropped %d source link(s) that did not open: %s", len(dropped), [d["url"] for d in dropped])
+        report["youtube_description"] = with_sources(report.get("youtube_description", ""), kept, credit_lines)
         save_post_text(report, final_dir)
         report["usage"] = summarize_usage(meter_records())
         (final_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

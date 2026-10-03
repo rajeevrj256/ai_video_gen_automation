@@ -17,6 +17,7 @@ the video; `resolve_cues` turns its picks into times on the timeline.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
@@ -58,12 +59,59 @@ def slug(name: str) -> str:
     return "-".join(words)[:60] or "file"
 
 
-def _files(cfg: Config, kind: str) -> list[Item]:
+# The licence of every uploaded file, kept next to the files (<folder>/licences.json). A file is only
+# used in videos once its licence is known: an unlicensed track can bring Content ID claims or a
+# copyright strike, and a CC BY file needs a credit (added to the video's description).
+LICENCES = {
+    "own": "Made or recorded by me",
+    "royalty-free": "Royalty-free, cleared for YouTube (bought, or e.g. Pixabay, Mixkit, YouTube Audio Library)",
+    "cc0": "CC0 / public domain",
+    "cc-by": "CC BY: free with a credit",
+    "unknown": "Unknown: not used in videos",
+}
+USABLE = ("own", "royalty-free", "cc0", "cc-by")
+LICENCE_FILE = "licences.json"
+
+
+def licences(cfg: Config, kind: str) -> dict[str, dict]:
+    path = folder(cfg, kind) / LICENCE_FILE
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def set_licence(cfg: Config, kind: str, filename: str, licence: str, credit: str = "") -> None:
+    if kind not in KINDS or licence not in LICENCES:
+        raise ValueError("Unknown licence")
+    root = folder(cfg, kind)
+    if not (root / Path(filename).name).is_file():
+        raise ValueError("No such file")
+    data = licences(cfg, kind)
+    data[Path(filename).name] = {"licence": licence, "credit": credit.strip()[:300]}
+    (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
+def credits(cfg: Config, used_files: list[tuple[str, str]]) -> list[str]:
+    """Credit lines for the CC BY files a video used ((kind, file name) pairs), as their licence asks."""
+    out = []
+    for kind, name in dict.fromkeys(used_files):
+        lic = licences(cfg, kind).get(name, {})
+        if lic.get("licence") == "cc-by":
+            out.append(lic.get("credit") or f"{Path(name).stem} (CC BY)")
+    return out
+
+
+def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
+    """The user's files of this kind; only those with a known licence unless `everything`."""
     root = folder(cfg, kind)
     types = MODEL_TYPES if kind == "models3d" else AUDIO_TYPES
+    lic = licences(cfg, kind)
     items, seen = [], set()
     for path in sorted(root.glob("*")) if root.exists() else []:
         if path.suffix.lower() not in types:
+            continue
+        if not everything and lic.get(path.name, {}).get("licence") not in USABLE:
             continue
         name = slug(path.name)
         while name in seen:
@@ -138,14 +186,19 @@ def listing(cfg: Config) -> list[dict]:
     for kind in KINDS:
         builtin = {"sfx": [Item(n, a, None) for n, (_, _, _, a) in CUE_SOUNDS.items()],
                    "music": [Item(n, a, None) for n, (a, _) in BEDS.items()], "models3d": []}[kind]
-        for item in [*_files(cfg, kind), *builtin]:
+        lic = licences(cfg, kind)
+        for item in [*_files(cfg, kind, everything=True), *builtin]:
+            own = lic.get(item.path.name, {}) if item.path else {}
             out.append({"kind": kind, "name": item.name, "about": item.about, "builtin": item.path is None,
                         "file": item.path.name if item.path else "",
-                        "size": item.path.stat().st_size if item.path else 0})
+                        "size": item.path.stat().st_size if item.path else 0,
+                        "licence": "builtin" if item.path is None else own.get("licence", "unknown"),
+                        "credit": own.get("credit", "")})
     return out
 
 
-def save_upload(cfg: Config, kind: str, filename: str, data: bytes) -> Path:
+def save_upload(cfg: Config, kind: str, filename: str, data: bytes, licence: str = "unknown",
+                credit: str = "") -> Path:
     if kind not in KINDS:
         raise ValueError("Unknown library folder")
     ext = Path(filename).suffix.lower()
@@ -157,13 +210,17 @@ def save_upload(cfg: Config, kind: str, filename: str, data: bytes) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     path = root / (slug(filename) + ext)
     path.write_bytes(data)
+    set_licence(cfg, kind, path.name, licence if licence in LICENCES else "unknown", credit)
     return path
 
 
 def remove(cfg: Config, kind: str, filename: str) -> None:
     path = folder(cfg, kind) / Path(filename).name  # no paths from outside the folder
-    if kind in KINDS and path.is_file():
+    if kind in KINDS and path.is_file() and path.name != LICENCE_FILE:
         path.unlink()
+        data = licences(cfg, kind)
+        if data.pop(path.name, None) is not None:
+            (folder(cfg, kind) / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
 def prompt_block(cfg: Config, long: bool = False) -> str:

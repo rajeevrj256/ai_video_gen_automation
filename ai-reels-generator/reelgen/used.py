@@ -149,3 +149,18 @@ def media_used(cfg: Config, video: Path) -> dict:
 
     return {"available": True, "music": music, "sounds": sounds, "models": list(models.values()),
             "footage": footage, "effects": effects}
+
+
+def library_files(cfg: Config, video: Path) -> list[tuple[str, str]]:
+    """(kind, file name) of every file from the user's library this video uses (for licence credits)."""
+    try:
+        used = media_used(cfg, video)
+    except (OSError, ValueError, KeyError):
+        return []
+    out = []
+    for kind, key in (("music", "music"), ("sfx", "sounds"), ("models3d", "models")):
+        for item in used.get(key) or []:
+            source = item.get("source", "")
+            if source.startswith("Your library: "):
+                out.append((kind, source[len("Your library: "):]))
+    return out

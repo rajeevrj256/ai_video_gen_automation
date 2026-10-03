@@ -62,6 +62,9 @@ class Config:
     # claims with sources rather than writing, and was ~45% of a long video's tokens.
     fact_model: str = field(default_factory=lambda: _env("REEL_FACT_MODEL", "claude-sonnet-5-5"))
     fact_effort: str = field(default_factory=lambda: _env("REEL_FACT_EFFORT", "medium"))
+    # Long/medium videos: how the story is told (longform.STORY_FORMS), or "auto" to let the writer
+    # pick the form that fits the material (avoiding the recent ones). Set per job on the Create page.
+    story_form: str = "auto"
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
     # without it the video uses animated gradient backgrounds.
