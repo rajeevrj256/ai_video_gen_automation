@@ -163,8 +163,18 @@ def _write_wav(path: Path, samples: np.ndarray, rate: int) -> None:
 
 # ---------- edge (online) ----------
 
+def _quiet_resets(loop, context) -> None:
+    """On Windows, Python's Proactor event loop logs a scary 'ConnectionResetError: [WinError 10054]'
+    traceback when Microsoft's speech server closes the connection after the audio is sent. The audio
+    is complete by then; only that message is dropped, everything else is logged as usual."""
+    if isinstance(context.get("exception"), ConnectionResetError):
+        return
+    loop.default_exception_handler(context)
+
+
 async def _edge_synthesize(text: str, voice: str, rate: str, pitch: str, out_path: Path,
                            volume: str = "+0%") -> list[Word]:
+    asyncio.get_running_loop().set_exception_handler(_quiet_resets)
     communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume, boundary="WordBoundary")
     words: list[Word] = []
     with open(out_path, "wb") as fh:
