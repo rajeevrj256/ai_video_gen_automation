@@ -18,9 +18,11 @@ def _load_dotenv(path: Path) -> None:
         key, value = line.split("=", 1)
         value = value.split(" #", 1)[0].strip().strip('"').strip("'")  # allow trailing comments
         key = key.strip()
-        # A real environment variable wins, except a value some other .env reader (moviepy's
-        # python-dotenv) took from a comment: "REEL_GL=   # GPU for..." must mean empty.
-        if key not in os.environ or os.environ[key].lstrip().startswith("#"):
+        # A real environment variable wins, except an empty one (an empty REEL_CHROME left in the
+        # Windows environment hid REEL_CHROME=chrome-for-testing from .env) or a value some other .env
+        # reader (moviepy's python-dotenv) took from a comment: "REEL_GL=   # GPU for..." means empty.
+        current = os.environ.get(key)
+        if current is None or not current.strip() or current.lstrip().startswith("#"):
             os.environ[key] = value
 
 
