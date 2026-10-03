@@ -991,6 +991,23 @@ def _dec_long_best(d: dict | None) -> dict | None:
 PREVIEW_FIXES = 1  # rounds of "fix the flagged lines, re-record, preview again" before the full render
 
 
+def _claims_changed(old: LongScript, new: LongScript, changed: set) -> set:
+    """The corrected lines whose spoken words or on-screen words/figures changed (only those
+    need a new fact-check; a different icon, layout or camera move doesn't)."""
+    def words(v: LVisual) -> list:  # what the visual says, not how it looks
+        return [v.headline, v.sub, [(i.label, i.text, i.display) for i in v.items], [a.label for a in v.actors]]
+
+    def said(s: LongScript, key) -> str:
+        c, b = key
+        if c == 0:
+            h = s.hook[b - 1] if 0 < b <= len(s.hook) else None
+            return "" if h is None else json.dumps([h.line, h.text, words(h.visual)])
+        ch = s.chapters[c - 1] if 0 < c <= len(s.chapters) else None
+        beat = ch.beats[b - 1] if ch and 0 < b <= len(ch.beats) else None
+        return "" if beat is None else json.dumps([beat.narration, words(beat.visual)])
+    return {k for k in changed if said(old, k) != said(new, k)}
+
+
 def _preview_review(script: LongScript, props: dict, cfg: Config, work: Path, tag: str, progress: Progress,
                     save) -> tuple[LongScript, dict, dict | None]:
     """Review ~18 frames drawn from the timeline before the full render, and fix the flagged lines
@@ -1021,9 +1038,10 @@ def _preview_review(script: LongScript, props: dict, cfg: Config, work: Path, ta
         fixed, changed = fix_long_script(script, cfg, list(pre.issues), fix)
         if not changed:
             return script, props, result(pre)
-        if cfg.video_style != "story":
-            progress(f"{tag} Claude is fact-checking the {len(changed)} corrected line(s)")
-            facts = fact_check_long(fixed, cfg, changed)
+        claims = _claims_changed(script, fixed, changed)  # a new icon or camera move has nothing to check
+        if cfg.video_style != "story" and claims:
+            progress(f"{tag} Claude is fact-checking the {len(claims)} corrected line(s) with new words or figures")
+            facts = fact_check_long(fixed, cfg, claims)
             if not facts.passed:  # one targeted fix; what's still disputed goes into the report as before
                 fixes = facts.checks.get("fact_check", {}).get("fix_instructions", "")
                 fixed, _ = fix_long_script(fixed, cfg, list(facts.issues), fixes, strict=True)
