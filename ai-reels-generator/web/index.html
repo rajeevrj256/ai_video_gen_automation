@@ -212,6 +212,16 @@
     .vs-script { border-right: 1px solid var(--line); }
     .vs-video video { max-height: 58vh; }
   }
+  .issues { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  details.issue { background: rgba(0,0,0,.18); border-radius: 8px; padding: 6px 10px; }
+  details.issue > summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; gap: 8px; align-items: baseline; }
+  details.issue > summary::-webkit-details-marker { display: none; }
+  details.issue > summary::before { content: "▸"; transition: transform .15s; }
+  details.issue[open] > summary::before { transform: rotate(90deg); }
+  details.issue .n { opacity: .7; font-variant-numeric: tabular-nums; }
+  details.issue .kind { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: rgba(255,159,10,.2); font-weight: 700; text-transform: uppercase; }
+  details.issue .body { margin-top: 6px; font-weight: 400; line-height: 1.45; color: var(--text, #ddd); }
+  .issue-tools { display: flex; gap: 6px; justify-content: flex-end; }
   details.used { margin-top: 16px; border: 1px solid var(--line, #333); border-radius: 10px; padding: 8px 12px; }
   details.used > summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
   details.used details { margin: 8px 0; }
@@ -658,6 +668,21 @@ function wireThumb(id) {
   };
 }
 
+// One collapsible row per issue: a short title (the issue's first clause), the full text when opened.
+function issueTitle(text) {
+  const m = text.match(/^([A-Za-z -]{2,20}):\s*(.*)$/s);
+  const body = m ? m[2] : text;
+  let t = body.split(/\s\(|:\s|\.\s|\.$|;\s/)[0].trim();
+  if (t.length > 70) t = t.slice(0, 67).replace(/\s+\S*$/, "") + "…";
+  return {kind: m ? m[1] : "", title: t || body.slice(0, 60), body};
+}
+function issueRows(issues) {
+  if (!issues || !issues.length) return "";
+  return `<div class="issues">${issues.map((x, i) => {
+    const {kind, title, body} = issueTitle(String(x));
+    return `<details class="issue"><summary><span class="n">${i + 1}</span>${kind ? `<span class="kind">${esc(kind)}</span>` : ""}${esc(title)}</summary><div class="body">${esc(body)}</div></details>`;
+  }).join("")}<div class="issue-tools"><button type="button" class="mini" onclick="this.closest('.issues').querySelectorAll('details').forEach(d=>d.open=true)">Open all</button> <button type="button" class="mini" onclick="this.closest('.issues').querySelectorAll('details').forEach(d=>d.open=false)">Close all</button></div></div>`;
+}
 async function openVideo(id) {
   const v = await api("/api/videos/" + encodeURIComponent(id));
   const src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
@@ -667,7 +692,7 @@ async function openVideo(id) {
   const tags = (v.hashtags || []).map((h) => "#" + h).join(" ");
   const verdict = v.verified
     ? `<div class="verdict ok">✅ Verified automatically — score ${esc(v.score)}/10</div>`
-    : `<div class="verdict warn">⚠️ Didn't pass every check. Watch it before posting.<br>${(v.issues || []).map(esc).join("<br>")}</div>`;
+    : `<div class="verdict warn">⚠️ Didn't pass every check. Watch it before posting.${issueRows(v.issues)}</div>`;
   $("#details").innerHTML = `
     <h3>${esc(v.title)}</h3>
     <div class="sub"><select id="catSel" class="mini" title="Category">${Object.keys(CAT_ICON).map((c) =>
