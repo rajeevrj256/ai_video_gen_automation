@@ -133,6 +133,7 @@ class BoardChapter(BaseModel):
     drop: bool = LChapter.model_fields["drop"]
     ambience: Ambience = LChapter.model_fields["ambience"]
     backdrop: str = LChapter.model_fields["backdrop"]
+    break_sound: str = LChapter.model_fields["break_sound"]
 
 
 class BoardBeat(BaseModel):
@@ -259,7 +260,8 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
             continue
         beats = [LBeat(narration=lines[i], visual=visuals[i + 1].visual if i + 1 in visuals else _fallback_visual(lines[i]),
                        sounds=visuals[i + 1].sounds if i + 1 in visuals else []) for i in range(first, last)]
-        extra = ({"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience, "backdrop": c.backdrop}
+        extra = ({"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience, "backdrop": c.backdrop,
+                  "break_sound": c.break_sound}
                  if c else {})
         chapters.append(LChapter(title=title, beats=beats, **extra))
     script = LongScript(topic=given.title, why_chosen="Your own script.", facts_checked="Checked and approved by you.",
