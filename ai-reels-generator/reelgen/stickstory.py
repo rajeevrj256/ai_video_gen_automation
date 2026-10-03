@@ -12,6 +12,7 @@ import logging
 import re
 import shutil
 import subprocess
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -376,16 +377,79 @@ def assign_voices(cast: list[dict], language: str = "english") -> dict[str, str]
 def _recent_line(r) -> str:
     if isinstance(r, str):  # older history entries were plain titles
         return r
-    return f"{r.get('title')} (places: {', '.join(r.get('places', []))}; music: {r.get('music', '?')})"
+    return (f"{r.get('title')}" + (f": {r['logline']}" if r.get("logline") else "")
+            + f" (places: {', '.join(r.get('places', []))}; music: {r.get('music', '?')})")
 
 
-def write_episode(cfg: Config, req: StickRequest, recent: list[str]) -> Episode:
+# ---------- never the same story twice ----------
+
+_history_lock = threading.Lock()
+STOP = set("a an the and or but of to in on at for with by from is are was be his her their your my our it its "
+           "this that when what who how why he she they you i we me him them not no just so then than into out up "
+           "about over after before again".split())
+
+
+def _words(text: str) -> set[str]:
+    return {w.rstrip("s") for w in re.findall(r"[a-z']+", text.lower()) if w not in STOP and len(w) > 2}
+
+
+def made_before(cfg: Config) -> list[dict]:
+    """Every stick video already made or being made: the library's reports (title and premise), plus
+    the history file, which is written as soon as a story is written (so a video still rendering, or
+    one that failed later, counts too). Newest last."""
+    seen: dict[str, dict] = {}
+    for path in sorted(cfg.output_dir.glob("*/report.json")):
+        try:
+            rep = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if rep.get("source") == "stick":
+            seen[rep.get("title", "").lower()] = {"title": rep.get("title", ""), "logline": rep.get("why_chosen", ""),
+                                                   "style": rep.get("style", "")}
+    try:
+        history = json.loads(_history(cfg).read_text(encoding="utf-8")) if _history(cfg).exists() else []
+    except (OSError, json.JSONDecodeError):
+        history = []
+    for r in history:
+        r = r if isinstance(r, dict) else {"title": r}
+        key = r.get("title", "").lower()
+        seen[key] = {**seen.get(key, {}), **{k: v for k, v in r.items() if v}}
+    return list(seen.values())
+
+
+def too_close(ep: Episode, past: list[dict]) -> dict | None:
+    """The earlier video this story repeats, if any: the same title, or most of the same words in the
+    title and premise (word overlap, so a new title on the same story is caught)."""
+    mine = _words(ep.title + " " + ep.logline)
+    for r in past:
+        if r.get("title", "").strip().lower() == ep.title.strip().lower():
+            return r
+        theirs = _words(r.get("title", "") + " " + r.get("logline", ""))
+        if mine and theirs and len(mine & theirs) / len(mine | theirs) >= 0.4:
+            return r
+    return None
+
+
+def remember(cfg: Config, entry: dict) -> None:
+    with _history_lock:
+        try:
+            history = json.loads(_history(cfg).read_text(encoding="utf-8")) if _history(cfg).exists() else []
+        except (OSError, json.JSONDecodeError):
+            history = []
+        history = [h for h in history if (h.get("title") if isinstance(h, dict) else h) != entry["title"]] + [entry]
+        _history(cfg).write_text(json.dumps(history[-200:], ensure_ascii=False, indent=0), encoding="utf-8")
+
+
+def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "") -> Episode:
     short = req.format == "short"
     cast = parse_cast(req.cast)
     prompt = ("The cast (use these ids and looks):\n" + "\n".join(f"- {c['id']}: {c['name']} ({c['look']})" for c in cast)
               + (f"\n\nThe idea: {req.idea}" if req.idea.strip() else "\n\nPick a fresh, relatable situation yourself.")
-              + ("\n\nRecent episodes (don't repeat their premise, opening place or music mood):\n"
-                 + "\n".join(f"- {_recent_line(r)}" for r in recent[-20:]) if recent else "")
+              + ("\n\nAlready made (never repeat one of these stories, not even with a new title or another "
+                 "character; also avoid their opening place and music mood):\n"
+                 + "\n".join(f"- {_recent_line(r)}" for r in recent[-40:]) if recent else "")
+              + (f"\n\nYour first draft repeated an earlier video ({avoid}). Write a completely different situation."
+                 if avoid else "")
               + "\n\n" + media.prompt_block(cfg))
     return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style), prompt, Episode,
                allow_web=req.style == "facts", effort=cfg.claude_effort, timeout=1800)
@@ -571,10 +635,18 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
     work.mkdir(parents=True, exist_ok=True)
     progress(f"Saving progress in {work.name}")
     try:
-        recent = json.loads(_history(cfg).read_text(encoding="utf-8")) if _history(cfg).exists() else []
+        recent = made_before(cfg)
         progress(("Claude is researching and writing" if req.style == "facts" else "Claude is writing")
                  + (" the Short" if short else " the episode"))
         ep = write_episode(cfg, req, recent)
+        # A story too close to one already made is written again once (not when you gave the idea).
+        twin = None if req.idea.strip() else too_close(ep, recent)
+        if twin:
+            progress(f"That story was already made (\"{twin.get('title')}\"); Claude is writing a different one")
+            ep = write_episode(cfg, req, recent, avoid=f"\"{twin.get('title')}\": {twin.get('logline', '')}")
+        # Remembered now, before voices and render: a video made at the same time sees it.
+        remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
+                       "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": ep.mood})
         fact_issues, findings, sources, dropped = [], [], [], []
         if req.style == "facts":
             ep, fact_issues, findings = check_facts(cfg, ep, progress)
@@ -621,9 +693,8 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         report["usage"] = summarize_usage(meter_records())
         (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        entry = {"title": ep.title, "style": req.style, "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)),
-                 "music": props.get("musicChoice", "")}
-        _history(cfg).write_text(json.dumps((recent + [entry])[-60:], ensure_ascii=False), encoding="utf-8")
+        remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
+                       "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": props.get("musicChoice", "")})
         progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
         return report
     except Exception:
