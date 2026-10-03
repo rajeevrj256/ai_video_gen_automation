@@ -28,6 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from . import tunnel
 from .categories import CATEGORIES, categorize
 from .config import EDITABLE, PROJECT_ROOT, Config, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
@@ -202,16 +203,17 @@ def allowed_networks(spec: str) -> list:
     return nets
 
 
-def tailscale_ip() -> str:
-    """This computer's Tailscale address (100.x), if Tailscale is installed and connected."""
-    for exe in ("tailscale", r"C:\Program Files\Tailscale\tailscale.exe"):
-        try:
-            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=5).stdout.split()
-            if out:
-                return out[0]
-        except (OSError, subprocess.SubprocessError):
-            continue
-    return ""
+def client_ip(request: Request) -> str:
+    """Who is asking. A request through the Cloudflare tunnel arrives from this computer (cloudflared),
+    with the visitor's real address in CF-Connecting-IP: that address counts, never 'this computer'."""
+    host = request.client.host if request.client else ""
+    forwarded = request.headers.get("cf-connecting-ip", "").strip()
+    try:
+        if forwarded and ipaddress.ip_address(host or "0.0.0.0").is_loopback:
+            return forwarded
+    except ValueError:
+        pass
+    return host
 
 
 def lan_ips() -> list[str]:
@@ -371,7 +373,7 @@ def create_app(cfg: Config) -> FastAPI:
         # Only the addresses in REEL_ALLOWED_IPS (and this computer) get anything at all, the page included.
         if networks:
             try:
-                ip = ipaddress.ip_address((request.client.host if request.client else "") or "0.0.0.0")
+                ip = ipaddress.ip_address(client_ip(request) or "0.0.0.0")
             except ValueError:
                 ip = None
             if ip is None or not (ip.is_loopback or any(ip in n for n in networks)):
@@ -384,18 +386,26 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/login")
     def login(body: LoginRequest, request: Request):
-        # 5 wrong PINs from one address lock it out for 15 minutes, so a PIN can't be guessed.
-        who = request.client.host if request.client else "?"
+        # 5 wrong PINs from one address lock it out for 15 minutes, and 20 from anywhere lock out every
+        # address but this computer's, so a PIN can't be guessed from many addresses either.
+        who = client_ip(request) or "?"
         now = time.time()
         recent = [t for t in failed.get(who, []) if now - t < 900]
-        if len(recent) >= 5:
+        everyone = sum(1 for k, ts in failed.items() if not k.startswith(("127.", "::1")) for t in ts if now - t < 900)
+        try:
+            local = ipaddress.ip_address(who).is_loopback
+        except ValueError:
+            local = False
+        if len(recent) >= 5 or (everyone >= 20 and not local):
             raise HTTPException(429, "Too many wrong PINs. Try again in 15 minutes.")
         if not cfg.app_pin or not secrets.compare_digest(body.pin, cfg.app_pin):
             failed[who] = recent + [now]
             raise HTTPException(403, "wrong PIN")
         failed.pop(who, None)
         resp = JSONResponse({"ok": True})
-        resp.set_cookie("reel_session", session_token, max_age=60 * 60 * 24 * 365, httponly=True, samesite="strict")
+        https = request.headers.get("x-forwarded-proto") == "https" or request.url.scheme == "https"
+        resp.set_cookie("reel_session", session_token, max_age=60 * 60 * 24 * 365, httponly=True, samesite="strict",
+                        secure=https)
         return resp
 
     @app.get("/api/status")
@@ -408,6 +418,7 @@ def create_app(cfg: Config) -> FastAPI:
             "pexels": bool(current.pexels_api_key),
             "telegram": bool(current.telegram_bot_token and current.telegram_chat_id),
             "urls": [f"http://{ip}:{cfg.port}" for ip in lan_ips()],
+            "public_url": tunnel.state["url"], "public_error": tunnel.state["error"],
             "busy": jobs.busy(),
             "storage": str(current.output_dir),
             "version": running_version,
@@ -882,9 +893,6 @@ def print_banner(cfg: Config) -> None:
     print(f"  On this computer:  http://localhost:{cfg.port}")
     for url in urls:
         print(f"  On your phone:     {url}   (same Wi-Fi)")
-    ts = tailscale_ip()
-    if ts:
-        print(f"  From anywhere:     http://{ts}:{cfg.port}   (Tailscale, on your own devices)")
     if cfg.allowed_ips:
         print(f"  Only these addresses may open it: {cfg.allowed_ips} (and this computer)")
     print(f"  Videos are saved in: {cfg.output_dir}")
@@ -913,4 +921,5 @@ def serve(cfg: Config) -> None:
     cfg = load_settings(cfg)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     print_banner(cfg)
+    tunnel.start(cfg)
     uvicorn.run(create_app(cfg), host="0.0.0.0", port=cfg.port, log_level="warning")

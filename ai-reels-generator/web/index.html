@@ -1573,6 +1573,7 @@ async function loadSettings() {
     ["Telegram", st.telegram ? "On" : "Off"],
     ["Videos saved in", st.storage],
     ["Open on phone", st.urls.join("  ") || "Not on a network"],
+    ["From anywhere", st.public_url || st.public_error || "Off (REEL_TUNNEL in .env)"],
   ].map(([a, b]) => `<div><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join("");
 }
 
