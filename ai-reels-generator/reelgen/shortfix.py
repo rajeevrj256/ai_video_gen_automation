@@ -12,6 +12,7 @@ already fix only the flagged lines (longform.fix_long_script); this does the sam
 from __future__ import annotations
 
 import logging
+import re
 
 from pydantic import BaseModel, Field
 
@@ -37,8 +38,10 @@ class ScriptFixes(BaseModel):
 
 FIX_SYSTEM = """You correct a short-form video script. Change only the scenes the problems are \
 about, as little as needed, keeping the voice, the story, the hook and the length. Never invent a \
-figure: use web search to get it right, or drop the claim. A graphic's numbers must match its \
-scene's voiceover. Return only the scenes you changed."""
+figure: get it right or drop the claim. A graphic's numbers must match its scene's voiceover. \
+If a problem is only about the footage (the wrong person, place, flag or object on screen), change \
+only that scene's footage queries and repeat its voiceover and graphic word for word. Scene 1's \
+first sentence is the hook: keep it 12 words or fewer. Return only the scenes you changed."""
 
 
 def _numbered(script: ReelScript, mark: set[int] | None = None) -> str:
@@ -80,12 +83,53 @@ def fix_scenes(script: ReelScript, cfg: Config, issues: list[str], instructions:
     return fixed, changed
 
 
-def fact_check_scenes(script: ReelScript, cfg: Config, only: set[int]) -> VerifyResult:
-    """Fact-check only the scenes marked >> (just corrected); the rest was checked before."""
+def _said(script: ReelScript, i: int) -> str:
+    """What a scene says (voiceover, on-screen graphic words and figures); footage is not a claim."""
+    if i == 0:
+        return script.title
+    if not 1 <= i <= len(script.scenes):
+        return ""
+    s = script.scenes[i - 1]
+    g = s.graphic
+    return " | ".join([s.narration, "" if g.type == "none" else f"{g.headline} {g.label} "
+                       + " ".join(f"{p.label} {p.display}" for p in g.points)])
+
+
+def claims_changed(old: ReelScript, new: ReelScript, changed: set[int]) -> set[int]:
+    """The corrected scenes whose words or figures changed. Only those need a new fact-check; new
+    footage queries don't (a footage-only review fix used to fact-check 5 scenes again)."""
+    return {i for i in changed if _said(old, i) != _said(new, i)}
+
+
+def _facts(text: str) -> set[str]:
+    """Figures and names in a text: numbers and capitalised words, except a sentence's first word."""
+    found = set()
+    for sentence in re.split(r"(?<=[.!?|])\s+", text):
+        words = re.findall(r"\d[\d,.%]*|[A-Z][\w'-]*|\S+", sentence)
+        found |= {w.rstrip(".,") for k, w in enumerate(words) if w[0].isdigit() or (k > 0 and w[0].isupper())}
+    return found
+
+
+def new_facts(old: ReelScript, new: ReelScript, changed: set[int]) -> bool:
+    """Do the corrected scenes bring a figure or a name the script didn't already have? Softened or
+    removed claims don't, and are re-checked without web search (each search round costs ~100k tokens)."""
+    before = _facts(" ".join(_said(old, i) for i in range(len(old.scenes) + 1)))
+    return bool(_facts(" ".join(_said(new, i) for i in changed)) - before)
+
+
+def fact_check_scenes(script: ReelScript, cfg: Config, only: set[int], web: bool = True,
+                      earlier: list[str] | None = None) -> VerifyResult:
+    """Fact-check only the scenes marked >> (just corrected); the rest was checked before. Without
+    `web` (the fix only softened or dropped claims), the earlier findings are the evidence."""
     prompt = (f"Topic: {script.topic}\nThe writer's sources: {script.facts_checked}\n\n{_numbered(script, only)}\n\n"
               "Only the lines marked >> were just corrected; the others were already checked. Fact-check the "
               ">> lines (and any contradiction they create with the rest). Don't flag unmarked lines.")
-    check = ask(cfg.ai_backend, cfg.claude_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=True,
+    if earlier:
+        prompt += "\n\nThe earlier fact-check found (with sources):\n" + "\n".join(earlier)
+    if not web:
+        prompt += ("\n\nThe correction adds no new figure or name: check that the >> lines now fix what was found "
+                   "and claim nothing the earlier findings and sources don't support. Don't search the web.")
+    check = ask(cfg.ai_backend, cfg.claude_model, FACT_CHECK_SYSTEM, prompt, FactCheck, allow_web=web,
                 effort=cfg.claude_effort)
     result = VerifyResult()
     result.checks["fact_check"] = check.model_dump()
