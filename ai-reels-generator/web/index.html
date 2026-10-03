@@ -157,6 +157,11 @@
   .sv-lines { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
   .sv-lines div { background: var(--panel-2); border-radius: 8px; padding: 6px 10px; font-size: 14px; }
   .sv-lines b { color: var(--accent); margin-right: 6px; }
+  .cast-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+  .cast-row { display: grid; grid-template-columns: 1.2fr 1fr 1.6fr auto auto; gap: 6px; align-items: center; }
+  .cast-row input, .cast-row select { padding: 8px 10px; font-size: 14px; }
+  .cast-row button { padding: 8px 12px; }
+  @media (max-width: 620px) { .cast-row { grid-template-columns: 1fr 1fr; } }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
   #savePost { margin-top: 14px; }
@@ -385,8 +390,10 @@
         <div><label for="stCount">How many</label>
           <select id="stCount"><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
       </div>
-      <label for="stCast">Cast (one per line: Name - look; looks: boy, girl, man, woman, kid, old-man, old-woman)</label>
-      <textarea class="edit" id="stCast" rows="5"></textarea>
+      <label>Cast and voices</label>
+      <p class="hint">Each character's look and voice. "Auto" gives everyone a different voice; ▶ plays a sample at the chosen speed.</p>
+      <div id="stCastRows" class="cast-rows"></div>
+      <button type="button" class="mini" id="stAdd">+ Add character</button>
       <button class="primary" id="stBtn">✨ Make it</button>
       <p class="hint" id="stMsg"></p>
     </div>
@@ -641,7 +648,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -1616,9 +1623,61 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
     : "Vertical 9:16 for Reels and Shorts, with real footage.";
 });
 // Stick Stories (reelgen/stickstory.py): stick-figure comedy episodes and Shorts with a recurring cast.
-let stFormat = "long";
+let stFormat = "long", STV = null;
 const ST_CAST = "Ben - boy\nLily - girl\nMom - woman\nDad - man\nMr. Carter - man";
-try { $("#stCast").value = localStorage.getItem("stickCast2") || ST_CAST; } catch (e) { $("#stCast").value = ST_CAST; }
+const ST_LOOKS = ["boy", "girl", "man", "woman", "kid", "old-man", "old-woman"];
+let stCast = [];
+const stParse = (text) => text.split("\n").filter((r) => r.trim()).map((r) => {
+  const [name = "", look = "boy", voice = ""] = r.split(" - ").map((x) => x.trim());
+  return { name, look: ST_LOOKS.includes(look) ? look : "boy", voice };
+});
+const stSerialize = () => stCast.filter((c) => c.name.trim()).map((c) => `${c.name.trim()} - ${c.look}${c.voice ? " - " + c.voice : ""}`).join("\n");
+// The same rule as stickstory.assign_voices: a chosen voice, else the first for the look nobody uses yet.
+function stAuto() {
+  const taken = new Set(stCast.map((c) => c.voice).filter(Boolean)), out = [];
+  stCast.forEach((c) => {
+    if (c.voice) { out.push(c.voice); return; }
+    const pool = (STV && STV.pools[c.look]) || [];
+    const pick = pool.find((v) => !taken.has(v)) || Object.values((STV && STV.pools) || {}).flat().find((v) => !taken.has(v)) || pool[0] || "";
+    taken.add(pick); out.push(pick);
+  });
+  return out;
+}
+function stRender() {
+  const auto = stAuto(), names = (STV && STV.names) || {};
+  $("#stCastRows").innerHTML = stCast.map((c, i) => `
+    <div class="cast-row" data-i="${i}">
+      <input data-k="name" value="${esc(c.name)}" placeholder="Name">
+      <select data-k="look">${ST_LOOKS.map((l) => `<option ${l === c.look ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <select data-k="voice"><option value="">Auto – ${esc(names[auto[i]] || "…")}</option>${Object.entries(names).map(([v, n]) =>
+        `<option value="${v}" ${v === c.voice ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+      <button type="button" class="mini" data-play title="Play a sample">▶</button>
+      <button type="button" class="mini danger" data-del title="Remove">✕</button>
+    </div>`).join("");
+  try { localStorage.setItem("stickCast3", stSerialize()); } catch (e) {}
+}
+async function loadStickView() {
+  if (!STV) { STV = await api("/api/stick/voices"); stRender(); }
+}
+try { stCast = stParse(localStorage.getItem("stickCast3") || ST_CAST); } catch (e) { stCast = stParse(ST_CAST); }
+stRender();
+$("#stCastRows").addEventListener("input", (e) => {
+  const row = e.target.closest("[data-i]"); if (!row) return;
+  stCast[+row.dataset.i][e.target.dataset.k] = e.target.value;
+  if (e.target.dataset.k !== "name") stRender(); else try { localStorage.setItem("stickCast3", stSerialize()); } catch (err) {}
+});
+$("#stCastRows").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-i]"); if (!row) return;
+  const i = +row.dataset.i;
+  if (e.target.closest("[data-del]")) { stCast.splice(i, 1); stRender(); return; }
+  if (e.target.closest("[data-play]")) {
+    const voice = stCast[i].voice || stAuto()[i];
+    const a = new Audio(`/api/stick/voice-preview?voice=${encodeURIComponent(voice)}&speed=${$("#stSpeed").value}&name=${encodeURIComponent(stCast[i].name)}`);
+    e.target.textContent = "…"; a.oncanplay = () => (e.target.textContent = "▶"); a.onerror = () => { e.target.textContent = "▶"; toast("Couldn't play the sample"); };
+    a.play().catch(() => {});
+  }
+});
+$("#stAdd").onclick = () => { stCast.push({ name: "", look: "man", voice: "" }); stRender(); };
 document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
   stFormat = b.dataset.format;
   document.querySelectorAll("#stFormat button").forEach((x) => x.classList.toggle("on", x === b));
@@ -1626,8 +1685,7 @@ document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
 });
 $("#stBtn").onclick = async () => {
   const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), language: "english", speed: Number($("#stSpeed").value),
-                 cast: $("#stCast").value, count: Number($("#stCount").value) };
-  try { localStorage.setItem("stickCast2", body.cast); } catch (e) {}
+                 cast: stSerialize(), count: Number($("#stCount").value) };
   $("#stBtn").disabled = true;
   try {
     await api("/api/stick", { method: "POST", body: JSON.stringify(body) });

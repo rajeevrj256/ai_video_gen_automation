@@ -571,6 +571,23 @@ def create_app(cfg: Config) -> FastAPI:
                            "manual", style, length, captions=body.captions,
                            story_form=body.story_form if length != "short" else None)
 
+    @app.get("/api/stick/voices")
+    def stick_voices():
+        from .stickstory import VOICE_NAMES, VOICE_POOLS
+
+        return {"names": VOICE_NAMES, "pools": VOICE_POOLS}
+
+    @app.get("/api/stick/voice-preview")
+    def stick_voice_preview(voice: str, speed: float = 1.5, name: str = ""):
+        from .stickstory import voice_preview
+
+        try:
+            return FileResponse(voice_preview(cfg, voice, speed, name[:30]), media_type="audio/wav")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"Couldn't make the sample: {exc}")
+
     @app.post("/api/stick")
     def stick(body: StickRequestBody):
         from .stickstory import DEFAULT_CAST

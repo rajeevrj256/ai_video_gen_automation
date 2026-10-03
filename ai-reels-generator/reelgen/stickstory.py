@@ -57,6 +57,26 @@ VOICES = {
               "man": "hi-IN-MadhurNeural", "woman": "hi-IN-SwaraNeural",
               "old-man": "hi-IN-MadhurNeural", "old-woman": "hi-IN-SwaraNeural"},
 }
+# Voices to choose from for each look (English), first = the default. Two characters with the same look
+# get different voices automatically; the tab can also set each character's voice.
+VOICE_POOLS = {
+    "boy": ["en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural", "en-US-EricNeural"],
+    "girl": ["en-US-AvaMultilingualNeural", "en-US-EmmaMultilingualNeural", "en-US-AnaNeural"],
+    "kid": ["en-US-AnaNeural", "en-US-EmmaMultilingualNeural"],
+    "man": ["en-US-GuyNeural", "en-US-ChristopherNeural", "en-US-RogerNeural", "en-US-SteffanNeural",
+            "en-US-BrianMultilingualNeural", "en-US-EricNeural"],
+    "woman": ["en-US-JennyNeural", "en-US-AriaNeural", "en-US-MichelleNeural", "en-US-EmmaMultilingualNeural"],
+    "old-man": ["en-US-ChristopherNeural", "en-US-RogerNeural", "en-US-GuyNeural"],
+    "old-woman": ["en-US-AriaNeural", "en-US-MichelleNeural", "en-US-JennyNeural"],
+}
+VOICE_NAMES = {  # for the tab's voice picker
+    "en-US-AndrewMultilingualNeural": "Andrew (young man, warm)", "en-US-BrianMultilingualNeural": "Brian (young man, casual)",
+    "en-US-EricNeural": "Eric (man, light)", "en-US-GuyNeural": "Guy (man, deep)", "en-US-ChristopherNeural": "Christopher (man, mature)",
+    "en-US-RogerNeural": "Roger (man, older)", "en-US-SteffanNeural": "Steffan (man, calm)",
+    "en-US-AvaMultilingualNeural": "Ava (young woman, bright)", "en-US-EmmaMultilingualNeural": "Emma (young woman, cheerful)",
+    "en-US-AnaNeural": "Ana (child)", "en-US-JennyNeural": "Jenny (woman, friendly)", "en-US-AriaNeural": "Aria (woman, confident)",
+    "en-US-MichelleNeural": "Michelle (woman, soft)",
+}
 WORDS_PER_SECOND = 2.2  # dialogue with comic pauses
 
 
@@ -165,14 +185,37 @@ def _rate(speed: float) -> str:
 
 
 def parse_cast(text: str) -> list[dict]:
+    """'Name - look' or 'Name - look - voice' per line (a voice id from VOICE_NAMES; empty = automatic)."""
     out = []
     for row in (text or DEFAULT_CAST).splitlines():
         if not row.strip():
             continue
-        name, _, look = row.partition("-")
-        look = look.strip().lower() or "boy"
-        out.append({"id": re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-") or f"c{len(out)}",
-                    "name": name.strip(), "look": look if look in get_args(Look) else "boy"})
+        parts = [p.strip() for p in row.split(" - ")]
+        if len(parts) == 1 and "-" in row:  # 'Ben-boy' written without spaces
+            parts = [p.strip() for p in row.split("-", 1)]
+        name, look = parts[0], (parts[1].lower() if len(parts) > 1 else "boy")
+        voice = parts[2] if len(parts) > 2 and parts[2] in VOICE_NAMES else ""
+        out.append({"id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or f"c{len(out)}",
+                    "name": name, "look": look if look in get_args(Look) else "boy", "voice": voice})
+    return out
+
+
+def assign_voices(cast: list[dict], language: str = "english") -> dict[str, str]:
+    """Each character's voice: the one chosen in the tab, else the first voice for their look that no one
+    else uses yet (Dad and Mr. Carter are both 'man' but sound different)."""
+    if language != "english":
+        return {c["id"]: VOICES.get(language, VOICES["english"]).get(c["look"], VOICES["english"]["man"]) for c in cast}
+    taken = {c["voice"] for c in cast if c.get("voice")}
+    out = {}
+    for c in cast:
+        if c.get("voice"):
+            out[c["id"]] = c["voice"]
+            continue
+        pool = VOICE_POOLS.get(c["look"], VOICE_POOLS["man"])
+        pick = next((v for v in pool if v not in taken), None) \
+            or next((v for p in VOICE_POOLS.values() for v in p if v not in taken), pool[0])
+        out[c["id"]] = pick
+        taken.add(pick)
     return out
 
 
@@ -193,15 +236,18 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     short = req.format == "short"
     spots = SPOTS
     looks = {c.id: c.look for c in ep.cast}
-    voices = VOICES.get(req.language, VOICES["english"])
+    voices = VOICES.get(req.language, VOICES["english"])  # fallback for a character nobody assigned
     lines = [(si, li, ln) for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines)]
 
     # One take per character (their lines in order), cut per line: each voice stays consistent.
     progress("Recording the voices")
     audio: dict[tuple[int, int], object] = {}
+    given = {c["id"]: c for c in parse_cast(req.cast)}
+    cast = [{"id": c.id, "look": c.look, "voice": given.get(c.id, {}).get("voice", "")} for c in ep.cast]
+    voice_of = assign_voices(cast, req.language)
     for cid in sorted({ln.speaker for _, _, ln in lines if ln.speaker in looks and ln.line.strip()}):
         mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.line.strip()]
-        takes = synthesize_scenes([ln.line for _, _, ln in mine], voices.get(looks[cid], voices["man"]),
+        takes = synthesize_scenes([ln.line for _, _, ln in mine], voice_of.get(cid, voices["man"]),
                                   work / "audio" / cid, cfg.tts_engine, cfg.kokoro_voice, _rate(req.speed))
         for (si, li, _), sa in zip(mine, takes):
             audio[(si, li)] = sa
@@ -342,3 +388,17 @@ def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress
                 log.exception("Stick video %d failed", i + 1)
                 vp(f"Video {i + 1} failed: {exc}")
     return reports
+
+
+def voice_preview(cfg: Config, voice: str, speed: float, name: str = "") -> Path:
+    """A short sample of a voice at a speed, for the tab's ▶ button (cached)."""
+    if voice not in VOICE_NAMES:
+        raise ValueError("Unknown voice")
+    folder = cfg.output_dir / "voice_previews"
+    out = folder / f"{voice}-{_rate(speed)}.wav"
+    if not out.exists():
+        line = f"Hi, I'm {name or VOICE_NAMES[voice].split(' ')[0]}. Wait... did someone eat my sandwich?"
+        sa = synthesize_scenes([line], voice, folder / "tmp", cfg.tts_engine, cfg.kokoro_voice, _rate(speed))[0]
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(sa.path), out)
+    return out
