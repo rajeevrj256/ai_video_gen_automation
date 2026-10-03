@@ -36,6 +36,7 @@ def load(cfg: Config) -> list[dict]:
 # token steps (llm.STEP_NAMES), so time and tokens can be read side by side; None ends a step.
 STEP_WORDS = [
     ("Paused", ("paused",)),
+    ("Storyboard", ("storyboarding",)),
     ("Script", ("writing the script", "rewriting the script", "picking the topic")),
     ("Fact-check", ("fact-checking",)),
     ("Fact fixes", ("fixing", "revising", "removing what", "trimming")),

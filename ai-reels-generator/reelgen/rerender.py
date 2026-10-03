@@ -165,7 +165,7 @@ def _same_footage(folder: Path, work: Path, count: int) -> list[list[Path]] | No
 
 
 def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progress, same_voice: bool = False) -> dict:
-    from .longform import FFMPEG, LongScript, build_long, youtube_chapters
+    from .longform import FFMPEG, HOOK_SECONDS, SCRIPT_HOOK_SECONDS, LongScript, build_long, youtube_chapters
     from .pipeline import _render_slot
     from .video import _remotion_cli, _render_remotion
 
@@ -174,7 +174,8 @@ def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progres
     if props is None:
         old = folder / "props.json"
         look = json.loads(old.read_text(encoding="utf-8")).get("look") if old.exists() else None
-        props = build_long(script, cfg, work, progress, look=look)  # same look and music, new voice
+        hook_seconds = SCRIPT_HOOK_SECONDS if report.get("source") == "script" else HOOK_SECONDS
+        props = build_long(script, cfg, work, progress, look=look, hook_seconds=hook_seconds)  # same look and music, new voice
     else:
         progress("Same voice: keeping the recorded voiceover and timings, only the subtitles change")
     cli = _remotion_cli()
@@ -193,6 +194,10 @@ def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progres
                     "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
     (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
     # A new voice changes the timings, so the YouTube chapter stamps change too.
+    if report.get("source") == "script":  # your description stays as written; the stamps are separate
+        return {"duration_seconds": round(props["duration"], 1),
+                "chapters": [{"title": c["title"], "start": c["start"]} for c in props["chapters"]],
+                "youtube_chapters": youtube_chapters(props)}
     description = re.split(r"\n\nChapters:\n", report.get("youtube_description", ""), maxsplit=1)[0]
     return {"duration_seconds": round(props["duration"], 1),
             "chapters": [{"title": c["title"], "start": c["start"]} for c in props["chapters"]],

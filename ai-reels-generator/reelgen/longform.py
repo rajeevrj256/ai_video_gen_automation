@@ -66,6 +66,7 @@ VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
 SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx)
 HOOK_SECONDS = (25.0, 30.0)
+SCRIPT_HOOK_SECONDS = (0.0, 600.0)  # a Script Video's own hook keeps its natural length (no stretching)
 
 
 # ---------- the script ----------
@@ -493,12 +494,12 @@ def _seed(script: LongScript) -> int:
     return zlib.crc32((script.topic + script.youtube_title).encode("utf-8")) & 0x7FFFFFFF
 
 
-def _hook_timing(lengths: list[float | None]) -> list[float]:
+def _hook_timing(lengths: list[float | None], seconds: tuple[float, float] = HOOK_SECONDS) -> list[float]:
     """Shot lengths for the hook: each line plus a breath, silent shots a short hold, and the
     whole hook stretched or tightened into 25-30 s (the cut into the video included)."""
     base = [(ln + 0.45) if ln else 2.0 for ln in lengths]
     floor = [(ln + 0.15) if ln else 1.4 for ln in lengths]
-    lo, hi = HOOK_SECONDS[0] - HOOK_TAIL, HOOK_SECONDS[1] - HOOK_TAIL
+    lo, hi = seconds[0] - HOOK_TAIL, seconds[1] - HOOK_TAIL
     total = sum(base)
     if total < lo:  # hold the shots longer
         base = [b * lo / total for b in base]
@@ -522,7 +523,8 @@ def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int
 
 
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
-               voices: list[list[SceneAudio]] | None = None, look: dict | None = None) -> dict:
+               voices: list[list[SceneAudio]] | None = None, look: dict | None = None,
+               hook_seconds: tuple[float, float] = HOOK_SECONDS) -> dict:
     """Record the voice (one take per chapter) and lay out the hook and every beat on the timeline,
     with this video's look, music, ambience and sound design.
     `voices`: recordings to use instead (the user's own voiceover), one list per chapter.
@@ -542,7 +544,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook",
                                        cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate) if any(said) else [])
         audios = [next(takes) if x else None for x in said]
-        lengths = _hook_timing([media_seconds(a.path) if a else None for a in audios])
+        lengths = _hook_timing([media_seconds(a.path) if a else None for a in audios], hook_seconds)
         t = 0.0
         for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
             shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": h.text.strip(),
@@ -1086,8 +1088,11 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     best = _dec_long_best(resume.get("best"))
     start = resume.get("attempt", 1)
     meter_add_earlier(resume.get("usage"))
+    # A Script Video (reelgen/scriptvideo.py): the user's own approved script, title and description.
+    # It enters here already scripted: no writing, fact-check, preview review, final review or post text.
+    manual: dict | None = resume.get("manual")
     state = {"length": "long", "minutes": minutes, "topic": topic, "stamp": stamp, "style": cfg.video_style,
-             "candidates": [asdict(c) for c in candidates], "best": resume.get("best")}
+             "candidates": [asdict(c) for c in candidates], "best": resume.get("best"), "manual": manual}
 
     def save(**changes) -> None:
         state.update(changes, usage=meter_records())
@@ -1110,6 +1115,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 progress(f"{tag} Revising the lines the reviewer flagged (keeping the rest of the script)")
                 script, changed = fix_long_script(script, cfg, revise["issues"], revise["fix"])
                 checked_all, revise = True, None
+            elif stage == "scripted" and manual:
+                progress(f"{tag} Using your script as written (no rewriting or fact-checking)")
             elif stage:
                 progress(f"{tag} Resuming: {STAGE_DONE.get(stage, stage)} already done")
             else:
@@ -1168,10 +1175,11 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             else:
                 for old in ("audio", "sfx"):
                     shutil.rmtree(work / old, ignore_errors=True)
-                props = build_long(script, cfg, work, progress)
+                props = build_long(script, cfg, work, progress,
+                                   hook_seconds=SCRIPT_HOOK_SECONDS if manual else HOOK_SECONDS)
                 save(stage="voiced", props=props)
             preview = resume.get("preview") if attempt == start else None
-            if stage != "rendered" and resume.get("previewed") != attempt:
+            if stage != "rendered" and resume.get("previewed") != attempt and not manual:
                 script, props, preview = _preview_review(script, props, cfg, work, tag, progress, save)
                 save(previewed=attempt, preview=preview)
             progress(f"{tag} Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
@@ -1190,6 +1198,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
 
             progress(f"{tag} Verifying video quality")
             verdict = check_long_video(out, minutes)
+            if manual:  # your script sets the length; only a broken file, resolution or audio counts
+                verdict.issues = [i for i in verdict.issues if not i.startswith("Video is ")]
+                verdict.passed = not verdict.issues
             # Resolution, audio, a broken file: what a preview can't see and a new render can fix.
             # A length outside the target (8-10 or 5-6 minutes) comes from the voiceover, so rendering again can't change it.
             tech_ok = all(i.startswith("Video is ") for i in verdict.issues)
@@ -1201,7 +1212,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 if not preview["passed"]:
                     verdict.passed = False
                     verdict.issues += preview["issues"]
-            elif verdict.passed:
+            elif verdict.passed and not manual:
                 progress(f"{tag} Claude is reviewing the finished video")
                 _, review = review_long(out, script, props, cfg)
                 verdict.checks.update(review.checks)
@@ -1219,6 +1230,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             save(best=_enc_long_best(best))
             if verdict.passed:
                 progress(f"{tag} Passed verification (score {verdict.score})")
+                break
+            if manual:  # never rewrite your lines: report what's wrong instead of revising
+                progress(f"{tag} Done, but the file has problems (see the report): {'; '.join(verdict.issues)}")
                 break
             if preview is not None and tech_ok:
                 # Only review issues are left, and the preview already had its fix round: keep this
@@ -1240,7 +1254,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg")]:
             scratch.unlink(missing_ok=True)
         (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-        final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-long"
+        final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-{'script' if manual else 'long'}"
         move(work, final_dir)
         (final_dir / CHECKPOINT).unlink(missing_ok=True)
         (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")
@@ -1273,14 +1287,20 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "duration_seconds": round(props["duration"], 1),
             "editor": "remotion (Long)",
         }
-        progress("Claude is writing the title, description, chapters and tags")
-        try:
-            report.update(write_long_post(script, props, cfg))
-        except Exception as exc:
-            log.warning("Post text step failed: %s", exc)
-            report.update({"caption": "", "hashtags": [], "youtube_title": script.youtube_title,
-                           "youtube_description": "Chapters:\n" + youtube_chapters(props), "youtube_hashtags": [],
-                           "youtube_tags": [], "post_text_error": str(exc)[:300]})
+        if manual:  # your title and description, as written; the chapter stamps are offered separately
+            report.update({"source": "script", "topic_source": "your script", "caption": manual["description"],
+                           "hashtags": [], "youtube_title": manual["title"], "youtube_description": manual["description"],
+                           "youtube_chapters": youtube_chapters(props), "youtube_hashtags": [], "youtube_tags": [],
+                           "facts_checked": "Checked and approved by you before production."})
+        else:
+            progress("Claude is writing the title, description, chapters and tags")
+            try:
+                report.update(write_long_post(script, props, cfg))
+            except Exception as exc:
+                log.warning("Post text step failed: %s", exc)
+                report.update({"caption": "", "hashtags": [], "youtube_title": script.youtube_title,
+                               "youtube_description": "Chapters:\n" + youtube_chapters(props), "youtube_hashtags": [],
+                               "youtube_tags": [], "post_text_error": str(exc)[:300]})
         save_post_text(report, final_dir)
         report["usage"] = summarize_usage(meter_records())
         (final_dir / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

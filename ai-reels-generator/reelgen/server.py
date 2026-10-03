@@ -110,6 +110,8 @@ class JobManager:
             cfg.video_style = job["style"]
             if job.get("captions") is not None:
                 cfg.captions = bool(job["captions"])
+            if job.get("voice"):  # a Script Video's own voice choice
+                cfg.long_voice = job["voice"]
             if job.get("myvoice"):
                 from .myvoice import finish
                 r = job["myvoice"]
@@ -123,11 +125,17 @@ class JobManager:
                 reports = resume_batch(cfg, job["resume"], progress)
                 fresh = job["count"] - len(job["resume"])  # videos that never started before the pause
                 if fresh > 0 and not job.get("pause"):
-                    if job.get("length") in ("long", "medium"):
+                    if job.get("script_input"):  # stopped before its storyboard was saved: start it again
+                        from .scriptvideo import ScriptInput, run_script_job
+                        reports += run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
+                    elif job.get("length") in ("long", "medium"):
                         from .longform import run_long_batch
                         reports += run_long_batch(_long_cfg(cfg, job), fresh, job["topic"], progress)
                     else:
                         reports += run(cfg, fresh, job["topic"], progress)
+            elif job.get("script_input"):  # Script Video: the user's own script through the long pipeline
+                from .scriptvideo import ScriptInput, run_script_job
+                reports = run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
             elif job.get("length") in ("long", "medium"):
                 from .longform import run_long_batch
                 reports = run_long_batch(_long_cfg(cfg, job), job["count"], job["topic"], progress)
@@ -217,6 +225,16 @@ class GenerateRequest(BaseModel):
     style: str | None = None  # facts | story | comedy | mix; empty = the style in Settings
     length: str = "short"  # "short" (30s, 9:16), "medium" (5-6 min) or "long" (8-10 min), both 16:9 animated
     captions: bool | None = None  # subtitles; empty = the Settings value
+
+
+class ScriptVideoRequest(BaseModel):
+    """Script Video: the user's own finished, fact-checked title, description, hook and script."""
+    title: str
+    description: str = ""
+    hook: str = ""
+    script: str
+    voice: str | None = None  # empty = the long-video voice in Settings
+    captions: bool | None = None
 
 
 class PostEdit(BaseModel):
@@ -527,6 +545,19 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
                            "manual", style, length, captions=body.captions)
 
+    @app.post("/api/script-video")
+    def script_video(body: ScriptVideoRequest):
+        from .scriptvideo import parse_script
+
+        title, script = body.title.strip(), body.script.strip()
+        if not title or not script:
+            raise HTTPException(400, "The title and the script are needed.")
+        if not parse_script(script)[0]:
+            raise HTTPException(400, "The script has no lines to read.")
+        given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script}
+        return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
+                           captions=body.captions)
+
     @app.get("/api/jobs")
     def list_jobs():
         now = time.time()  # lets the page run its timers on this computer's clock
@@ -617,7 +648,8 @@ def create_app(cfg: Config) -> FastAPI:
         if not folders and not fresh:
             raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
         return jobs.submit(job["topic"], len(folders) + fresh, "resume", job.get("style"), job.get("length", "short"),
-                           resume=folders)
+                           resume=folders, script_input=job.get("script_input"), voice=job.get("voice"),
+                           captions=job.get("captions"))
 
     @app.get("/api/automations")
     def list_automations():

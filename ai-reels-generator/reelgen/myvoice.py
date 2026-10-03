@@ -380,7 +380,7 @@ def _render_short(cfg: Config, folder: Path, work: Path, report: dict, script: d
 
 def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: dict, scenes: list[SceneAudio],
                  progress: Progress) -> None:
-    from .longform import LongScript, build_long
+    from .longform import HOOK_SECONDS, SCRIPT_HOOK_SECONDS, LongScript, build_long
     from .video import _remotion_cli, _render_remotion
 
     ls = LongScript.model_validate(script)
@@ -397,7 +397,8 @@ def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: di
         voices.append(chunk)
     old = folder / "props.json"
     look = json.loads(old.read_text(encoding="utf-8")).get("look") if old.exists() else None
-    props = build_long(ls, cfg, work, progress, voices=voices, look=look)
+    props = build_long(ls, cfg, work, progress, voices=voices, look=look,
+                       hook_seconds=SCRIPT_HOOK_SECONDS if report.get("source") == "script" else HOOK_SECONDS)
     cli = _remotion_cli()
     if cli is None:
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")

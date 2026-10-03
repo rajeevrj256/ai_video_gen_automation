@@ -145,6 +145,12 @@
   textarea.edit, input.edit { width: 100%; font: inherit; font-size: 15px; line-height: 1.45; color: var(--text);
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; resize: vertical; }
   textarea.edit:focus, input.edit:focus { border-color: var(--accent); outline: none; }
+  #svTabs { margin-bottom: 6px; }
+  .sv-lines { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .sv-lines div { background: var(--panel-2); border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+  .sv-lines b { color: var(--accent); margin-right: 6px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
   #savePost { margin-top: 14px; }
   /* next to the duration, so it never covers the title burned into the thumbnail */
   .card .postbadge { position: absolute; top: 8px; right: 52px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
@@ -293,6 +299,46 @@
     <div id="unfinished"></div>
     <button id="clearJobs" class="mini" hidden style="margin:4px 0 10px">🧹 Clear finished and failed jobs</button>
     <div id="jobs"></div>
+  </section>
+
+  <section class="view" id="view-script">
+    <div class="panel">
+      <h2>Script Video</h2>
+      <p class="hint">Your own finished script, made into an animated 16:9 video with the long-video pipeline. What you
+        write here is used exactly as written: no rewriting and no fact-checking. Claude only plans the visuals, sounds,
+        music and the hook's shots (one call, no web search).</p>
+      <div class="segmented" id="svTabs">
+        <button data-sv="details" class="on">📝 Title &amp; description</button><button data-sv="hook">⚡ Hook</button><button data-sv="script">📜 Script</button>
+      </div>
+      <div class="sv-pane" data-pane="details">
+        <label for="sv-title">Title</label>
+        <input class="edit" id="sv-title" maxlength="100" placeholder="The YouTube title">
+        <label for="sv-desc">Description</label>
+        <textarea class="edit" id="sv-desc" rows="8" placeholder="The YouTube description, as it should be posted"></textarea>
+      </div>
+      <div class="sv-pane" data-pane="hook" hidden>
+        <label for="sv-hook">Hook</label>
+        <textarea class="edit" id="sv-hook" rows="6" placeholder="The trailer before the video: a few short, punchy lines"></textarea>
+        <p class="hint">Spoken as written, before the video starts. Claude turns each line into a shot: what we see, the
+          words slammed on screen, camera, sounds and the trailer music, and may add a silent shot or two for pacing.
+          It runs as long as your lines take (no stretching).</p>
+        <div id="sv-hookLines" class="sv-lines"></div>
+      </div>
+      <div class="sv-pane" data-pane="script" hidden>
+        <label for="sv-script">Full script</label>
+        <textarea class="edit" id="sv-script" rows="18" placeholder="The narration, paragraph by paragraph.&#10;&#10;Optional chapter headings on their own line:&#10;## How It Started"></textarea>
+        <p class="hint">Mark chapters with a heading on its own line (<b>## How It Started</b> or <b>Chapter 2: The Money</b>);
+          otherwise Claude groups the lines into chapters. Write numbers the way they should be spoken.</p>
+        <p class="hint" id="sv-stats"></p>
+      </div>
+      <div class="grid2">
+        <div><label for="sv-voice">Voice</label><select id="sv-voice"></select></div>
+        <div><label>Subtitles</label>
+          <div class="segmented" id="sv-cc"><button data-cc="true" class="on">💬 On</button><button data-cc="false">🚫 Off</button></div></div>
+      </div>
+      <button class="primary" id="svBtn">🎬 Make the video</button>
+      <p class="hint" id="sv-msg"></p>
+    </div>
   </section>
 
   <section class="view" id="view-history">
@@ -463,6 +509,7 @@
 <nav id="nav">
   <button data-view="videos" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="9" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/></svg>Videos</button>
   <button data-view="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Create</button>
+  <button data-view="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Script</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
@@ -536,7 +583,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -751,6 +798,8 @@ async function openVideo(id) {
     <input class="edit" id="f-yttitle" maxlength="100" value="${esc(v.youtube_title)}">
     <div class="copyhead"><label for="f-ytdesc">Description</label><button class="mini" data-copy="ytDesc">Copy description + hashtags</button></div>
     <textarea class="edit" id="f-ytdesc" rows="${v.format === "long" ? 14 : 5}">${esc(v.youtube_description || v.caption)}</textarea>
+    ${v.youtube_chapters ? `<label>Chapter timestamps (add them to the description if you want YouTube chapters)</label>
+    <textarea class="edit" rows="6" readonly>${esc(v.youtube_chapters)}</textarea>` : ""}
     <label for="f-ythash">Description hashtags (first 3 show above the title)</label>
     <input class="edit" id="f-ythash" value="${esc((v.youtube_hashtags || (v.format === "long" ? [] : ["shorts"])).map((h) => "#" + h).join(" "))}">
     <div class="copyhead"><label for="f-yttags">Tags (YouTube Tags field, comma separated)</label><button class="mini" data-copy="ytTags">Copy</button></div>
@@ -1033,6 +1082,10 @@ const STEPS = [
   ["Voice", /voiceover/], ["Footage", /footage/], ["Preview", /Previewing the edit|preview frames|^(\[V\d+\] )?\[attempt \d+\/\d+\] Preview/],
   ["Editing", /Editing/], ["Review", /Verifying|reviewing the finished|title, description/],
 ];
+// A Script Video skips writing, fact-checking and review: its own steps.
+const SCRIPT_STEPS = [["Storyboard", /storyboarding/], ["Voice", /voiceover|Recording the hook/], ["Editing", /Editing/],
+  ["Checks", /Verifying/]];
+const stepsOf = (j) => j.length === "script" ? SCRIPT_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
@@ -1080,7 +1133,7 @@ function videosOf(j) {
       if (t !== v.attempt) v.step = -1; // a new try starts over at Script
       v.attempt = t;
     }
-    STEPS.forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
+    stepsOf(j).forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
     if (/^Done/.test(m)) v.state = /did not pass/.test(m) ? "check" : "done";
     if (/^Video \d+ failed:/.test(m)) { v.state = "failed"; v.error = m.replace(/^Video \d+ failed: /, ""); }
   });
@@ -1101,7 +1154,7 @@ function jobCard(j) {
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
-    + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : "");
+    + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script" : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -1109,7 +1162,7 @@ function jobCard(j) {
   if (running && j.count === 1 && vids.length) {
     // One video: the big step tracker.
     const v = vids[0];
-    body = `<div class="steps">${STEPS.map(([name], i) => {
+    body = `<div class="steps">${stepsOf(j).map(([name], i) => {
         const cls = i < v.step ? "done" : i === v.step ? "now" : "";
         const dot = i < v.step ? "✓" : i === v.step ? '<span class="spinner"></span>' : "";
         return `<div class="step ${cls}"><div class="dot">${dot}</div>${name}</div>`;
@@ -1128,7 +1181,7 @@ function jobCard(j) {
         : { done: "✅", check: "⚠️", failed: "❌", running: '<span class="spinner"></span>' }[v.state];
       const time = v.state === "running" ? liveSince(v.start) : mmss(v.end - v.start);
       rows.push(`<div class="vrow ${v.state}"><b>${n}</b>${icon}
-        <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.paused ? `Paused till ${v.paused}` : v.step >= 0 ? STEPS[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
+        <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.paused ? `Paused till ${v.paused}` : v.step >= 0 ? stepsOf(j)[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
         ${v.state === "running" && !v.paused ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
         ${vtok[n] ? `<span class="vtok">🪙 ${fmtTok(vtok[n])}</span>` : ""}<span class="vtime">${time}</span></div>`);
     }
@@ -1170,7 +1223,7 @@ async function loadUnfinished() {
       <h2>Unfinished videos</h2>
       <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
-          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : "📱 Short"}</span></div>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
@@ -1320,7 +1373,7 @@ async function loadHistory() {
     const mins = r.finished && r.created ? mmss(r.finished - r.created) : "";
     return `<div class="panel job ${esc(r.status)}">
       <div class="head"><div><div class="title">${TRIGGER(r.trigger || "manual")} · ${r.topic ? esc(r.topic) : "Trending topics"}
-          ${STYLE_TAG[r.style] ? " · " + STYLE_TAG[r.style] : ""}${r.length === "long" ? " · 🎬 Long" : r.length === "medium" ? " · 🎞️ Medium" : ""}</div>
+          ${STYLE_TAG[r.style] ? " · " + STYLE_TAG[r.style] : ""}${r.length === "long" ? " · 🎬 Long" : r.length === "medium" ? " · 🎞️ Medium" : r.length === "script" ? " · 📜 Your script" : ""}</div>
         <div class="sub">${new Date(r.created * 1000).toLocaleString()}${mins ? " · took " + mins : ""} · ${r.made} of ${r.count} made</div></div>
         <span class="pill ${esc(r.status)}">${LABEL[r.status] || esc(r.status)}</span></div>
       ${usageHtml({ steps, total: r.usage.total.tokens, cost: r.usage.total.cost_usd }, "Total")}
@@ -1459,6 +1512,62 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
     ? "16:9 for YouTube, 5–6 minutes: the same animated style as long videos with 4–5 chapters. Faster to make and uses fewer tokens. Jokes become true stories at this length."
     : "Vertical 9:16 for Reels and Shorts, with real footage.";
 });
+// Script Video: your own title, description, hook and script through the long-video pipeline.
+const SV_KEYS = { title: "#sv-title", description: "#sv-desc", hook: "#sv-hook", script: "#sv-script" };
+let svCc = true;
+const svWords = (t) => (t.trim().match(/\S+/g) || []).length;
+// Roughly how the server cuts the hook (reelgen/scriptvideo.parse_hook), for a live look at the shots.
+const svHookLines = (t) => (t.replace(/\s+/g, " ").trim().match(/[^.!?…]+[.!?…]*["'”’)\]]*/g) || [])
+  .map((x) => x.trim()).filter(Boolean);
+function svUpdate() {
+  const hook = svHookLines($("#sv-hook").value);
+  $("#sv-hookLines").innerHTML = hook.length ? `<span class="hint">Spoken lines (each becomes at least one shot; a long one is split at a comma):</span>`
+    + hook.map((h, i) => `<div><b>H${i + 1}</b>${esc(h)}</div>`).join("") : "";
+  const text = $("#sv-script").value;
+  const heads = text.split("\n").filter((l) => /^\s*(#+\s*\S|(chapter|part)\s+\w+)/i.test(l));
+  const words = svWords(text) - heads.reduce((n, l) => n + svWords(l), 0);
+  $("#sv-stats").textContent = words ? `${words} words ≈ ${(words / 2.5 / 60).toFixed(1)} min of narration`
+    + (heads.length ? ` · ${heads.length} chapter heading(s) marked` : " · chapters chosen by Claude") : "";
+  try { localStorage.setItem("scriptVideoDraft", JSON.stringify(Object.fromEntries(Object.entries(SV_KEYS).map(([k, sel]) => [k, $(sel).value])))); } catch (e) {}
+}
+async function loadScriptView() {
+  if (!$("#sv-voice").options.length) {
+    $("#sv-voice").innerHTML = ($("#s-long_voice") || {}).innerHTML || "";
+    const s = await api("/api/settings");
+    if (s.long_voice) $("#sv-voice").value = s.long_voice;
+    svCc = s.captions !== false;
+    document.querySelectorAll("#sv-cc button").forEach((x) => x.classList.toggle("on", (x.dataset.cc === "true") === svCc));
+  }
+  svUpdate();
+}
+try {
+  const draft = JSON.parse(localStorage.getItem("scriptVideoDraft") || "{}");
+  Object.entries(SV_KEYS).forEach(([k, sel]) => { if (draft[k]) $(sel).value = draft[k]; });
+} catch (e) {}
+Object.values(SV_KEYS).forEach((sel) => $(sel).addEventListener("input", svUpdate));
+document.querySelectorAll("#svTabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("#svTabs button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".sv-pane").forEach((p) => p.hidden = p.dataset.pane !== b.dataset.sv);
+});
+document.querySelectorAll("#sv-cc button").forEach((b) => b.onclick = () => {
+  svCc = b.dataset.cc === "true";
+  document.querySelectorAll("#sv-cc button").forEach((x) => x.classList.toggle("on", x === b));
+});
+$("#svBtn").onclick = async () => {
+  const body = { title: $("#sv-title").value, description: $("#sv-desc").value, hook: $("#sv-hook").value,
+                 script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc };
+  if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
+  $("#svBtn").disabled = true;
+  try {
+    await api("/api/script-video", { method: "POST", body: JSON.stringify(body) });
+    $("#sv-msg").textContent = "Started. Follow it on the Create tab.";
+    show("create");
+  } catch (e) {
+    $("#sv-msg").textContent = "Couldn't start it: " + e.message;
+  } finally {
+    $("#svBtn").disabled = false;
+  }
+};
 setStyle("facts");
 api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions !== false); }).catch(() => {}); // start from Settings
 $("#genBtn").onclick = async () => {
