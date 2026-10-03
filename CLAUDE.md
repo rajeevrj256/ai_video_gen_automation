@@ -78,7 +78,9 @@ Set these in `ai-reels-generator/.env`. They're read by `video.py`:
 - `REEL_GL=egl` (Linux): GPU for the headless browser. If renders come out black or crash, remove it.
 - `REEL_HWACCEL=if-possible`: NVENC encoding on NVIDIA GPUs. On machines without a
   usable NVIDIA GPU, Remotion fails instead of falling back, so `video.py` retries once
-  without it.
+  without it (and with `--crf` back). `--crf` silently disables NVENC (Remotion falls back to
+  libx264), so with hardware acceleration `video.py` drops `--crf` and passes `--video-bitrate`
+  (`REEL_GPU_BITRATE`, default 8M long / 12M Shorts). Check Task Manager's "Video Encode" graph.
 - Kokoro (offline voice) runs on CPU through onnxruntime. For GPU on Windows you could
   swap in `onnxruntime-directml`. Not done yet: measure first, since voice takes only a
   few seconds anyway.

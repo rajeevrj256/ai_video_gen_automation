@@ -258,6 +258,13 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
             value = str(max(1, os.cpu_count() or 1))
         if value:
             cmd.append(f"{flag}={value}")
+    if any(a.startswith("--hardware-acceleration=") for a in cmd):
+        # Remotion turns GPU encoding (NVENC) off whenever --crf is given ("crf is not supported with
+        # hardware acceleration"), so the GPU sat idle while the CPU encoded. NVENC takes a bitrate:
+        # REEL_GPU_BITRATE, default 8M for 16:9 long videos (flat animation) and 12M for Shorts (footage).
+        default = "8M" if composition == "Long" else "12M"
+        bitrate = os.environ.get("REEL_GPU_BITRATE", "").strip() or default
+        cmd = [a for a in cmd if not a.startswith("--crf=")] + [f"--video-bitrate={bitrate}"]
     log.info("Rendering with Remotion: %s", " ".join(cmd))
     proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
@@ -266,7 +273,7 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
         # GPU encoding (NVENC) fails outright on machines without a usable NVIDIA GPU
         # rather than falling back, so retry once with normal CPU encoding.
         log.warning("GPU encoding failed; rendering again with CPU encoding")
-        cmd = [a for a in cmd if a not in gpu_encode]
+        cmd = [a for a in cmd if a not in gpu_encode and not a.startswith("--video-bitrate=")] + [f"--crf={crf}"]
         proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out_path.exists():
