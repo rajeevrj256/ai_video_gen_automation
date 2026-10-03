@@ -64,7 +64,7 @@ cd ../../remotion-studio && npm run studio / npm run typecheck
 | Moving the project / jobs list | Checkpoints hold absolute paths; `fsutil.rebase` points them at the folder's new place on resume, and a stage whose files are gone is redone. Job cards have "Remove from list" (optionally deleting the unfinished video), "Clear finished and failed jobs", and Unfinished videos have "Discard". |
 | `sample-videos/<id>/` | Example videos shipped in the repo (app video folders: report, script, props, reel.mp4 under GitHub's 100 MB limit). `server.import_samples` copies each into the library once on start (`<output>/samples_imported.json`), so a deleted one stays deleted. |
 | `automations.py` | Several scheduled automations in `<output>/automations.json` (name, time, days, count, style, length, topic, `last_run`), run by `server.scheduler`; the old single `schedule_time` becomes the first one. |
-| `server.py`, `web/` | Local app, job queue, automations API, PIN. |
+| `server.py`, `web/` | Local app, job queue, automations API, PIN (5 wrong PINs from one address = 15 min lockout). **Watching from outside home**: Tailscale on the PC and the iPhone (no port forwarding, encrypted; the banner prints the PC's 100.x address via `tailscale_ip`), and `REEL_ALLOWED_IPS` (IPs/CIDRs, e.g. the phone's 100.x or 100.64.0.0/10) blocks every other address with 403, the page included; this computer is always allowed. Never suggest opening a router port: the app is plain http. |
 
 The reels editor is `ai-reels-generator/remotion/` (Remotion **4.0.529**, pinned; the
 Studio project uses `^4.0.0`, so keep versions separate). Props shape: `src/types.ts`.

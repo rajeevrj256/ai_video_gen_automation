@@ -8,6 +8,7 @@ like an app.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -188,6 +189,31 @@ def scheduler(jobs: JobManager) -> None:
 
 # ---------- helpers ----------
 
+def allowed_networks(spec: str) -> list:
+    """REEL_ALLOWED_IPS ('100.101.102.103, 192.168.1.0/24') as networks; a bad entry is skipped with a warning."""
+    nets = []
+    for part in re.split(r"[,\s]+", spec or ""):
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            log.warning("REEL_ALLOWED_IPS: '%s' is not an IP address or network; ignored", part)
+    return nets
+
+
+def tailscale_ip() -> str:
+    """This computer's Tailscale address (100.x), if Tailscale is installed and connected."""
+    for exe in ("tailscale", r"C:\Program Files\Tailscale\tailscale.exe"):
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=5).stdout.split()
+            if out:
+                return out[0]
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return ""
+
+
 def lan_ips() -> list[str]:
     ips = set()
     try:
@@ -337,8 +363,19 @@ def create_app(cfg: Config) -> FastAPI:
     # Cookie value is a random session secret, so the PIN itself is never stored in the browser.
     session_token = secrets.token_urlsafe(24)
 
+    networks = allowed_networks(cfg.allowed_ips)
+    failed: dict[str, list[float]] = {}  # wrong PINs per address, for the lockout
+
     @app.middleware("http")
     async def require_pin(request: Request, call_next):
+        # Only the addresses in REEL_ALLOWED_IPS (and this computer) get anything at all, the page included.
+        if networks:
+            try:
+                ip = ipaddress.ip_address((request.client.host if request.client else "") or "0.0.0.0")
+            except ValueError:
+                ip = None
+            if ip is None or not (ip.is_loopback or any(ip in n for n in networks)):
+                return JSONResponse({"detail": "not allowed from this address"}, status_code=403)
         path = request.url.path
         public = not path.startswith(("/api/", "/media/")) or path == "/api/login"
         if cfg.app_pin and not public and request.cookies.get("reel_session") != session_token:
@@ -346,9 +383,17 @@ def create_app(cfg: Config) -> FastAPI:
         return await call_next(request)
 
     @app.post("/api/login")
-    def login(body: LoginRequest):
+    def login(body: LoginRequest, request: Request):
+        # 5 wrong PINs from one address lock it out for 15 minutes, so a PIN can't be guessed.
+        who = request.client.host if request.client else "?"
+        now = time.time()
+        recent = [t for t in failed.get(who, []) if now - t < 900]
+        if len(recent) >= 5:
+            raise HTTPException(429, "Too many wrong PINs. Try again in 15 minutes.")
         if not cfg.app_pin or not secrets.compare_digest(body.pin, cfg.app_pin):
+            failed[who] = recent + [now]
             raise HTTPException(403, "wrong PIN")
+        failed.pop(who, None)
         resp = JSONResponse({"ok": True})
         resp.set_cookie("reel_session", session_token, max_age=60 * 60 * 24 * 365, httponly=True, samesite="strict")
         return resp
@@ -837,6 +882,11 @@ def print_banner(cfg: Config) -> None:
     print(f"  On this computer:  http://localhost:{cfg.port}")
     for url in urls:
         print(f"  On your phone:     {url}   (same Wi-Fi)")
+    ts = tailscale_ip()
+    if ts:
+        print(f"  From anywhere:     http://{ts}:{cfg.port}   (Tailscale, on your own devices)")
+    if cfg.allowed_ips:
+        print(f"  Only these addresses may open it: {cfg.allowed_ips} (and this computer)")
     print(f"  Videos are saved in: {cfg.output_dir}")
     ai = describe_backend(cfg.ai_backend)
     print(f"  AI: {ai}")

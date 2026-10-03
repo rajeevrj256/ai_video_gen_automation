@@ -99,6 +99,9 @@ class Config:
     # Local app (python -m reelgen serve).
     port: int = field(default_factory=lambda: int(_env("REEL_PORT", "8765")))
     app_pin: str = field(default_factory=lambda: _env("REEL_APP_PIN"))
+    # Who may open the app: IPs or networks (CIDR), comma-separated; empty = anyone who can reach it.
+    # This computer is always allowed. For Tailscale: the phone's 100.x address, or 100.64.0.0/10.
+    allowed_ips: str = field(default_factory=lambda: _env("REEL_ALLOWED_IPS"))
     # Daily auto-generation time in 24h local time, e.g. "08:30". Empty = off.
     schedule_time: str = field(default_factory=lambda: _env("REEL_SCHEDULE"))
     # Videos made at the same time (1-3). Claude/download waits overlap; editing takes turns.
