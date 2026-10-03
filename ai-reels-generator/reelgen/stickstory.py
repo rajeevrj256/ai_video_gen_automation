@@ -124,6 +124,8 @@ class SLine(BaseModel):
 class SScene(BaseModel):
     setting: Setting
     sign: str = Field(default="", description="A word on the set (a door sign, the board, a shop name), or empty.")
+    washing: bool = Field(default=False, description="Kitchen only: true only when someone in this scene is washing "
+                          "dishes at the sink (draws running water and soap foam in front of them). Otherwise false.")
     lines: list[SLine]
 
 
@@ -171,8 +173,9 @@ Clean, family-friendly humour that anyone can relate to. No politics, religion, 
 about groups, or anything mean-spirited. Never use these phrases: {", ".join(AI_CLICHES)}.
 
 The lines appear as small subtitles under the scene, so keep each one short (a few words to one sentence). \
-Use the kitchen sink (washing dishes), the sofa, the classroom desks or the bathroom door as the stage for \
-everyday situations.
+Pick the setting each scene needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
+bathroom, kitchen) and vary it between episodes: don't open in the same place as the recent episodes listed. \
+Washing dishes at the sink is one situation among many, only when the story is about it (set 'washing').
 
 Staging: every line lists everyone on screen with their spot, pose, face and facing (toward who they talk \
 to). Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
@@ -273,7 +276,8 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
                    "propText": a.prop_text[:6], "action": a.action} for a in ln.actors if a.id in looks]
         shots.append({"start": round(t, 3), "duration": duration, "scene": si, "setting": scene.setting,
-                      "sign": scene.sign or None, "caption": ln.caption or None, "camera": ln.camera,
+                      "sign": scene.sign or None,
+                      "washing": scene.setting == "kitchen" and scene.washing, "caption": ln.caption or None, "camera": ln.camera,
                       "focus": ln.focus or None, "actors": actors,
                       "speaker": ln.speaker if sa else None, "text": ln.line if sa else None, "words": words,
                       "audio": rel(sa.path) if sa else None, "lead": lead})
@@ -354,7 +358,8 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         report["usage"] = summarize_usage(meter_records())
         (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        _history(cfg).write_text(json.dumps((recent + [ep.title])[-60:], ensure_ascii=False), encoding="utf-8")
+        places = ", ".join(dict.fromkeys(sc.setting for sc in ep.scenes))
+        _history(cfg).write_text(json.dumps((recent + [f"{ep.title} (in: {places})"])[-60:], ensure_ascii=False), encoding="utf-8")
         progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
         return report
     except Exception:

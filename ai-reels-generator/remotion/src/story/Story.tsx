@@ -149,7 +149,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
             <Figure key={a.id} a={a} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
-          <SetFront setting={shot.setting} xs={shot.actors.map((a) => a.x)} t={t} />
+          <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} />
         </g>
       </svg>
       {speaker && shot.text && dialogue === 'subtitle' ? (
@@ -449,8 +449,9 @@ const EmoteView: React.FC<{emote: Emote; t: number; head: Pt}> = ({emote, t, hea
 
 const COUNTER = 190; // the kitchen counter's height: it hides the legs, the scene reads as a mid shot
 
-// What stands in front of the cast: the kitchen counter with a running tap and soap foam in the sink.
-const SetFront: React.FC<{setting: Setting; xs: number[]; t: number}> = ({setting, xs, t}) => {
+// What stands in front of the cast: the kitchen counter; its tap, running water and soap foam only
+// when the scene is about washing dishes (otherwise every kitchen scene looked like the same dish gag).
+const SetFront: React.FC<{setting: Setting; washing: boolean; xs: number[]; t: number}> = ({setting, washing, xs, t}) => {
   if (setting !== 'kitchen') return null;
   const top = FLOOR - COUNTER;
   const left = xs.length ? Math.min(...xs) : 800;
@@ -461,13 +462,13 @@ const SetFront: React.FC<{setting: Setting; xs: number[]; t: number}> = ({settin
       <rect x={-400} y={top} width={W + 800} height={H + 400} fill={PAPER} />
       <line x1={-400} y1={top} x2={W + 400} y2={top} stroke={INK} strokeWidth={SET_LINE + 1} />
       <g stroke={INK} strokeWidth={SET_LINE} fill="#fff" strokeLinejoin="round">
-        <path d={`M ${tapX} ${top} v -110 h 70 v 30 h -14 v -16 h -42 v 96 Z`} />
-        <rect x={tapX - 16} y={top - 128} width={60} height={14} rx={6} />
-        {[0, 1, 2].map((k) => (
+        {washing && <path d={`M ${tapX} ${top} v -110 h 70 v 30 h -14 v -16 h -42 v 96 Z`} />}
+        {washing && <rect x={tapX - 16} y={top - 128} width={60} height={14} rx={6} />}
+        {washing && [0, 1, 2].map((k) => (
           <line key={k} x1={tapX + 56 + k * 7} y1={top - 66} x2={tapX + 60 + k * 9} y2={top - 8} stroke="#7fb8e0" strokeWidth={3}
             strokeDasharray="10 8" strokeDashoffset={-t * 120 - k * 6} />
         ))}
-        {foam.map(([x, y, r], i) => <circle key={i} cx={x} cy={y} r={r} />)}
+        {washing && foam.map(([x, y, r], i) => <circle key={i} cx={x} cy={y} r={r} />)}
       </g>
     </g>
   );

@@ -41,6 +41,7 @@ export type Shot = {
   scene: number; // a new scene number = a new place (a cut with a whoosh)
   setting: Setting;
   sign?: string; // a word on the set (a door sign, a board, a shop name)
+  washing?: boolean; // kitchen: running water and soap foam in the sink (only when someone washes dishes)
   caption?: string; // meme caption at the top ("POV: ...")
   camera: Camera;
   focus?: string; // actor id the camera frames on 'close'

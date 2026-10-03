@@ -21,7 +21,7 @@ export const storyDemoProps: StoryProps = {
       actors: [a('raju', 760, {face: 'shock', emote: '!'}), a('mom', 1180, {facing: -1, pose: 'point', face: 'angry', emote: 'anger'})]}),
     shot(6, {scene: 2, setting: 'classroom', sign: 'EXAM', speaker: 'raju', text: 'I studied the wrong chapter.', words: words('I studied the wrong chapter.'),
       actors: [a('raju', 960, {pose: 'facepalm', face: 'sad'})]}),
-    shot(9, {scene: 3, setting: 'kitchen', speaker: 'mom', text: 'Hey, can I see your phone real quick?', words: words('Hey, can I see your phone real quick?'),
+    shot(9, {scene: 3, setting: 'kitchen', washing: true, speaker: 'mom', text: 'Hey, can I see your phone real quick?', words: words('Hey, can I see your phone real quick?'),
       actors: [a('mom', 880, {face: 'neutral'}), a('raju', 1080, {facing: -1, face: 'nervous', emote: 'sweat'})]}),
     shot(12, {scene: 4, setting: 'bathroom', camera: 'close', focus: 'raju', speaker: 'raju', text: 'Hiding here till dad sleeps.', words: words('Hiding here till dad sleeps.'),
       actors: [a('raju', 1300, {face: 'nervous', emote: 'sweat', facing: -1})]}),
