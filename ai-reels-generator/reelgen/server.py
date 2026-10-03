@@ -241,6 +241,11 @@ class LicenceEdit(BaseModel):
     credit: str = ""
 
 
+class LicenceAll(BaseModel):
+    licence: str
+    only_unknown: bool = True
+
+
 class StickRequestBody(BaseModel):
     """Stick Stories: a stick-figure comedy episode (16:9) or Short (9:16)."""
     idea: str = ""
@@ -749,6 +754,15 @@ def create_app(cfg: Config) -> FastAPI:
         from . import media
 
         return media.LICENCES
+
+    @app.put("/api/library/licences")
+    def set_all_library_licences(body: LicenceAll):
+        from . import media
+
+        try:
+            return {"changed": media.set_all_licences(cfg, body.licence, body.only_unknown)}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     @app.post("/api/library/{kind}")
     async def upload_to_library(kind: str, name: str, request: Request, licence: str = "unknown", credit: str = ""):

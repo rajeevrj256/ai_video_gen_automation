@@ -561,6 +561,11 @@
         <div><label for="lib-licence">Licence of the files you add</label><select id="lib-licence"></select></div>
         <div><label for="lib-credit">Credit (CC BY only)</label><input id="lib-credit" placeholder="e.g. Track by Artist, CC BY 4.0, link"></div>
       </div>
+      <div class="row">
+        <div><label for="lib-all">Set the licence of all your files at once</label><select id="lib-all"></select></div>
+        <div><label>&nbsp;</label><div class="btns"><button id="lib-all-unknown">Apply to files without a licence</button>
+          <button id="lib-all-every">Apply to every file</button></div></div>
+      </div>
       <div id="libList"></div>
     </div>
     <div class="panel">
@@ -1470,7 +1475,10 @@ async function loadLibrary() {
   if (!LICENCES) {
     // An app started before licences existed doesn't know this address: still list the files.
     try { LICENCES = await api("/api/library/licences"); } catch (e) { LICENCES = { unknown: "Unknown (restart the app to set licences)" }; }
-    $("#lib-licence").innerHTML = licenceSelect("unknown");
+    // New uploads default to the last licence picked (Royalty-free at first: most files come from Pixabay).
+    let last = "royalty-free"; try { last = localStorage.getItem("libLicence") || last; } catch (e) {}
+    $("#lib-licence").innerHTML = licenceSelect(LICENCES[last] ? last : "unknown");
+    $("#lib-all").innerHTML = licenceSelect(LICENCES["royalty-free"] ? "royalty-free" : "unknown");
   }
   const items = await api("/api/library");
   $("#libList").innerHTML = Object.keys(LIB_TITLE).map((k) => {
@@ -1497,6 +1505,18 @@ $("#lib-file").addEventListener("change", async (e) => {
   }
   e.target.value = ""; loadLibrary();
 });
+$("#lib-licence").addEventListener("change", (e) => { try { localStorage.setItem("libLicence", e.target.value); } catch (err) {} });
+async function setAllLicences(onlyUnknown) {
+  const sel = $("#lib-all");
+  if (!onlyUnknown && !confirm(`Set every file in the library to “${sel.selectedOptions[0].text}”?`)) return;
+  try {
+    const r = await api("/api/library/licences", { method: "PUT", body: JSON.stringify({ licence: sel.value, only_unknown: onlyUnknown }) });
+    toast(`Licence set on ${r.changed} file${r.changed === 1 ? "" : "s"}`);
+  } catch (err) { toast(err.message); }
+  loadLibrary();
+}
+$("#lib-all-unknown").addEventListener("click", () => setAllLicences(true));
+$("#lib-all-every").addEventListener("click", () => setAllLicences(false));
 async function saveLicence(key) {
   const sel = document.querySelector(`[data-lic="${CSS.escape(key)}"]`), credit = document.querySelector(`[data-credit="${CSS.escape(key)}"]`);
   try {

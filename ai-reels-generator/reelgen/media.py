@@ -92,6 +92,22 @@ def set_licence(cfg: Config, kind: str, filename: str, licence: str, credit: str
     (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
+def set_all_licences(cfg: Config, licence: str, only_unknown: bool = True) -> int:
+    """Give every file in the library (or only those without a licence yet) this licence; returns how many."""
+    if licence not in LICENCES:
+        raise ValueError("Unknown licence")
+    count = 0
+    for kind in KINDS:
+        lic = licences(cfg, kind)
+        for item in _files(cfg, kind, everything=True):
+            old = lic.get(item.path.name, {}).get("licence", "unknown")
+            if only_unknown and old != "unknown":
+                continue
+            set_licence(cfg, kind, item.path.name, licence, lic.get(item.path.name, {}).get("credit", ""))
+            count += 1
+    return count
+
+
 def credits(cfg: Config, used_files: list[tuple[str, str]]) -> list[str]:
     """Credit lines for the CC BY files a video used ((kind, file name) pairs), as their licence asks."""
     out = []
