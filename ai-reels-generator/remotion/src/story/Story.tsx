@@ -119,9 +119,12 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
 const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble'}> = ({shot, looks, newScene, vertical, dialogue}) => {
   const frame = useCurrentFrame();
   const {fps, width: OW, height: OH} = useVideoConfig();
-  // A Short frames the cast close (big heads, like the channel's Shorts): a ~570 px slice of the
-  // 1920 px set in the upper part of the frame, following whoever speaks; subtitles go below it.
-  const base = vertical ? 1.9 : 1;
+  // A Short frames the cast close (big heads, like the channel's Shorts): a slice of the 1920 px set
+  // in the upper part of the frame, following whoever speaks; subtitles go below it. The slice is as
+  // close as possible (1.9x, ~570 px) but always wide enough for everyone and every object on screen.
+  const xsOnScreen = [...shot.actors.map((a) => a.x), ...(shot.things ?? []).map((th) => th.x)];
+  const spread = xsOnScreen.length ? Math.max(...xsOnScreen) - Math.min(...xsOnScreen) : 0;
+  const base = vertical ? Math.min(1.9, Math.max(1.1, OW / (spread + 300))) : 1;
   const t = frame / fps;
   const frames = Math.max(1, Math.round(shot.duration * fps));
   const speaking = (id: string) => shot.speaker === id;
@@ -134,14 +137,15 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   const shake = shot.camera === 'shake' && frame < 16 ? Math.sin(frame * 2.7) * (16 - frame) * 1.6 : 0;
   const fx = focus ? focus.x : W / 2;
   const fy = FLOOR - 300;
-  const group = shot.actors.length ? shot.actors.reduce((n, a) => n + a.x, 0) / shot.actors.length : W / 2;
+  const group = xsOnScreen.length ? (Math.max(...xsOnScreen) + Math.min(...xsOnScreen)) / 2 : W / 2;
   const total = base * scale;
   const halfW = OW / (2 * total);
   const halfH = OH / (2 * total);
   const wantX = vertical ? (scale > 1 ? fx : group) : scale > 1 ? fx : W / 2;
   const cx = Math.min(W - Math.min(halfW, W / 2), Math.max(Math.min(halfW, W / 2), wantX));
   const cy = scale > 1 ? Math.min(H - halfH, Math.max(halfH, fy)) : vertical ? FLOOR - 250 : H / 2;
-  const floorY = (FLOOR - (shot.setting === 'kitchen' ? COUNTER : 0) - cy) * total + OH / 2;
+  const front = frontHeight(shot.setting);
+  const floorY = (FLOOR - front - cy) * total + OH / 2;
   const flash = newScene ? interpolate(frame, [0, 5], [0.9, 0], clamp) : 0;
   const speaker = shot.actors.find((a) => a.id === shot.speaker);
   const furniture = shot.furniture ?? defaultFurniture(shot.setting);
@@ -155,12 +159,12 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
           {shot.actors.filter((a) => a.pose === 'sit' && !a.action.startsWith('walk') && seatAt(furniture, a.x) === null).map((a) => (
             <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} />
           ))}
-          {(shot.things ?? []).map((th, i) => <ThingView key={`th${i}`} th={th} furniture={furniture} t={t} />)}
           {shot.actors.map((a) => (
             <Figure key={a.id} a={a} seat={seat(a)} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
           <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} />
+          {(shot.things ?? []).map((th, i) => <ThingView key={`th${i}`} th={th} furniture={furniture} front={front} t={t} />)}
         </g>
       </svg>
       {speaker && shot.text && dialogue === 'subtitle' ? (
@@ -170,7 +174,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
         <Bubble text={shot.text} words={shot.words} lead={shot.lead} x={(speaker.x - cx) * total + OW / 2}
           y={(FLOOR - 470 - (speaker.pose === 'sit' ? -(165 - seat(speaker)) : 0) - cy) * total + OH / 2} big={vertical} />
       ) : null}
-      {!speaker && shot.text ? <Narration text={shot.text} /> : null}
+      {!speaker && shot.text ? <Narration text={shot.text} top={vertical ? floorY + 40 : undefined} big={vertical} /> : null}
       {shot.caption ? <Caption text={shot.caption} top={vertical ? 230 : 36} /> : null}
       {flash > 0 ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: flash}} /> : null}
     </Layer>
@@ -574,11 +578,12 @@ const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect}
   );
 };
 
-const ThingView: React.FC<{th: Thing; furniture: Piece[]; t: number}> = ({th, furniture, t}) => {
+const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: number}> = ({th, furniture, front, t}) => {
   const ink = {stroke: INK, strokeWidth: SET_LINE, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const};
   const size = th.big ? 190 : 120;
   // On the table or desk at its spot; on a table brought in when there's none.
-  const desk = th.table ? surfaceAt(furniture, th.x) : null;
+  // A set with a counter in front of the cast (the kitchen) puts things on that counter.
+  const desk = th.table ? (front || surfaceAt(furniture, th.x)) : null;
   const top = FLOOR - (desk ?? (th.table ? TABLE_TOP : 0));
   return (
     <g>
@@ -590,6 +595,8 @@ const ThingView: React.FC<{th: Thing; furniture: Piece[]; t: number}> = ({th, fu
 
 // ---------- the sets ----------
 
+// A counter across the front of the set hides the legs and is where things stand (0 = none).
+const frontHeight = (setting: Setting) => (setting === 'kitchen' ? COUNTER : 0);
 const COUNTER = 190; // the kitchen counter's height: it hides the legs, the scene reads as a mid shot
 
 // What stands in front of the cast: the kitchen counter; its tap, running water and soap foam only
@@ -766,9 +773,10 @@ const Subtitle: React.FC<{text: string; lead: number; top?: number; big?: boolea
   );
 };
 
-const Narration: React.FC<{text: string}> = ({text}) => (
-  <div style={{position: 'absolute', left: 160, right: 160, bottom: 70, display: 'flex', justifyContent: 'center'}}>
-    <div style={{background: 'rgba(0,0,0,0.78)', color: '#fff', borderRadius: 14, padding: '14px 26px', fontSize: 40, fontWeight: 700, textAlign: 'center', textWrap: 'balance'}}>
+// The narrator's line: a dark caption box (people's lines are white), where subtitles go in a Short.
+const Narration: React.FC<{text: string; top?: number; big?: boolean}> = ({text, top, big}) => (
+  <div style={{position: 'absolute', left: big ? 70 : 160, right: big ? 70 : 160, ...(top !== undefined ? {top} : {bottom: 70}), display: 'flex', justifyContent: 'center'}}>
+    <div style={{background: 'rgba(0,0,0,0.78)', color: '#fff', borderRadius: 14, padding: '14px 26px', fontSize: big ? 46 : 40, fontWeight: 700, textAlign: 'center', textWrap: 'balance'}}>
       {text}
     </div>
   </div>
