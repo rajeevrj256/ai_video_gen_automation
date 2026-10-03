@@ -112,6 +112,8 @@ class JobManager:
                 cfg.captions = bool(job["captions"])
             if job.get("voice"):  # a Script Video's own voice choice
                 cfg.long_voice = job["voice"]
+            if job.get("story_form"):
+                cfg.story_form = job["story_form"]
             if job.get("myvoice"):
                 from .myvoice import finish
                 r = job["myvoice"]
@@ -225,6 +227,12 @@ class GenerateRequest(BaseModel):
     style: str | None = None  # facts | story | comedy | mix; empty = the style in Settings
     length: str = "short"  # "short" (30s, 9:16), "medium" (5-6 min) or "long" (8-10 min), both 16:9 animated
     captions: bool | None = None  # subtitles; empty = the Settings value
+    story_form: str = "auto"  # long/medium: longform.STORY_FORMS key, or auto
+
+
+class LicenceEdit(BaseModel):
+    licence: str
+    credit: str = ""
 
 
 class ScriptVideoRequest(BaseModel):
@@ -543,7 +551,8 @@ def create_app(cfg: Config) -> FastAPI:
         style = body.style if body.style in ("facts", "story", "comedy", "mix") else None
         length = body.length if body.length in ("long", "medium") else "short"
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
-                           "manual", style, length, captions=body.captions)
+                           "manual", style, length, captions=body.captions,
+                           story_form=body.story_form if length != "short" else None)
 
     @app.post("/api/script-video")
     def script_video(body: ScriptVideoRequest):
@@ -649,7 +658,7 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
         return jobs.submit(job["topic"], len(folders) + fresh, "resume", job.get("style"), job.get("length", "short"),
                            resume=folders, script_input=job.get("script_input"), voice=job.get("voice"),
-                           captions=job.get("captions"))
+                           captions=job.get("captions"), story_form=job.get("story_form"))
 
     @app.get("/api/automations")
     def list_automations():
@@ -689,13 +698,19 @@ def create_app(cfg: Config) -> FastAPI:
 
         return media.listing(cfg)
 
+    @app.get("/api/library/licences")
+    def library_licences():
+        from . import media
+
+        return media.LICENCES
+
     @app.post("/api/library/{kind}")
-    async def upload_to_library(kind: str, name: str, request: Request):
+    async def upload_to_library(kind: str, name: str, request: Request, licence: str = "unknown", credit: str = ""):
         # The raw file is the request body (no form encoding), so no extra upload package is needed.
         from . import media
 
         try:
-            path = media.save_upload(cfg, kind, name, await request.body())
+            path = media.save_upload(cfg, kind, name, await request.body(), licence, credit)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         return {"file": path.name, "name": media.slug(path.name)}
@@ -710,6 +725,16 @@ def create_app(cfg: Config) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404)
         return FileResponse(path)
+
+    @app.put("/api/library/{kind}/{name}/licence")
+    def set_library_licence(kind: str, name: str, body: LicenceEdit):
+        from . import media
+
+        try:
+            media.set_licence(cfg, kind, name, body.licence, body.credit)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True}
 
     @app.delete("/api/library/{kind}/{name}")
     def delete_from_library(kind: str, name: str):

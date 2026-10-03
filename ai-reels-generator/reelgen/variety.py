@@ -84,15 +84,18 @@ def recent_block(cfg: Config) -> str:
         return ""
     moods = ", ".join(p.get("mood", "?") for p in past)
     hooks = ", ".join(p.get("hook_music", "?") for p in past)
+    forms = [p["form"] for p in recent(cfg)[-4:] if p.get("form")]
     return (f"\n- Variety: the last videos used music moods {moods} and hook tracks {hooks}. Pick a different "
-            "mood and hook track unless this story clearly needs the same one.")
+            "mood and hook track unless this story clearly needs the same one."
+            + (f"\n- The last videos were told as: {', '.join(forms)}. Use a different story form unless this "
+               "material clearly fits only one of those." if forms else ""))
 
 
-def remember(cfg: Config, look: dict, mood: str, hook_music: str) -> None:
+def remember(cfg: Config, look: dict, mood: str, hook_music: str, form: str = "") -> None:
     with _lock:
         past = recent(cfg)
         past.append({"palette": look["palette"], "backdrop": look["backdrop"], "transition": look["transition"],
-                     "mood": mood, "hook_music": hook_music})
+                     "mood": mood, "hook_music": hook_music, "form": form})
         path = _path(cfg)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(past[-KEEP:], indent=1), encoding="utf-8")
