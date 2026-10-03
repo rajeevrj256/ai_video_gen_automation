@@ -48,6 +48,10 @@ CARD_SECONDS = 2.4  # chapter title card (older videos)
 # same "CHAPTER N OF M" card; now the styles rotate so neighbours never match and a video doesn't
 # open its breaks like the one before.
 BREAKS = {"blackout": 2.8, "lowerthird": 2.4, "trailer": 2.4, "split": 2.4, "cut": 1.3}
+# When Claude leaves a break's sound empty: the style's own role (the user's file whose name matches
+# it, else the built-in) and where it lands (the blackout holds a beat of silence first).
+BREAK_ROLE = {"blackout": ("shimmer", 0.5), "lowerthird": ("swish", 0.0), "trailer": ("glitch", 0.2),
+              "split": ("whoosh", 0.0), "cut": ("impact", 0.0)}
 
 
 def break_styles(count: int, seed: int, avoid_first: str = "") -> list[str]:
@@ -180,6 +184,7 @@ class LChapter(BaseModel):
     ambience: Literal["none", "room", "city", "rain", "wind", "crowd", "night", "lab", "sea", "fire"] = Field(
         default="none", description="A quiet background sound bed for where this chapter takes place, or 'none'.")
     card_text: str = Field(default="", description="The line shown on the break into this chapter: the question this chapter answers or a sharp phrase that pulls the viewer in, max 9 words, in your own words for this story (not the title, not 'Chapter 2'). Empty for the cold open.")
+    break_sound: str = Field(default="", description="The sound on the break into this chapter: a sound's name exactly as in the sound list (the user's own file when one fits this story, its mood and this moment; a built-in otherwise), 'none' for silence, or empty to let the editor use the usual sound for the break. Vary it across chapters.")
     backdrop: str = Field(default="", description="The background photo behind this chapter's visuals: a 2-4 word English stock-photo search for the real place, setting or material this chapter is about, concrete and filmable (no named people, brands or logos). Different for every chapter.")
 
 
@@ -273,7 +278,9 @@ sourced quote). Pick the type from what this story's evidence is, so each video 
 - 'keyword' and 'title' beats (mostly words) are at most 1 in 7 beats and never two in a row. Keyword \
 text is at most 3 words, a headline at most 6.
 - Chapter breaks: give every chapter after the cold open a card_text, the line on the break into it: \
-the question it answers or a sharp phrase, in your own words, never the title again.
+the question it answers or a sharp phrase, in your own words, never the title again; and a break_sound \
+from the sound list that suits this story and the moment (the user's own files first when they fit; \
+'none' where silence hits harder).
 - Backgrounds: give every chapter a backdrop (a stock-photo search for the real place, setting or \
 material that chapter is about) and the hook a hook_backdrop. They are photos behind the visuals, so \
 each chapter and each video looks like its own subject; never the same search twice.
@@ -760,6 +767,25 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     props["cues"] = cues + [{"src": files[n], "at": at, "name": n,
                              "volume": round(vol * (media.UPLOADED_GAIN * 1.6 if "/u-" in files[n] else 1), 3)}
                             for n, at, vol in auto if n in files]
+    # The sound on each chapter break: Claude's pick from the library (the user's files and the
+    # built-ins), else the break style's own role (the user's matching file, else the built-in).
+    library = {item.name for item in media.sounds(cfg)}
+    for c, chapter in zip(chapters, script.chapters):
+        if not c.get("style"):
+            continue
+        role, offset = BREAK_ROLE.get(c["style"], ("whoosh", 0.0))
+        pick = chapter.break_sound.strip()
+        if pick.lower() == "none":
+            c["sound"] = "none"
+            continue
+        if pick in library:
+            props["cues"] += media.resolve_cues([SoundCue(sound=pick, word="break", volume="medium")],
+                                                [_Word("break", offset, offset + 0.3)], c["start"], cfg, work / "sfx",
+                                                lambda p: p.relative_to(work).as_posix(), 1, used)
+            c["sound"] = pick
+        elif (name := pick if pick in files else role) in files:  # a transition sound by name, or the style's
+            props["cues"].append({"src": files[name], "at": round(c["start"] + offset, 3), "name": name, "volume": 0.45})
+            c["sound"] = name
     # Every effect quieter than the narrator, measured, whatever file it came from.
     voice = [b["audio"] for b in beats if b.get("audio")] + [s["audio"] for s in hook["shots"] if s.get("audio")]
     props["sfxLevels"] = media.level_sounds(props, work, voice)

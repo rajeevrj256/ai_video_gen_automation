@@ -36,14 +36,6 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   );
 };
 
-const BREAK_SOUND: Record<string, [string, number]> = {
-  blackout: ['shimmer', 0.5],
-  lowerthird: ['swish', -0.1],
-  trailer: ['glitch', 0.2],
-  split: ['whoosh', -0.1],
-  cut: ['impact', 0],
-};
-
 export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency}) => {
   useFonts();
   setCurrency(currency);
@@ -139,17 +131,12 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
       <Cues cues={cues} speech={speech} />
       {sfx
         ? chapters
-            .filter((c) => c.card > 0)
-            .map((c) => {
-              // Each break style has its own sound: the blackout holds a beat of silence first.
-              const [name, at] = BREAK_SOUND[c.style ?? ''] ?? ['whoosh', -0.1];
-              const src = (sfx as Record<string, string>)[name] ?? sfx.whoosh;
-              return (
-                <Sequence key={`s${c.index}`} name={`sfx chapter ${c.index}`} from={Math.max(0, f(c.start + at))} durationInFrames={f(1.6)}>
-                  <Html5Audio src={staticFile(src)} volume={0.3} />
-                </Sequence>
-              );
-            })
+            .filter((c) => c.card > 0 && !c.style) // newer breaks bring their own sound in the cues (Claude's pick)
+            .map((c) => (
+              <Sequence key={`s${c.index}`} name={`sfx chapter ${c.index}`} from={Math.max(0, f(c.start) - 3)} durationInFrames={f(1.2)}>
+                <Html5Audio src={staticFile(sfx.whoosh)} volume={0.3} />
+              </Sequence>
+            ))
         : null}
     </Layer>
   );
