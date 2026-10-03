@@ -8,6 +8,15 @@ import {icons, type LucideIcon} from 'lucide-react';
 const ALL = icons as Record<string, LucideIcon>;
 const KEYS = Object.keys(ALL);
 const SYNONYMS: Record<string, string> = {help: 'question-mark', question: 'question-mark', dollar: 'dollar-sign', money: 'banknote', person: 'user', people: 'users', warning: 'triangle-alert', alert: 'triangle-alert', delete: 'trash', bin: 'trash', danger: 'skull', love: 'heart', time: 'clock', world: 'globe', earth: 'earth', doctor: 'stethoscope', medicine: 'pill', lab: 'flask-conical', science: 'flask-conical', car: 'car', gun: 'crosshair', war: 'swords', soldier: 'shield'};
+// Whole names that the word-by-word search gets wrong ("data-center" found TextAlignCenter).
+const PHRASES: Record<string, string> = {
+  'data-center': 'server', 'data-centre': 'server', datacenter: 'server', 'server-farm': 'server',
+  'undersea-cable': 'cable', 'submarine-cable': 'cable', 'fiber-optic': 'cable', 'fibre-optic': 'cable',
+  'power-plant': 'factory', 'power-grid': 'zap', 'electricity': 'zap', 'stock-market': 'chart-candlestick',
+  ai: 'brain-circuit', 'artificial-intelligence': 'brain-circuit',
+};
+// Words that say nothing about the object; never pick an icon for them alone.
+const VAGUE = new Set(['center', 'centre', 'align', 'text', 'big', 'small', 'new', 'old', 'red', 'blue', 'green', 'icon']);
 const cache = new Map<string, LucideIcon>();
 
 // Money icons follow the video's currency: a "receipt" in a rupee story must not show a $.
@@ -32,6 +41,8 @@ export const iconFor = (name: string): LucideIcon => {
   const key = name.trim().toLowerCase();
   const hit = cache.get(key);
   if (hit) return inCurrency(hit);
+  const phrase = PHRASES[key.replace(/[_\s]+/g, '-')];
+  if (phrase && phrase !== key) return iconFor(phrase);
   let words = key.split(/[-_\s]+/).filter(Boolean);
   const tries: string[][] = [words, words.filter((w) => !/^\d+$/.test(w))];
   words = tries[1].flatMap((w) => (SYNONYMS[w] ?? w).split('-'));
@@ -46,8 +57,8 @@ export const iconFor = (name: string): LucideIcon => {
   if (!found && words.length) {
     const has = (k: string, w: string) => k.toLowerCase().includes(w);
     const all = KEYS.filter((k) => words.every((w) => has(k, w))).sort((a, b) => a.length - b.length);
-    const main = [...words].sort((a, b) => b.length - a.length)[0];
-    const some = KEYS.filter((k) => has(k, main)).sort((a, b) => a.length - b.length);
+    const main = [...words].filter((w) => !VAGUE.has(w)).sort((a, b) => b.length - a.length)[0] ?? '';
+    const some = main ? KEYS.filter((k) => has(k, main)).sort((a, b) => a.length - b.length) : [];
     found = ALL[all[0] ?? some[0]];
   }
   const icon = found ?? ALL.Sparkles;

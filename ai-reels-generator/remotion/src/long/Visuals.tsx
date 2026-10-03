@@ -157,7 +157,8 @@ const Stat: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
     <Stage>
       <div
         style={{
-          fontSize: Math.max(90, fitSize(text, 230, INNER * 1.12)),
+          // heavy digits are ~0.78 em wide (fitSize assumes 0.66) and the camera may zoom in ~12%
+          fontSize: Math.min(230, Math.floor((INNER * 0.82) / (Math.max(text.length, 1) * 0.78))),
           fontWeight: 900,
           whiteSpace: 'nowrap', // "5 to 1" must never break as "5 to / 1"
           color: accent,
@@ -308,18 +309,20 @@ const Compare: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   const [a, b] = v.items;
   const max = Math.max(Math.abs(a.value), Math.abs(b.value), 1e-9);
   const grow = interpolate(frame, [8, 34], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
-  const barMax = 380;
+  const barMax = 300;
   const col = (it: Item, color: string, delay: number) => (
     <CompareColumn key={it.label} item={it} color={color} height={(barMax * Math.abs(it.value)) / max} grow={grow} delay={delay} />
   );
   return (
     <>
       {v.headline ? (
-        <div style={{position: 'absolute', top: 110, left: SIDE, width: INNER, textAlign: 'center', fontSize: 70, fontWeight: 900, color: accent}}>
+        <div style={{position: 'absolute', top: 105, left: SIDE, width: INNER, textAlign: 'center', fontSize: fitSize(v.headline, 70, INNER * 0.95),
+          fontWeight: 900, color: accent, whiteSpace: 'nowrap'}}>
           {v.headline}
         </div>
       ) : null}
-      <div style={{position: 'absolute', left: SIDE, width: INNER, top: 230, height: 560, display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 220}}>
+      {/* below the title: the tallest bar + its value + a two-line label fit in 250..800 */}
+      <div style={{position: 'absolute', left: SIDE, width: INNER, top: 250, height: 550, display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 220}}>
         {col(a, 'rgba(255,255,255,0.85)', 0)}
         {col(b, accent, 6)}
       </div>
@@ -331,7 +334,7 @@ const CompareColumn: React.FC<{item: Item; color: string; height: number; grow: 
   const e = useEnter(delay);
   return (
     <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', width: 360, opacity: Math.min(1, e * 1.5)}}>
-      <div style={{fontSize: 64, fontWeight: 900, marginBottom: 16}}>{item.display}</div>
+      <div style={{fontSize: fitSize(item.display, 64, 330), fontWeight: 900, marginBottom: 16, whiteSpace: 'nowrap'}}>{item.display}</div>
       <div style={{width: 200, height: Math.max(8, height * grow), background: color, borderRadius: '18px 18px 6px 6px', boxShadow: `0 0 40px ${color}55`}} />
       <div style={{marginTop: 22, fontSize: 40, fontWeight: 800, textAlign: 'center', lineHeight: 1.2}}>{item.label}</div>
     </div>
@@ -388,16 +391,21 @@ const Chart: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
   const vals = pts.map((p) => p.value);
   const lo = Math.min(...vals, 0);
   const hi = Math.max(...vals);
-  const box = {x: SIDE + 80, y: 230, w: INNER - 160, h: 440};
+  const box = {x: SIDE + 120, y: 300, w: INNER - 240, h: 380};
   const xy = pts.map((p, i) => [box.x + (box.w * i) / Math.max(1, pts.length - 1), box.y + box.h - (box.h * (p.value - lo)) / Math.max(hi - lo, 1e-9)]);
   const draw = interpolate(frame, [6, Math.max(24, frames * 0.5)], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
   const d = xy.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
   const length = xy.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - xy[i - 1][0], p[1] - xy[i - 1][1]) : 0), 0);
   return (
     <>
-      <div style={{position: 'absolute', top: 110, left: SIDE, width: INNER, textAlign: 'center', fontSize: 64, fontWeight: 900}}>
-        {v.headline} <span style={{fontSize: 40, opacity: 0.8, fontWeight: 800}}>{v.sub}</span>
+      <div style={{position: 'absolute', top: 100, left: SIDE, width: INNER, textAlign: 'center', fontSize: fitSize(v.headline, 64, INNER * 0.95), fontWeight: 900, whiteSpace: 'nowrap'}}>
+        {v.headline}
       </div>
+      {v.sub ? (
+        <div style={{position: 'absolute', top: 182, left: SIDE, width: INNER, textAlign: 'center', fontSize: fitSize(v.sub, 38, INNER * 0.9), opacity: 0.8, fontWeight: 800, whiteSpace: 'nowrap'}}>
+          {v.sub}
+        </div>
+      ) : null}
       <svg width={1920} height={1080} style={{position: 'absolute', inset: 0}}>
         <line x1={box.x} x2={box.x + box.w} y1={box.y + box.h} y2={box.y + box.h} stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
         <path d={d} fill="none" stroke={accent} strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={length} strokeDashoffset={length * (1 - draw)} style={{filter: `drop-shadow(0 0 14px ${accent})`}} />
@@ -409,7 +417,8 @@ const Chart: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
       {xy.map((p, i) => {
         const on = draw >= i / Math.max(1, pts.length - 1) - 0.001;
         return (
-          <div key={i} style={{position: 'absolute', left: p[0] - 150, width: 300, top: p[1] - 90, textAlign: 'center', fontSize: 40, fontWeight: 900, opacity: on ? 1 : 0}}>
+          <div key={i} style={{position: 'absolute', left: p[0] - 150, width: 300, top: p[1] - 90, textAlign: 'center', fontSize: fitSize(pts[i].display, 40, 290),
+            fontWeight: 900, opacity: on ? 1 : 0, whiteSpace: 'nowrap'}}>
             {pts[i].display}
             <div style={{position: 'absolute', top: box.y + box.h - p[1] + 110, width: 300, fontSize: 34, fontWeight: 800, opacity: 0.8}}>{pts[i].label}</div>
           </div>
