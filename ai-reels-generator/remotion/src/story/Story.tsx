@@ -219,6 +219,8 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
 };
 
 // Small body movements that carry an emotion (pixels and degrees; lean is toward where they look).
+// No trembling or shaking: a figure that jitters for a whole line looked like a glitch. A shake is
+// only ever the line's own 'shake' action or the camera's.
 const acting = (face: Face, talking: boolean, t: number) => {
   const none = {dx: 0, dy: 0, lean: 0, head: 0};
   switch (face) {
@@ -226,13 +228,11 @@ const acting = (face: Face, talking: boolean, t: number) => {
       return {...none, dy: -Math.abs(Math.sin(t * 13)) * 12, head: -8 + Math.sin(t * 13) * 3};
     case 'cry':
     case 'sad':
-      return {...none, head: 9, dy: face === 'cry' ? Math.sin(t * 20) * 2 : 0, lean: talking ? 3 : 2};
-    case 'nervous':
-      return {...none, dx: Math.sin(t * 55) * 2.2};
+      return {...none, head: 9, lean: talking ? 3 : 2};
     case 'shock':
       return {...none, dy: talking ? -Math.max(0, Math.sin(Math.min(t, 0.35) * 9)) * 18 : 0, lean: -4};
     case 'angry':
-      return talking ? {dx: Math.sin(t * 48) * 3, dy: 0, lean: 7, head: 0} : {...none, lean: 3};
+      return {...none, lean: talking ? 7 : 3};
     case 'happy':
     case 'love':
       return talking ? {...none, dy: -Math.abs(Math.sin(t * 8)) * 6, head: Math.sin(t * 4) * 3} : none;
@@ -247,7 +247,7 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; t: number; fram
   const pose: Pose = walking ? 'walk' : a.pose;
   const small = look === 'kid' ? 0.78 : 1;
   const r = rig(pose, t, seat);
-  const breathe = pose === 'lie' ? 0 : Math.sin(t * 2.4 + a.x) * 3;
+  const breathe = pose === 'lie' || pose === 'sit' ? 0 : Math.sin(t * 2.4 + a.x) * 3; // seated figures stay on the seat
   const speakingNow = talking.some((w) => t >= w.start && t <= w.end);
   const mouthOpen = speakingNow && frame % 6 < 3;
   const lying = pose === 'lie' || a.action === 'fall';
@@ -342,7 +342,7 @@ const FaceView: React.FC<{face: Face; frame: number; mouthOpen: boolean; look: L
       <rect x={ex - 13} y={16} width={26} height={5} rx={2} fill="#fff" stroke="none" />
     </g>
   ) : face === 'nervous' ? (
-    <ellipse cx={ex + Math.sin(frame) * 2} cy={26} rx={10} ry={8} fill={INK} stroke="none" />
+    <ellipse cx={ex} cy={26} rx={10} ry={8} fill={INK} stroke="none" />
   ) : (
     <g>
       <ellipse cx={ex} cy={26} rx={15} ry={12} fill={INK} stroke="none" />
