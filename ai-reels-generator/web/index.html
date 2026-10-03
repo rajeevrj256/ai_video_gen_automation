@@ -1426,7 +1426,11 @@ let LICENCES = null;
 const licenceSelect = (value) => Object.entries(LICENCES || {}).map(([k, label]) =>
   `<option value="${k}" ${k === value ? "selected" : ""}>${esc(label)}</option>`).join("");
 async function loadLibrary() {
-  if (!LICENCES) { LICENCES = await api("/api/library/licences"); $("#lib-licence").innerHTML = licenceSelect("unknown"); }
+  if (!LICENCES) {
+    // An app started before licences existed doesn't know this address: still list the files.
+    try { LICENCES = await api("/api/library/licences"); } catch (e) { LICENCES = { unknown: "Unknown (restart the app to set licences)" }; }
+    $("#lib-licence").innerHTML = licenceSelect("unknown");
+  }
   const items = await api("/api/library");
   $("#libList").innerHTML = Object.keys(LIB_TITLE).map((k) => {
     const mine = items.filter((i) => i.kind === k && !i.builtin), built = items.filter((i) => i.kind === k && i.builtin);
@@ -1435,7 +1439,7 @@ async function loadLibrary() {
         ${k === "models3d" ? "" : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
         <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button>
         <div class="lic ${i.licence === "unknown" ? "warn" : ""}">${i.licence === "unknown" ? "⚠️ Not used until its licence is set · " : ""}
-          <select class="mini" data-lic="${k}/${esc(i.file)}">${licenceSelect(i.licence)}</select>
+          <select class="mini" data-lic="${k}/${esc(i.file)}">${licenceSelect(i.licence || "unknown")}</select>
           <input class="mini" data-credit="${k}/${esc(i.file)}" placeholder="Credit (CC BY)" value="${esc(i.credit || "")}" ${i.licence === "cc-by" ? "" : "hidden"}></div></div>`).join("")
       || `<p class="hint">None added yet.</p>`}${built.length ? `<p class="hint">Built in: ${built.map((i) => esc(i.name)).join(", ")}${k === "music" && mine.length ? " (used when none of yours fits a video)" : ""}</p>` : ""}`;
   }).join("");
