@@ -433,7 +433,8 @@ def unfinished(cfg: Config) -> list[dict]:
         script = state.get("script") or {}
         out.append({"id": folder.name, "topic": script.get("topic") or state.get("topic") or "Trending topic",
                     "title": script.get("title", ""), "style": state.get("style", "facts"),
-                    "length": state.get("length", "short"), "attempt": state.get("attempt", 1),
+                    "length": "medium" if state.get("length") == "long" and (state.get("minutes") or 8) < 7
+                              else state.get("length", "short"), "attempt": state.get("attempt", 1),
                     "done": STAGE_DONE.get(state.get("stage") or "", "nothing yet"),
                     "updated": path.stat().st_mtime})
     return out

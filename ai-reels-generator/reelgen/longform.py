@@ -1,4 +1,4 @@
-"""Long videos: 8-10 minute, 16:9, fully animated (no stock footage), for YouTube.
+"""Long videos: 8-10 minute (or medium, 5-6 minute), 16:9, fully animated (no stock footage), for YouTube.
 
 trend -> Claude writes a chaptered script where every beat has a narration line and an
 animated visual -> fact-check and fix (before anything is recorded) -> Indian English
@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import uuid
 import zlib
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
@@ -47,6 +47,17 @@ CARD_SECONDS = 2.4  # chapter title card
 CHAPTER_GAP = 0.5  # breath at the end of each chapter
 WORDS_PER_SECOND = 2.5  # measured presenter pace at +10%, pauses included
 MIN_MINUTES, MAX_MINUTES = 6.5, 11.0
+MEDIUM_MINUTES = 5.5  # the "medium" length: same pipeline, fewer and shorter chapters
+
+
+def shape(minutes: float) -> dict:
+    """How a video of this length is built: chapters, their length, the accepted running time.
+    Medium (under 7 minutes): a 30-45 s cold open and 3-4 chapters of 60-80 s. Long: as before."""
+    if minutes < 7:
+        return {"label": "5 to 6 minute", "range": "5-6", "chapters": (4, 5), "accept": (4, 6), "more": "3 to 4",
+                "chapter_secs": "60-80", "open_secs": "30-45", "min": 4.3, "max": 7.0}
+    return {"label": "8 to 10 minute", "range": "8-10", "chapters": (6, 8), "accept": (5, 9), "more": "5 to 7",
+            "chapter_secs": "60-100", "open_secs": "45-75", "min": MIN_MINUTES, "max": MAX_MINUTES}
 FACT_FIXES = 2
 LLM_TIMEOUT = 2400  # a 1,300-word script with research at high effort can take well over 15 minutes
 LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
@@ -125,7 +136,7 @@ class LChapter(BaseModel):
 
 class LongScript(BaseModel):
     topic: str = Field(description="The trending topic you chose, exactly as written in the candidate list (fiction: the theme you used).")
-    why_chosen: str = Field(description="One sentence: why this will hold viewers for 8 minutes, and the one story you will tell.")
+    why_chosen: str = Field(description="One sentence: why this will hold viewers to the end, and the one story you will tell.")
     facts_checked: str = Field(description="The key facts the script relies on and where they come from.")
     category: Literal["Sports", "Money", "Science & Space", "Tech", "History", "Nature & Animals", "Weather",
                       "Entertainment", "India", "Life & People", "Stories", "Comedy"] = Field(
@@ -140,14 +151,15 @@ class LongScript(BaseModel):
     hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
         default="spy-pulse", description="The hook's own trailer track: spy-pulse (ticking spy/action energy), ticking-clock (a race against time), dark-pulse (dread, mystery), glitch-drive (tech, chaos).")
     hook_track: str = Field(default="", description="The hook's music: the name of one of the user's own music files that fits an energetic trailer for this video, or empty to compose one (hook_music then sets its style).")
-    chapters: list[LChapter] = Field(description="6-8 chapters in order. The first is the cold open ('Intro').")
+    chapters: list[LChapter] = Field(description="The chapters in order (as many as the instructions say). The first is the cold open ('Intro').")
     music: str = Field(default="", description="Background track name from the music list (the user's own file when one fits the mood), 'compose' to have one composed for this video, or 'none'.")
 
 
-def _system(style: str, language: str) -> str:
+def _system(style: str, language: str, minutes: float = 8) -> str:
+    sh = shape(minutes)
     kind = ("a true story told like a documentary, every fact checked" if style != "story"
             else "an original fiction story, clearly presented as a story")
-    return f"""You write 8 to 10 minute YouTube videos that people watch to the end: {kind}. \
+    return f"""You write {sh['label']} YouTube videos that people watch to the end: {kind}. \
 The video is animated motion graphics, so every beat pairs one narration line with one animated \
 visual that shows exactly what that line says. A few beats can be a real video clip or a 3D model.
 
@@ -161,12 +173,12 @@ Retention structure (the most important rules):
 - Build the big question around the most surprising fact in the story (the paradox or twist), \
 not the obvious "how did they do it": e.g. "Sweden flipped every car to the other side of the \
 road, and crashes dropped. Why?" beats "How did Sweden switch sides?".
-- Chapter 1, the cold open (45-75 seconds): the first sentence (12 words or fewer) plants that \
+- Chapter 1, the cold open ({sh['open_secs']} seconds): the first sentence (12 words or fewer) plants that \
 question. Then raise the stakes. It must NOT explain the method, the answer or the twist, not \
 even in passing; the viewer learns them where the story reaches them. No greeting, no "in this \
 video", no "by the end you'll know".
 - Never repeat the answer: reveal it once, late, then use it for the payoff.
-- 5 to 7 more chapters of 60-100 seconds. Each opens with a mini-hook (a new question or surprise) \
+- {sh['more']} more chapters of {sh['chapter_secs']} seconds. Each opens with a mini-hook (a new question or surprise) \
 and ends on an open loop that pulls into the next ("But that created a bigger problem.").
 - Around the middle, a twist that changes how the story looks.
 - The big question is answered only in the last chapter, which ties back to the first line and ends \
@@ -249,7 +261,7 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     prompt = (f"Candidate topics trending now (region {cfg.geo}):\n{trends_as_json(candidates)}\n\n{task}\n"
               f"- Length: about {words} words of narration in total ({minutes:g} minutes), no less than "
               f"{int(words * 0.9)} and no more than {int(words * 1.1)}.\n"
-              f"- 6 to 8 chapters, 6 to 14 beats each." + variety.recent_block(cfg) + "\n\n"
+              f"- {shape(minutes)['chapters'][0]} to {shape(minutes)['chapters'][1]} chapters, 6 to 14 beats each." + variety.recent_block(cfg) + "\n\n"
               + media.prompt_block(cfg, long=True)
               + media.models_block(cfg))
     if len(candidates) == 1 and candidates[0].source == "manual":
@@ -259,7 +271,7 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
         if previous is not None:
             prompt += (f"\n\nThe rejected draft:\n{previous.model_dump_json()}\n"
                        "Keep what works; rewrite what was flagged. Don't reuse a flagged claim in softer words.")
-    script = ask(cfg.ai_backend, cfg.claude_model, _system(cfg.video_style, cfg.long_language), prompt,
+    script = ask(cfg.ai_backend, cfg.claude_model, _system(cfg.video_style, cfg.long_language, minutes), prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
     return script
@@ -378,8 +390,9 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
     result.checks["word_count"] = words
     if not target * 0.85 <= words <= target * 1.15:
         result.fail(f"Narration is {words} words; write about {int(target)} for {minutes:g} minutes.")
-    if not 5 <= len(script.chapters) <= 9:
-        result.fail(f"{len(script.chapters)} chapters; use 6 to 8.")
+    sh = shape(minutes)
+    if not sh["accept"][0] <= len(script.chapters) <= sh["accept"][1]:
+        result.fail(f"{len(script.chapters)} chapters; use {sh['chapters'][0]} to {sh['chapters'][1]}.")
     lowered = " ".join(b.narration for c in script.chapters for b in c.beats).lower()
     found = [p for p in AI_CLICHES if re.search(rf"\b{re.escape(p)}\b", lowered)]
     if found:
@@ -751,7 +764,7 @@ def youtube_chapters(props: dict) -> str:
 
 # ---------- checks and review ----------
 
-def check_long_video(video: Path) -> VerifyResult:
+def check_long_video(video: Path, target: float = 8) -> VerifyResult:
     result = VerifyResult()
     if not video.exists() or video.stat().st_size < 500_000:
         result.fail("Video file missing or empty.")
@@ -761,8 +774,9 @@ def check_long_video(video: Path) -> VerifyResult:
     if (info.get("width"), info.get("height")) != (WIDTH, HEIGHT):
         result.fail(f"Resolution is {info.get('width')}x{info.get('height')}, expected {WIDTH}x{HEIGHT}.")
     minutes = info.get("duration", 0) / 60
-    if not MIN_MINUTES <= minutes <= MAX_MINUTES:
-        result.fail(f"Video is {minutes:.1f} minutes; it should be 8 to 10.")
+    sh = shape(target)
+    if not sh["min"] <= minutes <= sh["max"]:
+        result.fail(f"Video is {minutes:.1f} minutes; it should be {sh['range'].replace('-', ' to ')}.")
     if not info.get("has_audio"):
         result.fail("No audio track.")
     result.checks["size_mb"] = round(video.stat().st_size / 1e6, 1)
@@ -842,7 +856,7 @@ def _sheet(tiles: list, out: Path) -> Path:
     return out
 
 
-LONG_REVIEW_SYSTEM = """You are a strict YouTube editor reviewing an 8-10 minute fully animated video before \
+LONG_REVIEW_SYSTEM = """You are a strict YouTube editor reviewing a {range} minute fully animated video before \
 it is posted. You judge whether viewers would stay to the end: a cold open that plants one big question, \
 chapters that each open with a mini-hook and end on an open loop, one subject explored in depth rather than \
 a list, a twist near the middle and a payoff that answers the opening question. It opens with a 25-30 \
@@ -868,7 +882,8 @@ def review_long(video: Path | None, script: LongScript, props: dict, cfg: Config
               f"Style: {'fiction story' if cfg.video_style == 'story' else 'true story, fact-checked'}\n"
               + "\n".join(lines) + "\n\nScore it and list what to fix. For 'visuals_match', judge the animated "
               "visuals against their lines. For 'story', judge retention across the whole video.")
-    review = ask(cfg.ai_backend, cfg.claude_model, LONG_REVIEW_SYSTEM, prompt, Review, images=[sheet],
+    review = ask(cfg.ai_backend, cfg.claude_model, LONG_REVIEW_SYSTEM.replace("{range}", shape(cfg.long_minutes)["range"]),
+                 prompt, Review, images=[sheet],
                  effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     result = VerifyResult()
     scores = [review.human_feel, review.hook, review.visuals_match, review.accuracy, review.story]
@@ -1063,6 +1078,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     resume = resume or {}
     # The length it was written for: a resume under other settings must not call it too long or short.
     minutes = resume.get("minutes") or cfg.long_minutes
+    cfg = replace(cfg, long_minutes=minutes)  # the review and checks judge it by the length it was written for
     history_path = cfg.output_dir / "history.json"
     feedback = resume.get("feedback", "")
     script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
@@ -1173,9 +1189,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                             "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
 
             progress(f"{tag} Verifying video quality")
-            verdict = check_long_video(out)
+            verdict = check_long_video(out, minutes)
             # Resolution, audio, a broken file: what a preview can't see and a new render can fix.
-            # A length outside 8-10 minutes comes from the voiceover, so rendering again can't change it.
+            # A length outside the target (8-10 or 5-6 minutes) comes from the voiceover, so rendering again can't change it.
             tech_ok = all(i.startswith("Video is ") for i in verdict.issues)
             if tech_ok and preview is not None:
                 # The preview already reviewed these same frames: a second opinion on the same
@@ -1231,6 +1247,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         report = {
             "id": final_dir.name,
             "format": "long",
+            "length": "medium" if minutes < 7 else "long",
             "topic": script.topic,
             "topic_source": candidates[0].source if topic else next(
                 (c.source for c in candidates if c.title.lower() == script.topic.lower()), "unknown"),

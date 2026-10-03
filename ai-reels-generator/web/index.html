@@ -254,7 +254,7 @@
       <input type="search" id="q" placeholder="🔎 Search titles, topics, hashtags…">
       <div class="chips" id="catChips"></div>
       <div class="chips">
-        <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="long">🎬 Long</button>
+        <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium">🎞️ Medium</button><button class="chip" data-len="long">🎬 Long</button>
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
       </div>
     </div>
@@ -273,7 +273,7 @@
       <p class="hint" id="styleHint"></p>
       <label>Length</label>
       <div class="segmented" id="length">
-        <button data-length="short" class="on">📱 Short · 30s</button><button data-length="long">🎬 Long · 8–10 min</button>
+        <button data-length="short" class="on">📱 Short · 30s</button><button data-length="medium">🎞️ Medium · 5–6 min</button><button data-length="long">🎬 Long · 8–10 min</button>
       </div>
       <p class="hint" id="lengthHint">Vertical 9:16 for Reels and Shorts, with real footage.</p>
       <label>Subtitles</label>
@@ -381,7 +381,7 @@
         <div class="chips" id="a-days"></div>
         <div class="row">
           <div><label for="a-length">Length</label>
-            <select id="a-length"><option value="short">📱 Short · 30s</option><option value="long">🎬 Long · 8–10 min</option></select></div>
+            <select id="a-length"><option value="short">📱 Short · 30s</option><option value="medium">🎞️ Medium · 5–6 min</option><option value="long">🎬 Long · 8–10 min</option></select></div>
           <div><label for="a-style">Style</label>
             <select id="a-style"><option value="facts">📚 Facts</option><option value="story">🎭 Fiction</option><option value="comedy">😂 Jokes</option><option value="mix">🔀 Mix</option></select></div>
         </div>
@@ -545,6 +545,8 @@ const CAT_ICON = { "Sports": "🏏", "Money": "💰", "Science & Space": "🚀",
   "Nature & Animals": "🐾", "Weather": "🌦️", "Entertainment": "🎬", "India": "🇮🇳", "Life & People": "🧑‍🤝‍🧑",
   "Stories": "🎭", "Comedy": "😂" };
 let library = [], libCat = "", libLen = "", libOk = "";
+// short, medium (5-6 min) or long (8-10 min); older 16:9 videos are told apart by their running time
+const lenOf = (v) => v.format !== "long" ? "short" : v.length || ((v.duration_seconds || 0) < 420 ? "medium" : "long");
 const cardHtml = (v) => `
     <div class="card${v.format === "long" ? " wide" : ""}" data-id="${esc(v.id)}">
       <img loading="lazy" src="/media/${encodeURIComponent(v.id)}/thumbnail.jpg" alt="">
@@ -558,7 +560,7 @@ function renderLibrary() {
   const text = (v) => [v.title, v.topic, v.youtube_title, v.caption, v.category, v.subject,
     ...(v.hashtags || []), ...(v.youtube_tags || [])].join(" ").toLowerCase();
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
-    && (!libLen || (v.format === "long" ? "long" : "short") === libLen)
+    && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || String(+!!v.verified) === libOk);
   const shown = library.filter(match);
   // Category chips count what the other filters leave.
@@ -1099,7 +1101,7 @@ function jobCard(j) {
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
-    + (j.length === "long" ? " · 🎬 Long" : "");
+    + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -1168,7 +1170,7 @@ async function loadUnfinished() {
       <h2>Unfinished videos</h2>
       <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
-          <span class="pill">${u.length === "long" ? "🎬 Long" : "📱 Short"}</span></div>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
@@ -1243,7 +1245,7 @@ async function loadAutomations() {
   $("#autoList").innerHTML = autos.length ? autos.map((a) => `
     <div class="auto ${a.enabled ? "" : "off"}">
       <div class="top"><b>${esc(a.name)}</b><span class="pill">${a.enabled ? "Next: " + esc(a.next) : "Off"}</span></div>
-      <div class="what">${esc(a.time)} · ${daysText(a.days)} · ${a.count} ${a.length === "long" ? "🎬 long" : "📱 short"} video${a.count > 1 ? "s" : ""}
+      <div class="what">${esc(a.time)} · ${daysText(a.days)} · ${a.count} ${a.length === "long" ? "🎬 long" : a.length === "medium" ? "🎞️ medium" : "📱 short"} video${a.count > 1 ? "s" : ""}
         · ${STYLE_TAG[a.style] || a.style} · ${a.topic ? "“" + esc(a.topic) + "”" : "trending topics"}${a.captions === false ? " · CC off" : ""}</div>
       <div class="btns">
         <button data-act="toggle" data-id="${a.id}">${a.enabled ? "⏸ Turn off" : "▶ Turn on"}</button>
@@ -1318,7 +1320,7 @@ async function loadHistory() {
     const mins = r.finished && r.created ? mmss(r.finished - r.created) : "";
     return `<div class="panel job ${esc(r.status)}">
       <div class="head"><div><div class="title">${TRIGGER(r.trigger || "manual")} · ${r.topic ? esc(r.topic) : "Trending topics"}
-          ${STYLE_TAG[r.style] ? " · " + STYLE_TAG[r.style] : ""}${r.length === "long" ? " · 🎬 Long" : ""}</div>
+          ${STYLE_TAG[r.style] ? " · " + STYLE_TAG[r.style] : ""}${r.length === "long" ? " · 🎬 Long" : r.length === "medium" ? " · 🎞️ Medium" : ""}</div>
         <div class="sub">${new Date(r.created * 1000).toLocaleString()}${mins ? " · took " + mins : ""} · ${r.made} of ${r.count} made</div></div>
         <span class="pill ${esc(r.status)}">${LABEL[r.status] || esc(r.status)}</span></div>
       ${usageHtml({ steps, total: r.usage.total.tokens, cost: r.usage.total.cost_usd }, "Total")}
@@ -1453,6 +1455,8 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#length button").forEach((x) => x.classList.toggle("on", x === b));
   $("#lengthHint").textContent = lengthValue === "long"
     ? "16:9 for YouTube, fully animated with chapters, Indian English (change in Settings). Takes about 30–90 minutes each; up to 5 at a time. Jokes become true stories at this length."
+    : lengthValue === "medium"
+    ? "16:9 for YouTube, 5–6 minutes: the same animated style as long videos with 4–5 chapters. Faster to make and uses fewer tokens. Jokes become true stories at this length."
     : "Vertical 9:16 for Reels and Shorts, with real footage.";
 });
 setStyle("facts");

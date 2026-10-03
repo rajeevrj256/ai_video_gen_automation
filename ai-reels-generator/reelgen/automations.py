@@ -29,7 +29,7 @@ class Automation(BaseModel):
     days: list[int] = Field(default_factory=lambda: list(range(7)))  # 0 = Monday ... 6 = Sunday
     count: int = 3
     style: str = "facts"
-    length: str = "short"  # short | long
+    length: str = "short"  # short | medium | long
     topic: str = ""  # empty = trending
     captions: bool = True  # subtitles burned into the videos
     last_run: str = ""  # ISO date of the last run, so a restart doesn't run it twice
@@ -42,8 +42,8 @@ class Automation(BaseModel):
             raise ValueError("Time must look like 09:30")
         self.days = sorted({d for d in self.days if 0 <= d <= 6}) or list(range(7))
         self.style = self.style if self.style in STYLES else "facts"
-        self.length = "long" if self.length == "long" else "short"
-        self.count = max(1, min(self.count, 5 if self.length == "long" else 15))
+        self.length = self.length if self.length in ("long", "medium") else "short"
+        self.count = max(1, min(self.count, 15 if self.length == "short" else 5))
         self.topic = self.topic.strip()[:200]
         return self
 

@@ -123,14 +123,14 @@ class JobManager:
                 reports = resume_batch(cfg, job["resume"], progress)
                 fresh = job["count"] - len(job["resume"])  # videos that never started before the pause
                 if fresh > 0 and not job.get("pause"):
-                    if job.get("length") == "long":
+                    if job.get("length") in ("long", "medium"):
                         from .longform import run_long_batch
-                        reports += run_long_batch(cfg, fresh, job["topic"], progress)
+                        reports += run_long_batch(_long_cfg(cfg, job), fresh, job["topic"], progress)
                     else:
                         reports += run(cfg, fresh, job["topic"], progress)
-            elif job.get("length") == "long":
+            elif job.get("length") in ("long", "medium"):
                 from .longform import run_long_batch
-                reports = run_long_batch(cfg, job["count"], job["topic"], progress)
+                reports = run_long_batch(_long_cfg(cfg, job), job["count"], job["topic"], progress)
             else:
                 reports = run(cfg, job["count"], job["topic"], progress)
             job["results"] = [r["id"] for r in reports]
@@ -146,6 +146,14 @@ class JobManager:
             runlog.record_job(self.cfg, job)
         except Exception:
             log.exception("Couldn't save the run history")
+
+
+def _long_cfg(cfg: Config, job: dict) -> Config:
+    """Medium jobs are long videos written for 5-6 minutes (fewer, shorter chapters)."""
+    from dataclasses import replace
+
+    from .longform import MEDIUM_MINUTES
+    return replace(cfg, long_minutes=MEDIUM_MINUTES) if job.get("length") == "medium" else cfg
 
 
 def scheduler(jobs: JobManager) -> None:
@@ -207,7 +215,7 @@ class GenerateRequest(BaseModel):
     topic: str | None = None
     count: int = 1
     style: str | None = None  # facts | story | comedy | mix; empty = the style in Settings
-    length: str = "short"  # "short" (30s, 9:16) or "long" (8-10 min, 16:9, animated)
+    length: str = "short"  # "short" (30s, 9:16), "medium" (5-6 min) or "long" (8-10 min), both 16:9 animated
     captions: bool | None = None  # subtitles; empty = the Settings value
 
 
@@ -515,9 +523,9 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/generate")
     def generate(body: GenerateRequest):
         style = body.style if body.style in ("facts", "story", "comedy", "mix") else None
-        long = body.length == "long"
-        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_LONG_BATCH if long else MAX_BATCH)),
-                           "manual", style, "long" if long else "short", captions=body.captions)
+        length = body.length if body.length in ("long", "medium") else "short"
+        return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
+                           "manual", style, length, captions=body.captions)
 
     @app.get("/api/jobs")
     def list_jobs():
