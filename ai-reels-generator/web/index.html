@@ -299,7 +299,7 @@
       </div>
       <label>Subtitles</label>
       <div class="segmented" id="cc">
-        <button data-cc="true" class="on">💬 CC on</button><button data-cc="false">🚫 CC off</button>
+        <button data-cc="true">💬 CC on</button><button data-cc="false" class="on">🚫 CC off</button>
       </div>
       <label for="topic">Topic</label>
       <input id="topic" placeholder="Leave empty for what's trending now">
@@ -447,14 +447,14 @@
             <select id="a-style"><option value="facts">📚 Facts</option><option value="story">🎭 Fiction</option><option value="comedy">😂 Jokes</option><option value="mix">🔀 Mix</option></select></div>
         </div>
         <label for="a-captions">Subtitles</label>
-        <select id="a-captions"><option value="true">💬 CC on</option><option value="false">🚫 CC off</option></select>
+        <select id="a-captions"><option value="false">🚫 CC off</option><option value="true">💬 CC on</option></select>
         <label for="a-topic">Topic (optional)</label><input id="a-topic" placeholder="Empty = what's trending that day">
         <div class="row">
           <button class="primary" id="saveAuto">Save automation</button><button id="cancelAuto">Cancel</button>
         </div>
       </div>
       <label for="s-captions">Subtitles (CC) by default</label>
-      <select id="s-captions"><option value="true">💬 On</option><option value="false">🚫 Off (graphics use the space)</option></select>
+      <select id="s-captions"><option value="false">🚫 Off (graphics use the space)</option><option value="true">💬 On</option></select>
       <label for="s-video_style">Default style (Create page)</label>
       <select id="s-video_style">
         <option value="facts">📚 True stories (fact-checked)</option>
@@ -1337,7 +1337,7 @@ function openAutoForm(a) {
   $("#a-name").value = a ? a.name : ""; $("#a-time").value = a ? a.time : "09:00";
   $("#a-count").value = String(a ? a.count : 3); $("#a-length").value = a ? a.length : "short";
   $("#a-style").value = a ? a.style : "facts"; $("#a-topic").value = a ? a.topic : "";
-  $("#a-captions").value = String(a ? a.captions !== false : true);
+  $("#a-captions").value = String(a ? a.captions === true : false);
   const days = a ? a.days : [0, 1, 2, 3, 4, 5, 6];
   $("#a-days").innerHTML = DAY_NAMES.map((d, i) => `<button class="chip ${days.includes(i) ? "on" : ""}" data-day="${i}">${d}</button>`).join("");
   document.querySelectorAll("#a-days .chip").forEach((c) => c.onclick = () => c.classList.toggle("on"));
@@ -1541,7 +1541,7 @@ function setStyle(style) {
   });
 }
 document.querySelectorAll("#style button").forEach((b) => b.onclick = () => setStyle(b.dataset.style));
-let lengthValue = "short", ccValue = true;
+let lengthValue = "short", ccValue = false;
 function setCc(on) {
   ccValue = !!on;
   document.querySelectorAll("#cc button").forEach((x) => x.classList.toggle("on", x.dataset.cc === String(ccValue)));
@@ -1614,7 +1614,7 @@ $("#svBtn").onclick = async () => {
   }
 };
 setStyle("facts");
-api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions !== false); }).catch(() => {}); // start from Settings
+api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions === true); }).catch(() => {}); // start from Settings (off unless turned on there)
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
