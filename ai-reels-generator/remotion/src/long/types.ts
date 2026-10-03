@@ -95,5 +95,6 @@ export type LongProps = {
   hook?: Hook;
   musicFrom?: number; // the main track starts after the hook
   ambience?: {src: string; from: number; to: number}[];
+  musicParts?: {src: string; from: number; to: number; name: string}[]; // the user's tracks on the chapters they fit
   currency?: string; // rupee | euro | pound: money icons show this symbol
 };

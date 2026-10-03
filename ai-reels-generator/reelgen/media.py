@@ -79,7 +79,53 @@ def sounds(cfg: Config) -> list[Item]:
 
 
 def music(cfg: Config) -> list[Item]:
-    return _files(cfg, "music") or [Item(n, about, None) for n, (about, _) in BEDS.items()]
+    """The user's tracks first, then the built-in beds: a video uses an upload only when one fits it
+    (Claude picks by the file names), never just because it's the only file there."""
+    mine = _files(cfg, "music")
+    return [*mine, *[Item(n, about, None) for n, (about, _) in BEDS.items() if n not in {m.name for m in mine}]]
+
+
+# What each automatic sound (transition, pop, click, the long videos' sound design) is for, as words
+# an uploaded file's name may contain. An upload whose name matches plays that role; otherwise the
+# built-in sound does.
+ROLE_WORDS = {
+    "whoosh": ("whoosh", "swoosh", "woosh", "whip", "swipe", "transition"),
+    "swish": ("swish", "swoosh", "whoosh", "woosh", "whip", "swipe"),
+    "impact": ("impact", "punch", "slam", "thud", "hit"),
+    "glitch": ("glitch", "digital", "static", "distort"),
+    "shimmer": ("shimmer", "sparkle", "magic", "chime", "twinkle", "glitter"),
+    "pop": ("pop", "bubble", "blip"),
+    "click": ("click", "tick", "tap", "blip"),
+    "ding": ("ding", "bell", "chime", "notification"),
+    "rumble": ("rumble", "earthquake", "quake"),
+    "heartbeat": ("heartbeat", "heart", "pulse"),
+    "typing": ("typing", "keyboard"),
+    "flyby": ("flyby", "fly", "plane", "jet"),
+    "cash": ("cash", "coin", "coins", "money", "register"),
+    "drone": ("drone", "ambient", "tension"),
+    "tick": ("tick", "clock", "timer"),
+    "sword": ("sword", "blade", "slash", "katana"),
+    "riser": ("riser", "uplifter", "swell", "build"),
+    "sad": ("sad", "fail", "trombone", "lose"),
+}
+
+
+def uploaded_for(cfg: Config, roles, out_dir: Path) -> dict[str, Path]:
+    """Copies of the user's sound files whose names match these roles (whole words of the file name);
+    roles with no matching upload are left out, so the built-in sound plays there."""
+    files = _files(cfg, "sfx")
+    out: dict[str, Path] = {}
+    for role in roles:
+        words = ROLE_WORDS.get(role, (role,))
+        match = next((f for w in words for f in files if {w, w + "s"} & set(f.name.split("-"))), None)
+        if match is None:
+            continue
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / f"u-{match.name}{match.path.suffix.lower()}"
+        if not dest.exists():
+            shutil.copy(match.path, dest)
+        out[role] = dest
+    return out
 
 
 def models(cfg: Config) -> list[Item]:
@@ -122,8 +168,9 @@ def remove(cfg: Config, kind: str, filename: str) -> None:
 
 def prompt_block(cfg: Config, long: bool = False) -> str:
     """The sound design instructions and the library, for the script writer."""
-    fx = "\n".join(f"  - {s.name}: {s.about}" for s in sounds(cfg))
-    tracks = "\n".join(f"  - {m.name}: {m.about}" for m in music(cfg))
+    mark = lambda i: " (the user's own file)" if i.path else " (built-in)"
+    fx = "\n".join(f"  - {s.name}: {s.about}{mark(s)}" for s in sounds(cfg))
+    tracks = "\n".join(f"  - {m.name}: {m.about}{mark(m)}" for m in music(cfg))
     where = ("the cold open (up to 4 layered cues) and at most 1 cue in a later beat, only on its key word, "
              "and no more than one cue every few beats" if long else
              "scene 1, the hook (2 to 4 cues layered on its words, e.g. a riser into the key word, a sword "
@@ -137,8 +184,12 @@ def prompt_block(cfg: Config, long: bool = False) -> str:
         "serious (death, a crash, a disaster, illness): there use only drone, heartbeat or none. Less is more: "
         "most lines get no sound, and 'soft' is the usual volume.\n"
         f"Sound effects you can use:\n{fx}\n"
+        "Use the user's own sound effects and music (listed first) wherever they fit the moment and the "
+        "video; when none fits, use a built-in one" + (" or let the app compose the music" if long else "") + ". "
+        "Never use a file only because it is there.\n"
         "Background music: pick the one track whose mood fits the whole video (it plays quietly under the "
-        f"voice), or 'none' for no music:\n{tracks}\n"
+        "voice)" + (", 'compose' to have a track composed for this video's mood" if long else "")
+        + f", or 'none' for no music:\n{tracks}\n"
     )
 
 
@@ -155,7 +206,8 @@ def pick_music(cfg: Config, name: str, out_dir: Path, seconds: float) -> Path | 
     if name == "none":
         return None
     items = music(cfg)
-    item = next((m for m in items if m.name == name), None) or (items[0] if items else None)
+    # An unknown name gets a built-in bed, never the user's first track whatever it is.
+    item = next((m for m in items if m.name == name), None) or next((m for m in items if m.path is None), None)
     if item is None:
         return None
     out_dir.mkdir(parents=True, exist_ok=True)

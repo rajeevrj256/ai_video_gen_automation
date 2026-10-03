@@ -37,7 +37,7 @@ from .trends import collect_trends, load_history, save_history, trends_as_json, 
 from .verify import FactCheck, VerifyResult, Review, probe
 from .video import FFMPEG, REMOTION_DIR, _remotion_cli, _render_remotion, media_seconds
 from .visuals import pexels_video
-from .voice import SceneAudio, synthesize_scenes
+from .voice import SceneAudio, Word as _Word, synthesize_scenes
 
 log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
@@ -53,6 +53,7 @@ LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
 VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart", "footage",
                 "model3d", "scene")
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
+SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx)
 HOOK_SECONDS = (25.0, 30.0)
 
 
@@ -109,11 +110,13 @@ class HookShot(BaseModel):
     line: str = Field(description="What the narrator says, trailer style: a short, punchy line of 3-12 words, or empty for a shot carried by sound and picture alone. Never reveals the answer.")
     text: str = Field(default="", description="On-screen text slammed in for this shot: 1-3 words (a date, a number, a place, 'WAIT...'), or empty. Most shots have none.")
     visual: LVisual = Field(description="What we see. Prefer motion: scene, model3d, footage, icons, stat. The camera move should be dramatic (push, dutch, orbit, pan).")
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list: on a word of the line, or word '*' to land on the slammed text. Prefer the user's own files when they fit.")
 
 
 class LChapter(BaseModel):
     title: str = Field(description="Chapter title for the title card and YouTube chapters, 2-5 words. YouTube shows chapters as 'key moments' in search, so make it a clear, searchable phrase about what the chapter covers ('How Oxford Mass-Produced It', not 'A New Hope'). Chapter 1 (the cold open) is 'Intro'.")
     beats: list[LBeat] = Field(description="6-14 beats. Each beat's visual shows what its narration says.")
+    music: str = Field(default="", description="One of the user's own music files that fits this chapter's mood (it plays under this chapter only), or empty for the composed score here. Check the user's files for every chapter; use one only where it really fits.")
     intensity: int = Field(default=3, ge=1, le=5, description="How intense the music is under this chapter, 1 (quiet, reflective) to 5 (peak). Build toward the twist and the ending; drop low after a peak so the next build is felt.")
     drop: bool = Field(default=False, description="True for the one or two chapters that open on the twist or the big turn: the music cuts to silence for a moment, then hits.")
     ambience: Literal["none", "room", "city", "rain", "wind", "crowd", "night", "lab", "sea", "fire"] = Field(
@@ -136,8 +139,9 @@ class LongScript(BaseModel):
         default="curious", description="The music's mood for the main video, chosen from the story.")
     hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
         default="spy-pulse", description="The hook's own trailer track: spy-pulse (ticking spy/action energy), ticking-clock (a race against time), dark-pulse (dread, mystery), glitch-drive (tech, chaos).")
+    hook_track: str = Field(default="", description="The hook's music: the name of one of the user's own music files that fits an energetic trailer for this video, or empty to compose one (hook_music then sets its style).")
     chapters: list[LChapter] = Field(description="6-8 chapters in order. The first is the cold open ('Intro').")
-    music: str = Field(default="", description="Background track name from the music list, or 'none'.")
+    music: str = Field(default="", description="Background track name from the music list (the user's own file when one fits the mood), 'compose' to have one composed for this video, or 'none'.")
 
 
 def _system(style: str, language: str) -> str:
@@ -201,7 +205,12 @@ match the words.
 
 Music and sound: set the music mood from the story, and give every chapter an intensity (1-5) that \
 follows the tension: build toward the twist and the ending, fall back after a peak, and mark the \
-chapter that opens on the twist with a drop. Pick an ambience only where a place matters.
+chapter that opens on the twist with a drop. Pick an ambience only where a place matters. Look at the \
+user's own music and sound files first (marked in the lists): use one for the hook (hook_track), the \
+main music and the sound effects where it fits this video; where none fits, leave hook_track empty, \
+write 'compose' for the music, and use built-in sounds. Decide part by part: each chapter can take \
+one of the user's tracks that fits its mood (chapter music) while the other chapters get the composed \
+score, and each line's sounds can mix the user's files with built-ins.
 
 Visuals:
 - Every visual must match its line. Numbers on screen must be real, sourced and identical to what \
@@ -312,7 +321,7 @@ def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instruct
         if f.chapter == 0 and 1 <= f.beat <= len(fixed.hook):
             h = fixed.hook[f.beat - 1]
             fixed.hook[f.beat - 1] = HookShot(beat=h.beat, line=f.narration, visual=f.visual,
-                                              text=h.text if f.text is None else f.text)
+                                              text=h.text if f.text is None else f.text, sounds=h.sounds)
             changed.add((0, f.beat))
         elif 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
             old = fixed.chapters[f.chapter - 1].beats[f.beat - 1]
@@ -529,13 +538,30 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                 lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
                                        for w in sa.words])
                 spoken += [(t + w.start, t + w.end) for w in sa.words]
+            # The hook's own sound effects: on a word of its line, or '*' on the slammed text.
+            spoken_cues = [c for c in h.sounds if c.word.strip() != "*"]
+            if sa and spoken_cues:
+                cues += media.resolve_cues(spoken_cues, sa.words, t, cfg, work / "sfx",
+                                           lambda p: p.relative_to(work).as_posix(), 2, used)
+            for c in [c for c in h.sounds if c.word.strip() == "*"][:1]:
+                slam = media.resolve_cues([c.model_copy(update={"word": "slam"})],
+                                          [_Word("slam", SLAM_AT, SLAM_AT + 0.3)], t, cfg, work / "sfx",
+                                          lambda p: p.relative_to(work).as_posix(), 1, used)
+                cues += slam if h.text.strip() else []
             hook["shots"].append(shot)
             t += d
         hook["duration"] = round(t + HOOK_TAIL, 3)
         hook["style"] = variety.fresh_trailer(cfg, script.hook_music, seed)
-        cuts = [s["start"] for s in hook["shots"][1:]] + [hook["duration"] - 0.05]
-        hook["music"] = music.trailer(hook["style"], hook["duration"] - 0.05, cuts, seed,
-                                      work / "music" / "hook.wav").relative_to(work).as_posix()
+        mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()), None)
+        if mine is not None:  # the user's own track fits this trailer
+            (work / "music").mkdir(parents=True, exist_ok=True)
+            dest = work / "music" / f"hook-own{mine.path.suffix.lower()}"
+            shutil.copy(mine.path, dest)
+            hook["music"], hook["own"] = dest.relative_to(work).as_posix(), mine.name
+        else:
+            cuts = [s["start"] for s in hook["shots"][1:]] + [hook["duration"] - 0.05]
+            hook["music"] = music.trailer(hook["style"], hook["duration"] - 0.05, cuts, seed,
+                                          work / "music" / "hook.wav").relative_to(work).as_posix()
 
     t = hook["duration"]
     for ci, chapter in enumerate(script.chapters):
@@ -580,6 +606,21 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         sections = [music.Section(c["start"] - main_start, c["end"] - main_start, (c["intensity"] - 1) / 4,
                                   bool(c["drop"])) for c in chapters]
         track = music.compose(script.mood, sections, t - main_start, seed, work / "music" / "main.wav")
+    # The user's own tracks, chapter by chapter where Claude found one that fits (the composed or
+    # main track steps aside there); consecutive chapters with the same track share one part.
+    own = {m.name: m for m in media.music(cfg) if m.path}
+    parts: list[dict] = []
+    for c, chapter in zip(chapters, script.chapters):
+        name = chapter.music.strip()
+        if name not in own or (track is not None and name == script.music):
+            continue
+        if parts and parts[-1]["name"] == name and abs(parts[-1]["to"] - c["start"]) < 0.5:
+            parts[-1]["to"] = c["end"]
+            continue
+        dest = work / "music" / f"part{len(parts):02d}{own[name].path.suffix.lower()}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(own[name].path, dest)
+        parts.append({"src": dest.relative_to(work).as_posix(), "from": c["start"], "to": c["end"], "name": name})
     ambience = []
     for c in chapters:
         if c["ambience"] != "none":
@@ -589,6 +630,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                 ambience.append({"src": bed.relative_to(work).as_posix(), "from": c["start"], "to": c["end"]})
 
     sfx = write_sfx(work / "sfx")
+    sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))  # the user's whoosh/pop/... where one matches
     props = {
         "title": script.youtube_title,
         "fps": cfg.fps,
@@ -602,6 +644,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         "music": track.relative_to(work).as_posix() if track else None,
         "musicFrom": main_start,
         "ambience": ambience,
+        "musicParts": parts,
         "sfx": {k: p.relative_to(work).as_posix() for k, p in sfx.items()},
         "cues": cues,
         "speech": media.speech_spans(spoken),
@@ -609,10 +652,14 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     }
     # Sound for every visual action, on top of Claude's word cues.
     auto = sound_design.design(props, look["transition"])
-    extra = write_cue_sounds(work / "sfx", {n for n, _, _ in auto} - set(sfx))
+    needed = {n for n, _, _ in auto} - set(sfx)
+    mine = media.uploaded_for(cfg, needed, work / "sfx")  # the user's file where its name matches the role
+    extra = {**write_cue_sounds(work / "sfx", needed - set(mine)), **mine}
     files = {**{k: p.relative_to(work).as_posix() for k, p in sfx.items()},
              **{k: p.relative_to(work).as_posix() for k, p in extra.items()}}
-    props["cues"] = cues + [{"src": files[n], "at": at, "volume": vol, "name": n} for n, at, vol in auto if n in files]
+    props["cues"] = cues + [{"src": files[n], "at": at, "name": n,
+                             "volume": round(vol * (media.UPLOADED_GAIN * 1.6 if "/u-" in files[n] else 1), 3)}
+                            for n, at, vol in auto if n in files]
     if new_look:
         variety.remember(cfg, look, script.mood, hook["style"])
     return props

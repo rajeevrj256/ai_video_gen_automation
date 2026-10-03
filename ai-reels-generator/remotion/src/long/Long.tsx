@@ -35,7 +35,7 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   );
 };
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], currency}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency}) => {
   useFonts();
   setCurrency(currency);
   const {fps} = useVideoConfig();
@@ -105,9 +105,16 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
       ) : null}
       {music ? (
         <Sequence name="music" from={f(musicFrom)}>
-          <Music src={music} speech={speech.map(([a, b]) => [a - musicFrom, b - musicFrom] as [number, number])} full={0.18} duck={0.065} />
+          <Music src={music} speech={speech.map(([a, b]) => [a - musicFrom, b - musicFrom] as [number, number])} full={0.18} duck={0.065}
+            mute={musicParts.map((m) => [m.from - musicFrom, m.to - musicFrom] as [number, number])} />
         </Sequence>
       ) : null}
+      {/* the user's own tracks on the chapters they fit (the composed score steps aside there) */}
+      {musicParts.map((m, i) => (
+        <Sequence key={`own${i}`} name={`music: ${m.name}`} from={f(m.from)} durationInFrames={Math.max(1, f(m.to - m.from))}>
+          <Music src={m.src} speech={speech.map(([a, b]) => [a - m.from, b - m.from] as [number, number])} full={0.16} duck={0.06} />
+        </Sequence>
+      ))}
       {ambience.map((a, i) => (
         <Sequence key={`amb${i}`} name={`ambience ${i + 1}`} from={f(a.from)} durationInFrames={Math.max(1, f(a.to - a.from))}>
           <Ambience src={a.src} frames={Math.max(1, f(a.to - a.from))} />

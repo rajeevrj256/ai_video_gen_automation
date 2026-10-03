@@ -46,8 +46,11 @@ def media_used(cfg: Config, video: Path) -> dict:
     music = []
     hook = props.get("hook") or {}
     if hook.get("music"):
-        music.append({"name": f"Trailer track: {hook.get('style') or 'trailer'}", "file": hook["music"],
-                      "source": "Composed for this video's hook", "times": [0.0], "play": hook["music"]})
+        own = hook.get("own")
+        music.append({"name": "Hook music" if own else f"Trailer track: {hook.get('style') or 'trailer'}",
+                      "file": hook["music"], "times": [0.0], "play": hook["music"],
+                      "source": f"Your library: {_library_file(cfg, 'music', own) or own}" if own
+                      else "Composed for this video's hook"})
     if props.get("music"):
         picked = script.get("music") or ""
         original = _library_file(cfg, "music", picked) if picked else None
@@ -59,6 +62,10 @@ def media_used(cfg: Config, video: Path) -> dict:
             source = f"Composed for this video (mood: {script.get('mood', 'auto')})"
         music.append({"name": "Main music", "file": props["music"], "source": source,
                       "times": [round(props.get("musicFrom", 0.0), 2)], "play": props["music"]})
+    for m in props.get("musicParts") or []:  # the user's tracks on the chapters they fit
+        music.append({"name": f"Chapter music ({m['from'] // 60:.0f}:{m['from'] % 60:02.0f}–{m['to'] // 60:.0f}:{m['to'] % 60:02.0f})",
+                      "file": m["src"], "source": f"Your library: {_library_file(cfg, 'music', m['name']) or m['name']}",
+                      "times": [round(m["from"], 2)], "play": m["src"]})
     for a in props.get("ambience") or []:
         music.append({"name": f"Ambience: {Path(a['src']).stem}", "file": a["src"], "source": "Composed ambience bed",
                       "times": [round(a["from"], 2)], "play": a["src"]})
@@ -71,7 +78,7 @@ def media_used(cfg: Config, video: Path) -> dict:
         times[name].append(c["at"])
         if name not in by_name:
             user = Path(c["src"]).name.startswith("u-")
-            original = _library_file(cfg, "sfx", name) if user else None
+            original = (_library_file(cfg, "sfx", name) or _library_file(cfg, "sfx", Path(c["src"]).stem[2:])) if user else None
             by_name[name] = {"name": name, "file": c["src"],
                              "source": f"Your library: {original or Path(c['src']).name}" if user else
                              f"Built-in (synthesised): {CUE_SOUNDS[name][3]}" if name in CUE_SOUNDS else "Built-in (synthesised)",

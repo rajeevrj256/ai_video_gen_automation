@@ -1309,7 +1309,7 @@ async function loadLibrary() {
       <div class="libitem"><b>${esc(i.name)}</b> <span class="hint">${(i.size / 1048576).toFixed(1)} MB</span>
         ${k === "models3d" ? "" : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
         <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button></div>`).join("")
-      || `<p class="hint">None added yet.</p>`}${built.length ? `<p class="hint">Built in: ${built.map((i) => esc(i.name)).join(", ")}${k === "music" && mine.length ? " (not used while you have your own music)" : ""}</p>` : ""}`;
+      || `<p class="hint">None added yet.</p>`}${built.length ? `<p class="hint">Built in: ${built.map((i) => esc(i.name)).join(", ")}${k === "music" && mine.length ? " (used when none of yours fits a video)" : ""}</p>` : ""}`;
   }).join("");
 }
 $("#lib-file").addEventListener("change", async (e) => {

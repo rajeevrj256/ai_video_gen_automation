@@ -208,6 +208,7 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
 
     music = media.pick_music(cfg, music_name, public_dir, timeline.total)
     sfx = write_sfx(public_dir / "sfx")
+    sfx.update(media.uploaded_for(cfg, list(sfx), public_dir / "sfx"))  # the user's whoosh/pop/... where one matches
     return {
         "title": title,
         "fps": cfg.fps,

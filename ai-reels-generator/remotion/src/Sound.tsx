@@ -8,7 +8,10 @@ import type {Cue, Span} from './types';
 
 const DUCK_RAMP = 0.35; // seconds to dip or recover
 
-export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: number; loop?: boolean}> = ({src, speech, full, duck, loop = true}) => {
+// `mute`: spans (seconds) where this track steps aside, e.g. the composed score under a chapter that
+// plays the user's own track; it fades out and back in over MUTE_RAMP.
+const MUTE_RAMP = 1.2;
+export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: number; loop?: boolean; mute?: Span[]}> = ({src, speech, full, duck, loop = true, mute = []}) => {
   const {fps, durationInFrames} = useVideoConfig();
   const level = (frame: number) => {
     const t = frame / fps;
@@ -23,7 +26,11 @@ export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: n
     }
     const k = speech.length ? interpolate(distance, [0.05, DUCK_RAMP], [0, 1], clamp) : 1;
     const fade = interpolate(frame, [0, 15, durationInFrames - 45, durationInFrames], [0, 1, 1, 0], clamp);
-    return (duck + (full - duck) * k) * fade;
+    let away = 1;
+    for (const [a, b] of mute) {
+      away = Math.min(away, interpolate(t, [a - MUTE_RAMP, a, b, b + MUTE_RAMP], [1, 0, 0, 1], clamp));
+    }
+    return (duck + (full - duck) * k) * fade * away;
   };
   return <Html5Audio src={staticFile(src)} loop={loop} loopVolumeCurveBehavior="extend" volume={level} />;
 };
