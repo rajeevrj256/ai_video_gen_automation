@@ -279,6 +279,7 @@ class StickRequestBody(BaseModel):
     idea: str = ""
     format: str = "long"
     minutes: float = 5
+    seconds: int = 0  # Short length: 15, 30, 45 (0 = 25-50 s)
     language: str = "english"
     speed: float = 1.5
     style: str = "comedy"  # comedy | fiction | facts
@@ -655,7 +656,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .stickstory import DEFAULT_CAST
 
         fmt = "short" if body.format == "short" else "long"
-        given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))),
+        given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))), "seconds": body.seconds if body.seconds in (15, 30, 45) else 0,
                  "language": body.language if body.language in ("english", "hindi") else "english",
                  "speed": min(2.0, max(0.8, float(body.speed))), "cast": body.cast.strip() or DEFAULT_CAST,
                  "style": body.style if body.style in ("comedy", "fiction", "facts") else "comedy"}

@@ -383,6 +383,10 @@
       <div class="segmented" id="stFormat">
         <button data-format="long" class="on">🎬 Episode · 16:9</button><button data-format="short">📱 Short · 9:16</button>
       </div>
+      <div id="stSecBox" hidden>
+        <label for="stSeconds">Length</label>
+        <select id="stSeconds"><option value="15">About 15 s</option><option value="30">About 30 s</option><option value="45">About 45 s</option><option value="0" selected>25-50 s (Claude decides)</option></select>
+      </div>
       <div id="stLenBox">
         <label for="stMinutes">Length</label>
         <select id="stMinutes"><option value="3">About 3 min</option><option value="5" selected>About 5 min</option><option value="8">About 8 min</option></select>
@@ -1725,9 +1729,10 @@ document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
   stFormat = b.dataset.format;
   document.querySelectorAll("#stFormat button").forEach((x) => x.classList.toggle("on", x === b));
   $("#stLenBox").hidden = stFormat === "short";
+  $("#stSecBox").hidden = stFormat !== "short";
 });
 $("#stBtn").onclick = async () => {
-  const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), language: "english", speed: Number($("#stSpeed").value),
+  const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), seconds: Number($("#stSeconds").value), language: "english", speed: Number($("#stSpeed").value),
                  style: stStyle, cast: stSerialize(), count: Number($("#stCount").value) };
   $("#stBtn").disabled = true;
   try {

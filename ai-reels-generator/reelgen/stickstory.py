@@ -126,6 +126,7 @@ class StickRequest:
     minutes: float = 5.0
     language: str = "english"
     speed: float = 1.5  # how fast everyone talks: 1.5 = 50% faster than normal (snappy comedy timing)
+    seconds: int = 0  # a Short's length: 15, 30 or 45 s (0 = 25-50 s)
     style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked)
     cast: str = DEFAULT_CAST
 
@@ -196,7 +197,7 @@ class Episode(BaseModel):
     scenes: list[SScene]
 
 
-def _system(short: bool, minutes: float, language: str, style: str = "comedy") -> str:
+def _system(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0) -> str:
     lang = ("natural, casual American English, the way kids, teens and parents really talk (no Indian or British "
             "words, no rupees: dollars, US schools, US homes)" if language == "english"
             else "everyday Hindi in Devanagari script, as families really talk")
@@ -204,7 +205,9 @@ def _system(short: bool, minutes: float, language: str, style: str = "comedy") -
     hook = {"comedy": "with a 'POV:' caption", "fiction": "with someone already in trouble",
             "facts": "with a surprising question or a wrong belief someone holds"}.get(style, "")
     if short:
-        form = f"""a YouTube Short (9:16), 25-50 seconds: ONE situation, 5-12 lines. The first line ({hook}) \
+        span = (f"{seconds} seconds (at most {seconds + 3}): ONE situation, {max(3, seconds // 4)}-{max(4, seconds // 3)} "
+                "short lines" if seconds else "25-50 seconds: ONE situation, 5-12 lines")
+        form = f"""a YouTube Short (9:16), {span}. The first line ({hook}) \
 hooks in under 2 seconds; the {payoff} lands in the last 5 seconds, and the ending can loop back to the start. \
 At most 3 characters, standing close together (spots left, center, right)."""
     else:
@@ -451,7 +454,7 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
               + (f"\n\nYour first draft repeated an earlier video ({avoid}). Write a completely different situation."
                  if avoid else "")
               + "\n\n" + media.prompt_block(cfg))
-    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style), prompt, Episode,
+    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
                allow_web=req.style == "facts", effort=cfg.claude_effort, timeout=1800)
 
 
