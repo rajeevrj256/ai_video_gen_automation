@@ -161,7 +161,17 @@
   .cast-row { display: grid; grid-template-columns: 1.2fr 1fr 1.6fr auto auto; gap: 6px; align-items: center; }
   .cast-row input, .cast-row select { padding: 8px 10px; font-size: 14px; }
   .cast-row button { padding: 8px 12px; }
-  @media (max-width: 620px) { .cast-row { grid-template-columns: 1fr 1fr; } }
+  .cast-row button { width: auto; min-width: 40px; }
+  /* A phone: each character is a small card, name / look / ✕ on top and the voice with ▶ below. */
+  @media (max-width: 620px) {
+    .cast-row { grid-template-columns: 1fr 96px 40px; grid-template-areas: "name look del" "voice voice play";
+      padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+    .cast-row [data-k="name"] { grid-area: name; } .cast-row [data-k="look"] { grid-area: look; }
+    .cast-row [data-k="voice"] { grid-area: voice; min-width: 0; } .cast-row [data-play] { grid-area: play; }
+    .cast-row [data-del] { grid-area: del; }
+    .cast-row input, .cast-row select { min-width: 0; width: 100%; }
+    .cast-row button { padding: 8px 0; min-width: 0; width: 40px; }
+  }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
   #savePost { margin-top: 14px; }
