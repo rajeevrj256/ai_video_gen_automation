@@ -99,3 +99,22 @@ def remember(cfg: Config, look: dict, mood: str, hook_music: str, form: str = ""
         path = _path(cfg)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(past[-KEEP:], indent=1), encoding="utf-8")
+
+
+PHOTOS_KEEP = 400  # background photos used lately, never picked again for a new video
+
+
+def used_photos(cfg: Config) -> set[int]:
+    path = cfg.output_dir / "backdrop_photos.json"
+    try:
+        return set(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else set()
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def remember_photos(cfg: Config, ids: set[int]) -> None:
+    with _lock:
+        path = cfg.output_dir / "backdrop_photos.json"
+        old = sorted(used_photos(cfg))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps((old + sorted(ids - set(old)))[-PHOTOS_KEEP:]), encoding="utf-8")

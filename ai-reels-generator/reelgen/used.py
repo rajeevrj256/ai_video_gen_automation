@@ -116,6 +116,12 @@ def media_used(cfg: Config, video: Path) -> dict:
     for c in props.get("cuts") or []:  # Shorts: stock clips
         if c.get("src"):
             footage.append({"name": Path(c["src"]).stem, "file": c["src"], "source": "Pexels", "times": [round(c["start"], 2)]})
+    for key, src in ({"hook": hook_plate} if (hook_plate := (props.get("look") or {}).get("hookPlate")) else {}).items() | \
+            ((props.get("look") or {}).get("plates") or {}).items():
+        ch = next((c for c in props.get("chapters") or [] if str(c.get("index")) == key), None)
+        footage.append({"name": "Background photo: " + ("hook" if key == "hook" else (ch or {}).get("title", f"chapter {key}")),
+                        "file": src, "source": "Pexels photo (" + ((props.get("look") or {}).get("plateUrls") or {}).get(key, "") + ")",
+                        "times": [0.0 if key == "hook" else round((ch or {}).get("start", 0.0), 2)]})
     for m in models.values():
         m["count"] = len(m["times"])
 

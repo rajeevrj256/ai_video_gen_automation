@@ -53,6 +53,8 @@ export type Look = {
   backdrop: 'blobs' | 'grid' | 'rays' | 'waves' | 'dots' | 'paper';
   transition: 'smooth' | 'whip' | 'zoom' | 'glitch' | 'flash' | 'slide';
   seed: number;
+  plates?: Record<string, string>; // chapter index -> background photo of that chapter's own setting
+  hookPlate?: string | null; // the hook's background photo
 };
 
 export type HookShot = {

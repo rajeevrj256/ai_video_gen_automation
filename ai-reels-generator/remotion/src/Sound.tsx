@@ -35,14 +35,20 @@ export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: n
   return <Html5Audio src={staticFile(src)} loop={loop} loopVolumeCurveBehavior="extend" volume={level} />;
 };
 
-export const Cues: React.FC<{cues: Cue[]}> = ({cues}) => {
+// An effect that lands while the narrator is speaking plays at this share of its level, so the voice
+// always stays on top (the files themselves are already levelled below the voice: media.level_sounds).
+export const SPEECH_DUCK = 0.5;
+const inSpeech = (at: number, speech: Span[]) => speech.some(([a, b]) => at >= a - 0.15 && at <= b + 0.15);
+
+export const Cues: React.FC<{cues: Cue[]; speech?: Span[]}> = ({cues, speech = []}) => {
   const {fps} = useVideoConfig();
   return (
     <>
       {cues.map((c, i) => (
         // No durationInFrames: every effect plays out its own tail.
         <Sequence key={i} name={`sound ${c.name}`} from={Math.round(c.at * fps)}>
-          <Html5Audio src={staticFile(c.src)} volume={c.volume} trimBefore={Math.round((c.trim ?? 0) * fps) || undefined} />
+          <Html5Audio src={staticFile(c.src)} volume={c.volume * (inSpeech(c.at, speech) ? SPEECH_DUCK : 1)}
+            trimBefore={Math.round((c.trim ?? 0) * fps) || undefined} />
         </Sequence>
       ))}
     </>

@@ -165,6 +165,7 @@ class LChapter(BaseModel):
     drop: bool = Field(default=False, description="True for the one or two chapters that open on the twist or the big turn: the music cuts to silence for a moment, then hits.")
     ambience: Literal["none", "room", "city", "rain", "wind", "crowd", "night", "lab", "sea", "fire"] = Field(
         default="none", description="A quiet background sound bed for where this chapter takes place, or 'none'.")
+    backdrop: str = Field(default="", description="The background photo behind this chapter's visuals: a 2-4 word English stock-photo search for the real place, setting or material this chapter is about, concrete and filmable (no named people, brands or logos). Different for every chapter.")
 
 
 class LongScript(BaseModel):
@@ -186,6 +187,7 @@ class LongScript(BaseModel):
     hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
         default="spy-pulse", description="The hook's own trailer track: spy-pulse (ticking spy/action energy), ticking-clock (a race against time), dark-pulse (dread, mystery), glitch-drive (tech, chaos).")
     hook_track: str = Field(default="", description="The hook's music: the name of one of the user's own music files that fits an energetic trailer for this video, or empty to compose one (hook_music then sets its style).")
+    hook_backdrop: str = Field(default="", description="The background photo behind the hook: a 2-4 word English stock-photo search for the most striking real setting of this story (no named people, brands or logos).")
     chapters: list[LChapter] = Field(description="The chapters in order (as many as the instructions say). The first is the cold open ('Intro').")
     music: str = Field(default="", description="Background track name from the music list (the user's own file when one fits the mood), 'compose' to have one composed for this video, or 'none'.")
 
@@ -255,6 +257,9 @@ things), steps (the mechanism), footage (the real place), model3d (the actual ob
 sourced quote). Pick the type from what this story's evidence is, so each video looks like its subject.
 - 'keyword' and 'title' beats (mostly words) are at most 1 in 7 beats and never two in a row. Keyword \
 text is at most 3 words, a headline at most 6.
+- Backgrounds: give every chapter a backdrop (a stock-photo search for the real place, setting or \
+material that chapter is about) and the hook a hook_backdrop. They are photos behind the visuals, so \
+each chapter and each video looks like its own subject; never the same search twice.
 - 'scene' (1-4 icon actors acting the line out) and 'icons' only for an action or relationship that \
 has no evidence to show; together at most 1 in 3 beats, never three in a row, and never just two icons \
 with an arrow as the whole idea: make the actors do what the line says.
@@ -588,6 +593,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     seed = _seed(script)
     new_look = look is None
     look = look or variety.pick_look(cfg, seed)
+    look = _plates(script, cfg, work, dict(look), progress)
     beats, chapters, lines, cues, spoken = [], [], [], [], []
     used: dict[str, str] = {}
     clip_ids: set[int] = set()  # never the same stock clip twice
@@ -732,9 +738,46 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     props["cues"] = cues + [{"src": files[n], "at": at, "name": n,
                              "volume": round(vol * (media.UPLOADED_GAIN * 1.6 if "/u-" in files[n] else 1), 3)}
                             for n, at, vol in auto if n in files]
+    # Every effect quieter than the narrator, measured, whatever file it came from.
+    voice = [b["audio"] for b in beats if b.get("audio")] + [s["audio"] for s in hook["shots"] if s.get("audio")]
+    props["sfxLevels"] = media.level_sounds(props, work, voice)
     if new_look:
         variety.remember(cfg, look, script.mood, hook["style"], script.story_form)
     return props
+
+
+def _plates(script: LongScript, cfg: Config, work: Path, look: dict, progress: Progress) -> dict:
+    """Background photos of each chapter's own setting (and the hook's), darkened under the visuals,
+    so no two videos share a backdrop. Photos used by earlier videos are skipped; a re-make with the
+    same look downloads the same pictures again (look['plateUrls']). Without a Pexels key, or when
+    nothing fits, that part keeps the abstract backdrop style."""
+    from .visuals import download_to, pexels_photo
+
+    urls: dict[str, str] = dict(look.get("plateUrls") or {})
+    wanted = {"hook": script.hook_backdrop, **{str(i): c.backdrop for i, c in enumerate(script.chapters)}}
+    plates, earlier = {}, variety.used_photos(cfg)
+    taken = set(earlier)  # pexels_photo adds each photo it takes
+    if any(wanted.values()) and (cfg.pexels_api_key or urls):
+        progress("Finding background photos")
+    for key, query in wanted.items():
+        out = work / "plates" / f"{key}.jpg"
+        try:
+            if key in urls:  # a re-make: the same picture
+                download_to(urls[key], out)
+            elif query.strip() and cfg.pexels_api_key and pexels_photo(query, cfg.pexels_api_key, out, taken):
+                urls[key] = out.with_suffix(".url").read_text(encoding="utf-8").strip()
+            else:
+                continue
+        except Exception as exc:  # a missing photo keeps the abstract backdrop, never fails the video
+            log.warning("Background photo for %s (%r) failed: %s", key, query, exc)
+            continue
+        plates[key] = out.relative_to(work).as_posix()
+    if taken - earlier:
+        variety.remember_photos(cfg, taken - earlier)
+    look["plates"] = {k: v for k, v in plates.items() if k != "hook"}
+    look["hookPlate"] = plates.get("hook")
+    look["plateUrls"] = urls
+    return look
 
 
 def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) -> dict:

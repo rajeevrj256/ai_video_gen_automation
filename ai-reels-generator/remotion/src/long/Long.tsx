@@ -20,12 +20,12 @@ import type {Chapter, Look, LongProps, Visual} from './types';
 export const paletteFor = (chapter: number, look?: Look) => worldFor(lookOf(look), chapter);
 
 // One visual, whatever its kind.
-const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean; look: Look; chapter: number; seed: number}> = ({v, frames, accent, roomy, look, chapter, seed}) => {
+const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean; look: Look; chapter: number; seed: number; plate?: string | null}> = ({v, frames, accent, roomy, look, chapter, seed, plate}) => {
   if (v.type === 'footage' && v.src) return <Footage v={v} frames={frames} accent={accent} />;
   if (v.type === 'model3d' && (v.src || v.parts?.length)) return <Model3D v={v} frames={frames} accent={accent} />;
   return (
     <>
-      <Backdrop look={look} chapter={chapter} seed={seed} />
+      <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />
       {v.type === 'scene' && v.actors?.length ? (
         <SceneView v={v} frames={frames} accent={accent} />
       ) : (
@@ -50,7 +50,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
             hook={hook}
             look={look}
             render={(s, frames) => (
-              <Body v={s.visual} frames={frames} accent={look.accents[0]} roomy={roomy} look={{...look, backdrop: 'rays'}} chapter={0} seed={7} />
+              <Body v={s.visual} frames={frames} accent={look.accents[0]} roomy={roomy} look={{...look, backdrop: 'rays'}} chapter={0} seed={7} plate={look.hookPlate} />
             )}
           />
         </Sequence>
@@ -64,7 +64,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         return (
           <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${b.visual.camera ?? 'push'})`} from={from} durationInFrames={frames}>
             <Shot v={b.visual} frames={frames} transition={look.transition}>
-              <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} />
+              <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.plates?.[String(b.chapter)]} />
             </Shot>
           </Sequence>
         );
@@ -74,7 +74,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         .filter((c) => c.card > 0)
         .map((c) => (
           <Sequence key={`c${c.index}`} name={`chapter card ${c.index}`} from={f(c.start)} durationInFrames={f(c.card)}>
-            <Backdrop look={look} chapter={c.index} seed={100 + c.index} />
+            <Backdrop look={look} chapter={c.index} seed={100 + c.index} plate={look.plates?.[String(c.index)]} />
             <ChapterCard chapter={c} frames={f(c.card)} total={chapters.filter((x) => x.card > 0).length} accent={paletteFor(c.index, look).accent} />
           </Sequence>
         ))}
@@ -120,7 +120,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
           <Ambience src={a.src} frames={Math.max(1, f(a.to - a.from))} />
         </Sequence>
       ))}
-      <Cues cues={cues} />
+      <Cues cues={cues} speech={speech} />
       {sfx
         ? chapters
             .filter((c) => c.card > 0)

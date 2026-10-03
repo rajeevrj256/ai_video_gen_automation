@@ -1,5 +1,5 @@
 import React from 'react';
-import {Easing, Freeze, Sequence, interpolate, random, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Freeze, Img, Sequence, interpolate, random, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {COLORS, FONT, clamp} from '../theme';
 import {Layer} from '../Layer';
 import type {Camera, Hook, HookShot, Look, Visual} from './types';
@@ -148,9 +148,43 @@ const GlitchBars: React.FC<{seed: number}> = ({seed}) => (
 
 // ---------- backdrops ----------
 
-export const Backdrop: React.FC<{look: Look; chapter: number; seed: number}> = ({look, chapter, seed}) => {
+// A real photo of the chapter's own setting (reelgen/longform._plates), darkened and softened under
+// the visuals and drifting slowly, tinted with this video's palette; the abstract style shows through faintly.
+const Plate: React.FC<{src: string; tint: string; seed: number}> = ({src, tint, seed}) => {
+  const frame = useCurrentFrame();
+  const dir = seed % 2 ? 1 : -1;
+  const scale = 1.12 + 0.06 * Math.min(1, frame / 600);
+  return (
+    <>
+      <Img
+        src={staticFile(src)}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          transform: `scale(${scale}) translateX(${dir * Math.min(40, frame * 0.06)}px)`,
+          filter: 'blur(3px) brightness(0.42) saturate(0.85) contrast(1.05)',
+        }}
+      />
+      <div style={{position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${tint}cc 0%, ${tint}55 45%, rgba(0,0,0,0.55) 100%)`}} />
+    </>
+  );
+};
+
+export const Backdrop: React.FC<{look: Look; chapter: number; seed: number; plate?: string | null}> = ({look, chapter, seed, plate}) => {
   const frame = useCurrentFrame() + seed * 37;
   const p = worldFor(look, chapter);
+  if (plate) {
+    return (
+      <Layer name="backdrop photo">
+        <div style={{position: 'absolute', inset: 0, background: COLORS.ink}} />
+        <Plate src={plate} tint={p.a} seed={seed} />
+        <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.6) 100%)'}} />
+      </Layer>
+    );
+  }
   const base = `linear-gradient(135deg, ${p.a}, ${COLORS.ink})`;
   const gx = 50 + 25 * Math.sin(frame / 140);
   const gy = 40 + 18 * Math.cos(frame / 170);

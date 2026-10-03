@@ -381,3 +381,72 @@ BEDS = {
     "dark-tension": ("built-in low drone with a slow pulse: mystery, crime, suspense, disasters", _tension),
     "light-playful": ("built-in light plucks: comedy, fun facts, light stories", _playful),
 }
+
+
+# ---------- sound-effect levels, measured against the voice ----------
+
+SFX_UNDER_VOICE = 0.5  # every effect's loudness is at most half the narrator's (about -6 dB) ...
+# ... and Cues in the editor lower it again while someone speaks (SPEECH_DUCK in Sound.tsx).
+
+
+def _loudness(path: Path) -> float | None:
+    """RMS of the audible part of a sound file (quiet tails ignored), 0-1; None if unreadable."""
+    import subprocess
+
+    from .video import FFMPEG
+
+    try:
+        raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(path), "-ac", "1", "-ar", "22050", "-f", "f32le", "-"],
+                             capture_output=True, timeout=60, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    x = np.frombuffer(raw, dtype=np.float32)
+    if not x.size:
+        return None
+    win = 1024
+    frames = x[: x.size // win * win].reshape(-1, win) if x.size >= win else x.reshape(1, -1)
+    rms = np.sqrt((frames ** 2).mean(axis=1))
+    loud = rms[rms > max(1e-4, rms.max() * 0.1)]  # the part you actually hear
+    return float(np.sqrt((loud ** 2).mean())) if loud.size else None
+
+
+def level_sounds(props: dict, root: Path, voice_files: list[str]) -> dict:
+    """Make every sound effect quieter than the voice, whatever its source: built-in, uploaded or
+    synthesised. Each effect file louder than SFX_UNDER_VOICE x the narration is written again
+    turned down (as <name>-lv.wav) and props point at that copy. Returns {file: gain} applied."""
+    import wave
+
+    voices = [v for v in (_loudness(root / f) for f in voice_files[:12] if f) if v]
+    if not voices:
+        return {}
+    target = float(np.median(voices)) * SFX_UNDER_VOICE
+    srcs = {c["src"] for c in props.get("cues") or []} | set((props.get("sfx") or {}).values())
+    gains, moved = {}, {}
+    for src in sorted(srcs):
+        level = _loudness(root / src)
+        if not level or level <= target:
+            continue
+        gain = target / level
+        import subprocess
+
+        from .video import FFMPEG
+
+        out = (root / src).with_name((root / src).stem + "-lv.wav")
+        try:
+            raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(root / src), "-ac", "2", "-ar", "44100", "-f", "f32le", "-"],
+                                 capture_output=True, timeout=60, check=True).stdout
+        except (subprocess.SubprocessError, OSError):
+            continue
+        pcm = np.clip(np.frombuffer(raw, dtype=np.float32) * gain, -1, 1)
+        with wave.open(str(out), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(44100)
+            w.writeframes((pcm * 32767).astype("<i2").tobytes())
+        moved[src] = out.relative_to(root).as_posix()
+        gains[src] = round(gain, 3)
+    for c in props.get("cues") or []:
+        c["src"] = moved.get(c["src"], c["src"])
+    if props.get("sfx"):
+        props["sfx"] = {k: moved.get(v, v) for k, v in props["sfx"].items()}
+    return gains

@@ -57,6 +57,41 @@ def pexels_video(query: str, api_key: str, out_path: Path, used_ids: set[int],
     return None
 
 
+def pexels_photo(query: str, api_key: str, out_path: Path, used_ids: set[int]) -> Path | None:
+    """Download a landscape stock photo for a long video's background plate (a chapter's place or
+    subject), skipping photos used before. The page slug or alt text must share a word with the
+    query. Saves the photo's link next to it (.url) so a re-make uses the same picture."""
+    resp = requests.get(
+        "https://api.pexels.com/v1/search",
+        params={"query": query, "orientation": "landscape", "size": "large", "per_page": 15},
+        headers={"Authorization": api_key},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    photos = [{**p, "url": f"{p.get('url', '')} {p.get('alt', '')}"} for p in resp.json().get("photos", [])]
+    for photo in _relevant(query, photos):
+        if photo.get("id") in used_ids or (photo.get("width") or 0) < 1600:
+            continue
+        link = (photo.get("src") or {}).get("large2x") or (photo.get("src") or {}).get("original")
+        if not link:
+            continue
+        download_to(link, out_path)
+        used_ids.add(photo.get("id"))
+        out_path.with_suffix(".url").write_text(link, encoding="utf-8")
+        return out_path
+    return None
+
+
+def download_to(link: str, out_path: Path) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(link, stream=True, timeout=60) as dl:
+        dl.raise_for_status()
+        with open(out_path, "wb") as fh:
+            for block in dl.iter_content(1 << 20):
+                fh.write(block)
+    return out_path
+
+
 STOPWORDS = {"a", "an", "the", "of", "in", "on", "at", "and", "with", "to", "for", "from", "by", "up", "close", "closeup", "shot", "view"}
 
 

@@ -70,7 +70,7 @@ export const Reel: React.FC<ReelProps> = ({title, scenes, cuts, captions, music,
       )}
 
       {music ? <Music src={music} speech={speech} full={0.2} duck={0.07} /> : null}
-      <Cues cues={cues} />
+      <Cues cues={cues} speech={speech} />
 
       {sfx ? (
         <>
