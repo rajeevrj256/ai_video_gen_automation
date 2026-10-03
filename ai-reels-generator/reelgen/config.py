@@ -52,7 +52,7 @@ class Config:
     # "comedy" (jokes) or "mix" (rotates through the three in a batch).
     video_style: str = field(default_factory=lambda: _env("REEL_STYLE", "facts"))
     # Subtitles burned into the video. Off gives the graphics the space they used.
-    captions: bool = field(default_factory=lambda: _env("REEL_CAPTIONS", "on").lower() not in ("off", "0", "false", "no"))
+    captions: bool = field(default_factory=lambda: _env("REEL_CAPTIONS", "off").lower() in ("on", "1", "true", "yes"))
     # Long videos (16:9, fully animated, reelgen/longform.py): length, narration language and voice.
     long_minutes: float = field(default_factory=lambda: float(_env("REEL_LONG_MINUTES", "8")))
     long_language: str = field(default_factory=lambda: _env("REEL_LONG_LANGUAGE", "Indian English"))
@@ -130,6 +130,7 @@ def settings_path(cfg: Config) -> Path:
 # Settings files from before Andrew became the default voice everywhere get it once;
 # a voice picked after that is kept.
 VOICE_MARK = "_voice_default_andrew"
+CAPTIONS_MARK = "_captions_default_off"  # subtitles became off by default: saved settings and automations switched once
 
 
 def load_settings(cfg: Config) -> Config:
@@ -142,6 +143,17 @@ def load_settings(cfg: Config) -> Config:
         if not saved.get(VOICE_MARK):
             saved.update({"voice": DEFAULT_VOICE, "long_voice": DEFAULT_VOICE, VOICE_MARK: True})
             path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+        if not saved.get(CAPTIONS_MARK):
+            saved.update({"captions": False, CAPTIONS_MARK: True})
+            path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+            autos = cfg.output_dir / "automations.json"
+            try:
+                if autos.exists():
+                    items = json.loads(autos.read_text(encoding="utf-8"))
+                    autos.write_text(json.dumps([{**a, "captions": False} for a in items], indent=2, ensure_ascii=False),
+                                     encoding="utf-8")
+            except (OSError, ValueError):
+                pass
         for key, value in saved.items():
             if key in EDITABLE and not (key in ("claude_model", "claude_effort", "fact_model", "fact_effort") and value == ""):
                 setattr(cfg, key, _typed(cfg, key, value))  # blank model/effort = default
@@ -163,6 +175,6 @@ def save_settings(cfg: Config, updates: dict) -> Config:
         if key in EDITABLE:
             setattr(cfg, key, _typed(cfg, key, value))
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    settings_path(cfg).write_text(json.dumps({**{k: getattr(cfg, k) for k in EDITABLE}, VOICE_MARK: True}, indent=2),
+    settings_path(cfg).write_text(json.dumps({**{k: getattr(cfg, k) for k in EDITABLE}, VOICE_MARK: True, CAPTIONS_MARK: True}, indent=2),
                                   encoding="utf-8")
     return cfg
