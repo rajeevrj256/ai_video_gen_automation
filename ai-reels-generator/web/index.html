@@ -349,7 +349,7 @@
       <div class="grid2">
         <div><label for="sv-voice">Voice</label><select id="sv-voice"></select></div>
         <div><label>Subtitles</label>
-          <div class="segmented" id="sv-cc"><button data-cc="true" class="on">💬 On</button><button data-cc="false">🚫 Off</button></div></div>
+          <div class="segmented" id="sv-cc"><button data-cc="true">💬 On</button><button data-cc="false" class="on">🚫 Off</button></div></div>
       </div>
       <button class="primary" id="svBtn">🎬 Make the video</button>
       <p class="hint" id="sv-msg"></p>
@@ -1559,7 +1559,7 @@ document.querySelectorAll("#length button").forEach((b) => b.onclick = () => {
 });
 // Script Video: your own title, description, hook and script through the long-video pipeline.
 const SV_KEYS = { title: "#sv-title", description: "#sv-desc", hook: "#sv-hook", script: "#sv-script" };
-let svCc = true;
+let svCc = false;
 const svWords = (t) => (t.trim().match(/\S+/g) || []).length;
 // Roughly how the server cuts the hook (reelgen/scriptvideo.parse_hook), for a live look at the shots.
 const svHookLines = (t) => (t.replace(/\s+/g, " ").trim().match(/[^.!?…]+[.!?…]*["'”’)\]]*/g) || [])
@@ -1580,7 +1580,7 @@ async function loadScriptView() {
     $("#sv-voice").innerHTML = ($("#s-long_voice") || {}).innerHTML || "";
     const s = await api("/api/settings");
     if (s.long_voice) $("#sv-voice").value = s.long_voice;
-    svCc = s.captions !== false;
+    svCc = s.captions === true;
     document.querySelectorAll("#sv-cc button").forEach((x) => x.classList.toggle("on", (x.dataset.cc === "true") === svCc));
   }
   svUpdate();
