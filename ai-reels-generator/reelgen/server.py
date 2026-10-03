@@ -306,6 +306,10 @@ class PostEdit(BaseModel):
     youtube_tags: list[str] = []
 
 
+class ReviewBody(BaseModel):
+    decision: str  # accept | reject
+
+
 class LoginRequest(BaseModel):
     pin: str
 
@@ -560,6 +564,21 @@ def create_app(cfg: Config) -> FastAPI:
         save_post_text(report, folder)
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         return report
+
+    @app.post("/api/videos/{video_id}/review")
+    def review_video(video_id: str, body: ReviewBody):
+        """Accept keeps the video and marks it accepted (what happens next comes later); reject deletes it."""
+        folder = video_dir(cfg, video_id)
+        if body.decision == "reject":
+            shutil.rmtree(folder)
+            return {"ok": True, "deleted": True}
+        if body.decision != "accept":
+            raise HTTPException(400, "decision must be accept or reject")
+        path = folder / "report.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report["review"] = {"decision": "accepted", "at": datetime.now().isoformat(timespec="seconds")}
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "review": report["review"]}
 
     @app.delete("/api/videos/{video_id}")
     def delete_video(video_id: str):

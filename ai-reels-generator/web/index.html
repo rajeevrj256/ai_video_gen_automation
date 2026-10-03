@@ -173,6 +173,11 @@
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
   #savePost { margin-top: 14px; }
   /* next to the duration, so it never covers the title burned into the thumbnail */
+  .card .review { display: flex; gap: 6px; margin-top: 8px; }
+  .card .review button, .review-big button { flex: 1; padding: 7px 0; font-size: 13px; border-radius: 10px; }
+  .review-big button { padding: 12px 0; font-size: 15px; }
+  button.ok { background: var(--ok); color: #111; } button.no { background: #e5484d; color: #fff; }
+  .card .accepted { font-size: 11px; color: var(--ok); }
   .card .postbadge { position: absolute; top: 8px; right: 52px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
   .card.wide .postbadge { right: 70px; }
   .libitem .lic { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
@@ -686,8 +691,21 @@ const cardHtml = (v) => `
       <span class="badge ${v.verified ? "ok-bg" : "warn-bg"}">${v.verified ? "✓ " + (v.score ?? "") : "Check"}</span>
       <span class="dur">${v.format === "long" ? "🎬 " + mmss(v.duration_seconds || 0) : Math.round(v.duration_seconds || 0) + "s"}</span>
       ${v.youtube_description && !v.post_text_error ? '<span class="postbadge" title="Title, description and hashtags ready">📝</span>' : ""}
-      <div class="meta">${esc(v.title)}${v.usage ? `<div class="vtok" style="margin:2px 0 0">🪙 ${fmtTok(v.usage.total.tokens)} tokens</div>` : ""}</div>
+      <div class="meta">${v.review ? '<span class="accepted">✓ Accepted</span> ' : ""}${esc(v.title)}${v.usage ? `<div class="vtok" style="margin:2px 0 0">🪙 ${fmtTok(v.usage.total.tokens)} tokens</div>` : ""}
+        ${v.review ? "" : `<div class="review"><button class="ok" data-review="accept" title="Keep it">✓ Accept</button><button class="no" data-review="reject" title="Delete it">✕ Reject</button></div>`}</div>
     </div>`;
+// Accept marks the video accepted; Reject deletes it (after asking). Shown until one is picked.
+async function reviewVideo(id, decision) {
+  const v = library.find((x) => x.id === id);
+  if (decision === "reject" && !confirm(`Reject and delete "${v ? v.title : id}"?`)) return false;
+  try {
+    const r = await api(`/api/videos/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify({ decision }) });
+    if (r.deleted) library = library.filter((x) => x.id !== id);
+    else if (v) v.review = r.review;
+    renderLibrary(); toast(r.deleted ? "Rejected and deleted" : "Accepted");
+    return true;
+  } catch (e) { toast(e.message); return false; }
+}
 function renderLibrary() {
   const q = $("#q").value.trim().toLowerCase();
   const text = (v) => [v.title, v.topic, v.youtube_title, v.caption, v.category, v.subject,
@@ -708,7 +726,11 @@ function renderLibrary() {
       <div class="grid">${vids.map(cardHtml).join("")}</div></div>` : "";
   }).join("");
   $("#shelves").innerHTML = shelves || (library.length ? `<div class="empty"><b>No videos match</b>Try another word or filter.</div>` : "");
-  document.querySelectorAll("#shelves .card").forEach((c) => c.onclick = () => openVideo(c.dataset.id));
+  document.querySelectorAll("#shelves .card").forEach((c) => c.onclick = (e) => {
+    const b = e.target.closest("[data-review]");
+    if (b) { e.stopPropagation(); reviewVideo(c.dataset.id, b.dataset.review); return; }
+    openVideo(c.dataset.id);
+  });
 }
 async function loadVideos() {
   library = await api("/api/videos");
@@ -870,6 +892,8 @@ async function openVideo(id) {
       <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
     </div>
+    ${v.review ? `<p class="hint">✓ Accepted ${esc((v.review.at || "").replace("T", " "))}</p>` : `<div class="actions review-big">
+      <button class="ok" id="acceptVideo">✓ Accept</button><button class="no" id="rejectVideo">✕ Reject (delete)</button></div>`}
     ${v.post_text_error ? `<div class="errbox">⚠️ Writing the post text failed, so this is only the rough draft: ${esc(v.post_text_error)}</div>`
       : v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
     <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px">
@@ -971,6 +995,10 @@ async function openVideo(id) {
       if (moved) { moved.category = $("#catSel").value; renderLibrary(); }
     } catch (e) { toast(e.message); }
   };
+  if ($("#acceptVideo")) {
+    $("#acceptVideo").onclick = async () => { if (await reviewVideo(id, "accept")) openVideo(id); };
+    $("#rejectVideo").onclick = async () => { if (await reviewVideo(id, "reject")) { closePlayer(); loadVideos(); } };
+  }
   $("#deleteVideo").onclick = async () => {
     if (!confirm("Delete this video from your computer?")) return;
     await api("/api/videos/" + encodeURIComponent(id), { method: "DELETE" });
