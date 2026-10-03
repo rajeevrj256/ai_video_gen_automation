@@ -165,8 +165,8 @@ The story (the rest of the scenes):
 - The answer to the hook's question arrives only in the last one or two scenes, as the turn \
   or reveal.
 - The last line ties back to the first, ideally so it could flow into the opening again when \
-  the video loops, followed by a short natural call to action tied to the story ("Follow for \
-  the next one"), not "like and subscribe".
+  the video loops, followed by a short natural call to action ("Follow for more stories like \
+  this"), not "like and subscribe". Never announce, name or tease a next video or its topic.
 - A trending news item (a match, a launch, a price move) is not a story on its own: find the \
   story inside or behind it (how it started, the record behind it, why it works that way, the \
   surprising cause) and tell that. Don't recap scores or headlines.

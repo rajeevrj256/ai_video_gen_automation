@@ -17,14 +17,15 @@ export const SceneView: React.FC<{v: Visual; frames: number; accent: string}> = 
   const actors = (v.actors ?? []).slice(0, 4);
   const n = Math.max(1, actors.length);
   const slot = (i: number) => (W / (n + 1)) * (i + 1);
+  const size = n > 2 ? 230 : 290;
   return (
     <div style={{position: 'absolute', inset: 0, fontFamily: FONT, color: COLORS.text}}>
       <Stage accent={accent} />
       {actors.slice(1).map((a, i) => (
-        <Link key={`l${i}`} from={slot(i)} to={slot(i + 1)} at={a.at} accent={accent} />
+        <Link key={`l${i}`} from={actors[i]} to={a} fromX={slot(i)} toX={slot(i + 1)} leadX={slot(0)} frames={frames} accent={accent} size={size} />
       ))}
       {actors.map((a, i) => (
-        <ActorView key={i} a={a} x={slot(i)} lead={{x: slot(0)}} frames={frames} accent={accent} size={n > 2 ? 230 : 290} />
+        <ActorView key={i} a={a} x={slot(i)} lead={{x: slot(0)}} frames={frames} accent={accent} size={size} />
       ))}
       {v.headline ? (
         <div style={{position: 'absolute', top: 100, width: W, textAlign: 'center', fontSize: 58, fontWeight: 900, opacity: 0.95}}>{v.headline}</div>
@@ -58,32 +59,68 @@ const Stage: React.FC<{accent: string}> = ({accent}) => {
   );
 };
 
-// A dashed arrow from one actor to the next, drawn when the second one arrives: the scene reads
-// as cause and effect (A leads to B), and a still frame shows how the actors relate.
-const Link: React.FC<{from: number; to: number; at: number; accent: string}> = ({from, to, at, accent}) => {
+// An arrow from one actor to the next, drawn when the second one arrives: the scene reads as
+// cause and effect (A leads to B). It is attached to where the two icons are on this frame (they
+// move, grow and shrink), starts and ends just off their edges, and its head points along the
+// curve. Actors that leave or circle (flee, walk-across, orbit, multiply) get no arrow.
+const NO_LINK = new Set(['flee', 'walk-across', 'orbit', 'multiply']);
+type Pt = {x: number; y: number};
+const quad = (a: Pt, c: Pt, b: Pt, t: number): Pt => ({
+  x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t * t * b.x,
+  y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t * t * b.y,
+});
+const Link: React.FC<{from: Actor; to: Actor; fromX: number; toX: number; leadX: number; frames: number; accent: string; size: number}> = ({
+  from, to, fromX, toX, leadX, frames, accent, size,
+}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
-  const p = interpolate(frame - Math.round((at + 0.35) * fps), [0, 0.5 * fps], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
-  if (p <= 0 || to - from < 260) return null;
-  const x0 = from + 150;
-  const x1 = to - 150;
-  const y = FLOOR - 190;
-  const flow = (frame * 2) % 40;
+  if (NO_LINK.has(from.action) || NO_LINK.has(to.action)) return null;
+  const p = interpolate(frame - Math.round((to.at + 0.35) * fps), [0, 0.55 * fps], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  if (p <= 0) return null;
+  const A = actorPose(from, fromX, leadX, frame, fps, frames, size);
+  const B = actorPose(to, toX, leadX, frame, fps, frames, size);
+  if (A.opacity <= 0 || B.opacity <= 0) return null;
+  // a lucide glyph fills about 84% of its box; keep a small gap from its edge
+  const gap = 28;
+  const ra = size * 0.42 * A.scale + gap;
+  const rb = size * 0.42 * B.scale + gap;
+  const dx = B.x - A.x;
+  const dy = B.y - A.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist - ra - rb < 90) return null; // icons too close: an arrow would overlap them
+  const ux = dx / dist;
+  const uy = dy / dist;
+  // leave each icon a little above its centre line so the arc clears both shapes
+  const start = {x: A.x + ux * ra, y: A.y + uy * ra - 20};
+  const end = {x: B.x - ux * rb, y: B.y - uy * rb - 20};
+  const len = Math.hypot(end.x - start.x, end.y - start.y);
+  const bend = Math.min(110, len * 0.22);
+  const ctrl = {x: (start.x + end.x) / 2 + uy * bend, y: (start.y + end.y) / 2 - Math.abs(ux) * bend};
+  // draw the curve up to p (exact split of the quadratic), the head rides on its tip
+  const c1 = {x: start.x + (ctrl.x - start.x) * p, y: start.y + (ctrl.y - start.y) * p};
+  const tip = quad(start, ctrl, end, p);
+  const dir = {x: tip.x - c1.x, y: tip.y - c1.y};
+  const dl = Math.hypot(dir.x, dir.y) || 1;
+  const hx = dir.x / dl;
+  const hy = dir.y / dl;
+  const head = 30;
+  const wing = (s: number) => `${tip.x - hx * head + -hy * head * 0.62 * s} ${tip.y - hy * head + hx * head * 0.62 * s}`;
+  const flow = (frame * 1.5) % 36;
+  const fade = Math.min(A.opacity, B.opacity);
   return (
-    <svg style={{position: 'absolute', left: 0, top: 0, width: W, height: 1080, overflow: 'visible'}}>
-      <path d={`M ${x0} ${y} Q ${(x0 + x1) / 2} ${y - 90} ${x0 + (x1 - x0) * p} ${y}`} fill="none" stroke={accent} strokeWidth={6}
-        strokeDasharray="22 18" strokeDashoffset={-flow} strokeLinecap="round" opacity={0.85} />
-      {p > 0.95 ? <path d={`M ${x1 - 26} ${y - 20} L ${x1} ${y} L ${x1 - 26} ${y + 20}`} fill="none" stroke={accent} strokeWidth={6} strokeLinecap="round" /> : null}
+    <svg style={{position: 'absolute', left: 0, top: 0, width: W, height: 1080, overflow: 'visible', opacity: 0.9 * fade}}>
+      <path d={`M ${start.x} ${start.y} Q ${c1.x} ${c1.y} ${tip.x - hx * head * 0.6} ${tip.y - hy * head * 0.6}`} fill="none" stroke={accent} strokeWidth={6}
+        strokeDasharray="20 16" strokeDashoffset={-flow} strokeLinecap="round" style={{filter: `drop-shadow(0 0 8px ${accent})`}} />
+      <path d={`M ${wing(1)} L ${tip.x} ${tip.y} L ${wing(-1)} Z`} fill={accent} stroke={accent} strokeWidth={4} strokeLinejoin="round"
+        style={{filter: `drop-shadow(0 0 8px ${accent})`}} />
     </svg>
   );
 };
 
-const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: number; accent: string; size: number}> = ({a, x, lead, frames, accent, size}) => {
-  const frame = useCurrentFrame();
-  const {fps} = useVideoConfig();
+// Where an actor is on this frame (shared by the actor and the arrows pointing at it).
+const actorPose = (a: Actor, x: number, leadX: number, frame: number, fps: number, frames: number, size: number) => {
   const start = Math.round(a.at * fps);
   const local = frame - start;
-  const Icon = iconFor(a.icon);
   const e = spring({frame: local, fps, config: {damping: 11, mass: 0.7}});
   const p = (d: number) => interpolate(local, [0, d * fps], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
   const idle = Math.sin(frame / 9) * 6;
@@ -176,9 +213,17 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
   let ax = x + dx;
   let ay = FLOOR - size / 2 - 30 + dy;
   if (orbitAngle !== null) {
-    ax = lead.x + Math.cos(orbitAngle) * 330;
+    ax = leadX + Math.cos(orbitAngle) * 330;
     ay = FLOOR - size / 2 - 60 + Math.sin(orbitAngle) * 120;
   }
+  return {x: ax, y: ay, scale, rot, opacity, lines, copies, e};
+};
+
+const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: number; accent: string; size: number}> = ({a, x, lead, frames, accent, size}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const Icon = iconFor(a.icon);
+  const {x: ax, y: ay, scale, rot, opacity, lines, copies, e} = actorPose(a, x, lead.x, frame, fps, frames, size);
   const disc = (px: number, py: number, s: number, key?: number, alpha = 1) => (
     <div
       key={key}

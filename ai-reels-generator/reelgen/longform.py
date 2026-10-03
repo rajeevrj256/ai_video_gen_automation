@@ -170,7 +170,8 @@ video", no "by the end you'll know".
 and ends on an open loop that pulls into the next ("But that created a bigger problem.").
 - Around the middle, a twist that changes how the story looks.
 - The big question is answered only in the last chapter, which ties back to the first line and ends \
-with one short, natural line asking viewers to subscribe for the next story.
+with one short, natural line asking viewers to subscribe. Never announce, name or tease a next \
+video or its topic ("next time...", "in the next video...", "coming up next").
 - One subject, in depth: the whole video stays on the subject you name. Every chapter goes a level \
 deeper (how, why, the telling detail, what it caused, what nobody expects). Never a list of \
 separate examples.
@@ -180,7 +181,7 @@ separate examples.
 same pattern twice in a row.
 - No chapter is a list (logo, song, signs, buses...): every beat must raise the risk, answer a \
 worry or push the story forward, or it goes.
-- The call to action names a concrete next story, not a generic "subscribe for more".
+- The call to action is a single plain line (subscribe, or comment an answer); it never names or teases another video.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
 The hook (25-30 seconds, before chapter 1): an energetic cinematic trailer for this video, NOT the \
