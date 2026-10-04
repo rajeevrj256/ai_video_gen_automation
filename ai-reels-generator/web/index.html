@@ -320,7 +320,7 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
-        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="script">📜 Your script</button>
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="script">📜 Your script</button>
       </div></details>
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
@@ -455,6 +455,43 @@
       <button type="button" class="mini" id="stAdd">+ Add character</button>
       <button class="primary" id="stBtn">✨ Make it</button>
       <p class="hint" id="stMsg"></p>
+    </div>
+  </section>
+
+  <section class="view" id="view-toon">
+    <div class="panel">
+      <h2>Toon Explainers</h2>
+      <p class="hint">Flat, colourful animated explainers (16:9): cartoon people, a mascot that carries the story, countdown numbers,
+        date cards, big word slams and an animation on every sentence (cracks, clones, switches, gauges, puppet strings, crowds...).
+        Claude picks the structure, designs a new mascot and cast, and every video gets its own colours, so no two look alike.
+        Every real fact is researched and fact-checked; the sources go in the description.</p>
+      <label>Structure</label>
+      <div class="segmented" id="toForm" style="flex-wrap:wrap">
+        <button data-form="auto" class="on">🎲 Claude picks</button><button data-form="countdown">🔢 Countdown</button>
+        <button data-form="scenario">🧪 What if</button><button data-form="explainer">⚙️ How it works</button>
+        <button data-form="timeline">📅 Timeline</button><button data-form="myths">❓ Myths</button><button data-form="versus">⚔️ Versus</button>
+      </div>
+      <p class="hint" id="toFormHint"></p>
+      <label for="toTopic">Topic (optional)</label>
+      <textarea class="edit" id="toTopic" rows="2" placeholder="e.g. What happens if AI agents escape their sandbox / 7 ways the power grid could fail. Leave empty and Claude picks one."></textarea>
+      <div class="grid2">
+        <div><label for="toMinutes">Length</label>
+          <select id="toMinutes"><option value="1">About 1 min (test)</option><option value="3" selected>About 3 min</option><option value="5">About 5 min</option><option value="8">About 8 min</option><option value="10">About 10 min</option></select></div>
+        <div><label for="toCount">How many</label>
+          <select id="toCount"><option>1</option><option>2</option><option>3</option></select></div>
+      </div>
+      <div class="grid2">
+        <div><label for="toVoice">Narrator</label><select id="toVoice"></select></div>
+        <div><label for="toSpeed">Speaking speed</label>
+          <select id="toSpeed"><option value="5">Normal</option><option value="12" selected>Fast (+12%)</option><option value="20">Very fast (+20%)</option></select></div>
+      </div>
+      <div class="grid2">
+        <div><label for="toCaptions">Subtitles</label>
+          <select id="toCaptions"><option value="true" selected>💬 Small subtitles</option><option value="false">🚫 None</option></select></div>
+        <div><label for="toMark">Channel name on screen (optional)</label><input id="toMark" placeholder="e.g. your channel name"></div>
+      </div>
+      <button class="primary" id="toBtn">✨ Make it</button>
+      <p class="hint" id="toMsg"></p>
     </div>
   </section>
 
@@ -640,6 +677,7 @@
   <button data-view="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Create</button>
   <button data-view="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Script</button>
   <button data-view="stick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><path d="M12 8v7M12 15l-4 6M12 15l4 6M7 11h10"/></svg>Stick</button>
+  <button data-view="toon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a8 7 0 0 1 16 0c0 4-3.6 7-8 7-1.2 0-2.3-.2-3.3-.6L4 19l1-3.5A6.6 6.6 0 0 1 4 11z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/><path d="M9.5 13.5c1.4 1 3.6 1 5 0"/></svg>Toon</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
@@ -773,7 +811,7 @@ function renderLibrary() {
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : String(+!!v.verified) === libOk))
-    && (!libType || (libType === "ai" ? !["stick", "script"].includes(v.source) : v.source === libType));
+    && (!libType || (libType === "ai" ? !["stick", "script", "toon"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
@@ -1300,7 +1338,9 @@ const SCRIPT_STEPS = [["Storyboard", /storyboarding/], ["Voice", /voiceover|Reco
   ["Checks", /Verifying/]];
 const STICK_STEPS = [["Writing", /writing the (episode|Short)/], ["Voices", /Recording the voices/], ["Editing", /Editing/],
   ["Checks", /Verifying/]];
-const stepsOf = (j) => j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : STEPS;
+const TOON_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
+  ["Editing", /Editing|Mixing/], ["Checks", /Verifying/]];
+const stepsOf = (j) => j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
@@ -1371,7 +1411,7 @@ function jobCard(j) {
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
     + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
-      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : "");
+      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "toon" ? " · 🎨 Toon" : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -1445,7 +1485,7 @@ async function loadUnfinished() {
       <h2>Unfinished videos</h2>
       <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
-          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : "📱 Short"}</span></div>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
@@ -1917,6 +1957,40 @@ $("#stBtn").onclick = async () => {
     show("create");
   } catch (e) { $("#stMsg").textContent = "Couldn't start it: " + e.message; }
   finally { $("#stBtn").disabled = false; }
+};
+
+// Toon Explainers (reelgen/toon.py): flat animated explainers with cartoon people and a mascot.
+let toForm = "auto";
+const TO_HINT = {
+  auto: "Claude picks the structure that fits the topic (and not the one the last videos used).",
+  countdown: "A top-N list counted down; each entry a mini story with a real dated example.",
+  scenario: "A step-by-step 'what would happen if' simulation; the speculative parts are said as possibilities.",
+  explainer: "How something works, layer by layer.", timeline: "The true story in order, dated turning points.",
+  myths: "What people believe vs what the evidence shows.", versus: "Two things compared round by round, with a verdict.",
+};
+const toFormSet = (v) => {
+  toForm = TO_HINT[v] ? v : "auto";
+  document.querySelectorAll("#toForm button").forEach((x) => x.classList.toggle("on", x.dataset.form === toForm));
+  $("#toFormHint").textContent = TO_HINT[toForm];
+};
+document.querySelectorAll("#toForm button").forEach((b) => b.onclick = () => toFormSet(b.dataset.form));
+toFormSet("auto");
+api("/api/toon/options").then((o) => {
+  $("#toVoice").innerHTML = Object.entries(o.voices).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
+}).catch(() => { $("#toVoice").innerHTML = '<option value="en-US-AndrewMultilingualNeural">Andrew (US)</option>'; });
+try { $("#toMark").value = localStorage.getItem("toonMark") || ""; } catch (e) {}
+$("#toBtn").onclick = async () => {
+  const body = { topic: $("#toTopic").value, minutes: Number($("#toMinutes").value), form: toForm, voice: $("#toVoice").value,
+                 speed: Number($("#toSpeed").value), captions: $("#toCaptions").value === "true", watermark: $("#toMark").value,
+                 count: Number($("#toCount").value) };
+  try { localStorage.setItem("toonMark", body.watermark); } catch (e) {}
+  $("#toBtn").disabled = true;
+  try {
+    await api("/api/toon", { method: "POST", body: JSON.stringify(body) });
+    $("#toMsg").textContent = "Started. Follow it on the Create tab.";
+    show("create");
+  } catch (e) { $("#toMsg").textContent = "Couldn't start it: " + e.message; }
+  finally { $("#toBtn").disabled = false; }
 };
 
 // Script Video: your own title, description, hook and script through the long-video pipeline.

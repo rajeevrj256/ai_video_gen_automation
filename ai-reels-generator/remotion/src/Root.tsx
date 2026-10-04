@@ -13,6 +13,9 @@ import {Thumbnail, thumbSize, type ThumbProps} from './Thumbnail';
 import {StickStory} from './story/Story';
 import {storyDemoProps} from './story/demo';
 import type {StoryProps} from './story/types';
+import {Toon} from './toon/Toon';
+import {toonDemoProps} from './toon/demo';
+import type {ToonProps} from './toon/types';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
@@ -34,6 +37,10 @@ const calculateStoryMetadata: CalculateMetadataFunction<StoryProps> = ({props}) 
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
   width: props.vertical ? 1080 : 1920,
   height: props.vertical ? 1920 : 1080,
+});
+const calculateToonMetadata: CalculateMetadataFunction<ToonProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
 });
 const calculateThumbMetadata: CalculateMetadataFunction<ThumbProps> = ({props}) => thumbSize(props.wide);
 const thumbDemo: ThumbProps = {src: 'thumb/frame.jpg', text: 'Why no tax cut', highlight: 'tax cut', side: 'left',
@@ -83,6 +90,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={storyDemoProps}
     calculateMetadata={calculateStoryMetadata}
+  />
+  {/* 16:9 flat animated explainer: cartoon people, a mascot, objects and actions: reelgen/toon.py */}
+  <Composition
+    id="Toon"
+    component={Toon}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={toonDemoProps}
+    calculateMetadata={calculateToonMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition

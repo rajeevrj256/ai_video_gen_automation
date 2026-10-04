@@ -178,6 +178,18 @@ def _story(m: Mixer, p: dict) -> None:
     _cues(m, p.get("cues"), speech)
 
 
+def _toon(m: Mixer, p: dict) -> None:
+    """remotion/src/toon/Toon.tsx: each shot's voice at its start + lead, the music under it all, the cues."""
+    f = lambda s: round(float(s) * m.fps)  # noqa: E731
+    speech = p.get("speech") or []
+    for s in p.get("shots") or []:
+        if s.get("audio"):
+            m.add(s["audio"], f(float(s["start"]) + float(s.get("lead") or 0)))
+    if p.get("music"):
+        m.add(p["music"], 0, loop=True, volume=_music_level(m.fps, m.frames, speech, 0.17, 0.06))
+    _cues(m, p.get("cues"), speech)
+
+
 def mix(props: dict, composition: str, public: Path, out: Path, ffmpeg: str) -> None:
     """Write the soundtrack of `props` to `out` (48 kHz stereo WAV, exactly the video's length)."""
     fps = int(props.get("fps") or 30)
@@ -187,6 +199,8 @@ def mix(props: dict, composition: str, public: Path, out: Path, ffmpeg: str) -> 
         _long(m, props)
     elif composition == "StickStory":
         _story(m, props)
+    elif composition == "Toon":
+        _toon(m, props)
     else:
         raise ValueError(f"No soundtrack mixer for {composition}")
     m.write(out)

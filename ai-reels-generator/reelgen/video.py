@@ -240,7 +240,7 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
     public_dir = out_path.parent
     props_path = public_dir / "props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-    if composition in ("Long", "StickStory") and float(props.get("duration") or 0) > PART_FROM:
+    if composition in ("Long", "StickStory", "Toon") and float(props.get("duration") or 0) > PART_FROM:
         return _render_in_parts(cli, props, props_path, out_path, composition, crf, progress or log.info)
     gpu = _gpu_wanted()
     cmd = _remotion_cmd(cli, composition, out_path, props_path, crf, gpu)
