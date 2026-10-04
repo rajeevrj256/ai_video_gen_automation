@@ -317,7 +317,7 @@
       <details class="fgroup" open><summary>Category <span class="fnow" id="fnowCat">All</span></summary>
         <div class="chips" id="catChips"></div></details>
       <details class="fgroup" open><summary>Length <span class="fnow" id="fnowLen">All lengths</span></summary><div class="chips">
-        <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium">🎞️ Medium</button><button class="chip" data-len="long">🎬 Long</button>
+        <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
         <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="script">📜 Your script</button>
@@ -741,7 +741,9 @@ const dayLabel = (d) => {
   return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: day.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 };
 // short, medium (5-6 min) or long (8-10 min); older 16:9 videos are told apart by their running time
-const lenOf = (v) => v.format !== "long" ? "short" : v.length || ((v.duration_seconds || 0) < 420 ? "medium" : "long");
+// Stick episodes ("stick") and Script Videos ("script") are 16:9 too: they go by running time like older videos.
+const lenOf = (v) => v.format !== "long" ? "short"
+  : ["long", "medium"].includes(v.length) ? v.length : ((v.duration_seconds || 0) < 420 ? "medium" : "long");
 const cardHtml = (v) => `
     <div class="card${v.format === "long" ? " wide" : ""}" data-id="${esc(v.id)}">
       <img loading="lazy" src="/media/${encodeURIComponent(v.id)}/thumbnail.jpg" alt="">
