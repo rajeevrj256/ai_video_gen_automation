@@ -97,6 +97,16 @@
   .pill.done { background: rgba(61,220,132,.15); color: var(--ok); }
   .pill.partial { background: rgba(255,159,10,.15); color: var(--warn); }
   .pill.failed { background: rgba(255,90,95,.15); color: var(--bad); }
+  .sheet { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: none; align-items: flex-end; justify-content: center; }
+  .sheet.open { display: flex; }
+  .sheet-panel { background: var(--panel); width: min(760px, 100%); max-height: 88vh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 14px 16px 28px; }
+  @media (min-width: 900px) { .sheet { align-items: center; } .sheet-panel { border-radius: 18px; } }
+  .sheet-head { position: sticky; top: -14px; background: var(--panel); display: flex; justify-content: space-between; align-items: center; padding: 6px 0 10px; }
+  .sline { margin: 6px 0; line-height: 1.5; } .snote { font-size: 12px; color: var(--muted); }
+  .sheetlog { font-size: 13px; color: var(--muted); padding-left: 18px; }
+  .step.tap { cursor: pointer; } .step.tap:hover .dot { outline: 2px solid var(--accent); }
+  .scriptbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .vrow .tapbtn { padding: 4px 7px; }
   .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 4px 0 10px; }
   .step { text-align: center; font-size: 11px; color: var(--muted); }
   .step .dot { width: 30px; height: 30px; margin: 0 auto 5px; border-radius: 50%; display: grid; place-items: center;
@@ -605,6 +615,14 @@
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
 
+<div class="sheet" id="sheet" onclick="if (event.target === this) closeSheet()">
+  <div class="sheet-panel">
+    <div class="sheet-head"><b id="sheetTitle"></b>
+      <span><button class="mini" onclick="openSheet($('#sheet').dataset.job, +$('#sheet').dataset.video, +$('#sheet').dataset.step)">↻</button>
+      <button class="mini" onclick="closeSheet()">✕</button></span></div>
+    <div id="sheetBody"></div>
+  </div>
+</div>
 <div class="player" id="player">
   <div class="stage">
     <button class="close" id="closePlayer">✕ Close</button>
@@ -1196,7 +1214,7 @@ async function copy(text) {
 
 // Turn the job's log into a friendly progress view.
 const STEPS = [
-  ["Script", /writing the script|picking the topic/], ["Fact-check", /fact-check|Fixing facts/],
+  ["Script", /writing the script|picking the topic/], ["Fact-check", /[Ff]act-check|Fixing facts/],
   ["Voice", /voiceover/], ["Footage", /footage/], ["Preview", /Previewing the edit|preview frames|^(\[V\d+\] )?\[attempt \d+\/\d+\] Preview/],
   ["Editing", /Editing/], ["Review", /Verifying|reviewing the finished|title, description/],
 ];
@@ -1242,7 +1260,7 @@ function videosOf(j) {
     const mark = m.match(/^=== Video (\d+)\//);
     if (mark) cur = +mark[1];
     if (n === null) n = cur;
-    const v = (vids[n] ||= { n, lines: [], start: l.t, end: l.t, step: -1, attempt: "", state: "running" });
+    const v = (vids[n] ||= { n, lines: [], start: l.t, end: l.t, step: -1, attempt: "", state: "running", byStep: {} });
     v.lines.push(m); v.end = l.t;
     const pause = m.match(/^Paused: .*until (\d\d:\d\d)/);
     v.paused = pause ? pause[1] : "";
@@ -1254,6 +1272,7 @@ function videosOf(j) {
       v.attempt = t;
     }
     stepsOf(j).forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
+    if (!m.startsWith("§")) (v.byStep[v.step] ||= []).push(m); // what each stage did, for its popup
     if (/^Done/.test(m)) v.state = /did not pass/.test(m) ? "check" : "done";
     if (/^Video \d+ failed:/.test(m)) { v.state = "failed"; v.error = m.replace(/^Video \d+ failed: /, ""); }
   });
@@ -1286,7 +1305,7 @@ function jobCard(j) {
     body = `<div class="steps">${stepsOf(j).map(([name], i) => {
         const cls = i < v.step ? "done" : i === v.step ? "now" : "";
         const dot = i < v.step ? "✓" : i === v.step ? '<span class="spinner"></span>' : "";
-        return `<div class="step ${cls}"><div class="dot">${dot}</div>${name}</div>`;
+        return `<div class="step ${cls} tap" data-sheet="${esc(j.id)}" data-video="${v.n}" data-step="${i}" title="Open">${`<div class="dot">${dot}</div>`}${name}</div>`;
       }).join("")}</div>
       <div class="now-line">${esc(v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
       <div class="timer">⏱ ${liveSince(v.start)}</div>`;
@@ -1304,13 +1323,16 @@ function jobCard(j) {
       rows.push(`<div class="vrow ${v.state}"><b>${n}</b>${icon}
         <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.paused ? `Paused till ${v.paused}` : v.step >= 0 ? stepsOf(j)[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
         ${v.state === "running" && !v.paused ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
-        ${vtok[n] ? `<span class="vtok">🪙 ${fmtTok(vtok[n])}</span>` : ""}<span class="vtime">${time}</span></div>`);
+        ${vtok[n] ? `<span class="vtok">🪙 ${fmtTok(vtok[n])}</span>` : ""}<span class="vtime">${time}</span>
+        <button class="mini tapbtn" data-sheet="${esc(j.id)}" data-video="${n}" data-step="0" title="Read the script">📜</button>
+        <button class="mini tapbtn" data-sheet="${esc(j.id)}" data-video="${n}" data-step="${Math.max(0, v.step)}" title="What this step is doing">📋</button></div>`);
     }
     body = `<div class="vrows">${rows.join("")}</div><div class="timer">⏱ Total ${liveSince(jobStart)}</div>`;
   } else if (j.status !== "queued" && j.log.length) {
     const per = vids.map((v) => mmss(v.end - v.start));
     body = (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
-      + `<div class="timer">⏱ Took ${mmss(end - jobStart)}${per.length > 1 ? ` in total · per video ${per.join(", ")}` : ""}</div>`;
+      + `<div class="timer">⏱ Took ${mmss(end - jobStart)}${per.length > 1 ? ` in total · per video ${per.join(", ")}` : ""}</div>`
+      + (vids.length ? `<div class="scriptbtns">${vids.map((v) => `<button class="mini" data-sheet="${esc(j.id)}" data-video="${v.n}" data-step="0">📜 Script${vids.length > 1 ? " " + v.n : ""}</button>`).join("")}</div>` : "");
   }
   const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map(esc).join("<br>")}</div>` : "";
   const canResume = !running && j.status !== "queued" && made < j.count
@@ -1387,9 +1409,42 @@ $("#clearJobs").onclick = async () => {
   try { await api("/api/jobs/clear", { method: "POST" }); toast("Cleared finished jobs"); loadJobs(); } catch (err) { toast(err.message); }
 };
 
+// A popup for a stage of a job (Create tab): the script for the writing stage, what the stage did for
+// the others. Only reads; the job keeps running. The jobs list refreshes behind it.
+let JOBS = [];
+async function openSheet(jobId, n, step) {
+  const j = JOBS.find((x) => x.id === jobId); if (!j) return;
+  const steps = stepsOf(j), name = (steps[step] || ["Stage"])[0];
+  const box = $("#sheetBody");
+  $("#sheetTitle").textContent = step === 0 ? `📜 ${name}${j.count > 1 ? ` · video ${n}` : ""}` : `📋 ${name}${j.count > 1 ? ` · video ${n}` : ""}`;
+  $("#sheet").classList.add("open"); document.body.style.overflow = "hidden";
+  $("#sheet").dataset.job = jobId; $("#sheet").dataset.video = n; $("#sheet").dataset.step = step;
+  const v = videosOf(j).find((x) => x.n === +n);
+  const log = v && v.byStep[step] ? v.byStep[step] : [];
+  const logHtml = log.length ? `<h4 class="section">What happened</h4><ol class="sheetlog">${log.map((m) => `<li>${esc(m)}</li>`).join("")}</ol>` : "";
+  if (step !== 0) { box.innerHTML = logHtml || `<p class="hint">This stage hasn't started yet.</p>`; return; }
+  box.innerHTML = `<p class="hint">Loading the script…</p>`;
+  try {
+    const sc = await api(`/api/jobs/${encodeURIComponent(jobId)}/videos/${n}/script`);
+    box.innerHTML = `<h3 style="margin:0 0 4px">${esc(sc.title)}</h3>
+      ${sc.about ? `<p class="hint" style="margin:0 0 6px">${esc(sc.about)}</p>` : ""}
+      ${sc.hook ? `<p><b>On screen first:</b> ${esc(sc.hook)}</p>` : ""}
+      <p class="hint">${sc.words} words · the latest version (fixes made after the fact-check show up here as they happen)</p>
+      ${sc.sections.map((s) => `<h4 class="section">${esc(s.heading)}</h4>${s.lines.map((l) =>
+        `<p class="sline">${l.who ? `<b>${esc(l.who)}:</b> ` : ""}${esc(l.text)}${l.note ? ` <span class="snote">${esc(l.note)}</span>` : ""}</p>`).join("")}`).join("")}
+      ${logHtml}`;
+  } catch (e) { box.innerHTML = `<p class="hint">${esc(e.message)}</p>${logHtml}`; }
+}
+function closeSheet() { $("#sheet").classList.remove("open"); document.body.style.overflow = ""; }
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-sheet]");
+  if (t) { e.preventDefault(); openSheet(t.dataset.sheet, +t.dataset.video, +t.dataset.step); }
+});
+
 async function loadJobs() {
   loadUnfinished().catch(() => {});
   const jobs = await api("/api/jobs");
+  JOBS = jobs;
   // Keep each open log where the reader left it across refreshes: at the bottom it follows new
   // lines live, anywhere else it stays put (it used to jump back to the first line every refresh).
   const open = new Map([...document.querySelectorAll("#jobs details.log[open]")].map((d) => {

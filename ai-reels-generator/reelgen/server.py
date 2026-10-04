@@ -246,6 +246,84 @@ def list_videos(cfg: Config) -> list[dict]:
     return sorted(videos, key=lambda v: v.get("created_at", ""), reverse=True)
 
 
+def _video_folders(cfg: Config, job: dict, n: int) -> list[Path]:
+    """Video n's folders from its job log, newest first: the finished video (§done), then the working
+    folder ('Saving progress in ...')."""
+    cur, found = 1, []
+    for entry in job.get("log", []):
+        msg = entry.get("msg", "")
+        tag = re.match(r"^\[V(\d+)\] (.*)$", msg, re.S)
+        k = cur
+        if tag:
+            k, msg = int(tag.group(1)), tag.group(2)
+        mark = re.match(r"^=== Video (\d+)/", msg)
+        if mark:
+            cur = k = int(mark.group(1))
+        if k != n:
+            continue
+        saving = re.match(r"^Saving progress in (\S+)", msg)
+        if saving:
+            found.append(cfg.output_dir / saving.group(1))
+        if msg.startswith("§done "):
+            try:
+                found.append(cfg.output_dir / json.loads(msg[6:])["id"])
+            except (ValueError, KeyError):
+                pass
+    root = cfg.output_dir.resolve()
+    return [f for f in reversed(found) if f.resolve().parent == root and f.is_dir()]
+
+
+def _latest_script(folder: Path) -> dict | None:
+    """The newest script in a video folder: the draft written right after Claude, the checkpoint's
+    (after fixes), the finished script.json, or a stick episode."""
+    best, when = None, -1.0
+    for name in ("draft.json", "checkpoint.json", "script.json", "episode.json"):
+        path = folder / name
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if name == "checkpoint.json":
+            data = data.get("script")
+        if isinstance(data, dict) and path.stat().st_mtime > when:
+            best, when = data, path.stat().st_mtime
+    return best
+
+
+def script_view(d: dict) -> dict:
+    """Any of the pipelines' scripts as {title, about, sections: [{heading, lines: [{who, text, note}]}]}."""
+    sections, hook_text = [], ""
+    if "chapters" in d:  # medium/long video or Script Video
+        hook = [{"text": h.get("line") or "(no words: picture and sound)", "note": h.get("text") and f"on screen: {h['text']}"}
+                for h in d.get("hook") or []]
+        if hook:
+            sections.append({"heading": "Hook", "lines": hook})
+        for i, c in enumerate(d.get("chapters") or [], 1):
+            sections.append({"heading": f"{i}. {c.get('title', '')}", "lines": [
+                {"text": b.get("narration", ""), "note": ((b.get("visual") or {}).get("type") or "")
+                 + (f": {(b.get('visual') or {}).get('headline')}" if (b.get("visual") or {}).get("headline") else "")}
+                for b in c.get("beats") or []]})
+        title = d.get("youtube_title") or d.get("topic", "")
+    elif d.get("scenes") and "lines" in (d["scenes"][0] or {}):  # stick story
+        for i, sc in enumerate(d["scenes"], 1):
+            sections.append({"heading": f"Scene {i} · {sc.get('setting', '')}", "lines": [
+                {"who": "" if ln.get("speaker") in ("none", "") else ln.get("speaker"),
+                 "text": ln.get("line") or "(a silent beat)", "note": ln.get("emotion", "") if ln.get("line") else ""}
+                for ln in sc.get("lines") or []]})
+        title = d.get("title", "")
+    else:  # a Short
+        sections.append({"heading": "Scenes", "lines": [
+            {"text": sc.get("narration", ""), "note": ((sc.get("graphic") or {}).get("type") or "") if (sc.get("graphic") or {}).get("type") not in (None, "none") else ""}
+            for sc in d.get("scenes") or []]})
+        title = d.get("youtube_title") or d.get("title", "")
+        hook_text = d.get("title", "")  # the on-screen hook of the first seconds
+    about = d.get("subject") or d.get("logline") or d.get("why_chosen") or ""
+    words = sum(len(str(l.get("text", "")).split()) for s_ in sections for l in s_["lines"])
+    return {"title": title, "about": about, "hook": hook_text, "sections": sections, "words": words}
+
+
 def video_dir(cfg: Config, video_id: str) -> Path:
     path = (cfg.output_dir / video_id).resolve()
     if path.parent != cfg.output_dir.resolve() or not (path / "report.json").exists():
@@ -700,6 +778,19 @@ def create_app(cfg: Config) -> FastAPI:
     def list_jobs():
         now = time.time()  # lets the page run its timers on this computer's clock
         return [{**j, "now": now} for j in jobs.jobs]
+
+    @app.get("/api/jobs/{job_id}/videos/{n}/script")
+    def job_script(job_id: str, n: int):
+        """The script a running (or finished) video is using right now, as readable sections. Only reads
+        files the pipeline already wrote; the job keeps going."""
+        job = next((j for j in jobs.jobs if j["id"] == job_id), None)
+        if job is None:
+            raise HTTPException(404, "job not found")
+        for folder in _video_folders(cfg, job, n):
+            data = _latest_script(folder)
+            if data is not None:
+                return script_view(data)
+        raise HTTPException(404, "No script yet: Claude is still writing it.")
 
     def busy_folders() -> set[str]:
         return {f for j in jobs.jobs if j["status"] in ("queued", "running") for f in j.get("folders", []) + j.get("resume", [])}

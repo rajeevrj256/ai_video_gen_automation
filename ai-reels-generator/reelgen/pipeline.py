@@ -145,6 +145,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             if first_write:  # never the same video twice: checked before anything else is spent
                 script = repeats.guard(cfg, script, ("short",),
                                        lambda why: write_script(cfg, candidates, why, script), progress)
+        if not stage:  # readable from the Create tab while the video is still being made
+            (run_dir / "draft.json").write_text(script.model_dump_json(), encoding="utf-8")
         if not stage:
             if not topic:  # keep later attempts on the chosen topic
                 candidates = [c for c in candidates if c.title.lower() == script.topic.lower()] or candidates

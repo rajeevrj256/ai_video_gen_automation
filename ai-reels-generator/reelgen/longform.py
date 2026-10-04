@@ -1335,6 +1335,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                     script = repeats.guard(cfg, script, ("long",),
                                            lambda why: write_long_script(cfg, candidates, minutes, why, script),
                                            progress, kind="long")
+            if not stage or stage == "scripted":  # readable from the Create tab while the video is being made
+                (work / "draft.json").write_text(script.model_dump_json(), encoding="utf-8")
             for fix in range(0 if stage else FACT_FIXES + 2):
                 script = repair_long_script(script)  # free fixes first
                 basic = check_long_script(script, minutes)
