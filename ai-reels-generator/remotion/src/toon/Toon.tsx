@@ -5,7 +5,7 @@ import {Cues, Music} from '../Sound';
 import {FONT, clamp, useFonts} from '../theme';
 import {Layer} from '../Layer';
 import {BackdropView} from './Backdrops';
-import {ActionLayer, ItemView, slots} from './Effects';
+import {ActionLayer, ItemView, itemWidth, layout} from './Effects';
 import {Mascot, shade} from './Mascot';
 import {Person} from './Person';
 import type {PersonSpec, ToonProps, ToonShot} from './types';
@@ -77,7 +77,7 @@ const Caption: React.FC<{shot: ToonShot; t: number}> = ({shot, t}) => {
   const start = Math.floor(i / per) * per;
   const text = w.slice(start, start + per).map((x) => x.text).join(' ');
   return (
-    <div style={{position: 'absolute', left: 0, right: 0, bottom: 34, display: 'flex', justifyContent: 'center'}}>
+    <div style={{position: 'absolute', left: 0, right: 0, bottom: 58, display: 'flex', justifyContent: 'center'}}>
       <div style={{fontFamily: FONT, fontWeight: 800, fontSize: 34, color: '#fff', background: 'rgba(0,0,0,0.55)', padding: '6px 18px', borderRadius: 10, maxWidth: 1100, textAlign: 'center'}}>{text}</div>
     </div>
   );
@@ -124,8 +124,19 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
   const m = shot.mascot && !shot.card?.kind.startsWith('number') ? shot.mascot : null;
   const mascotAt = m ? {x: MASCOT_X[m.pos], y: 560} : null;
   const items = ownStage ? [] : shot.items.slice(0, 5);
-  const taken = [...(m ? [MASCOT_X[m.pos]] : []), ...(shot.people ?? []).map((sp) => PERSON_X[sp.pos] ?? 960)];
-  const spots = slots(Math.max(1, items.length), taken);
+  // What is already on screen, as x-ranges: the mascot, every person, the podium on a stage.
+  const occupied: [number, number][] = [
+    ...(m ? [[MASCOT_X[m.pos] - MASCOT_S[m.size] / 2 - 20, MASCOT_X[m.pos] + MASCOT_S[m.size] / 2 + 20] as [number, number]] : []),
+    ...(shot.people ?? []).map((sp) => {
+      const x = PERSON_X[sp.pos] ?? 960, half = sp.seated || shot.backdrop === 'desk' ? 270 : 200;
+      return [x - half, x + half] as [number, number];
+    }),
+    ...(shot.backdrop === 'stage' ? [[760, 1160] as [number, number]] : []),
+  ];
+  const base = items.length > 3 ? 200 : 250;
+  const placed = layout(items.length ? items.map((it) => itemWidth(it, base)) : [base], occupied);
+  const spots = placed.pos;
+  const size = Math.round(base * placed.scale);
   const isNumber = shot.card?.kind === 'number';
   // Camera and the cut into this shot.
   const cam = shot.camera === 'push' ? interpolate(frame, [0, frames], [1, 1.07]) : shot.camera === 'pull' ? interpolate(frame, [0, frames], [1.07, 1]) : 1;
@@ -152,12 +163,16 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
             }) : null}
             {(shot.people ?? []).map((sp, i) => <PersonView key={`p${i}`} spec={sp} frame={frame} talk={sp.talking ? talk : 0} backdrop={shot.backdrop} />)}
             <Foreground kind={shot.people?.length ? shot.backdrop : ''} tone={tone} />
+{shot.action === 'connect' ? ( // the lines run behind the objects, never across their labels
+                        <ActionLayer action={shot.action} p={p} frame={frame} fps={fps} pal={pal} items={shot.items} spots={spots} mascotAt={mascotAt}
+              mascot={props.mascot} values={shot.values} seed={props.style.seed + index} />
+            ) : null}
             {items.map((it, i) => {
               const s = spring({frame: frame - i * 4 - (shot.action === 'pop' ? Math.round(shot.at * fps) : 0), fps, config: {damping: 11, mass: 0.6}});
               const fall = shot.action === 'strings-burn' ? Math.max(0, p - 0.6) * 900 : 0;
               const sp = spots[i];
-              const size = items.length > 3 ? 190 : 250;
-              return <div key={i} style={{position: 'absolute', left: sp.x - size / 2, top: sp.y - size / 2 + fall + Math.sin((frame + i * 20) / 18) * 6, transform: `scale(${s})`}}>
+              if (i === 0 && (shot.action === 'lock' || shot.action === 'unlock')) return null; // the padlock stands in its place
+              return <div key={i} style={{position: 'absolute', left: sp.x, top: sp.y - size / 2 + fall + Math.sin((frame + i * 20) / 18) * 6, transform: `translateX(-50%) scale(${s})`}}>
                 <ItemView item={it} s={size} p={pal} frame={frame} k={i} />
               </div>;
             })}
@@ -168,8 +183,10 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
                 <Mascot shape={props.mascot.shape} color={props.mascot.color} accessory={props.mascot.accessory} mood={m.mood} tint={m.tint} frame={frame} size={size} flip={m.pos === 'right'} />
               </div>;
             })() : null}
-            <ActionLayer action={shot.action} p={p} frame={frame} fps={fps} pal={pal} items={shot.items} spots={spots} mascotAt={mascotAt}
+{shot.action === 'connect' ? null : (
+                        <ActionLayer action={shot.action} p={p} frame={frame} fps={fps} pal={pal} items={shot.items} spots={spots} mascotAt={mascotAt}
               mascot={props.mascot} values={shot.values} seed={props.style.seed + index} />
+            )}
             {shot.slam && t >= Math.max(0, shot.at - 0.1) ? (
               <Slam text={shot.slam} style={props.style.slam} frame={frame - Math.round(Math.max(0, shot.at - 0.1) * fps)} fps={fps} pal={pal}
                 low={ownStage || shot.action === 'strings' || shot.action === 'strings-burn'} />

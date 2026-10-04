@@ -395,6 +395,11 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
             people = [{"look": _look(cast[a.id]), "pose": a.pose, "mood": a.mood, "pos": a.pos, "talking": a.talking,
                        "seated": sh.backdrop == "desk", "flip": a.pos in ("right", "far-right")}
                       for a in sh.people[:3] if a.id in cast]
+            if sh.backdrop == "stage" and people:  # the speaker stands at the podium, anyone else to the side
+                speaker = next((x for x in people if x["talking"]), people[0])
+                others = iter(["far-left", "far-right"])
+                for x in people:
+                    x["pos"] = "center" if x is speaker else (x["pos"] if x["pos"] in ("far-left", "far-right") else next(others, "far-right"))
             shot = {"backdrop": sh.backdrop, "tone": si % tones, "action": sh.action, "at": at, "camera": sh.camera,
                     "enter": sh.enter,
                     "items": [{"icon": o.icon.strip().lower()[:40] or "sparkles", "label": o.label[:28] or None, "badge": o.badge}

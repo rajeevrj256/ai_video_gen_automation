@@ -210,18 +210,47 @@ const Trend: React.FC<{p: number; up: boolean; pal: ToonPalette}> = ({p, up, pal
   );
 };
 
-// Where objects go: the free places, away from the people and the mascot (x centres in `taken`), the
-// ones nearest the middle first. A shot with no one in it uses the middle itself.
-export const slots = (n: number, taken: number[]): XY[] => {
-  const xs = [960, 620, 1300, 330, 1590];
-  const free = xs.filter((x) => taken.every((t) => Math.abs(t - x) > 380));
-  // Nowhere fully free: the place farthest from everyone.
-  const far = [...xs].sort((a, b) => Math.min(...taken.map((t) => Math.abs(t - b))) - Math.min(...taken.map((t) => Math.abs(t - a))))[0];
-  const pool = free.length ? free : [far];
-  const ordered = [...pool].sort((a, b) => Math.abs(a - 960) - Math.abs(b - 960));
-  if (n <= ordered.length) return ordered.slice(0, n).sort((a, b) => a - b).map((x) => ({x, y: taken.length ? 470 : 520}));
-  // More objects than free places: stack them in two rows in the free places.
-  return Array.from({length: n}, (_, i) => ({x: ordered[i % ordered.length], y: 330 + Math.floor(i / ordered.length) * 300}));
+// Where objects go. `occupied` are the x-ranges people, the mascot and the podium fill; objects go only in
+// the free gaps, in one row, centred in each gap, the biggest gaps first; if they don't fit they shrink
+// (down to 55%), and only then share a gap in two rows. Nothing is ever drawn on top of anyone.
+export const itemWidth = (it: Item, s: number) =>
+  it.badge ? Math.max(s, (it.label || it.icon).length * s * 0.17 + s * 0.5) : Math.max(s, (it.label || '').length * s * 0.12 + 40) + 20;
+
+export const layout = (widths: number[], occupied: [number, number][]): {pos: XY[]; scale: number} => {
+  const occ = [...occupied].sort((a, b) => a[0] - b[0]);
+  const free: [number, number][] = [];
+  let x = 50;
+  for (const [a, b] of occ) {
+    if (a - x > 120) free.push([x, a]);
+    x = Math.max(x, b);
+  }
+  if (1870 - x > 120) free.push([x, 1870]);
+  const gaps = [...free].sort((a, b) => b[1] - b[0] - (a[1] - a[0]));
+  const y = occupied.length ? 470 : 520;
+  for (let scale = 1; scale >= 0.55; scale -= 0.15) {
+    const ws = widths.map((w) => w * scale);
+    const pos: XY[] = [];
+    let i = 0;
+    for (const [a, b] of gaps) {
+      let sum = 0, k = i;
+      while (k < ws.length && sum + ws[k] + (k > i ? 50 : 0) <= b - a) sum += ws[k++] + (k > i + 1 ? 50 : 0);
+      let cx = (a + b) / 2 - sum / 2;
+      for (let j = i; j < k; j++) {
+        pos.push({x: cx + ws[j] / 2, y});
+        cx += ws[j] + 50;
+      }
+      i = k;
+      if (i >= ws.length) break;
+    }
+    if (i >= ws.length) return {pos: pos.sort((p1, p2) => p1.x - p2.x), scale};
+  }
+  // Still too many: two rows in the widest gap (or the middle if everything is taken).
+  const [a, b] = gaps[0] ?? [660, 1260];
+  const perRow = Math.ceil(widths.length / 2);
+  return {
+    pos: widths.map((_, i) => ({x: a + ((b - a) * ((i % perRow) + 0.5)) / perRow, y: i < perRow ? 330 : 660})),
+    scale: 0.55,
+  };
 };
 
 export const ActionLayer: React.FC<{
@@ -257,7 +286,11 @@ export const ActionLayer: React.FC<{
     case 'unlock':
     case 'lock': {
       const open = action === 'unlock' ? ease(p) : 1 - ease(p);
-      return <div style={{position: 'absolute', left: target.x - 130, top: target.y - 330}}><Padlock s={260} open={open} p={pal} /></div>;
+      // The padlock takes the first object's place (that object isn't drawn), its label under it.
+      return <div style={{position: 'absolute', left: target.x, top: target.y - 150, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10}}>
+        <Padlock s={240} open={open} p={pal} />
+        {items[0]?.label ? <div style={{background: '#fff', color: '#15151c', fontWeight: 900, fontSize: 40, padding: '6px 18px', borderRadius: 12, textTransform: 'uppercase', whiteSpace: 'nowrap'}}>{items[0].label}</div> : null}
+      </div>;
     }
     case 'toggle-off':
     case 'toggle-on':
