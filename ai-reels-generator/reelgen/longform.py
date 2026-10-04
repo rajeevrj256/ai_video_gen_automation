@@ -1338,6 +1338,11 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         # A checkpoint written by an earlier resume lost the script (state didn't carry it over); the
         # draft written when the script was made still has it.
         resume["script"] = json.loads((work / "draft.json").read_text(encoding="utf-8"))
+    if not resume.get("props") and resume.get("stage") in ("voiced", "rendered") and (work / "props.json").exists():
+        # Same loss for the timeline; the render wrote it to props.json in this folder.
+        resume["props"] = json.loads((work / "props.json").read_text(encoding="utf-8"))
+    if not resume.get("props") and resume.get("stage") in ("voiced", "rendered"):
+        resume["stage"] = "scripted"  # nothing to render from: record the voice again (no Claude calls)
     script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
     open_facts: list[str] = resume.get("open_facts", [])
     best = _dec_long_best(resume.get("best"))
