@@ -401,6 +401,15 @@ def _first_error(proc) -> str:
     return (first or " ".join(lines[-3:]))[:600]
 
 
+def _audio_cmd(cli: Path, composition: str, out: Path, props_path: Path, a: int, b: int,
+               concurrency: int | None = None) -> list[str]:
+    """One minute of the soundtrack as WAV, with the same browser, tabs, timeout and own port as the picture
+    parts (the old single soundtrack pass had none of them and ran on the slow default browser)."""
+    cmd = _remotion_cmd(cli, composition, out, props_path, 18, False, [f"--frames={a}-{b}"], concurrency)
+    drop = ("--codec=", "--color-space=", "--jpeg-quality=", "--crf=")
+    return [c for c in cmd if not c.startswith(drop)] + ["--codec=wav"]
+
+
 def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, composition: str, crf: int,
                      progress) -> None:
     """Render a long video one minute at a time into render-parts/, then join the parts and the
@@ -470,15 +479,45 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
         left = (total - b - 1) / max(0.01, drawn / max(0.1, time.time() - started)) / 60
         progress(f"Editing: {(b + 1) / fps / 60:.1f} of {total / fps / 60:.1f} min done · {rate:.1f} frames/s · "
                  + (f"about {max(1, round(left))} min left" if b + 1 < total else "adding the sound and joining the parts"))
-    # The soundtrack once (voice, music, effects), then everything joined without re-encoding the picture.
+    # The soundtrack (voice, music, effects), one minute at a time like the picture: a single pass over an
+    # 11-minute Script Video hit the 1-hour limit after every picture part was done. Each minute is kept
+    # (`audioNNN.wav` + `.ok`), so Resume carries on; the minutes are PCM, so joining them is sample-exact.
     audio = parts / "audio.wav"
     if not audio.exists():
-        cmd = [str(cli), "render", "src/index.ts", composition, str(audio), f"--props={props_path}",
-               f"--public-dir={props_path.parent}", "--codec=wav", "--overwrite", *_port_args()]
-        proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
+        # The sound pass draws no picture (props `soundOnly`): every frame is visited only to gather sounds.
+        sound_path = props_path.with_name("props-sound.json")
+        sound_path.write_text(json.dumps({**props, "soundOnly": True}, ensure_ascii=False), encoding="utf-8")
+        pieces = []
+        for i, (a, b) in enumerate(ranges):
+            piece, ok = parts / f"audio{i:03d}.wav", parts / f"audio{i:03d}.ok"
+            pieces.append(piece)
+            if piece.exists() and ok.exists():
+                continue
+            for tries in range(1, PART_TRIES + 1):
+                cmd = _audio_cmd(cli, composition, piece, sound_path, a, b,
+                                 max(1, _concurrency() // 2) if tries == PART_TRIES else None)
+                log.info("Rendering sound %d/%d (try %d): %s", i + 1, len(ranges), tries, " ".join(cmd))
+                try:
+                    proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError(f"The sound for minute {i + 1} of {len(ranges)} took over an hour; the finished "
+                                       "parts are kept and Resume continues from here.")
+                if proc.returncode == 0 and piece.exists():
+                    ok.write_text("ok")
+                    break
+                why = _first_error(proc)
+                if tries == PART_TRIES:
+                    raise RuntimeError(f"Rendering the sound failed on minute {i + 1} of {len(ranges)} after {tries} "
+                                       f"tries: {why}. The finished parts are kept; Resume continues from here.")
+                progress(f"Sound: minute {i + 1} of {len(ranges)} failed ({why[:120]}); trying it again")
+            progress(f"Sound: {i + 1} of {len(ranges)} min done")
+        listing = parts / "audio.txt"
+        listing.write_text("".join(f"file '{p.name}'\n" for p in pieces), encoding="utf-8")
+        proc = subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing),
+                               "-c", "copy", str(audio)], capture_output=True, text=True)
         if proc.returncode != 0 or not audio.exists():
-            raise RuntimeError(f"Rendering the soundtrack failed: {(proc.stderr or proc.stdout)[-800:]}")
+            raise RuntimeError(f"Joining the sound failed: {proc.stderr[-800:]}")
     listing = parts / "parts.txt"
     listing.write_text("".join(f"file '{f.name}'\n" for f in files), encoding="utf-8")
     join = [FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-i", str(audio),

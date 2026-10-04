@@ -89,7 +89,7 @@ const rig = (pose: Pose, t: number, SEAT: number): Rig => {
 
 // ---------- the composition ----------
 
-export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, speech, vertical = false, dialogue = 'subtitle'}) => {
+export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, speech, vertical = false, dialogue = 'subtitle', soundOnly = false}) => {
   useFonts();
   useHandFont();
   const {fps} = useVideoConfig();
@@ -97,7 +97,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
   const looks: Record<string, Look> = Object.fromEntries(cast.map((c) => [c.id, c.look]));
   return (
     <Layer name="stick story" style={{backgroundColor: PAPER, fontFamily: FONT}}>
-      {shots.map((s, i) => (
+      {soundOnly ? null : shots.map((s, i) => (
         <Sequence key={i} name={`shot ${i + 1} ${s.setting}${s.speaker ? ` (${s.speaker})` : ''}`} from={f(s.start)} durationInFrames={Math.max(1, f(s.duration))}>
           <ShotView shot={s} looks={looks} cast={cast} vertical={vertical} dialogue={dialogue} newScene={i === 0 || shots[i - 1].scene !== s.scene} />
         </Sequence>

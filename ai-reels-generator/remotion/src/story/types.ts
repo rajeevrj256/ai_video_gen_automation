@@ -65,6 +65,9 @@ export type Shot = {
 
 
 export type StoryProps = {
+  // The sound pass of a long render (reelgen/video.py): no picture, so a frame costs almost nothing.
+  soundOnly?: boolean;
+  silent?: boolean;
   fps: number;
   duration: number;
   title: string;

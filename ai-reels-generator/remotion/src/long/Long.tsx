@@ -37,7 +37,7 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   );
 };
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false}) => {
   useFonts();
   setCurrency(currency);
   const {fps} = useVideoConfig();
@@ -46,6 +46,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
   const roomy = captions.length === 0;
   return (
     <Layer name="long" style={{backgroundColor: COLORS.ink, fontFamily: FONT, overflow: 'hidden'}}>
+      {soundOnly ? null : (<>
       {hook && hook.shots.length ? (
         <Sequence name="hook (trailer)" durationInFrames={f(hook.duration)}>
           <HookView
@@ -90,6 +91,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
 
       <Subtitles groups={captions} />
       <Grain />
+      </>)}
 
       {/* voice: the hook's lines, then every beat */}
       {(hook?.shots ?? []).map((s, i) =>
