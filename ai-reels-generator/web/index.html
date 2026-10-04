@@ -198,6 +198,16 @@
   .lib-tools input[type=search] { width: 100%; }
   .lib-tools .chips { margin-top: 0; }
   .lib-tools .chip .n { opacity: .6; margin-left: 4px; }
+  /* Wide screens: the filters in a left column (30%) that stays put while the videos (70%) scroll. */
+  @media (min-width: 900px) {
+    main:has(#view-videos.active) { max-width: 1400px; }
+    #view-videos.active { display: grid; grid-template-columns: minmax(260px, 30%) minmax(0, 1fr); column-gap: 24px; align-items: start; }
+    #view-videos > .lib-tools { grid-column: 1; grid-row: 1 / span 4; position: sticky; top: 76px; margin-bottom: 0;
+      max-height: calc(100vh - 170px); overflow-y: auto; padding: 14px; background: var(--panel); border-radius: var(--radius); }
+    #view-videos > :not(.lib-tools) { grid-column: 2; }
+    #view-videos > .lib-tools .chips { gap: 6px; }
+    #view-videos .shelf:first-child { margin-top: 0; }
+  }
   .shelf { margin: 18px 0 8px; }
   .shelf h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 17px; }
   .shelf h3 .count { font-size: 12px; color: var(--muted); font-weight: 600; }
