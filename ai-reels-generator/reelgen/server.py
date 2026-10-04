@@ -324,6 +324,11 @@ def script_view(d: dict) -> dict:
     return {"title": title, "about": about, "hook": hook_text, "sections": sections, "words": words}
 
 
+def _code_stamp() -> float:
+    """Newest change to the app's Python code on disk."""
+    return max((p.stat().st_mtime for p in Path(__file__).resolve().parent.glob("*.py")), default=0.0)
+
+
 def video_dir(cfg: Config, video_id: str) -> Path:
     path = (cfg.output_dir / video_id).resolve()
     if path.parent != cfg.output_dir.resolve() or not (path / "report.json").exists():
@@ -444,6 +449,7 @@ def create_app(cfg: Config) -> FastAPI:
                                          timeout=10).stdout.strip() or "unknown"
     except Exception:
         running_version = "unknown"
+    started_code = _code_stamp()  # outside the try: always set
     threading.Thread(target=scheduler, args=(jobs,), daemon=True).start()
     # Cookie value is a random session secret, so the PIN itself is never stored in the browser.
     session_token = secrets.token_urlsafe(24)
@@ -505,6 +511,9 @@ def create_app(cfg: Config) -> FastAPI:
             "busy": jobs.busy(),
             "storage": str(current.output_dir),
             "version": running_version,
+            # The page is read from disk on every load, the Python code only when the app starts: after a
+            # pull the page can show buttons the running app doesn't know yet ('Not Found').
+            "restart_needed": _code_stamp() > started_code,
             "renderer": _renderer(),
         }
 

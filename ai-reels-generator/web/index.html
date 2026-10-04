@@ -97,6 +97,7 @@
   .pill.done { background: rgba(61,220,132,.15); color: var(--ok); }
   .pill.partial { background: rgba(255,159,10,.15); color: var(--warn); }
   .pill.failed { background: rgba(255,90,95,.15); color: var(--bad); }
+  .restartbar { position: sticky; top: 0; z-index: 40; background: #ff9f0a; color: #111; font-weight: 700; padding: 10px 14px; font-size: 14px; }
   .sheet { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: none; align-items: flex-end; justify-content: center; }
   .sheet.open { display: flex; }
   .sheet-panel { background: var(--panel); width: min(760px, 100%); max-height: 88vh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 14px 16px 28px; }
@@ -615,6 +616,7 @@
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
 
+<div class="restartbar" id="restartBar" hidden>🔄 The app was updated. Close the Reel Studio window on your computer and start it again (start.bat): until then new buttons answer "Not Found".</div>
 <div class="sheet" id="sheet" onclick="if (event.target === this) closeSheet()">
   <div class="sheet-panel">
     <div class="sheet-head"><b id="sheetTitle"></b>
@@ -722,7 +724,7 @@ async function reviewVideo(id, decision) {
     else if (v) v.review = r.review;
     renderLibrary(); toast(r.deleted ? "Rejected and deleted" : "Accepted");
     return true;
-  } catch (e) { toast(e.message); return false; }
+  } catch (e) { toast(e.message === "Not Found" ? "Restart the app first: it was updated and doesn't know this button yet" : e.message); return false; }
 }
 function renderLibrary() {
   const q = $("#q").value.trim().toLowerCase();
@@ -1674,6 +1676,7 @@ async function loadSettings() {
 async function poll() {
   try {
     const st = await api("/api/status");
+    $("#restartBar").hidden = !st.restart_needed;
     $("#busyPill").textContent = st.busy ? "Generating…" : "Idle";
     $("#busyPill").classList.toggle("busy", st.busy);
     if (current === "create") loadJobs();

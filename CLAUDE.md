@@ -130,6 +130,7 @@ review about 1 min. A failed review costs a whole extra try.
   `reelgen/__init__.py` imports `config` first and `_load_dotenv` overrides values that start with `#`;
   `video.py` ignores them too. Before this, a `.env` copied from `.env.example` could make every Remotion
   render fail and silently fall back to the moviepy edit.
+- **A pull without a restart**: the page is read from disk on every load, the Python code only at start, so new buttons answered "Not Found" (FastAPI's own 404 for a route the running app doesn't have; the app's own 404 says "video not found"). `/api/status` `restart_needed` (`_code_stamp`: newest `reelgen/*.py` change vs the one at start) shows an orange "restart the app" bar.
 - **`.env` holds keys** (Pexels, optional Anthropic/Telegram). Never print, commit or
   paste it. It's git-ignored.
 
