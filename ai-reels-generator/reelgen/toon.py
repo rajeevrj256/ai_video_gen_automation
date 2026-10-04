@@ -435,6 +435,30 @@ def check_facts(cfg: Config, sc: ToonScript, progress: Progress) -> tuple[ToonSc
 
 # ---------- from the script to the editor's props ----------
 
+def _close(a: str, b: str) -> bool:
+    try:
+        x, y = int(a.lstrip("#"), 16), int(b.lstrip("#"), 16)
+    except ValueError:
+        return False
+    return sum(abs(((x >> k) & 255) - ((y >> k) & 255)) for k in (16, 8, 0)) < 90
+
+
+def _fresh_mascot(cfg: Config, sc: ToonScript, seed: int) -> None:
+    """Never the same mascot as the last 3 videos: a repeated generic body gets another one, and a repeated
+    colour another colour (a body that fits the subject, like a sun for a solar storm, is kept)."""
+    rng = random.Random(seed)
+    past = _history(cfg)[-3:]
+    shapes = [str(h.get("mascot", "")).split(" ")[0] for h in past]
+    colors = [str(h.get("mascot_color", "")).lower() for h in past]
+    m = sc.mascot
+    if m.shape in shapes and m.shape in GENERIC:
+        m.shape = rng.choice([g for g in GENERIC if g not in shapes] or list(GENERIC))
+    if m.color.lower() in colors or any(_close(m.color, c) for c in colors if c):
+        pool = ["#2F9BFF", "#FF5D8F", "#2FB36D", "#8E5CF7", "#14B8A6", "#F15BB5", "#FFB703", "#E5484D", "#00BBF9", "#FF8C42"]
+        m.color = rng.choice([c for c in pool if not any(_close(c, x) for x in colors if x)] or pool)
+
+
+
 def _look(p: TPerson) -> dict:
     return {"skin": SKINS[p.skin % len(SKINS)], "hair": p.hair, "hairColor": p.hair_color, "beard": p.beard,
             "glasses": p.glasses, "shirt": p.shirt, "tie": p.tie or None, "pants": p.pants, "coat": p.coat or None,
