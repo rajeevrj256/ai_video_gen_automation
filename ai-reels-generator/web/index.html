@@ -313,7 +313,7 @@
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
       </div>
       <div class="chips">
-        <button class="chip on" data-sort="new">🕒 Newest first</button><button class="chip" data-sort="old">Oldest first</button><button class="chip" data-sort="day">📅 By date</button>
+        <button class="chip" data-sort="new">🕒 Newest first</button><button class="chip" data-sort="old">Oldest first</button><button class="chip on" data-sort="day">📅 By date</button>
       </div>
     </div>
     <div id="shelves"></div>
@@ -715,8 +715,8 @@ function show(view) {
 const CAT_ICON = { "Sports": "🏏", "Money": "💰", "Science & Space": "🚀", "Tech": "💡", "History": "🏛️",
   "Nature & Animals": "🐾", "Weather": "🌦️", "Entertainment": "🎬", "India": "🇮🇳", "Life & People": "🧑‍🤝‍🧑",
   "Stories": "🎭", "Comedy": "😂" };
-let library = [], libCat = "", libLen = "", libOk = "", libSort = "new";
-try { libSort = localStorage.getItem("libSort") || "new"; } catch (e) {}
+let library = [], libCat = "", libLen = "", libOk = "", libSort = "day"; // by date unless this device picked another
+try { libSort = localStorage.getItem("libSort2") || "day"; } catch (e) {}
 // created_at is "YYYYMMDD-HHMMSS" (UTC), so it sorts as text; shown as the day in this device's time.
 const madeAt = (v) => { const m = String(v.created_at || "").match(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)/);
   return m ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : null; };
@@ -804,7 +804,7 @@ document.querySelectorAll("#libTools [data-len]").forEach((b) => b.onclick = () 
 document.querySelectorAll("#libTools [data-sort]").forEach((b) => {
   b.classList.toggle("on", b.dataset.sort === libSort);
   b.onclick = () => {
-    libSort = b.dataset.sort; try { localStorage.setItem("libSort", libSort); } catch (e) {}
+    libSort = b.dataset.sort; try { localStorage.setItem("libSort2", libSort); } catch (e) {}
     document.querySelectorAll("#libTools [data-sort]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
   };
 });
