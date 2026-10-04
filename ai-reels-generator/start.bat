@@ -13,6 +13,8 @@ if not exist remotion\node_modules\.bin\remotion.cmd (call :install_editor) else
 if not exist .env copy .env.example .env >nul
 where claude >nul 2>nul || echo Note: Claude Code not found. Install it from https://claude.com/claude-code and run "claude" once to log in, or put ANTHROPIC_API_KEY in .env.
 .venv\Scripts\python -m reelgen serve %*
+rem 75 = closed by "Update and restart": a new window opens with the updated app.
+if errorlevel 75 if not errorlevel 76 exit
 pause
 goto :eof
 

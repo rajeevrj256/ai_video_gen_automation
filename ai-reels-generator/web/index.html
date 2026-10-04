@@ -666,6 +666,13 @@
       <div id="libList"></div>
     </div>
     <div class="panel">
+      <h2>App updates</h2>
+      <div class="hint" id="updInfo">Checks GitHub for a newer version of this app.</div>
+      <div class="btns" style="margin-top:10px"><button id="updCheck">Check for updates</button>
+        <button class="primary" id="updNow">⬆ Update &amp; restart</button></div>
+      <div class="hint" style="margin-top:8px">Closes the app, pulls the latest code from GitHub, installs anything new and starts it again (about a minute; longer when the video editor's packages changed). Running videos are stopped and can be resumed afterwards.</div>
+    </div>
+    <div class="panel">
       <h2>This computer</h2>
       <div class="status-list" id="statusList"></div>
     </div>
@@ -682,7 +689,8 @@
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
 
-<div class="restartbar" id="restartBar" hidden>🔄 The app was updated. Close the Reel Studio window on your computer and start it again (start.bat): until then new buttons answer "Not Found".</div>
+<div class="restartbar" id="restartBar" hidden>🔄 The app's code changed on disk: restart it to use it (until then new buttons answer "Not Found"). <button class="mini" onclick="updateNow()">⬆ Update &amp; restart</button></div>
+<div class="restartbar" id="updating" hidden style="position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;text-align:center;font-size:18px;background:rgba(10,10,14,.92);color:#fff"></div>
 <div class="sheet" id="sheet" onclick="if (event.target === this) closeSheet()">
   <div class="sheet-panel">
     <div class="sheet-head"><b id="sheetTitle"></b>
@@ -1779,8 +1787,11 @@ async function loadSettings() {
   }
   const ai = { "claude-code": "Claude Code (your login)", api: st.api_key_set ? "Anthropic API key" : "API key — NOT SET",
     missing: "NOT SET UP — install Claude Code and run `claude` once" }[st.backend];
+  checkUpdate();
+  const lu = st.last_update;
   $("#statusList").innerHTML = [
     ["Running version", st.version || "unknown"],
+    ...(lu ? [["Last update", (lu.ok ? "" : "⚠️ ") + lu.message]] : []),
     ["Video renderer", st.renderer || "unknown (update the app)"],
     ["AI in use", ai],
     ["Claude Code installed", st.claude_code_installed ? "Yes" : "No"],
@@ -1791,6 +1802,49 @@ async function loadSettings() {
     ["From anywhere", st.public_url || st.public_error || "Off (REEL_TUNNEL in .env)"],
   ].map(([a, b]) => `<div><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join("");
 }
+
+// ---------- update and restart (reelgen/updater.py) ----------
+async function checkUpdate() {
+  $("#updInfo").textContent = "Checking GitHub…";
+  try {
+    const u = await api("/api/update/check");
+    if (!u.ok) { $("#updInfo").textContent = u.error; return; }
+    $("#updInfo").innerHTML = (u.behind ? `<b>${u.behind} update${u.behind > 1 ? "s" : ""} available</b> on ${esc(u.branch)}:<br>` +
+      u.commits.map((c) => "• " + esc(c)).join("<br>") : `Up to date (${esc(u.branch)} at ${esc(u.head)}).`) +
+      (u.local_changes.length ? `<br>⚠️ Files changed on this computer (an update may not apply): ${u.local_changes.map(esc).join(", ")}` : "");
+  } catch (e) { $("#updInfo").textContent = "Couldn't check: " + e.message; }
+}
+
+async function updateNow() {
+  if (!confirm("Update & restart: the app closes, pulls the latest version from GitHub and starts again. Continue?")) return;
+  const go = (force) => fetch("/api/update", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ force }) });
+  let res = await go(false);
+  if (res.status === 409) {
+    const d = (await res.json()).detail || {};
+    if (!confirm("These are still running or waiting:\n\n" + (d.jobs || []).join("\n") +
+      "\n\nRunning videos stop now and can be resumed after the restart (Create > Unfinished videos). Waiting ones must be started again. Update anyway?")) return;
+    res = await go(true);
+  }
+  if (!res.ok) { alert("Update failed: " + ((await res.json().catch(() => ({}))).detail || res.statusText)); return; }
+  const box = $("#updating"); box.hidden = false; box.style.display = "flex";
+  const t0 = Date.now();
+  let wentDown = false;
+  const tick = async () => {
+    const secs = Math.round((Date.now() - t0) / 1000);
+    box.innerHTML = `⬆ Updating Reel Studio… ${secs} s<br><span style="font-size:14px;opacity:.8">Closing, pulling the new version, installing and starting again. This page reloads by itself.</span>`;
+    try {
+      const r = await fetch("/api/status", { credentials: "same-origin", cache: "no-store" });
+      if (wentDown && (r.ok || r.status === 401)) { location.reload(); return; }
+      if (!r.ok && r.status !== 401) wentDown = true;
+    } catch { wentDown = true; }
+    if (secs > 600) { box.innerHTML = "The app hasn't come back after 10 minutes. Look at the Reel Studio window on the computer (or output/update.log)."; return; }
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 1500);
+}
+
+$("#updCheck").onclick = checkUpdate;
+$("#updNow").onclick = updateNow;
 
 async function poll() {
   try {

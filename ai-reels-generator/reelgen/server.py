@@ -17,6 +17,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -44,6 +45,31 @@ THUMB_FILES = {"frames.jpg", "picture.jpg", "with-words.jpg"}
 
 
 # ---------- background jobs ----------
+
+# A video (or a whole job) that failed: also sent on Telegram, so it's seen away from the computer.
+FAIL_LINE = re.compile(r"(?:^|\]\s*)(Video \d+ failed: |Error: )")
+
+
+class UpdateBody(BaseModel):
+    force: bool = False  # stop running videos too
+
+
+def job_label(job: dict) -> str:
+    inp = job.get("toon_input") or job.get("stick_input") or job.get("script_input") or {}
+    what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
+    kind = ("Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
+            else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
+    return f"{what} · {kind}"
+
+
+def alert(text: str) -> None:
+    """Send a Telegram message in the background (no-op without a bot token)."""
+    from .notifier import send_text
+
+    current = load_settings(Config())
+    if current.telegram_bot_token and current.telegram_chat_id:
+        threading.Thread(target=send_text, args=(current.telegram_bot_token, current.telegram_chat_id, text), daemon=True).start()
+
 
 class JobManager:
     """Runs generation jobs one at a time on a worker thread."""
@@ -105,6 +131,11 @@ class JobManager:
                 job.setdefault("folders", []).append(msg.rsplit("Saving progress in ", 1)[1].strip())
             job["log"].append({"t": time.time(), "msg": msg})
             log.info("[job %s] %s", job["id"], msg)
+            if FAIL_LINE.search(msg) and not job.get("cancel") and msg not in job.setdefault("alerted", []):
+                job["alerted"].append(msg)
+                alert(f"⚠️ Reel Studio: a video failed\n{job_label(job)}\n\n{msg[:1500]}\n\n"
+                      + ("Open the app and press 'Resume from where it stopped' (nothing done so far is redone)."
+                         if job.get("folders") else "Open the app to see the full log."))
 
         progress.should_pause = lambda job=job: bool(job.get("pause"))  # checked at every step boundary
         # Stop and remove: kills the Claude call or render running now (reelgen/stopper.py).
@@ -475,6 +506,16 @@ def create_app(cfg: Config) -> FastAPI:
     except Exception:
         running_version = "unknown"
     started_code = _code_stamp()  # outside the try: always set
+    # The result of an update made from the app (reelgen/updater.py), told once on Telegram.
+    from .updater import RESULT, last_result
+    last_update = last_result(cfg.output_dir)
+    if last_update and not last_update.get("notified"):
+        alert(("✅ Reel Studio updated and restarted: " if last_update.get("ok") else "⚠️ Reel Studio restarted, update failed: ")
+              + str(last_update.get("message", "")) + f" (branch {last_update.get('branch')}, now {running_version})")
+        try:
+            (cfg.output_dir / RESULT).write_text(json.dumps({**last_update, "notified": True}), encoding="utf-8")
+        except OSError:
+            pass
     threading.Thread(target=scheduler, args=(jobs,), daemon=True).start()
     # Cookie value is a random session secret, so the PIN itself is never stored in the browser.
     session_token = secrets.token_urlsafe(24)
@@ -540,7 +581,41 @@ def create_app(cfg: Config) -> FastAPI:
             # pull the page can show buttons the running app doesn't know yet ('Not Found').
             "restart_needed": _code_stamp() > started_code,
             "renderer": _renderer(),
+            "last_update": last_update,
         }
+
+    # ---------- update and restart (reelgen/updater.py) ----------
+
+    @app.get("/api/update/check")
+    def update_check():
+        from . import updater
+        return updater.check()
+
+    @app.post("/api/update")
+    def update_now(body: UpdateBody):
+        """Stop running videos (they resume later), hand over to the updater, quit; it pulls and starts the app again."""
+        from . import updater
+
+        active = [j for j in jobs.jobs if j["status"] in ("queued", "running")]
+        if active and not body.force:
+            raise HTTPException(409, {"jobs": [job_label(j) for j in active]})
+        for j in active:
+            j.update(pause=True, cancel=True)  # stopper.py kills the Claude call / render now; checkpoints stay
+            j["log"].append({"t": time.time(), "msg": "Stopped for the app update; resume it after the restart"})
+        deadline = time.time() + 25
+        while any(j.get("started") and not j.get("finished") for j in active) and time.time() < deadline:
+            time.sleep(0.5)
+        argv = sys.argv[1:]
+        serve_args = argv[1:] if argv[:1] == ["serve"] else []
+        updater.start(cfg.output_dir, cfg.port, serve_args)
+
+        def quit_soon() -> None:
+            time.sleep(1.0)  # let this answer reach the page first
+            tunnel.stop()
+            os._exit(75)  # start.bat closes its window on 75 instead of waiting for a key
+
+        threading.Thread(target=quit_soon, daemon=True).start()
+        return {"ok": True, "stopped": len(active)}
 
     @app.get("/api/videos")
     def videos():
