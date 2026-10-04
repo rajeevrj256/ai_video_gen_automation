@@ -319,6 +319,11 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
         f"- {graphics}"
     )
     prompt += "\n\n" + media.prompt_block(cfg)
+    from .repeats import prompt_block as made_block
+
+    prompt += made_block(cfg, ("short",))
+    if topic_is_manual(candidates) and candidates[0].context.startswith("Subject:"):
+        prompt += f"\n\nThe user's topic is narrowed to this one subject; make the video about it: {candidates[0].context}"
     if feedback:
         prompt += f"\n\nA reviewer rejected the previous draft. Fix every point:\n{feedback}"
         if previous is not None:

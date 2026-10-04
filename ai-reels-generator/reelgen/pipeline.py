@@ -26,6 +26,7 @@ from .llm import meter_add_earlier, meter_records, set_limit_reporter, start_met
 from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
 from .script_writer import STYLE_NAMES, STYLES as MIX, ReelScript, write_script
+from . import repeats
 from .trends import Trend, collect_trends, load_history, save_history
 from .shortfix import claims_changed, fact_check_scenes, fix_scenes, new_facts
 from .verify import VerifyResult, check_script, check_video, fact_check_script, review_with_claude
@@ -63,7 +64,9 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     progress("Finding trending topics")
     first_script = None
     if topic:
-        candidates = [Trend(title=topic, source="manual", context=angle_note)]
+        # A typed topic is narrowed first to one subject not made before (a small call, checked in code).
+        subject = repeats.narrow(cfg, topic, ("short",), progress) if cfg.video_style == "facts" else ""
+        candidates = [Trend(title=topic, source="manual", context=" ".join(x for x in (subject, angle_note) if x))]
     else:
         # One video at a time picks from the trends, skipping topics already used or
         # being made right now by a parallel video.
@@ -73,6 +76,8 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
             candidates = collect_trends(cfg.geo, used + sorted(_claimed))
             progress("[attempt 1/%d] Claude is picking the topic and writing the script" % cfg.max_attempts)
             first_script = write_script(cfg, candidates, "", None)
+            first_script = repeats.guard(cfg, first_script, ("short",),
+                                         lambda why: write_script(cfg, candidates, why, first_script), progress)
             _claimed.add(first_script.topic)
     claimed = first_script.topic if first_script else None
 
@@ -135,7 +140,11 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             script = first_script  # already written while holding the topic lock
         else:
             progress(f"{tag} Claude is picking the topic and writing the script")
+            first_write = script is None
             script = write_script(cfg, candidates, feedback, previous=script if feedback else None)
+            if first_write:  # never the same video twice: checked before anything else is spent
+                script = repeats.guard(cfg, script, ("short",),
+                                       lambda why: write_script(cfg, candidates, why, script), progress)
         if not stage:
             if not topic:  # keep later attempts on the chosen topic
                 candidates = [c for c in candidates if c.title.lower() == script.topic.lower()] or candidates
@@ -313,6 +322,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         "voice": cfg.voice,
         "captions": cfg.captions,
         "why_chosen": script.why_chosen,
+        "subject": script.subject,
         "title": script.title,
         "youtube_title": script.youtube_title,
         "caption": script.caption,

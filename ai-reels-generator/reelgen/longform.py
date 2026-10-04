@@ -33,6 +33,7 @@ from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
 from . import music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
+from . import repeats
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
 from .verify import FactCheck, VerifyResult, Review, probe
 from .video import FFMPEG, REMOTION_DIR, _remotion_cli, _render_remotion, media_seconds
@@ -342,8 +343,13 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
               + variety.recent_block(cfg) + "\n\n"
               + media.prompt_block(cfg, long=True)
               + media.models_block(cfg))
+    from .repeats import prompt_block as made_block
+
+    prompt += made_block(cfg, ("long",))
     if len(candidates) == 1 and candidates[0].source == "manual":
         prompt += f"\n- The user asked for this topic: {candidates[0].title}. Use it."
+        if candidates[0].context.startswith("Subject:"):
+            prompt += f"\n- It is narrowed to one subject not made before; make the video about it: {candidates[0].context}"
     if feedback:
         prompt += f"\n\nThe previous draft was rejected. Fix every point:\n{feedback}"
         if previous is not None:
@@ -1167,7 +1173,10 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     history_path = cfg.output_dir / "history.json"
     progress("Finding trending topics")
     if topic:
-        candidates = [Trend(title=topic, source="manual")]
+        # A typed topic is narrowed first to one subject not made before (a small call, checked in code):
+        # "the origin story of an everyday technology" made the QR-code video twice, 5 hours each.
+        subject = repeats.narrow(cfg, topic, ("long",), progress) if cfg.video_style != "story" else ""
+        candidates = [Trend(title=topic, source="manual", context=subject)]
     else:
         with _topic_lock:
             with _history_lock:
@@ -1311,11 +1320,21 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 checked_all, revise = True, None
             elif stage == "scripted" and manual:
                 progress(f"{tag} Using your script as written (no rewriting or fact-checking)")
+                if attempt == 1:  # your own script is never blocked, but a repeat is pointed out
+                    twin = repeats.too_close(script.subject, script.youtube_title,
+                                             [p for p in repeats.made(cfg) if p.get("kind") == "long"])
+                    if twin:
+                        progress(f"{tag} Note: this looks like \"{twin.get('title')}\", made {twin.get('when', 'before')}")
             elif stage:
                 progress(f"{tag} Resuming: {STAGE_DONE.get(stage, stage)} already done")
             else:
                 progress(f"{tag} Claude is picking the topic and writing the script (long video, a few minutes)")
+                first_write = script is None
                 script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
+                if first_write:  # never the same video twice: checked before voice, music and the render
+                    script = repeats.guard(cfg, script, ("long",),
+                                           lambda why: write_long_script(cfg, candidates, minutes, why, script),
+                                           progress, kind="long")
             for fix in range(0 if stage else FACT_FIXES + 2):
                 script = repair_long_script(script)  # free fixes first
                 basic = check_long_script(script, minutes)
