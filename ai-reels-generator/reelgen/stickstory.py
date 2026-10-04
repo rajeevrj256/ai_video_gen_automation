@@ -663,7 +663,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
         out = work / "reel.mp4"
         with _render_slot(cfg):
-            _render_remotion(cli, props, out, composition="StickStory", crf=18, timeout=4 * 3600)
+            _render_remotion(cli, props, out, composition="StickStory", crf=18, progress=progress)
         subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "2", "-i", str(out), "-frames:v", "1", "-q:v", "3",
                         str(work / "thumbnail.jpg")], check=False)
         progress("Verifying video quality")

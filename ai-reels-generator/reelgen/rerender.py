@@ -122,6 +122,9 @@ def _same_voice_props(folder: Path, work: Path, cfg: Config, music_name: str) ->
     files += [x for x in ((props.get("hook") or {}).get("music"),) if x]
     files += [x["audio"] for x in (props.get("hook") or {}).get("shots", []) if x.get("audio")]
     files += [x["visual"]["src"] for x in (props.get("hook") or {}).get("shots", []) if x["visual"].get("src")]
+    look = props.get("look") or {}  # the background photos, as drawn and as prepared
+    files += [x for x in [*(look.get("plates") or {}).values(), look.get("hookPlate"),
+                          *(look.get("platesBaked") or {}).values()] if x]
     if props.get("musicFrom") is not None and props.get("music"):
         files.append(props["music"])  # composed tracks are kept with the video
     files += [b["visual"]["src"] for b in props.get("beats", []) if b["visual"].get("src")]
@@ -197,7 +200,7 @@ def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progres
         slot.acquire()
     try:
         progress(f"Editing the video ({props['duration'] / 60:.1f} min of animation; this takes a while)")
-        _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, timeout=4 * 3600)
+        _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, progress=progress)
     finally:
         slot.release()
     subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "3", "-i", str(work / "reel.mp4"), "-frames:v", "1",

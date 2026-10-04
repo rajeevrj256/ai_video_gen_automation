@@ -404,4 +404,4 @@ def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: di
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
     from .pipeline import _render_slot
     with _render_slot(cfg):  # one edit at a time
-        _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, timeout=4 * 3600)
+        _render_remotion(cli, props, work / "reel.mp4", composition="Long", crf=18, progress=progress)

@@ -51,7 +51,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
             hook={hook}
             look={look}
             render={(s, frames) => (
-              <Body v={s.visual} frames={frames} accent={look.accents[0]} roomy={roomy} look={{...look, backdrop: 'rays'}} chapter={0} seed={7} plate={look.hookPlate} />
+              <Body v={s.visual} frames={frames} accent={look.accents[0]} roomy={roomy} look={{...look, backdrop: 'rays'}} chapter={0} seed={7} plate={look.platesBaked?.hook ?? look.hookPlate} />
             )}
           />
         </Sequence>
@@ -65,7 +65,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         return (
           <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${b.visual.camera ?? 'push'})`} from={from} durationInFrames={frames}>
             <Shot v={b.visual} frames={frames} transition={look.transition}>
-              <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.plates?.[String(b.chapter)]} />
+              <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
             </Shot>
           </Sequence>
         );
@@ -80,7 +80,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
                 tint={paletteFor(c.index, look).a} plate={look.plates?.[String(c.index)]} count={chapters.filter((x) => x.card > 0).length} />
             ) : (
               <>
-                <Backdrop look={look} chapter={c.index} seed={100 + c.index} plate={look.plates?.[String(c.index)]} />
+                <Backdrop look={look} chapter={c.index} seed={100 + c.index} plate={look.platesBaked?.[String(c.index)] ?? look.plates?.[String(c.index)]} />
                 <ChapterCard chapter={c} frames={f(c.card)} total={chapters.filter((x) => x.card > 0).length} accent={paletteFor(c.index, look).accent} />
               </>
             )}

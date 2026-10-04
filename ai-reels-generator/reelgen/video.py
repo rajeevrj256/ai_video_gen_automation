@@ -15,6 +15,7 @@ import random
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -231,61 +232,189 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
 
 
 def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = "Reel", crf: int = 18,
-                     timeout: int = 1800) -> None:
+                     timeout: int = 1800, progress=None) -> None:
+    """Render with Remotion. A long composition (over PART_FROM seconds) is rendered in one-minute parts
+    that survive a crash, a timeout or closing the app (`_render_in_parts`); a Short in one go."""
     public_dir = out_path.parent
     props_path = public_dir / "props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-    cmd = [str(cli), "render", "src/index.ts", composition, str(out_path),
-           f"--props={props_path}", f"--public-dir={public_dir}",
-           # bt709 tags the file as standard TV-range colour, so phones don't show it washed out.
-           "--codec=h264", f"--crf={crf}", "--color-space=bt709", "--overwrite",
-           # Frames go to the encoder as JPEG; the default quality (80) softens text edges.
-           "--jpeg-quality=95"]
-    # Remotion downloads its own headless Chrome on first render. Where that
-    # download is blocked, REEL_CHROME can point at an installed Chrome/Chromium.
-    # REEL_CHROME=chrome-for-testing uses Remotion's full test browser instead of the headless
-    # shell: on a Windows laptop with a GTX 1650 only that one (with REEL_GL empty) drew on the GPU.
-    chrome = os.environ.get("REEL_CHROME", "").strip()
-    if chrome.lower() == "chrome-for-testing":
-        cmd += ["--chrome-mode=chrome-for-testing"]
-    elif chrome:
-        cmd += [f"--browser-executable={chrome}", "--chrome-mode=chrome-for-testing"]
-    # Speed knobs for a strong local machine (see CLAUDE.md at the repo root):
-    # REEL_CONCURRENCY = frames rendered in parallel (default here: every core),
-    # REEL_GL = browser GPU backend, e.g. "angle" on Windows/NVIDIA or "egl" on Linux,
-    # REEL_HWACCEL = "if-possible" to encode with the GPU where Remotion supports it.
-    for env, flag in (("REEL_CONCURRENCY", "--concurrency"), ("REEL_GL", "--gl"),
-                      ("REEL_HWACCEL", "--hardware-acceleration")):
-        value = os.environ.get(env, "").strip()
-        if value.startswith("#"):  # a comment read as a value
-            value = ""
-        if env == "REEL_CONCURRENCY" and not value:
-            # Remotion's default uses half the cores; only one render runs at a time (the render
-            # slot), so give it all of them. Measured ~1.6x faster on 4 cores.
-            value = str(max(1, os.cpu_count() or 1))
-        if value:
-            cmd.append(f"{flag}={value}")
-    if any(a.startswith("--hardware-acceleration=") for a in cmd):
-        # Remotion turns GPU encoding (NVENC) off whenever --crf is given ("crf is not supported with
-        # hardware acceleration"), so the GPU sat idle while the CPU encoded. NVENC takes a bitrate:
-        # REEL_GPU_BITRATE, default 8M for 16:9 long videos (flat animation) and 12M for Shorts (footage).
-        default = "8M" if composition == "Long" else "12M"
-        bitrate = os.environ.get("REEL_GPU_BITRATE", "").strip() or default
-        cmd = [a for a in cmd if not a.startswith("--crf=")] + [f"--video-bitrate={bitrate}"]
+    if composition in ("Long", "StickStory") and float(props.get("duration") or 0) > PART_FROM:
+        return _render_in_parts(cli, props, props_path, out_path, composition, crf, progress or log.info)
+    gpu = _gpu_wanted()
+    cmd = _remotion_cmd(cli, composition, out_path, props_path, crf, gpu)
     log.info("Rendering with Remotion: %s", " ".join(cmd))
     proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
-    gpu_encode = [a for a in cmd if a.startswith("--hardware-acceleration=")]
-    if (proc.returncode != 0 or not out_path.exists()) and gpu_encode:
+    if (proc.returncode != 0 or not out_path.exists()) and gpu:
         # GPU encoding (NVENC) fails outright on machines without a usable NVIDIA GPU
         # rather than falling back, so retry once with normal CPU encoding.
-        log.warning("GPU encoding failed; rendering again with CPU encoding")
-        cmd = [a for a in cmd if a not in gpu_encode and not a.startswith("--video-bitrate=")] + [f"--crf={crf}"]
+        _gpu_failed(proc)
+        cmd = _remotion_cmd(cli, composition, out_path, props_path, crf, False)
         proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out_path.exists():
         tail = (proc.stderr.strip() or proc.stdout.strip())[-1500:]
         raise RuntimeError(f"Remotion render failed ({proc.returncode}): {tail}")
+
+
+PART_FROM = 150  # seconds: longer compositions render in parts
+PART_SECONDS = 60
+PART_TIMEOUT = 3600  # one part (a minute of video) taking an hour means something is stuck
+_gpu_broken = {"why": ""}  # set once GPU encoding failed on this machine: later renders go straight to CPU
+
+
+def _env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return "" if value.startswith("#") else value  # a comment read as a value
+
+
+def _gpu_wanted() -> bool:
+    return bool(_env("REEL_HWACCEL")) and _env("REEL_HWACCEL") != "disable" and not _gpu_broken["why"]
+
+
+def _gpu_failed(proc) -> None:
+    tail = (proc.stderr.strip() or proc.stdout.strip())[-400:]
+    _gpu_broken["why"] = tail or "GPU encoding failed"
+    log.warning("GPU encoding failed, using CPU encoding from now on: %s", tail)
+
+
+def _free_ram_gb() -> float | None:
+    """Memory free right now (Windows, Linux, macOS), or None if unknown."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            st = Status()
+            st.dwLength = ctypes.sizeof(Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+            return st.ullAvailPhys / 2**30
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            info = dict(line.split(":", 1) for line in fh)
+        return int(info["MemAvailable"].split()[0]) / 2**20
+    except Exception:
+        return None
+
+
+def _concurrency() -> int:
+    """Frames drawn at once: REEL_CONCURRENCY, else every core, but never more browser tabs than free
+    memory holds (about 0.9 GB each). Too many tabs on a laptop with little free memory made Windows
+    swap to disk, and the render crawled at ~1 frame a second."""
+    if _env("REEL_CONCURRENCY"):
+        return max(1, int(float(_env("REEL_CONCURRENCY"))))
+    cores = max(1, os.cpu_count() or 1)
+    free = _free_ram_gb()
+    return cores if free is None else max(2, min(cores, int(free / 0.9)))
+
+
+def _remotion_cmd(cli: Path, composition: str, out: Path, props_path: Path, crf: int, gpu: bool,
+                  extra: list[str] | None = None) -> list[str]:
+    cmd = [str(cli), "render", "src/index.ts", composition, str(out),
+           f"--props={props_path}", f"--public-dir={props_path.parent}",
+           # bt709 tags the file as standard TV-range colour, so phones don't show it washed out.
+           "--codec=h264", "--color-space=bt709", "--overwrite",
+           # Frames go to the encoder as JPEG; the default quality (80) softens text edges.
+           "--jpeg-quality=95", f"--concurrency={_concurrency()}"]
+    # Remotion downloads its own headless Chrome on first render. Where that
+    # download is blocked, REEL_CHROME can point at an installed Chrome/Chromium.
+    # REEL_CHROME=chrome-for-testing uses Remotion's full test browser instead of the headless
+    # shell: on a Windows laptop with a GTX 1650 only that one (with REEL_GL empty) drew on the GPU.
+    chrome = _env("REEL_CHROME")
+    if chrome.lower() == "chrome-for-testing":
+        cmd += ["--chrome-mode=chrome-for-testing"]
+    elif chrome:
+        cmd += [f"--browser-executable={chrome}", "--chrome-mode=chrome-for-testing"]
+    if _env("REEL_GL"):  # browser GPU backend, e.g. "egl" on Linux
+        cmd.append(f"--gl={_env('REEL_GL')}")
+    if gpu:
+        # Remotion turns GPU encoding (NVENC) off whenever --crf is given ("crf is not supported with
+        # hardware acceleration"), so the GPU sat idle while the CPU encoded. NVENC takes a bitrate:
+        # REEL_GPU_BITRATE, default 8M for 16:9 videos (flat animation) and 12M for Shorts (footage).
+        bitrate = _env("REEL_GPU_BITRATE") or ("12M" if composition == "Reel" else "8M")
+        cmd += [f"--hardware-acceleration={_env('REEL_HWACCEL')}", f"--video-bitrate={bitrate}"]
+    else:
+        cmd.append(f"--crf={crf}")
+    return cmd + (extra or [])
+
+
+def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, composition: str, crf: int,
+                     progress) -> None:
+    """Render a long video one minute at a time into render-parts/, then join the parts and the
+    soundtrack (rendered once, audio only) without re-encoding. A finished part is kept: a crash, a
+    timeout or a closed app costs one minute of work, and Resume continues with the next part (parts
+    of a changed timeline are thrown away). Every part reports progress and the time left; GPU
+    encoding is tried on the first part and, if it fails, the rest goes to the CPU (no full re-render)."""
+    import hashlib
+    import math
+
+    fps = int(props.get("fps") or 30)
+    total = max(1, math.ceil(float(props["duration"]) * fps))
+    parts = out_path.parent / "render-parts"
+    parts.mkdir(exist_ok=True)
+    stamp = hashlib.sha1((json.dumps(props, sort_keys=True) + composition).encode()).hexdigest()[:16]
+    mark = parts / "timeline.sha"
+    if not mark.exists() or mark.read_text().strip() != stamp:
+        for old in parts.glob("*"):
+            old.unlink()
+        mark.write_text(stamp)
+    step = PART_SECONDS * fps
+    ranges = [(a, min(a + step, total) - 1) for a in range(0, total, step)]
+    files, drawn, started = [], 0, time.time()
+    for i, (a, b) in enumerate(ranges):
+        part, ok = parts / f"part{i:03d}.mp4", parts / f"part{i:03d}.ok"
+        files.append(part)
+        if part.exists() and ok.exists():
+            continue
+        gpu = _gpu_wanted()
+        for attempt in (gpu, False) if gpu else (False,):
+            cmd = _remotion_cmd(cli, composition, part, props_path, crf, attempt, [f"--frames={a}-{b}", "--muted"])
+            log.info("Rendering part %d/%d: %s", i + 1, len(ranges), " ".join(cmd))
+            t0 = time.time()
+            try:
+                proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+                                      errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(f"Part {i + 1} of {len(ranges)} (one minute of video) took over an hour, so the "
+                                   "render stopped; the finished parts are kept and Resume continues from here.")
+            if proc.returncode == 0 and part.exists():
+                ok.write_text("gpu" if attempt else "cpu")
+                break
+            if attempt:  # GPU encoding failed: this part and the rest on the CPU
+                _gpu_failed(proc)
+                progress("GPU encoding didn't work on this computer; encoding on the CPU instead")
+                continue
+            tail = (proc.stderr.strip() or proc.stdout.strip())[-1500:]
+            raise RuntimeError(f"Remotion render failed on part {i + 1} ({proc.returncode}): {tail}")
+        drawn += b - a + 1
+        rate = (b - a + 1) / max(0.1, time.time() - t0)
+        left = (total - b - 1) / max(0.01, drawn / max(0.1, time.time() - started)) / 60
+        progress(f"Editing: {(b + 1) / fps / 60:.1f} of {total / fps / 60:.1f} min done · {rate:.1f} frames/s · "
+                 + (f"about {max(1, round(left))} min left" if b + 1 < total else "adding the sound and joining the parts"))
+    # The soundtrack once (voice, music, effects), then everything joined without re-encoding the picture.
+    audio = parts / "audio.wav"
+    if not audio.exists():
+        cmd = [str(cli), "render", "src/index.ts", composition, str(audio), f"--props={props_path}",
+               f"--public-dir={props_path.parent}", "--codec=wav", "--overwrite"]
+        proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
+        if proc.returncode != 0 or not audio.exists():
+            raise RuntimeError(f"Rendering the soundtrack failed: {(proc.stderr or proc.stdout)[-800:]}")
+    listing = parts / "parts.txt"
+    listing.write_text("".join(f"file '{f.name}'\n" for f in files), encoding="utf-8")
+    join = [FFMPEG, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-i", str(audio),
+            "-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart"]
+    proc = subprocess.run(join + ["-c:v", "copy", str(out_path)], capture_output=True, text=True)
+    if proc.returncode != 0 or not out_path.exists():  # parts from two encoders: join them by re-encoding once
+        proc = subprocess.run(join + ["-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p", str(out_path)],
+                              capture_output=True, text=True)
+    if proc.returncode != 0 or not out_path.exists():
+        raise RuntimeError(f"Joining the parts failed: {proc.stderr[-800:]}")
+    shutil.rmtree(parts, ignore_errors=True)
 
 
 # ---------- moviepy (fallback) ----------

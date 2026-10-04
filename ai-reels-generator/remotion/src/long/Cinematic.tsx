@@ -165,7 +165,9 @@ const Plate: React.FC<{src: string; tint: string; seed: number}> = ({src, tint, 
           height: '100%',
           objectFit: 'cover',
           transform: `scale(${scale}) translateX(${dir * Math.min(40, frame * 0.06)}px)`,
-          filter: 'blur(3px) brightness(0.42) saturate(0.85) contrast(1.05)',
+          // A photo prepared by reelgen (…-bg.jpg) is already blurred and graded: drawing that filter on
+          // every frame was a fifth of a long video's render time.
+          filter: src.endsWith('-bg.jpg') ? undefined : 'blur(3px) brightness(0.42) saturate(0.85) contrast(1.05)',
         }}
       />
       <div style={{position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${tint}cc 0%, ${tint}55 45%, rgba(0,0,0,0.55) 100%)`}} />

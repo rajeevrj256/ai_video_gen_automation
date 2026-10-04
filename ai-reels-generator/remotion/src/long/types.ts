@@ -55,6 +55,7 @@ export type Look = {
   seed: number;
   plates?: Record<string, string>; // chapter index -> background photo of that chapter's own setting
   hookPlate?: string | null; // the hook's background photo
+  platesBaked?: Record<string, string>; // the same photos already blurred, darkened and graded once (chapter index or 'hook')
 };
 
 export type HookShot = {

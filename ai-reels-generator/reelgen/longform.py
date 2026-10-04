@@ -839,8 +839,35 @@ def _plates(script: LongScript, cfg: Config, work: Path, look: dict, progress: P
         variety.remember_photos(cfg, taken - earlier)
     look["plates"] = {k: v for k, v in plates.items() if k != "hook"}
     look["hookPlate"] = plates.get("hook")
+    look["platesBaked"] = {k: b for k, v in plates.items() if (b := _bake_plate(work, v))}
     look["plateUrls"] = urls
     return look
+
+
+def _bake_plate(work: Path, rel: str) -> str | None:
+    """The backdrop photo blurred, darkened and graded once, the way the editor's CSS filter used to do
+    on every frame (blur 3px, brightness .42, saturate .85, contrast 1.05), at 1.2x the frame so the
+    slow drift and zoom stay sharp enough. Returns its path, or None (the editor then filters it)."""
+    from PIL import Image, ImageEnhance, ImageFilter
+
+    src = work / rel
+    out = src.with_name(src.stem + "-bg.jpg")
+    try:
+        with Image.open(src) as im:
+            im = im.convert("RGB")
+            w, h = 2304, 1296
+            scale = max(w / im.width, h / im.height)
+            im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+            left, top = (im.width - w) // 2, (im.height - h) // 2
+            im = im.crop((left, top, left + w, top + h)).filter(ImageFilter.GaussianBlur(3 * 1.2))
+            im = ImageEnhance.Brightness(im).enhance(0.42)
+            im = ImageEnhance.Color(im).enhance(0.85)
+            im = ImageEnhance.Contrast(im).enhance(1.05)
+            im.save(out, quality=88)
+        return out.relative_to(work).as_posix()
+    except Exception as exc:
+        log.warning("Couldn't prepare %s: %s", rel, exc)
+        return None
 
 
 def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) -> dict:
@@ -1412,7 +1439,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 pass  # the edit finished before it stopped
             else:
                 with _render_slot(cfg):
-                    _render_remotion(cli, props, out, composition="Long", crf=18, timeout=4 * 3600)
+                    _render_remotion(cli, props, out, composition="Long", crf=18, progress=progress)
                 save(stage="rendered")
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "3", "-i", str(out), "-frames:v", "1",
                             "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
