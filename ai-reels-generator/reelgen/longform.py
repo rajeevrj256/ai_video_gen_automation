@@ -1334,6 +1334,10 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     cfg = replace(cfg, long_minutes=minutes)  # the review and checks judge it by the length it was written for
     history_path = cfg.output_dir / "history.json"
     feedback = resume.get("feedback", "")
+    if not resume.get("script") and resume.get("stage") and (work / "draft.json").exists():
+        # A checkpoint written by an earlier resume lost the script (state didn't carry it over); the
+        # draft written when the script was made still has it.
+        resume["script"] = json.loads((work / "draft.json").read_text(encoding="utf-8"))
     script = LongScript.model_validate(resume["script"]) if resume.get("script") else None
     open_facts: list[str] = resume.get("open_facts", [])
     best = _dec_long_best(resume.get("best"))
@@ -1342,8 +1346,12 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     # A Script Video (reelgen/scriptvideo.py): the user's own approved script, title and description.
     # It enters here already scripted: no writing, fact-check, preview review, final review or post text.
     manual: dict | None = resume.get("manual")
-    state = {"length": "long", "minutes": minutes, "topic": topic, "stamp": stamp, "style": cfg.video_style,
-             "candidates": [asdict(c) for c in candidates], "best": resume.get("best"), "manual": manual}
+    # Everything the checkpoint held is kept (script, props, preview...): a resume that saved only what it
+    # changed dropped the script, and the next resume crashed after a finished 11-minute render.
+    state = {**resume, "length": "long", "minutes": minutes, "topic": topic, "stamp": stamp,
+             "style": cfg.video_style, "candidates": [asdict(c) for c in candidates], "best": resume.get("best"),
+             "manual": manual}
+    state.pop("usage", None)
 
     def save(**changes) -> None:
         state.update(changes, usage=meter_records())
@@ -1459,6 +1467,11 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             if cli is None:
                 raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
             out = work / "reel.mp4"
+            kept_render = work / f"attempt{attempt}.mp4"
+            if stage == "rendered" and not out.exists() and kept_render.exists():
+                move(kept_render, out)  # it stopped after the render was set aside: use it, don't render again
+                if (work / f"attempt{attempt}.jpg").exists():
+                    (work / f"attempt{attempt}.jpg").replace(work / "thumbnail.jpg")
             if stage == "rendered" and out.exists():
                 pass  # the edit finished before it stopped
             else:
