@@ -830,6 +830,9 @@ document.querySelectorAll("#libTools [data-sort]").forEach((b) => {
     document.querySelectorAll("#libTools [data-sort]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
   };
 });
+// On a phone the filter sections start folded (each heading still shows its current choice);
+// on a wide screen they start open.
+if (window.matchMedia("(max-width: 899px)").matches) document.querySelectorAll("#libTools .fgroup").forEach((d) => d.open = false);
 document.querySelectorAll("#libTools [data-type]").forEach((b) => b.onclick = () => {
   libType = b.dataset.type; document.querySelectorAll("#libTools [data-type]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
 });
