@@ -198,6 +198,13 @@
   .lib-tools input[type=search] { width: 100%; }
   .lib-tools .chips { margin-top: 0; }
   .lib-tools .chip .n { opacity: .6; margin-left: 4px; }
+  .fgroup > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    padding: 4px 0; list-style: none; display: flex; align-items: center; gap: 8px; }
+  .fgroup > summary::-webkit-details-marker { display: none; }
+  .fgroup > summary::before { content: "▸"; transition: transform .15s; } .fgroup[open] > summary::before { transform: rotate(90deg); }
+  .fgroup .fnow { margin-left: auto; text-transform: none; letter-spacing: 0; color: var(--accent); font-weight: 600; }
+  .fgroup[open] .fnow { display: none; }
+  .fgroup .chips { margin-top: 6px; }
   /* Wide screens: the filters in a left column (30%) that stays put while the videos (70%) scroll. */
   @media (min-width: 900px) {
     main:has(#view-videos.active) { max-width: 1400px; }
@@ -307,14 +314,21 @@
   <section class="view" id="view-videos">
     <div class="lib-tools" id="libTools">
       <input type="search" id="q" placeholder="🔎 Search titles, topics, hashtags…">
-      <div class="chips" id="catChips"></div>
-      <div class="chips">
+      <details class="fgroup" open><summary>Category <span class="fnow" id="fnowCat">All</span></summary>
+        <div class="chips" id="catChips"></div></details>
+      <details class="fgroup" open><summary>Length <span class="fnow" id="fnowLen">All lengths</span></summary><div class="chips">
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium">🎞️ Medium</button><button class="chip" data-len="long">🎬 Long</button>
+      </div></details>
+      <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="script">📜 Your script</button>
+      </div></details>
+      <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
-      </div>
-      <div class="chips">
+        <button class="chip" data-ok="todo">🕓 To review</button><button class="chip" data-ok="accepted">👍 Accepted</button>
+      </div></details>
+      <details class="fgroup" open><summary>Sort <span class="fnow" id="fnowSort">By date</span></summary><div class="chips">
         <button class="chip" data-sort="new">🕒 Newest first</button><button class="chip" data-sort="old">Oldest first</button><button class="chip on" data-sort="day">📅 By date</button>
-      </div>
+      </div></details>
     </div>
     <div id="shelves"></div>
     <div class="grid" id="grid" hidden></div>
@@ -715,7 +729,7 @@ function show(view) {
 const CAT_ICON = { "Sports": "🏏", "Money": "💰", "Science & Space": "🚀", "Tech": "💡", "History": "🏛️",
   "Nature & Animals": "🐾", "Weather": "🌦️", "Entertainment": "🎬", "India": "🇮🇳", "Life & People": "🧑‍🤝‍🧑",
   "Stories": "🎭", "Comedy": "😂" };
-let library = [], libCat = "", libLen = "", libOk = "", libSort = "day"; // by date unless this device picked another
+let library = [], libCat = "", libLen = "", libOk = "", libType = "", libSort = "day"; // by date unless this device picked another
 try { libSort = localStorage.getItem("libSort2") || "day"; } catch (e) {}
 // created_at is "YYYYMMDD-HHMMSS" (UTC), so it sorts as text; shown as the day in this device's time.
 const madeAt = (v) => { const m = String(v.created_at || "").match(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)/);
@@ -755,7 +769,8 @@ function renderLibrary() {
     ...(v.hashtags || []), ...(v.youtube_tags || [])].join(" ").toLowerCase();
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
-    && (libOk === "" || String(+!!v.verified) === libOk);
+    && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : String(+!!v.verified) === libOk))
+    && (!libType || (libType === "ai" ? !["stick", "script"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
@@ -764,6 +779,11 @@ function renderLibrary() {
   $("#catChips").innerHTML = `<button class="chip ${libCat ? "" : "on"}" data-cat="">All <span class="n">${shown.length}</span></button>`
     + cats.map((c) => `<button class="chip ${libCat === c ? "on" : ""}" data-cat="${esc(c)}">${CAT_ICON[c]} ${esc(c)} <span class="n">${counts[c]}</span></button>`).join("");
   document.querySelectorAll("#catChips .chip").forEach((b) => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
+  // Each section's heading shows what it is set to, so a folded section still tells you.
+  const label = (sel) => (document.querySelector(`#libTools ${sel}.on`) || {}).textContent || "";
+  $("#fnowCat").textContent = libCat || "All";
+  $("#fnowLen").textContent = label("[data-len]"); $("#fnowType").textContent = label("[data-type]");
+  $("#fnowOk").textContent = label("[data-ok]"); $("#fnowSort").textContent = label("[data-sort]");
   if (libSort === "day") {  // one shelf per day, newest day first (the category chips still filter)
     const days = [];
     shown.filter((v) => !libCat || v.category === libCat).forEach((v) => {
@@ -807,6 +827,9 @@ document.querySelectorAll("#libTools [data-sort]").forEach((b) => {
     libSort = b.dataset.sort; try { localStorage.setItem("libSort2", libSort); } catch (e) {}
     document.querySelectorAll("#libTools [data-sort]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
   };
+});
+document.querySelectorAll("#libTools [data-type]").forEach((b) => b.onclick = () => {
+  libType = b.dataset.type; document.querySelectorAll("#libTools [data-type]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
 });
 document.querySelectorAll("#libTools [data-ok]").forEach((b) => b.onclick = () => {
   libOk = b.dataset.ok; document.querySelectorAll("#libTools [data-ok]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
