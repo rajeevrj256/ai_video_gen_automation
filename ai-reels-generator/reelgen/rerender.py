@@ -93,8 +93,18 @@ def _short(cfg: Config, folder: Path, work: Path, progress: Progress) -> dict:
         rendered = render_video(script.title, scenes, backgrounds, cfg, work / "reel.mp4",
                                 graphics=[s.graphic for s in script.scenes],
                                 transitions=[s.transition for s in script.scenes],
-                                sounds=[s.sounds for s in script.scenes], music=script.music)
+                                sounds=[s.sounds for s in script.scenes], music=script.music,
+                                music_file=_kept_music(folder))
     return {"duration_seconds": rendered["duration_seconds"], "editor": rendered.get("editor", "")}
+
+
+def _kept_music(folder: Path) -> Path | None:
+    """A Short's own music track, so a re-make sounds the same (it is composed new for every video)."""
+    try:
+        name = json.loads((folder / "props.json").read_text(encoding="utf-8")).get("music")
+    except (OSError, ValueError):
+        return None
+    return folder / name if name and (folder / name).exists() else None
 
 
 def _same_voice_props(folder: Path, work: Path, cfg: Config, music_name: str) -> dict | None:

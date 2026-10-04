@@ -73,8 +73,9 @@ def pick_look(cfg: Config, seed: int) -> dict:
 
 
 def fresh_trailer(cfg: Config, wanted: str, seed: int) -> str:
-    """Claude's trailer style, unless the last two videos already used it."""
-    used = [p.get("hook_music") for p in recent(cfg)[-2:]]
+    """Claude's trailer style, unless one of the last three videos already used it (4 styles: each
+    comes back only every fourth video; key, tempo and chords change every time anyway)."""
+    used = [p.get("hook_music") for p in recent(cfg)[-3:]]
     return wanted if wanted in TRAILERS and wanted not in used else _fresh(TRAILERS, used, random.Random(seed))
 
 

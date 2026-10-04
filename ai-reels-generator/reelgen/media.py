@@ -241,9 +241,12 @@ def remove(cfg: Config, kind: str, filename: str) -> None:
 
 def prompt_block(cfg: Config, long: bool = False) -> str:
     """The sound design instructions and the library, for the script writer."""
+    rested = set(_recent_uploads(cfg))
     mark = lambda i: " (the user's own file)" if i.path else " (built-in)"
+    track_mark = lambda i: ((" (the user's own file; a recent video used it, so not this time)" if i.name in rested
+                             else " (the user's own file)") if i.path else " (built-in mood: composed new for each video)")
     fx = "\n".join(f"  - {s.name}: {s.about}{mark(s)}" for s in sounds(cfg))
-    tracks = "\n".join(f"  - {m.name}: {m.about}{mark(m)}" for m in music(cfg))
+    tracks = "\n".join(f"  - {m.name}: {m.about}{track_mark(m)}" for m in music(cfg))
     where = ("the cold open (up to 4 layered cues) and at most 1 cue in a later beat, only on its key word, "
              "and no more than one cue every few beats" if long else
              "scene 1, the hook (2 to 4 cues layered on its words, e.g. a riser into the key word, a sword "
@@ -274,19 +277,76 @@ def models_block(cfg: Config) -> str:
             "is found online or built from your parts):\n" + "\n".join(f"  - {m.about}" for m in found) + "\n")
 
 
-def pick_music(cfg: Config, name: str, out_dir: Path, seconds: float) -> Path | None:
-    """The track Claude chose (or the first that exists), copied or made in out_dir."""
+# ---------- never the same music video after video ----------
+# Every pipeline notes the music it used in <output>/music_used.json: an uploaded track rests for the
+# next RECENT_UPLOADS videos (Claude sees it marked, and the code refuses it anyway), and the built-in
+# "beds" are no longer one fixed recording each: every video composes its own (music.compose, a mood
+# that fits the bed, not the last ones used, and a fresh seed for key, tempo and chords).
+MUSIC_MEMORY = "music_used.json"
+RECENT_UPLOADS = 4
+BED_MOODS = {"calm-documentary": ("calm", "curious", "emotional", "uplifting"),
+             "dark-tension": ("suspense", "mystery", "dark"),
+             "light-playful": ("playful", "quirky", "uplifting", "curious")}
+_music_lock = __import__("threading").Lock()
+
+
+def recent_music(cfg: Config) -> list[str]:
+    try:
+        return json.loads((cfg.output_dir / MUSIC_MEMORY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def note_music(cfg: Config, *names: str) -> None:
+    """Remember tracks a video used: an upload's name, or 'mood:<name>' for a composed one."""
+    names = [n for n in names if n]
+    if not names:
+        return
+    with _music_lock:
+        used = recent_music(cfg) + names
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
+        (cfg.output_dir / MUSIC_MEMORY).write_text(json.dumps(used[-60:]), encoding="utf-8")
+
+
+def fresh_track(cfg: Config, name: str) -> bool:
+    """False for an uploaded track one of the last few videos already used."""
+    return name not in _recent_uploads(cfg)
+
+
+def _recent_uploads(cfg: Config) -> list[str]:
+    uploads = [n for n in recent_music(cfg) if not n.startswith("mood:")]
+    return uploads[-RECENT_UPLOADS:]
+
+
+def fresh_mood(cfg: Config, choices: tuple[str, ...], seed: int) -> str:
+    """One of `choices`, preferring moods the last composed tracks didn't use."""
+    import random
+
+    last = [n[5:] for n in recent_music(cfg) if n.startswith("mood:")][-3:]
+    pool = [m for m in choices if m not in last] or list(choices)
+    return random.Random(seed).choice(pool)
+
+
+def pick_music(cfg: Config, name: str, out_dir: Path, seconds: float, mood_hint: str = "") -> Path | None:
+    """The track Claude chose, copied, or a track composed for this video. An upload a recent video
+    used, or an unknown name, gets a composed track instead (never the user's first file)."""
+    import random
+
+    from . import music as composer
+
     if name == "none":
         return None
-    items = music(cfg)
-    # An unknown name gets a built-in bed, never the user's first track whatever it is.
-    item = next((m for m in items if m.name == name), None) or next((m for m in items if m.path is None), None)
-    if item is None:
-        return None
     out_dir.mkdir(parents=True, exist_ok=True)
-    if item.path is not None:
-        return Path(shutil.copy(item.path, out_dir / f"music{item.path.suffix.lower()}"))
-    return _write(out_dir / "music.wav", BEDS[item.name][1](min(seconds + 2, 90)), peak=0.5)
+    mine = next((m for m in music(cfg) if m.name == name and m.path is not None), None)
+    if mine is not None and name not in _recent_uploads(cfg):
+        note_music(cfg, mine.name)
+        return Path(shutil.copy(mine.path, out_dir / f"music{mine.path.suffix.lower()}"))
+    seed = random.randrange(2**31)
+    choices = BED_MOODS.get(name) or ((mood_hint,) if mood_hint in composer.MOOD_SPECS else BED_MOODS["calm-documentary"])
+    mood = fresh_mood(cfg, choices, seed)
+    note_music(cfg, f"mood:{mood}")
+    return composer.compose(mood, [composer.Section(0, seconds + 2, 0.45)], min(seconds + 2, 600), seed,
+                            out_dir / "music.wav")
 
 
 def _norm(word: str) -> str:

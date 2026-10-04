@@ -665,7 +665,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             t += d
         hook["duration"] = round(t + HOOK_TAIL, 3)
         hook["style"] = variety.fresh_trailer(cfg, script.hook_music, seed)
-        mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()), None)
+        # The user's track for the hook, unless a recent video already opened with it.
+        mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()
+                     and media.fresh_track(cfg, m.name)), None)
         if mine is not None:  # the user's own track fits this trailer
             (work / "music").mkdir(parents=True, exist_ok=True)
             dest = work / "music" / f"hook-own{mine.path.suffix.lower()}"
@@ -715,7 +717,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     progress("Composing the music")
     main_start = hook["duration"]
     track = None
-    if script.music and script.music != "none" and any(m.name == script.music and m.path for m in media.music(cfg)):
+    if (script.music and script.music != "none" and media.fresh_track(cfg, script.music)
+            and any(m.name == script.music and m.path for m in media.music(cfg))):
         track = media.pick_music(cfg, script.music, work / "music", t - main_start)
     if track is None and script.music != "none":
         sections = [music.Section(c["start"] - main_start, c["end"] - main_start, (c["intensity"] - 1) / 4,
@@ -723,7 +726,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         track = music.compose(script.mood, sections, t - main_start, seed, work / "music" / "main.wav")
     # The user's own tracks, chapter by chapter where Claude found one that fits (the composed or
     # main track steps aside there); consecutive chapters with the same track share one part.
-    own = {m.name: m for m in media.music(cfg) if m.path}
+    own = {m.name: m for m in media.music(cfg) if m.path and media.fresh_track(cfg, m.name)}
     parts: list[dict] = []
     for c, chapter in zip(chapters, script.chapters):
         name = chapter.music.strip()
@@ -744,6 +747,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             if bed:
                 ambience.append({"src": bed.relative_to(work).as_posix(), "from": c["start"], "to": c["end"]})
 
+    # Remembered for the next videos: their hook, main track and chapter tracks will differ.
+    composed = track is not None and track.name == "main.wav"  # pick_music notes an upload itself
+    media.note_music(cfg, hook.get("own", ""), *[p["name"] for p in parts], f"mood:{script.mood}" if composed else "")
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))  # the user's whoosh/pop/... where one matches
     props = {

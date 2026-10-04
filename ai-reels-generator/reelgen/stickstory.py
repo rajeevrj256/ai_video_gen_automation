@@ -599,7 +599,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     # tempo, chords), following each scene's intensity; one of the user's tracks only when Claude picked it.
     choice = (ep.music or "compose").strip()
     mine = {m.name for m in media.music(cfg) if m.path is not None}
-    if choice in mine:
+    if choice in mine and media.fresh_track(cfg, choice):  # never the upload a recent video used
         track = media.pick_music(cfg, choice, work / "music", t)
     elif choice == "none":
         track = None
@@ -610,6 +610,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         sections = [composer.Section(a, b, ep.scenes[si].intensity) for si, (a, b) in enumerate(zip(starts, [*starts[1:], t]))]
         (work / "music").mkdir(parents=True, exist_ok=True)
         track = composer.compose(ep.mood, sections, t, int(uuid.uuid4().int % 2**31), work / "music" / "score.wav")
+        media.note_music(cfg, f"mood:{ep.mood}")
         choice = f"composed ({ep.mood})"
     props = {
         "fps": cfg.fps, "duration": round(t, 3), "title": ep.title, "vertical": short,

@@ -91,7 +91,7 @@ def plan_timeline(scenes: list[SceneAudio]) -> Timeline:
 
 def render_video(title: str, scenes: list[SceneAudio], backgrounds: list[list[Path]], cfg: Config,
                  out_path: Path, graphics: list | None = None, transitions: list[str] | None = None,
-                 sounds: list[list] | None = None, music: str = "") -> dict:
+                 sounds: list[list] | None = None, music: str = "", music_file: Path | None = None) -> dict:
     """Render to `out_path`. Every input file must live inside out_path's folder,
     which is the public dir Remotion serves them from."""
     timeline = plan_timeline(scenes)
@@ -102,7 +102,7 @@ def render_video(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pa
         if cli is None:
             raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
         props = build_props(title, scenes, backgrounds, graphics or [None] * len(scenes), timeline, cfg,
-                            out_path.parent, transitions, sounds, music)
+                            out_path.parent, transitions, sounds, music, music_file)
         _render_remotion(cli, props, out_path)
     except Exception as exc:
         log.warning("Remotion edit unavailable, using the simpler moviepy edit: %s", exc)
@@ -163,7 +163,7 @@ def plan_transitions(requested: list[str] | None, count: int) -> list[str]:
 
 def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Path]], graphics: list,
                 timeline: Timeline, cfg: Config, public_dir: Path, transitions: list[str] | None = None,
-                sounds: list[list] | None = None, music_name: str = "") -> dict:
+                sounds: list[list] | None = None, music_name: str = "", music_file: Path | None = None) -> dict:
     """Everything the Reel composition needs (see remotion/src/types.ts). Times in seconds."""
     def rel(path: Path) -> str:  # paths in props are relative to the public dir
         return Path(path).resolve().relative_to(public_dir.resolve()).as_posix()
@@ -206,7 +206,11 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
             if end > group[0].start:
                 captions.append({"start": words[0]["start"], "end": round(start + end, 3), "words": words})
 
-    music = media.pick_music(cfg, music_name, public_dir, timeline.total)
+    if music_file is not None and Path(music_file).exists():  # a re-make keeps the video's own track
+        music = Path(shutil.copy(music_file, public_dir / f"music-kept{Path(music_file).suffix.lower()}"))
+    else:  # a new track for this video (an upload Claude picked, else composed in a fitting mood)
+        music = media.pick_music(cfg, music_name, public_dir, timeline.total,
+                                 {"facts": "curious", "story": "mystery", "comedy": "playful"}.get(cfg.video_style, ""))
     sfx = write_sfx(public_dir / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), public_dir / "sfx"))  # the user's whoosh/pop/... where one matches
     props = {
