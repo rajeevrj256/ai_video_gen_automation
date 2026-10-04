@@ -21,9 +21,35 @@ const BODY: Record<MascotShape, string> = {
   coin: 'M100 18 A82 82 0 1 1 99.9 18 Z',
   drop: 'M100 14 C126 56 172 92 172 128 C172 166 140 188 100 188 C60 188 28 166 28 128 C28 92 74 56 100 14 Z',
   ghost: 'M100 22 C148 22 176 56 176 104 V176 L156 160 L136 178 L116 160 L100 178 L84 160 L64 178 L44 160 L24 176 V104 C24 56 52 22 100 22 Z',
+  sun: 'M100 38 A62 62 0 1 1 99.9 38 Z',
+  flame: 'M104 10 C120 48 168 70 168 126 C168 166 138 190 100 190 C62 190 32 166 32 126 C32 92 58 78 66 46 C80 66 84 76 90 84 C94 58 96 34 104 10 Z',
+  planet: 'M100 34 A66 66 0 1 1 99.9 34 Z',
+  virus: 'M100 40 A60 60 0 1 1 99.9 40 Z',
+  chip: 'M48 38 H152 Q164 38 164 50 V154 Q164 166 152 166 H48 Q36 166 36 154 V50 Q36 38 48 38 Z',
+  battery: 'M44 56 H156 Q170 56 170 70 V164 Q170 178 156 178 H44 Q30 178 30 164 V70 Q30 56 44 56 Z',
+  shield: 'M100 18 L172 44 V100 C172 146 140 176 100 192 C60 176 28 146 28 100 V44 Z',
+  heart: 'M100 182 C40 140 14 108 14 72 C14 40 40 22 64 22 C82 22 94 32 100 46 C106 32 118 22 136 22 C160 22 186 40 186 72 C186 108 160 140 100 182 Z',
+  cloud: 'M54 168 C28 168 14 148 14 126 C14 102 32 86 54 86 C58 52 84 32 112 32 C146 32 168 56 170 86 C192 90 190 168 160 168 Z',
+  star: 'M100 10 L126 70 L190 74 L140 116 L156 180 L100 146 L44 180 L60 116 L10 74 L74 70 Z',
 };
 // Where the face sits (centre y) for each body.
-const FACE_Y: Record<MascotShape, number> = {bubble: 96, blob: 100, bot: 104, cube: 108, coin: 100, drop: 128, ghost: 98};
+const FACE_Y: Record<MascotShape, number> = {bubble: 96, blob: 100, bot: 104, cube: 108, coin: 100, drop: 128, ghost: 98,
+  sun: 100, flame: 132, planet: 100, virus: 100, chip: 102, battery: 118, shield: 96, heart: 84, cloud: 116, star: 110};
+
+// Parts drawn behind the body: rays, a ring, spikes, pins, a terminal.
+const Behind: React.FC<{shape: MascotShape; body: string; frame: number}> = ({shape, body, frame}) => {
+  const dark = shade(body, -0.35);
+  if (shape === 'sun') return <g transform={`rotate(${frame * 0.6} 100 100)`}>{Array.from({length: 12}, (_, i) => <path key={i} d="M92 20 L100 -6 L108 20 Z" fill={shade(body, 0.1)} stroke={dark} strokeWidth={3} transform={`rotate(${i * 30} 100 100)`} />)}</g>;
+  if (shape === 'virus') return <g>{Array.from({length: 10}, (_, i) => <g key={i} transform={`rotate(${i * 36 + Math.sin(frame / 12) * 3} 100 100)`}><line x1={100} y1={40} x2={100} y2={14} stroke={dark} strokeWidth={7} /><circle cx={100} cy={12} r={9} fill={shade(body, 0.15)} stroke={dark} strokeWidth={3} /></g>)}</g>;
+  if (shape === 'chip') return <g>{[56, 80, 104, 128, 148].map((v) => <g key={v} fill={dark}><rect x={v - 5} y={22} width={10} height={18} rx={2} /><rect x={v - 5} y={164} width={10} height={18} rx={2} /><rect x={20} y={v - 5} width={18} height={10} rx={2} /><rect x={162} y={v - 5} width={18} height={10} rx={2} /></g>)}</g>;
+  if (shape === 'battery') return <rect x={78} y={40} width={44} height={20} rx={5} fill={dark} />;
+  return null;
+};
+const Front: React.FC<{shape: MascotShape; body: string}> = ({shape, body}) => {
+  if (shape === 'planet') return <path d="M14 116 C14 92 186 66 188 88 C190 108 150 122 100 132" fill="none" stroke={shade(body, 0.4)} strokeWidth={10} strokeLinecap="round" opacity={0.9} />;
+  if (shape === 'battery') return <rect x={44} y={150} width={112} height={16} rx={6} fill="#2FB36D" opacity={0.85} />;
+  return null;
+};
 
 const Eyes: React.FC<{mood: Mood; y: number; blink: boolean; ink: string}> = ({mood, y, blink, ink}) => {
   const L = 76, R = 124;
@@ -138,10 +164,12 @@ export const Mascot: React.FC<{
   return (
     <svg viewBox="-10 -10 220 220" width={size} height={size} style={{overflow: 'visible', transform: `translateY(${bob}px) scaleX(${flip ? -1 : 1})`}}>
       <ellipse cx={100} cy={198} rx={64} ry={9} fill="rgba(0,0,0,0.18)" />
+      <Behind shape={shape} body={body} frame={frame} />
       <path d={BODY[shape]} fill={body} stroke={shade(body, -0.35)} strokeWidth={5} strokeLinejoin="round" />
+      <Front shape={shape} body={body} />
       {shape === 'cube' ? <path d="M36 58 L100 86 L164 58" fill="none" stroke={shade(body, -0.25)} strokeWidth={4} /> : null}
       {shape === 'coin' ? <circle cx={100} cy={100} r={66} fill="none" stroke={shade(body, -0.2)} strokeWidth={5} /> : null}
-      <ellipse cx={100} cy={y + 8} rx={56} ry={40} fill={shade(body, 0.35)} opacity={0.75} />
+      <ellipse cx={100} cy={y + 8} rx={({star: 36, heart: 48, flame: 44, shield: 50} as Record<string, number>)[shape] ?? 56} ry={({star: 28, heart: 34, flame: 36} as Record<string, number>)[shape] ?? 40} fill={shade(body, 0.35)} opacity={0.75} />
       <ellipse cx={70} cy={50} rx={16} ry={8} fill="#fff" opacity={0.35} transform="rotate(-25 70 50)" />
       <Eyes mood={mood} y={y} blink={blink} ink={ink} />
       <Mouth mood={mood} y={y} ink={ink} />

@@ -59,7 +59,9 @@ FORMS = {
     "versus": "two things compared round by round on what matters, ending with an honest verdict",
 }
 Form = Literal["countdown", "scenario", "explainer", "timeline", "myths", "versus"]
-Shape = Literal["bubble", "blob", "bot", "cube", "coin", "drop", "ghost"]
+Shape = Literal["bubble", "blob", "bot", "cube", "coin", "drop", "ghost", "sun", "flame", "planet", "virus", "chip",
+                "battery", "shield", "heart", "cloud", "star"]
+GENERIC = ("bubble", "blob", "cube", "ghost", "star", "drop")  # bodies that say nothing about the subject
 Accessory = Literal["none", "headset", "antenna", "cap", "glasses", "crown", "bowtie"]
 Mood = Literal["neutral", "happy", "wink", "smug", "angry", "sad", "scared", "shocked", "sleepy", "evil", "cool"]
 Backdrop = Literal["grid", "flat", "dots", "sky", "city", "space", "lab", "stage", "desk"]
@@ -122,7 +124,10 @@ class ToonRequest:
 class TMascot(BaseModel):
     name: str = Field(description="A short name for the mascot.")
     represents: str = Field(description="What the mascot stands for in this video (the AI, a virus, a coin, the viewer's money...).")
-    shape: Shape = Field(description="Body: bubble (chat bubble), blob, bot (rounded robot head), cube, coin, drop (water drop), ghost.")
+    shape: Shape = Field(description="Its body, from what it stands for: bot/chip/bubble (AI, computers, chat), sun/planet "
+                         "(space, the sun, Earth), flame (fire, heat, energy), battery (power, electricity), virus "
+                         "(disease, malware), shield (security, defence), heart (health, love), coin (money), cloud "
+                         "(weather, the cloud), drop (water), star, cube, blob, ghost (only when nothing fits better).")
     color: str = Field(description="Its main colour as #RRGGBB, bright and readable on the palette (not grey).")
     accessory: Accessory
 
@@ -188,6 +193,10 @@ class TSegment(BaseModel):
 
 class ToonScript(BaseModel):
     subject: str = Field(description="The one specific subject of the video.")
+    cold_open: list[TShot] = Field(default_factory=list, description="The hook, 30-40 seconds (85-110 spoken words) in 6-10 "
+                                   "fast shots before the title card: the most gripping moments of the video, escalating, "
+                                   "big actions, 2-3 slams, ending on a cliffhanger line. Only things the video really "
+                                   "shows; true or clearly a possibility.")
     form: Form
     title: str = Field(description="The video's title: curiosity and the main search phrase, max 70 characters, honest.")
     hook: str = Field(description="One sentence: why someone keeps watching.")
@@ -215,7 +224,11 @@ Length: about {words} spoken words ({minutes:g} minutes), every line one shot.
 The narration:
 - American English, a confident, slightly dramatic narrator talking to the viewer. Short punchy sentences mixed with \
 longer ones; each line pushes forward (but, so, except, which means). Escalate: every segment raises the stakes.
-- Open on the stakes in the first two lines; no greeting, no "in this video".
+- Open with `cold_open`, an energetic 30-40 second hook (85-110 words, 6-10 shots), like a trailer: a startling first \
+line in 12 words or fewer, then the stakes rising shot by shot (the most surprising facts and moments from the video, \
+a "but" turn, a question the viewer needs answered), 2-3 slams, a different action in every shot, and a final \
+cliffhanger line that leads straight into the title card. The segments start after the title. No greeting, no \
+"in this video". These words count toward the total length.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 - Accuracy first: every real name, number, date and event must be true and confirmed with web search; put the pages in \
 `sources`. Anything speculative is said as a possibility ("could", "imagine", "experts warn"), never as fact. No real \
@@ -226,7 +239,9 @@ The pictures (one shot per line):
 - Something happens in every shot: pick the `action` that shows the line literally (a line about breaking out → \
 burst or crack; about control → strings; about turning off the grid → toggle-off; about spreading → clone or flood). \
 Fire it on the word that says it (`action_word`). Never the same action two shots in a row.
-- The mascot is the subject (an AI, a virus, money...) and appears in most shots; its face and tint follow the story \
+- The mascot is the subject (an AI, a virus, money...): design it from what the video is about (the solar storm → a \
+sun, malware → a virus, savings → a coin), a new design each video, and set its face as hidden in every shot if \
+nothing in the story can be a character. It appears in most shots; its face and tint follow the story \
 (happy → smug → red and angry). Clone and flood it when the subject spreads.
 - Cartoon people act out lines about humans: engineers at a desk, an official at the stage podium (talking=true), \
 scientists in the lab, a running crowd in the city. Keep each cast member's look the same all video.
@@ -261,9 +276,12 @@ def write_script(cfg: Config, req: ToonRequest, avoid: str = "") -> ToonScript:
         recent = ("\nThe last videos used these forms and mascots; pick something different: "
                   + "; ".join(f"{p.get('form')} ({p.get('mascot')})" for p in past))
     topic = req.topic.strip()
-    prompt = (f"Topic: {topic}" if topic else "Topic: pick a subject people are curious or worried about right now "
-              "(science, technology, space, health, money, nature, history) that suits this format.")
-    prompt += repeats.prompt_block(cfg, repeats.EVERY)
+    if topic:  # the user's own topic is the video: never swapped for another subject
+        prompt = (f"Topic, chosen by the user: {topic}\nThe video is about exactly this topic (its subject and title follow "
+                  "it). Don't replace it with a different subject.")
+    else:
+        prompt = ("Topic: pick a subject people are curious or worried about right now (science, technology, space, "
+                  "health, money, nature, history) that suits this format.") + repeats.prompt_block(cfg, repeats.EVERY)
     if avoid:
         prompt += f"\n\n{avoid}"
     prompt += ("\n- Research budget: at most 8 web searches and 6 opened pages, then write.")
@@ -286,7 +304,9 @@ class ScriptCheck(BaseModel):
 
 
 def _refs(sc: ToonScript) -> dict[str, TShot]:
-    return {f"S{si + 1}.{hi + 1}": sh for si, seg in enumerate(sc.segments) for hi, sh in enumerate(seg.shots)}
+    refs = {f"H{hi + 1}": sh for hi, sh in enumerate(sc.cold_open)}
+    refs.update({f"S{si + 1}.{hi + 1}": sh for si, seg in enumerate(sc.segments) for hi, sh in enumerate(seg.shots)})
+    return refs
 
 
 def _check(cfg: Config, sc: ToonScript, only: set[str] | None = None) -> ScriptCheck:
@@ -328,6 +348,7 @@ def check_facts(cfg: Config, sc: ToonScript, progress: Progress) -> tuple[ToonSc
                 if c.verdict != "confirmed":
                     issues.append(f"{c.ref}: still not confirmed ({c.note}); the shot was cut.")
                     refs[c.ref].line = ""
+    sc.cold_open = [sh for sh in sc.cold_open if sh.line.strip()]
     for seg in sc.segments:
         seg.shots = [sh for sh in seg.shots if sh.line.strip()]
     sc.segments = [seg for seg in sc.segments if seg.shots]
@@ -357,37 +378,60 @@ def _spoken_number(n: int) -> str:
     return words[n] if 0 <= n < len(words) else str(n)
 
 
+TITLE_SECONDS = 2.4  # the title card after the cold open
+
+
 def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: Progress, seed: int) -> tuple[dict, dict]:
+    from . import music as composer, variety
+
     style = _style(cfg, seed)
-    # The spoken script: a countdown entry opens with its number ("Number seven."), then every line.
-    plan: list[tuple[int, TShot | None, str]] = []
+    # What is spoken, in order: the cold open, then each countdown number ("Number seven.") and every line.
+    plan: list[tuple[str, int, TShot | None, str]] = [("hook", -1, sh, sh.line) for sh in sc.cold_open]
     for si, seg in enumerate(sc.segments):
         if sc.form == "countdown" and seg.number:
-            plan.append((si, None, f"Number {_spoken_number(seg.number)}."))
-        for sh in seg.shots:
-            plan.append((si, sh, sh.line))
+            plan.append(("number", si, None, f"Number {_spoken_number(seg.number)}."))
+        plan += [("line", si, sh, sh.line) for sh in seg.shots]
     progress("Recording the voiceover")
     rate = f"+{max(0, min(40, req.speed))}%"
     voice = req.voice if req.voice in VOICES else "en-US-AndrewMultilingualNeural"
-    audio = synthesize_scenes([text for _, _, text in plan], voice, work / "audio", cfg.tts_engine, cfg.kokoro_voice, rate)
+    audio = synthesize_scenes([text for *_, text in plan], voice, work / "audio", cfg.tts_engine, cfg.kokoro_voice, rate)
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     cast = {p.id: p for p in sc.cast}
     shots, cues, spoken = [], [], []
     tones = len(PALETTES[style["palette"]]["tones"])
-    t = 0.0
-    for (si, sh, text), sa in zip(plan, audio):
-        seg = sc.segments[si]
-        lead = 0.35 if sh is None else 0.12
+    cue = lambda name, at, vol: cues.append({"src": rel(sfx[name]), "at": round(max(0.0, at), 3), "volume": vol, "name": name}) if name in sfx else None  # noqa: E731
+    m = sc.mascot
+    t, music_from = 0.0, 0.0
+    hook_cuts: list[float] = []
+
+    def title_card() -> None:
+        nonlocal t, music_from
+        shots.append({"start": round(t, 3), "duration": TITLE_SECONDS, "lead": 0, "audio": None, "text": "", "words": [],
+                      "segment": -1, "backdrop": "flat", "tone": 0, "items": [], "action": "none", "at": 0.2,
+                      "camera": "push", "enter": "flash", "mascot": {"mood": "happy", "tint": "normal", "pos": "center", "size": "m"},
+                      "card": {"kind": "title", "text": sc.title}})
+        cue("whoosh", t - 0.15, 0.7)
+        cue("impact", t + 0.2, 0.8)
+        cue("shimmer", t + 0.45, 0.5)
+        t += TITLE_SECONDS
+        music_from = max(0.0, t - 0.4)
+
+    for i, ((kind, si, sh, text), sa) in enumerate(zip(plan, audio)):
+        if kind != "hook" and not any(s.get("card", {}) and s["card"].get("kind") == "title" for s in shots):
+            title_card()  # once, after the cold open (first, if there is none)
+        seg = sc.segments[si] if si >= 0 else None
+        lead = 0.35 if kind == "number" else 0.12
         talk = media_seconds(sa.path)
-        duration = round(lead + talk + (0.55 if sh is None else 0.22), 3)
+        duration = round(lead + talk + (0.55 if kind == "number" else 0.22), 3)
         words = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words]
-        if sh is None:  # the countdown card
-            shot = {"backdrop": "flat", "tone": si % tones, "items": [], "action": "none", "at": 0.3, "camera": "still",
+        tone = (si if si >= 0 else 2) % tones
+        if kind == "number":
+            shot = {"backdrop": "flat", "tone": tone, "items": [], "action": "none", "at": 0.3, "camera": "still",
                     "enter": "whip", "card": {"kind": "number", "text": str(seg.number), "sub": seg.heading or None}}
-            cues += [{"src": rel(sfx["whoosh"]), "at": round(t, 3), "volume": 0.5, "name": "whoosh"},
-                     {"src": rel(sfx["impact"]), "at": round(t + 0.25, 3), "volume": 0.45, "name": "impact"}]
+            cue("whoosh", t - 0.05, 0.6)
+            cue("impact", t + 0.25, 0.7)
         else:
             key = re.sub(r"[^a-z0-9]", "", sh.action_word.lower())
             hit = next((w for w in sa.words if key and re.sub(r"[^a-z0-9]", "", w.text.lower()) == key), None)
@@ -400,8 +444,8 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
                 others = iter(["far-left", "far-right"])
                 for x in people:
                     x["pos"] = "center" if x is speaker else (x["pos"] if x["pos"] in ("far-left", "far-right") else next(others, "far-right"))
-            shot = {"backdrop": sh.backdrop, "tone": si % tones, "action": sh.action, "at": at, "camera": sh.camera,
-                    "enter": sh.enter,
+            shot = {"backdrop": sh.backdrop, "tone": tone, "action": sh.action, "at": at, "camera": sh.camera,
+                    "enter": "whip" if kind == "hook" and sh.enter == "cut" else sh.enter,
                     "items": [{"icon": o.icon.strip().lower()[:40] or "sparkles", "label": o.label[:28] or None, "badge": o.badge}
                               for o in sh.objects[:4]],
                     "mascot": None if sh.mascot == "hidden" else {"mood": sh.mascot, "tint": sh.mascot_tint,
@@ -409,37 +453,75 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
                     "people": people, "crowd": sh.crowd, "slam": sh.slam[:24].upper() or None,
                     "card": {"kind": "date", "text": sh.date[:20]} if sh.date else None,
                     "values": [float(v) for v in sh.values[:5]]}
-            sound = ACTION_SOUND.get(sh.action)
-            if sound in sfx:
-                cues.append({"src": rel(sfx[sound]), "at": round(t + at, 3), "volume": 0.45, "name": sound})
+            # Sounds: the action on its word, a whoosh on whip cuts, a light swish on every other cut, a pop on slams.
+            cue(ACTION_SOUND.get(sh.action, ""), t + at, 0.85 if kind == "hook" else 0.75)
             if shot["enter"] == "whip":
-                cues.append({"src": rel(sfx["whoosh"]), "at": round(max(0.0, t - 0.05), 3), "volume": 0.4, "name": "whoosh"})
+                cue("whoosh", t - 0.05, 0.6)
+            elif shots:
+                cue("swish", t - 0.03, 0.3)
             if shot["slam"]:
-                cues.append({"src": rel(sfx["pop"]), "at": round(t + max(0.0, at - 0.1), 3), "volume": 0.4, "name": "pop"})
+                cue("pop", t + max(0.0, at - 0.1), 0.6)
+            if kind == "hook":
+                hook_cuts.append(t)
         shots.append({"start": round(t, 3), "duration": duration, "lead": lead, "audio": rel(sa.path), "text": text,
                       "words": words, "segment": si, **shot})
         spoken += [(t + lead + w.start, t + lead + w.end) for w in sa.words]
         t += duration
+    if not any((s.get("card") or {}).get("kind") == "title" for s in shots):
+        title_card()
     t = round(t + 0.8, 3)
-    # A track composed for this video in Claude's mood, rising with each segment's intensity.
-    from . import music as composer
-
     (work / "music").mkdir(parents=True, exist_ok=True)
-    starts = [next(s["start"] for s in shots if s["segment"] == si) for si in range(len(sc.segments))]
-    sections = [composer.Section(a, b, sc.segments[si].intensity) for si, (a, b) in enumerate(zip(starts, [*starts[1:], t]))]
-    track = composer.compose(sc.mood, sections, t, seed, work / "music" / "score.wav")
-    media.note_music(cfg, f"mood:{sc.mood}")
-    m = sc.mascot
+    # The hook gets its own trailer track (a style the last videos didn't use), the rest a track composed for
+    # this video in a mood the last videos didn't use, rising with each segment's intensity.
+    hook_music = None
+    if hook_cuts:
+        used = [h.get("trailer") for h in _history(cfg)[-3:]]
+        trailer = random.Random(seed).choice([x for x in variety.TRAILERS if x not in used] or list(variety.TRAILERS))
+        style["trailer"] = trailer
+        hook_music = composer.trailer(trailer, music_from + 0.4, [c for c in hook_cuts[1:]] + [music_from], seed,
+                                      work / "music" / "hook.wav")
+    recent_moods = [n[5:] for n in media.recent_music(cfg) if n.startswith("mood:")][-3:]
+    mood = sc.mood if sc.mood not in recent_moods else media.fresh_mood(cfg, tuple(MusicMood.__args__), seed)
+    seg_starts = [next(s["start"] for s in shots if s["segment"] == si) for si in range(len(sc.segments))]
+    bounds = list(zip(seg_starts, [*seg_starts[1:], t]))
+    sections = [composer.Section(max(0.0, a - music_from), b - music_from, sc.segments[si].intensity) for si, (a, b) in enumerate(bounds)]
+    track = composer.compose(mood, sections, t - music_from, seed, work / "music" / "score.wav")
+    media.note_music(cfg, f"mood:{mood}")
     props = {
         "fps": cfg.fps, "duration": t, "title": sc.title, "palette": PALETTES[style["palette"]],
         "mascot": {"shape": m.shape, "color": m.color if re.fullmatch(r"#[0-9a-fA-F]{6}", m.color) else "#2F9BFF",
                    "accessory": m.accessory, "name": m.name},
         "style": {"slam": style["slam"], "card": style["card"], "seed": style["seed"]},
         "shots": shots, "captions": req.captions, "watermark": req.watermark.strip()[:40] or None,
-        "music": rel(track), "speech": media.speech_spans(spoken), "cues": cues,
+        "music": rel(track), "musicFrom": round(music_from, 3), "musicMood": mood,
+        "hookMusic": rel(hook_music) if hook_music else None, "hookEnd": round(music_from + 0.4, 3),
+        "speech": media.speech_spans(spoken), "cues": cues,
     }
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
     return props, style
+
+
+def _fresh_mascot(cfg: Config, sc: ToonScript, seed: int) -> None:
+    """Never the same mascot as the last 3 videos: a repeated generic body gets another one, and a repeated
+    colour another colour (a body that fits the subject, like a sun for a solar storm, is kept)."""
+    rng = random.Random(seed)
+    past = _history(cfg)[-3:]
+    shapes = [str(h.get("mascot", "")).split(" ")[0] for h in past]
+    colors = [str(h.get("mascot_color", "")).lower() for h in past]
+    m = sc.mascot
+    if m.shape in shapes and m.shape in GENERIC:
+        m.shape = rng.choice([g for g in GENERIC if g not in shapes] or list(GENERIC))
+    if m.color.lower() in colors or any(_close(m.color, c) for c in colors if c):
+        pool = ["#2F9BFF", "#FF5D8F", "#2FB36D", "#8E5CF7", "#14B8A6", "#F15BB5", "#FFB703", "#E5484D", "#00BBF9", "#FF8C42"]
+        m.color = rng.choice([c for c in pool if not any(_close(c, x) for x in colors if x)] or pool)
+
+
+def _close(a: str, b: str) -> bool:
+    try:
+        x, y = int(a.lstrip("#"), 16), int(b.lstrip("#"), 16)
+    except ValueError:
+        return False
+    return sum(abs(((x >> k) & 255) - ((y >> k) & 255)) for k in (16, 8, 0)) < 90
 
 
 # ---------- the run ----------
@@ -467,15 +549,19 @@ def run_toon(cfg: Config, req: ToonRequest, progress: Progress = log.info, resum
         issues, findings = state.get("issues", []), state.get("findings", [])
         progress("Resuming: script and fact-check already done")
     else:
-        topic = req.topic.strip()
-        if topic and len(topic.split()) > 2:  # a broad topic: narrow it to one subject not made before
-            req = ToonRequest(**{**asdict(req), "topic": repeats.narrow(cfg, topic, repeats.EVERY, progress)})
         progress("Claude is researching and writing the script and storyboard")
         sc = write_script(cfg, req)
-        sc = repeats.guard(cfg, sc, repeats.EVERY, lambda why: write_script(cfg, req, why), progress, kind="long")
+        if req.topic.strip():  # your topic is kept; a video already made on it is only pointed out
+            twin = repeats.too_close(sc.subject, sc.title, [x for x in repeats.made(cfg) if x.get("kind", "short") in repeats.EVERY])
+            if twin:
+                progress(f"Note: a video like this exists already (\"{twin.get('title')}\"); keeping your topic")
+            repeats.claim(cfg, {"title": sc.title, "subject": sc.subject, "topic": req.topic.strip(), "kind": "long"})
+        else:  # Claude's own pick: never the same video twice
+            sc = repeats.guard(cfg, sc, repeats.EVERY, lambda why: write_script(cfg, req, why), progress, kind="long")
         (work / "draft.json").write_text(sc.model_dump_json(indent=1), encoding="utf-8")
         sc, issues, findings = check_facts(cfg, sc, progress)
         save(stage="scripted", script=sc.model_dump(), issues=issues, findings=findings)
+    _fresh_mascot(cfg, sc, seed)
     sources, dropped = verify_sources(sc.sources)
     if state.get("props") and all((work / s["audio"]).exists() for s in state["props"]["shots"] if s.get("audio")):
         props, style = state["props"], state["style"]
@@ -504,7 +590,9 @@ def run_toon(cfg: Config, req: ToonRequest, progress: Progress = log.info, resum
     if not info.get("has_audio"):
         issues.append("No audio track.")
     _remember(cfg, {"title": sc.title, "subject": sc.subject, "form": sc.form, "mascot": f"{sc.mascot.shape} {sc.mascot.represents}",
-                    "palette": style["palette"], "slam": style["slam"], "card": style["card"]})
+                    "mascot_color": sc.mascot.color,
+                    "palette": style["palette"], "slam": style["slam"], "card": style["card"], "trailer": style.get("trailer"),
+                    "mood": props.get("musicMood")})
     final = cfg.output_dir / f"{stamp}-{slugify(sc.title)}-toon"
     (work / CHECKPOINT).unlink(missing_ok=True)
     move(work, final)

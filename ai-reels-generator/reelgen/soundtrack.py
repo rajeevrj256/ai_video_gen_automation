@@ -185,8 +185,16 @@ def _toon(m: Mixer, p: dict) -> None:
     for s in p.get("shots") or []:
         if s.get("audio"):
             m.add(s["audio"], f(float(s["start"]) + float(s.get("lead") or 0)))
-    if p.get("music"):
-        m.add(p["music"], 0, loop=True, volume=_music_level(m.fps, m.frames, speech, 0.17, 0.06))
+    hook_end = float(p.get("hookEnd") or 0)
+    if p.get("hookMusic"):  # the cold open's trailer track
+        n = f(hook_end + 1.5)
+        m.add(p["hookMusic"], 0, length_frames=n, volume=_music_level(
+            m.fps, min(n, m.frames), [s_ for s_ in speech if s_[0] < hook_end], 0.6, 0.2))
+    if p.get("music"):  # the video's own track from the title card on
+        mf = float(p.get("musicFrom") or 0)
+        start = f(mf)
+        m.add(p["music"], start, loop=True, volume=_music_level(
+            m.fps, m.frames - start, [(a - mf, b - mf) for a, b in speech], 0.26, 0.13))
     _cues(m, p.get("cues"), speech)
 
 

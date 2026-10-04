@@ -53,6 +53,20 @@ const NumberCard: React.FC<{text: string; sub?: string | null; style: ToonProps[
   );
 };
 
+const TitleCard: React.FC<{text: string; frame: number; fps: number; pal: ToonProps['palette']}> = ({text, frame, fps, pal}) => {
+  const s = spring({frame: frame - 3, fps, config: {damping: 11, mass: 0.7}});
+  const words = text.split(' ');
+  return (
+    <div style={{position: 'absolute', left: 0, right: 0, top: 120, display: 'flex', justifyContent: 'center'}}>
+      <div style={{fontFamily: FONT, fontWeight: 900, fontSize: text.length > 40 ? 84 : 104, lineHeight: 1.08, color: '#fff', textAlign: 'center', maxWidth: 1600,
+        textTransform: 'uppercase', WebkitTextStroke: '12px #15151c', paintOrder: 'stroke', textShadow: `0 12px 0 ${shade(pal.accent, -0.3)}`,
+        transform: `scale(${s}) rotate(${(1 - s) * -4}deg)`}}>
+        {words.map((w, i) => <span key={i} style={{opacity: interpolate(frame, [i * 2, i * 2 + 6], [0, 1], clamp)}}>{w} </span>)}
+      </div>
+    </div>
+  );
+};
+
 const DateCard: React.FC<{text: string; frame: number; fps: number}> = ({text, frame, fps}) => {
   const s = spring({frame: frame - 4, fps, config: {damping: 12}});
   return (
@@ -121,7 +135,9 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
   const tone = pal.tones[shot.tone % pal.tones.length];
   const p = Math.max(0, (t - shot.at) / 0.9); // the action, from its word
   const ownStage = OWN_STAGE.has(shot.action);
-  const m = shot.mascot && !shot.card?.kind.startsWith('number') ? shot.mascot : null;
+  const given = shot.mascot && !shot.card?.kind.startsWith('number') ? shot.mascot : null;
+  // An action that fills the middle (switch, gauge, chart, versus...) moves the mascot to the side, smaller.
+  const m = given && ownStage && given.pos === 'center' ? {...given, pos: 'right' as const, size: 's' as const} : given;
   const mascotAt = m ? {x: MASCOT_X[m.pos], y: 560} : null;
   const items = ownStage ? [] : shot.items.slice(0, 5);
   // What is already on screen, as x-ranges: the mascot, every person, the podium on a stage.
@@ -192,7 +208,7 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
                 low={ownStage || shot.action === 'strings' || shot.action === 'strings-burn'} />
             ) : null}
             {shot.card?.kind === 'date' ? <DateCard text={shot.card.text} frame={frame} fps={fps} /> : null}
-            {shot.card?.kind === 'title' ? <Slam text={shot.card.text} style="pill" frame={frame} fps={fps} pal={pal} low={false} /> : null}
+            {shot.card?.kind === 'title' ? <TitleCard text={shot.card.text} frame={frame} fps={fps} pal={pal} /> : null}
           </>
         )}
       </div>
@@ -231,7 +247,18 @@ export const Toon: React.FC<ToonProps> = (props) => {
           <Audio src={staticFile(s.audio)} />
         </Sequence>
       ) : null))}
-      {props.music ? <Music src={props.music} speech={props.speech} full={0.17} duck={0.06} /> : null}
+      {/* The cold open's trailer track, then the video's own track from the title card on. The narration
+          barely pauses, so the main track's level under the voice (duck) has to stay audible. */}
+      {props.hookMusic ? (
+        <Sequence name="hook music" durationInFrames={f((props.hookEnd ?? 0) + 1.5)}>
+          <Music src={props.hookMusic} speech={props.speech.filter(([a]) => a < (props.hookEnd ?? 0))} full={0.6} duck={0.2} loop={false} />
+        </Sequence>
+      ) : null}
+      {props.music ? (
+        <Sequence name="music" from={f(props.musicFrom ?? 0)}>
+          <Music src={props.music} speech={props.speech.map(([a, b]) => [a - (props.musicFrom ?? 0), b - (props.musicFrom ?? 0)] as [number, number])} full={0.26} duck={0.13} />
+        </Sequence>
+      ) : null}
       <Cues cues={props.cues} speech={props.speech} />
     </Layer>
   );

@@ -3,7 +3,8 @@ import type {Cue, Span} from '../types';
 // Toon Explainers (reelgen/toon.py): flat, colourful animated explainers. Every sentence is one shot in
 // which something happens (an action on objects and the video's mascot), never a slide of text.
 
-export type MascotShape = 'bubble' | 'blob' | 'bot' | 'cube' | 'coin' | 'drop' | 'ghost';
+export type MascotShape = 'bubble' | 'blob' | 'bot' | 'cube' | 'coin' | 'drop' | 'ghost' | 'sun' | 'flame' | 'planet' | 'virus'
+  | 'chip' | 'battery' | 'shield' | 'heart' | 'cloud' | 'star';
 export type Accessory = 'none' | 'headset' | 'antenna' | 'cap' | 'glasses' | 'crown' | 'bowtie';
 export type Mood = 'neutral' | 'happy' | 'wink' | 'smug' | 'angry' | 'sad' | 'scared' | 'shocked' | 'sleepy' | 'evil' | 'cool';
 export type Tint = 'normal' | 'red' | 'grey' | 'gold' | 'green';
@@ -74,6 +75,9 @@ export type ToonProps = {
   captions: boolean;
   watermark?: string | null;
   music?: string | null;
+  musicFrom?: number; // the main track starts after the title card
+  hookMusic?: string | null; // the cold open's trailer track
+  hookEnd?: number;
   speech: Span[];
   cues: Cue[];
   silent?: boolean;
