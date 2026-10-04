@@ -880,7 +880,12 @@ def create_app(cfg: Config) -> FastAPI:
         folders = [f for f in body.get("folders", []) if f in available]
         if not folders:
             raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
-        return jobs.submit(None, len(folders), "resume", resume=folders)
+        # The card keeps the video's own title, style and length (it showed "Trending topic · Facts" with
+        # the Shorts stages for a resumed Script Video or News medium video).
+        first = next(u for u in unfinished(cfg) if u["id"] == folders[0])
+        title = first.get("title") or (first.get("topic") if first.get("topic") != "Trending topic" else None)
+        return jobs.submit(title, len(folders), "resume", first.get("style"), first.get("length", "short"),
+                           resume=folders)
 
     @app.post("/api/jobs/{job_id}/pause")
     def pause_job(job_id: str):

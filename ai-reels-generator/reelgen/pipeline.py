@@ -441,7 +441,7 @@ def unfinished(cfg: Config) -> list[dict]:
         state = json.loads(path.read_text(encoding="utf-8"))
         script = state.get("script") or {}
         out.append({"id": folder.name, "topic": script.get("topic") or state.get("topic") or "Trending topic",
-                    "title": script.get("title", ""), "style": state.get("style", "facts"),
+                    "title": (state.get("manual") or {}).get("title") or script.get("title") or script.get("youtube_title", ""), "style": state.get("style", "facts"),
                     "length": "script" if state.get("manual") else
                               "medium" if state.get("length") == "long" and (state.get("minutes") or 8) < 7
                               else state.get("length", "short"), "attempt": state.get("attempt", 1),
