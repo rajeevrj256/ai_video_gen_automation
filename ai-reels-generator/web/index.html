@@ -302,6 +302,9 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium">🎞️ Medium</button><button class="chip" data-len="long">🎬 Long</button>
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
       </div>
+      <div class="chips">
+        <button class="chip on" data-sort="new">🕒 Newest first</button><button class="chip" data-sort="old">Oldest first</button><button class="chip" data-sort="day">📅 By date</button>
+      </div>
     </div>
     <div id="shelves"></div>
     <div class="grid" id="grid" hidden></div>
@@ -702,7 +705,17 @@ function show(view) {
 const CAT_ICON = { "Sports": "🏏", "Money": "💰", "Science & Space": "🚀", "Tech": "💡", "History": "🏛️",
   "Nature & Animals": "🐾", "Weather": "🌦️", "Entertainment": "🎬", "India": "🇮🇳", "Life & People": "🧑‍🤝‍🧑",
   "Stories": "🎭", "Comedy": "😂" };
-let library = [], libCat = "", libLen = "", libOk = "";
+let library = [], libCat = "", libLen = "", libOk = "", libSort = "new";
+try { libSort = localStorage.getItem("libSort") || "new"; } catch (e) {}
+// created_at is "YYYYMMDD-HHMMSS" (UTC), so it sorts as text; shown as the day in this device's time.
+const madeAt = (v) => { const m = String(v.created_at || "").match(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)/);
+  return m ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : null; };
+const dayLabel = (d) => {
+  if (!d) return "Unknown date";
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()), today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 86400000);
+  return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: day.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+};
 // short, medium (5-6 min) or long (8-10 min); older 16:9 videos are told apart by their running time
 const lenOf = (v) => v.format !== "long" ? "short" : v.length || ((v.duration_seconds || 0) < 420 ? "medium" : "long");
 const cardHtml = (v) => `
@@ -733,19 +746,35 @@ function renderLibrary() {
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || String(+!!v.verified) === libOk);
-  const shown = library.filter(match);
+  const shown = library.filter(match).sort((a, b) =>
+    (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
   const counts = {}; shown.forEach((v) => counts[v.category] = (counts[v.category] || 0) + 1);
   const cats = Object.keys(CAT_ICON).filter((c) => counts[c]);
   $("#catChips").innerHTML = `<button class="chip ${libCat ? "" : "on"}" data-cat="">All <span class="n">${shown.length}</span></button>`
     + cats.map((c) => `<button class="chip ${libCat === c ? "on" : ""}" data-cat="${esc(c)}">${CAT_ICON[c]} ${esc(c)} <span class="n">${counts[c]}</span></button>`).join("");
   document.querySelectorAll("#catChips .chip").forEach((b) => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
+  if (libSort === "day") {  // one shelf per day, newest day first (the category chips still filter)
+    const days = [];
+    shown.filter((v) => !libCat || v.category === libCat).forEach((v) => {
+      const label = dayLabel(madeAt(v)), last = days[days.length - 1];
+      if (last && last.label === label) last.vids.push(v); else days.push({ label, vids: [v] });
+    });
+    $("#shelves").innerHTML = days.map((d) => `<div class="shelf"><h3>📅 ${esc(d.label)} <span class="count">${d.vids.length} video${d.vids.length > 1 ? "s" : ""}</span></h3>
+      <div class="grid">${d.vids.map(cardHtml).join("")}</div></div>`).join("")
+      || (library.length ? `<div class="empty"><b>No videos match</b>Try another word or filter.</div>` : "");
+    bindCards();
+    return;
+  }
   const shelves = (libCat ? [libCat] : cats).map((c) => {
     const vids = shown.filter((v) => v.category === c);
     return vids.length ? `<div class="shelf"><h3>${CAT_ICON[c] || ""} ${esc(c)} <span class="count">${vids.length} video${vids.length > 1 ? "s" : ""}</span></h3>
       <div class="grid">${vids.map(cardHtml).join("")}</div></div>` : "";
   }).join("");
   $("#shelves").innerHTML = shelves || (library.length ? `<div class="empty"><b>No videos match</b>Try another word or filter.</div>` : "");
+  bindCards();
+}
+function bindCards() {
   document.querySelectorAll("#shelves .card").forEach((c) => c.onclick = (e) => {
     const b = e.target.closest("[data-review]");
     if (b) { e.stopPropagation(); reviewVideo(c.dataset.id, b.dataset.review); return; }
@@ -761,6 +790,13 @@ async function loadVideos() {
 $("#q").oninput = () => renderLibrary();
 document.querySelectorAll("#libTools [data-len]").forEach((b) => b.onclick = () => {
   libLen = b.dataset.len; document.querySelectorAll("#libTools [data-len]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
+});
+document.querySelectorAll("#libTools [data-sort]").forEach((b) => {
+  b.classList.toggle("on", b.dataset.sort === libSort);
+  b.onclick = () => {
+    libSort = b.dataset.sort; try { localStorage.setItem("libSort", libSort); } catch (e) {}
+    document.querySelectorAll("#libTools [data-sort]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
+  };
 });
 document.querySelectorAll("#libTools [data-ok]").forEach((b) => b.onclick = () => {
   libOk = b.dataset.ok; document.querySelectorAll("#libTools [data-ok]").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary();
