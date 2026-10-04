@@ -376,6 +376,7 @@
     </div>
     <div id="unfinished"></div>
     <button id="clearJobs" class="mini" hidden style="margin:4px 0 10px">🧹 Clear finished and failed jobs</button>
+    <button id="powerOff" class="mini" style="margin:4px 0 10px">⏻ Shut down PC when done</button>
     <div id="jobs"></div>
   </section>
 
@@ -689,6 +690,7 @@
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
 
+<div class="restartbar" id="powerBar" hidden style="position:fixed;top:0;left:0;right:0;z-index:60;background:#e5484d;color:#fff"></div>
 <div class="restartbar" id="restartBar" hidden>🔄 The app's code changed on disk: restart it to use it (until then new buttons answer "Not Found"). <button class="mini" onclick="updateNow()">⬆ Update &amp; restart</button></div>
 <div class="restartbar" id="updating" hidden style="position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;text-align:center;font-size:18px;background:rgba(10,10,14,.92);color:#fff"></div>
 <div class="sheet" id="sheet" onclick="if (event.target === this) closeSheet()">
@@ -1843,6 +1845,23 @@ async function updateNow() {
   setTimeout(tick, 1500);
 }
 
+// ---------- shut down when done (reelgen/poweroff.py) ----------
+async function setPower(on) {
+  try { showPower(await api("/api/poweroff", { method: "POST", body: JSON.stringify({ on }) })); }
+  catch (e) { alert("Couldn't change it: " + e.message); }
+}
+function showPower(p) {
+  if (!p) return;
+  const bar = $("#powerBar"), btn = $("#powerOff");
+  btn.textContent = p.armed ? "✕ Don't shut down" : "⏻ Shut down PC when done";
+  btn.onclick = () => p.armed ? setPower(false)
+    : confirm("Shut the computer down when every running and waiting video is finished?\n\nIt waits a minute after the last one, then Windows gives one more minute's warning. Automations scheduled later won't run.") && setPower(true);
+  bar.hidden = !(p.armed || p.error);
+  bar.innerHTML = p.error ? "⚠️ " + esc(p.error) + ` <button class="mini" onclick="setPower(false)">OK</button>`
+    : (p.issued ? "⏻ Shutting down in about a minute…" : p.in !== undefined ? `⏻ Everything is finished: shutting down in ${p.in} s…`
+      : "⏻ The PC shuts down when every video is finished.") + ` <button class="mini" onclick="setPower(false)">Cancel</button>`;
+}
+
 $("#updCheck").onclick = checkUpdate;
 $("#updNow").onclick = updateNow;
 
@@ -1850,13 +1869,14 @@ async function poll() {
   try {
     const st = await api("/api/status");
     $("#restartBar").hidden = !st.restart_needed;
+    showPower(st.poweroff);
     $("#busyPill").textContent = st.busy ? "Generating…" : "Idle";
     $("#busyPill").classList.toggle("busy", st.busy);
     if (current === "create") loadJobs();
     if (lastBusy && !st.busy) { toast("Video ready"); if (current === "videos") loadVideos(); }
     lastBusy = st.busy;
   } catch {}
-  pollTimer = setTimeout(poll, lastBusy ? 3000 : 8000);
+  pollTimer = setTimeout(poll, lastBusy || $("#powerBar").hidden === false ? 3000 : 8000);
 }
 
 $("#nav").onclick = (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.view); };

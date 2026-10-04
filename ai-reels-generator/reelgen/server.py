@@ -50,6 +50,10 @@ THUMB_FILES = {"frames.jpg", "picture.jpg", "with-words.jpg"}
 FAIL_LINE = re.compile(r"(?:^|\]\s*)(Video \d+ failed: |Error: )")
 
 
+class PowerBody(BaseModel):
+    on: bool
+
+
 class UpdateBody(BaseModel):
     force: bool = False  # stop running videos too
 
@@ -517,6 +521,8 @@ def create_app(cfg: Config) -> FastAPI:
         except OSError:
             pass
     threading.Thread(target=scheduler, args=(jobs,), daemon=True).start()
+    from . import poweroff
+    threading.Thread(target=poweroff.watch, args=(jobs.busy, alert), daemon=True).start()
     # Cookie value is a random session secret, so the PIN itself is never stored in the browser.
     session_token = secrets.token_urlsafe(24)
 
@@ -582,7 +588,13 @@ def create_app(cfg: Config) -> FastAPI:
             "restart_needed": _code_stamp() > started_code,
             "renderer": _renderer(),
             "last_update": last_update,
+            "poweroff": poweroff.view(),
         }
+
+    @app.post("/api/poweroff")
+    def power_when_done(body: PowerBody):
+        """Shut the computer down once no job is queued or running (reelgen/poweroff.py); off cancels."""
+        return poweroff.arm(body.on)
 
     # ---------- update and restart (reelgen/updater.py) ----------
 
