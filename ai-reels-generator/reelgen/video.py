@@ -484,6 +484,17 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
     # (`audioNNN.wav` + `.ok`), so Resume carries on; the minutes are PCM, so joining them is sample-exact.
     audio = parts / "audio.wav"
     if not audio.exists():
+        # The soundtrack is mixed straight from the props with ffmpeg and numpy (reelgen/soundtrack.py), in
+        # seconds and with no browser: Remotion's sound pass refused connections to its own file server
+        # where many sounds start together (minute 11 of an 11-minute Script Video, three tries in a row).
+        from .soundtrack import mix
+        progress("Mixing the soundtrack")
+        try:
+            mix(props, composition, props_path.parent, audio, FFMPEG)
+        except Exception as exc:  # unknown composition or an unreadable file: Remotion's own pass below
+            log.warning("Mixing the soundtrack failed (%s); rendering it with Remotion instead", exc)
+            audio.unlink(missing_ok=True)
+    if not audio.exists():
         # The sound pass draws no picture (props `soundOnly`): every frame is visited only to gather sounds.
         sound_path = props_path.with_name("props-sound.json")
         sound_path.write_text(json.dumps({**props, "soundOnly": True}, ensure_ascii=False), encoding="utf-8")
