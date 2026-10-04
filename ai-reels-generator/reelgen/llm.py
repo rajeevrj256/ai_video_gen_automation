@@ -26,6 +26,8 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from . import stopper
+
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -209,7 +211,7 @@ def _wait_for_limit() -> None:
     clock = datetime.fromtimestamp(until).strftime("%H:%M")
     _report(f"Paused: Claude usage limit reached. Waiting until {clock}, then continuing from this step")
     while time.time() < _limit_until:
-        time.sleep(min(60, max(1, _limit_until - time.time())))
+        stopper.sleep(min(60, max(1, _limit_until - time.time())))
     _report("Resumed after the Claude usage limit reset")
 
 
@@ -219,6 +221,7 @@ def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
     """`timeout`: seconds one Claude Code run may take (long-video scripts need more)."""
     global _limit_until
     while True:
+        stopper.check()
         _wait_for_limit()
         try:
             return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd, effort, timeout)
@@ -294,8 +297,9 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
     try:
         # Output is always read as UTF-8: Windows would otherwise decode it with its legacy
         # code page, fail on characters like ₹ or emoji, and hand back no output at all.
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout, cwd=cwd, stdin=subprocess.DEVNULL)
+        # stopper.run: killed at once when the job is stopped (Stop and remove on the Create tab).
+        proc = stopper.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout, cwd=cwd, stdin=subprocess.DEVNULL)
     finally:
         for name in temp_files:
             Path(name).unlink(missing_ok=True)

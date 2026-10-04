@@ -24,6 +24,7 @@ from typing import Callable, Literal
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from . import stopper
 from .fsutil import move
 from .config import PROJECT_ROOT, Config
 from .llm import ask, meter_add_earlier, meter_records, start_meter, summarize_usage, usage_line
@@ -216,8 +217,9 @@ class LongScript(BaseModel):
 
 def _system(style: str, language: str, minutes: float = 8) -> str:
     sh = shape(minutes)
-    kind = ("a true story told like a documentary, every fact checked" if style != "story"
-            else "an original fiction story, clearly presented as a story")
+    kind = ("an original fiction story, clearly presented as a story" if style == "story" else
+            "a news explainer about one real story from the last 7 days, every fact checked" if style == "news"
+            else "a true story told like a documentary, every fact checked")
     return f"""You write {sh['label']} YouTube videos that people watch to the end: {kind}. \
 The video is animated motion graphics, so every beat pairs one narration line with one animated \
 visual that shows exactly what that line says. A few beats can be a real video clip or a 3D model.
@@ -345,7 +347,7 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
               + media.models_block(cfg))
     from .repeats import prompt_block as made_block
 
-    prompt += made_block(cfg, ("long",))
+    prompt += made_block(cfg, ("short", "long"))
     if len(candidates) == 1 and candidates[0].source == "manual":
         prompt += f"\n- The user asked for this topic: {candidates[0].title}. Use it."
         if candidates[0].context.startswith("Subject:"):
@@ -355,6 +357,17 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
         if previous is not None:
             prompt += (f"\n\nThe rejected draft:\n{previous.model_dump_json()}\n"
                        "Keep what works; rewrite what was flagged. Don't reuse a flagged claim in softer words.")
+    if cfg.video_style == "news":
+        from .script_writer import news_rules
+        prompt += news_rules()
+        if len(candidates) == 1 and candidates[0].source == "manual":
+            prompt += (f"\n- The user asked for news about: {candidates[0].title}. If nothing from the last 7 days "
+                       "fits, take this week's closest story in the same field.")
+    if cfg.video_style != "story":
+        # Every search and opened page is read again on each later turn of the call: an open-ended
+        # research run made one script ~900k tokens. The fact-check confirms the claims afterwards.
+        prompt += ("\n- Research budget: at most 8 web searches and 6 opened pages in total. Search for what you "
+                   "need, then write; don't keep browsing.")
     script = ask(cfg.ai_backend, cfg.claude_model, _system(cfg.video_style, cfg.long_language, minutes), prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
@@ -1027,7 +1040,7 @@ def preview_sheet(props: dict, work: Path, out: Path) -> Path:
         json.dump({"composition": "Long", "props": props, "publicDir": str(work.resolve()), "stills": stills}, f)
         job = f.name
     try:
-        done = subprocess.run(["node", str(REMOTION_DIR / "scripts" / "stills.mjs"), job], cwd=REMOTION_DIR,
+        done = stopper.run(["node", str(REMOTION_DIR / "scripts" / "stills.mjs"), job], cwd=REMOTION_DIR,
                               capture_output=True, text=True, timeout=1800)
         if done.returncode != 0:
             raise RuntimeError((done.stderr or done.stdout).strip()[-500:])
@@ -1072,7 +1085,7 @@ def review_long(video: Path | None, script: LongScript, props: dict, cfg: Config
               f"bottom.\n\nHook: {hook_lines}\n"
               f"Title: {script.youtube_title}\nThe big question: {script.hook_question}\n"
               f"Story form: {STORY_FORMS.get(script.story_form, ('?',))[0]}\n"
-              f"Style: {'fiction story' if cfg.video_style == 'story' else 'true story, fact-checked'}\n"
+              f"Style: {'fiction story' if cfg.video_style == 'story' else 'latest news, fact-checked' if cfg.video_style == 'news' else 'true story, fact-checked'}\n"
               + "\n".join(lines) + "\n\nScore it and list what to fix. For 'visuals_match', judge the animated "
               "visuals against their lines. For 'story', judge retention across the whole video.")
     review = ask(cfg.ai_backend, cfg.claude_model, LONG_REVIEW_SYSTEM.replace("{range}", shape(cfg.long_minutes)["range"]),
@@ -1172,7 +1185,7 @@ def write_long_post(script: LongScript, props: dict, cfg: Config) -> dict:
     prompt = (f"Topic: {script.topic}\nDraft title: {script.youtube_title}\nThe big question: {script.hook_question}\n"
               f"Chapters: {', '.join(c.title for c in script.chapters)}\n"
               f"Narration (start): {summary}\n\nResearch the search terms, then write the YouTube post text for this long "
-              f"{'fiction story' if cfg.video_style == 'story' else 'documentary'} video.")
+              f"{'fiction story' if cfg.video_style == 'story' else 'news explainer' if cfg.video_style == 'news' else 'documentary'} video.")
     post = ask(cfg.ai_backend, cfg.claude_model, POST_SYSTEM, prompt, LongPost, allow_web=True, effort=cfg.claude_effort)
     return {
         "caption": "",
@@ -1208,7 +1221,7 @@ def run_long(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     if topic:
         # A typed topic is narrowed first to one subject not made before (a small call, checked in code):
         # "the origin story of an everyday technology" made the QR-code video twice, 5 hours each.
-        subject = repeats.narrow(cfg, topic, ("long",), progress) if cfg.video_style != "story" else ""
+        subject = repeats.narrow(cfg, topic, repeats.EVERY, progress) if cfg.video_style not in ("story", "news") else ""
         candidates = [Trend(title=topic, source="manual", context=subject)]
     else:
         with _topic_lock:
@@ -1275,6 +1288,8 @@ def _preview_review(script: LongScript, props: dict, cfg: Config, work: Path, ta
         progress(f"{tag} Previewing the edit: drawing the review frames before the full render")
         try:
             sheet = preview_sheet(props, work, work / "review_frames.jpg")
+        except stopper.Stopped:
+            raise
         except Exception as exc:  # the preview is a shortcut; without it the full render is reviewed as before
             log.warning("Preview frames failed, reviewing after the render instead: %s", exc)
             return script, props, None
@@ -1311,7 +1326,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                resume: dict | None = None) -> dict:
     """The attempt loop for one long video. Saves checkpoint.json after the script, the
     voice and every render, so a stopped video can carry on instead of starting again."""
-    from .pipeline import CHECKPOINT, STAGE_DONE, _history_lock, _render_slot, pause_point, slugify
+    from .pipeline import CHECKPOINT, STAGE_DONE, _history_lock, _render_slot, pause_point, pause_requested, slugify
 
     resume = resume or {}
     # The length it was written for: a resume under other settings must not call it too long or short.
@@ -1341,6 +1356,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             tag = f"[attempt {attempt}/{LONG_ATTEMPTS}]"
             stage = resume.get("stage") if attempt == start else None
             changed: set | None = None  # None = check everything; a set = only the lines just corrected
+            first_fix = 0  # the fact-check round to start from (a resume after a pause in the middle)
             checked_all = False  # has the whole script been fact-checked once?
             if stage == "revise":  # resumed after a failed review
                 revise = {"issues": resume.get("review_issues") or [feedback], "fix": resume.get("review_fix", "")}
@@ -1351,6 +1367,10 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 progress(f"{tag} Revising the lines the reviewer flagged (keeping the rest of the script)")
                 script, changed = fix_long_script(script, cfg, revise["issues"], revise["fix"])
                 checked_all, revise = True, None
+            elif stage == "checking":  # paused between fact-check rounds: carry on with the lines corrected so far
+                progress(f"{tag} Resuming the fact-check where it was paused")
+                changed = {tuple(c) for c in resume["changed"]} if resume.get("changed") is not None else None
+                checked_all, first_fix, stage = bool(resume.get("checked_all")), int(resume.get("fix", 0)), None
             elif stage == "scripted" and manual:
                 progress(f"{tag} Using your script as written (no rewriting or fact-checking)")
                 if attempt == 1:  # your own script is never blocked, but a repeat is pointed out
@@ -1365,12 +1385,16 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 first_write = script is None
                 script = write_long_script(cfg, candidates, minutes, feedback, script if feedback else None)
                 if first_write:  # never the same video twice: checked before voice, music and the render
-                    script = repeats.guard(cfg, script, ("long",),
+                    script = repeats.guard(cfg, script, repeats.EVERY,
                                            lambda why: write_long_script(cfg, candidates, minutes, why, script),
                                            progress, kind="long")
             if not stage or stage == "scripted":  # readable from the Create tab while the video is being made
                 (work / "draft.json").write_text(script.model_dump_json(), encoding="utf-8")
-            for fix in range(0 if stage else FACT_FIXES + 2):
+            for fix in range(first_fix, 0 if stage else FACT_FIXES + 2):
+                if fix > first_fix and pause_requested():  # Pause between rounds, keeping the fixes made so far
+                    save(attempt=attempt, stage="checking", script=script.model_dump(), feedback=feedback, fix=fix,
+                         changed=sorted(changed) if changed is not None else None, checked_all=checked_all)
+                first_fix = 0
                 script = repair_long_script(script)  # free fixes first
                 basic = check_long_script(script, minutes)
                 checking = basic.passed and cfg.video_style != "story"
@@ -1544,6 +1568,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             progress("Claude is writing the title, description, chapters and tags")
             try:
                 report.update(write_long_post(script, props, cfg))
+            except stopper.Stopped:
+                raise
             except Exception as exc:
                 log.warning("Post text step failed: %s", exc)
                 report.update({"caption": "", "hashtags": [], "youtube_title": script.youtube_title,

@@ -107,6 +107,8 @@ class JobManager:
             log.info("[job %s] %s", job["id"], msg)
 
         progress.should_pause = lambda job=job: bool(job.get("pause"))  # checked at every step boundary
+        # Stop and remove: kills the Claude call or render running now (reelgen/stopper.py).
+        progress.should_pause.stop = lambda job=job: bool(job.get("cancel"))
         try:
             cfg = load_settings(Config())
             cfg.video_style = job["style"]
@@ -734,7 +736,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/generate")
     def generate(body: GenerateRequest):
-        style = body.style if body.style in ("facts", "story", "comedy", "mix") else None
+        style = body.style if body.style in ("facts", "news", "story", "comedy", "mix") else None
         length = body.length if body.length in ("long", "medium") else "short"
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
                            "manual", style, length, captions=body.captions,
@@ -806,23 +808,41 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.delete("/api/jobs/{job_id}")
     def remove_job(job_id: str, discard: bool = False):
-        """Take a finished or failed job off the list; `discard` also deletes the files of
-        videos it left unfinished (they can't be resumed after that)."""
-        from .pipeline import CHECKPOINT
+        """Take a job off the list. A queued or running job is stopped at once: the Claude call or
+        render it is on is killed (reelgen/stopper.py). `discard` also deletes the files of videos
+        it left unfinished (they can't be resumed after that)."""
         with jobs.lock:
             job = next((j for j in jobs.jobs if j["id"] == job_id), None)
             if job is None:
                 raise HTTPException(404, "No such job")
-            if job["status"] in ("queued", "running"):
-                raise HTTPException(409, "Pause it first; a running job can't be removed")
+            running = job["status"] in ("queued", "running")
+            if running:
+                job.update(cancel=True, pause=True)
             jobs.jobs.remove(job)
+        if running:
+            job["log"].append({"t": time.time(), "msg": "Stopped and removed"})
+            if job.get("started"):  # its threads take a few seconds to end; delete only after that
+                threading.Thread(target=_discard_when_done, args=(job, discard), daemon=True).start()
+                return {"ok": True}
         if discard:
-            busy = busy_folders()
-            for f in set(job.get("folders", []) + job.get("resume", [])) - busy:
-                path = (cfg.output_dir / f).resolve()
-                if path.parent == cfg.output_dir.resolve() and (path / CHECKPOINT).exists():
-                    shutil.rmtree(path, ignore_errors=True)
+            _discard(job)
         return {"ok": True}
+
+    def _discard_when_done(job: dict, discard: bool) -> None:
+        for _ in range(120):
+            if job.get("finished"):
+                break
+            time.sleep(1)
+        if discard:
+            _discard(job)
+
+    def _discard(job: dict) -> None:
+        from .pipeline import CHECKPOINT
+        busy = busy_folders()
+        for f in set(job.get("folders", []) + job.get("resume", [])) - busy:
+            path = (cfg.output_dir / f).resolve()
+            if path.parent == cfg.output_dir.resolve() and (path / CHECKPOINT).exists():
+                shutil.rmtree(path, ignore_errors=True)
 
     @app.post("/api/jobs/clear")
     def clear_jobs():

@@ -35,7 +35,7 @@ from moviepy import (
 
 from .captions import build_captions, group_words, render_title
 from .config import MAX_SECONDS, PROJECT_ROOT, Config
-from . import media
+from . import media, stopper
 from .sfx import write_sfx
 from .voice import SceneAudio
 
@@ -105,6 +105,8 @@ def render_video(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pa
         props = build_props(title, scenes, backgrounds, graphics or [None] * len(scenes), timeline, cfg,
                             out_path.parent, transitions, sounds, music, music_file)
         _render_remotion(cli, props, out_path)
+    except stopper.Stopped:
+        raise
     except Exception as exc:
         log.warning("Remotion edit unavailable, using the simpler moviepy edit: %s", exc)
         editor = f"moviepy ({exc})"[:300]
@@ -211,7 +213,7 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
         music = Path(shutil.copy(music_file, public_dir / f"music-kept{Path(music_file).suffix.lower()}"))
     else:  # a new track for this video (an upload Claude picked, else composed in a fitting mood)
         music = media.pick_music(cfg, music_name, public_dir, timeline.total,
-                                 {"facts": "curious", "story": "mystery", "comedy": "playful"}.get(cfg.video_style, ""))
+                                 {"facts": "curious", "news": "curious", "story": "mystery", "comedy": "playful"}.get(cfg.video_style, ""))
     sfx = write_sfx(public_dir / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), public_dir / "sfx"))  # the user's whoosh/pop/... where one matches
     props = {
@@ -243,14 +245,14 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
     gpu = _gpu_wanted()
     cmd = _remotion_cmd(cli, composition, out_path, props_path, crf, gpu)
     log.info("Rendering with Remotion: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+    proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
     if (proc.returncode != 0 or not out_path.exists()) and gpu:
         # GPU encoding (NVENC) fails outright on machines without a usable NVIDIA GPU
         # rather than falling back, so retry once with normal CPU encoding.
         _gpu_failed(proc)
         cmd = _remotion_cmd(cli, composition, out_path, props_path, crf, False)
-        proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+        proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out_path.exists():
         tail = (proc.stderr.strip() or proc.stdout.strip())[-1500:]
@@ -376,7 +378,7 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
             log.info("Rendering part %d/%d: %s", i + 1, len(ranges), " ".join(cmd))
             t0 = time.time()
             try:
-                proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+                proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                                       errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
             except subprocess.TimeoutExpired:
                 raise RuntimeError(f"Part {i + 1} of {len(ranges)} (one minute of video) took over an hour, so the "
@@ -400,7 +402,7 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
     if not audio.exists():
         cmd = [str(cli), "render", "src/index.ts", composition, str(audio), f"--props={props_path}",
                f"--public-dir={props_path.parent}", "--codec=wav", "--overwrite"]
-        proc = subprocess.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
+        proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
         if proc.returncode != 0 or not audio.exists():
             raise RuntimeError(f"Rendering the soundtrack failed: {(proc.stderr or proc.stdout)[-800:]}")

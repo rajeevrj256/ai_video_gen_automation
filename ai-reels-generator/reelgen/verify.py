@@ -72,9 +72,9 @@ def check_script(script: ReelScript, cfg: Config) -> VerifyResult:
 
     graphics = [s.graphic for s in script.scenes if s.graphic.type != "none"]
     result.checks["graphics"] = [g.type for g in graphics]
-    if cfg.video_style == "facts" and not 2 <= len(graphics) <= 5:
+    if cfg.video_style in ("facts", "news") and not 2 <= len(graphics) <= 5:
         result.fail(f"{len(graphics)} on-screen graphics; design 3 or 4.")
-    elif cfg.video_style != "facts" and len(graphics) > 3:
+    elif cfg.video_style not in ("facts", "news") and len(graphics) > 3:
         result.fail(f"{len(graphics)} on-screen graphics; use at most 3 'keyword' graphics.")
     for i, scene in enumerate(script.scenes, 1):
         g = scene.graphic
@@ -244,6 +244,8 @@ def _describe_graphic(g) -> str:
 
 # The review rubric is written for true stories; fiction and comedy are judged on their own terms.
 STYLE_REVIEW = {
+    "news": ("\n\nThis is a latest-news video: judge 'accuracy' also on whether the story is really from the last "
+             "7 days, says when it happened and who reports it, and presents nothing speculative as fact."),
     "story": ("\n\nThis is an original fiction short story, not a factual video. Judge 'accuracy' as: it "
               "states no false real-world facts, uses no real people or brands, and isn't presented as "
               "real news. Judge 'story' on the hook's tension, rising stakes and a fair twist at the "

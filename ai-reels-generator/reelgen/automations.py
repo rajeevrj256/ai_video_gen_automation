@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from .config import Config, load_settings
 
-STYLES = ("facts", "story", "comedy", "mix")
+STYLES = ("facts", "news", "story", "comedy", "mix")
 _lock = threading.Lock()
 
 

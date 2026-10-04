@@ -34,6 +34,8 @@ Never promise anything the video doesn't deliver, and keep the facts identical t
 
 
 STYLE_NOTE = {
+    "news": "This is a latest-news video: lead with what happened and when, use news tags (the field, the "
+            "organisation involved, 'news'), and keep it factual: no hype, no speculation.",
     "story": "This is an original fiction short story: say so in the caption (e.g. 'A short story') "
              "and use story tags like shortstory and fiction; never present it as real.",
     "comedy": "This is a comedy video: write the caption and tags for comedy and relatable humour.",

@@ -25,9 +25,11 @@ from .config import MAX_SECONDS, Config
 from .llm import meter_add_earlier, meter_records, set_limit_reporter, start_meter, summarize_usage, usage_line
 from .notifier import notify
 from .post_copy import apply_post_copy, save_post_text
-from .script_writer import STYLE_NAMES, STYLES as MIX, ReelScript, write_script
+from .script_writer import STYLE_NAMES, STYLES as MIX, TRUE_STYLES, ReelScript, write_script
 from . import repeats
 from .trends import Trend, collect_trends, load_history, save_history
+from . import stopper
+from .stopper import Paused, Stopped, pause_requested  # noqa: F401 (the pipelines import them from here)
 from .shortfix import claims_changed, fact_check_scenes, fix_scenes, new_facts
 from .verify import VerifyResult, check_script, check_video, fact_check_script, review_with_claude
 from .video import render_video, voice_seconds
@@ -65,7 +67,7 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
     first_script = None
     if topic:
         # A typed topic is narrowed first to one subject not made before (a small call, checked in code).
-        subject = repeats.narrow(cfg, topic, ("short",), progress) if cfg.video_style == "facts" else ""
+        subject = repeats.narrow(cfg, topic, repeats.EVERY, progress) if cfg.video_style == "facts" else ""  # news: the writer searches
         candidates = [Trend(title=topic, source="manual", context=" ".join(x for x in (subject, angle_note) if x))]
     else:
         # One video at a time picks from the trends, skipping topics already used or
@@ -76,7 +78,7 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
             candidates = collect_trends(cfg.geo, used + sorted(_claimed))
             progress("[attempt 1/%d] Claude is picking the topic and writing the script" % cfg.max_attempts)
             first_script = write_script(cfg, candidates, "", None)
-            first_script = repeats.guard(cfg, first_script, ("short",),
+            first_script = repeats.guard(cfg, first_script, repeats.EVERY,
                                          lambda why: write_script(cfg, candidates, why, first_script), progress)
             _claimed.add(first_script.topic)
     claimed = first_script.topic if first_script else None
@@ -129,7 +131,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             # full fact-check, and brought new errors.
             progress(f"{tag} Fixing the scenes the reviewer flagged (keeping the rest of the script)")
             old = script
-            script, changed = fix_scenes(script, cfg, revise["issues"], revise["fix"], web=cfg.video_style == "facts")
+            script, changed = fix_scenes(script, cfg, revise["issues"], revise["fix"], web=cfg.video_style in TRUE_STYLES)
             changed = claims_changed(old, script, changed)  # new footage queries need no fact-check
             if revise.get("facts") and not changed:
                 changed = None  # facts were still unconfirmed and no words changed: check it all again
@@ -143,7 +145,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             first_write = script is None
             script = write_script(cfg, candidates, feedback, previous=script if feedback else None)
             if first_write:  # never the same video twice: checked before anything else is spent
-                script = repeats.guard(cfg, script, ("short",),
+                script = repeats.guard(cfg, script, repeats.EVERY,
                                        lambda why: write_script(cfg, candidates, why, script), progress)
         if not stage:  # readable from the Create tab while the video is still being made
             (run_dir / "draft.json").write_text(script.model_dump_json(), encoding="utf-8")
@@ -172,7 +174,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
             # script once, then only the scenes corrected since (marked >>). Fixes change only
             # the flagged scenes. Fiction and comedy have no factual claims; the review guards them.
             facts = VerifyResult()  # passes unless the fact-check below finds something
-            for fix in range(FACT_FIXES + 1 if cfg.video_style == "facts" else 0):
+            for fix in range(FACT_FIXES + 1 if cfg.video_style in TRUE_STYLES else 0):
                 if changed:
                     progress(f"{tag} Claude is fact-checking the {len(changed)} corrected scene(s)")
                     facts = fact_check_scenes(script, cfg, changed, web=recheck_web, earlier=earlier)
@@ -192,7 +194,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
                     break  # keep the last script that passed the basic checks
                 recheck_web, earlier = new_facts(script, fixed, now), list(facts.issues) + ([fixes] if fixes else [])
                 script, changed = fixed, now
-            if cfg.video_style == "facts" and not facts.passed:
+            if cfg.video_style in TRUE_STYLES and not facts.passed:
                 progress(f"{tag} Still has unconfirmed facts after fixing: {'; '.join(facts.issues)}")
                 if attempt < cfg.max_attempts:
                     # A render takes minutes and the review would fail on these same facts:
@@ -234,7 +236,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
                                           web=False)
                 if not now or not check_script(trimmed, cfg).passed:
                     break
-                if cfg.video_style == "facts":
+                if cfg.video_style in TRUE_STYLES:
                     now = claims_changed(script, trimmed, now)
                     trimmed_facts = fact_check_scenes(trimmed, cfg, now, web=new_facts(script, trimmed, now)) if now else facts
                     if not trimmed_facts.passed:
@@ -344,6 +346,8 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
     progress("Claude is writing the title, description and trending hashtags")
     try:
         apply_post_copy(report, script, cfg, final_dir)
+    except Stopped:
+        raise
     except Exception as exc:  # keep the script's draft text rather than lose the video
         log.warning("Post text step failed, keeping the draft caption: %s", exc)
         report.update({"youtube_description": script.caption, "youtube_hashtags": ["shorts"], "youtube_tags": [],
@@ -361,20 +365,13 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
 
 # ---- pause: stop at the next step boundary, resume later from the checkpoint ----
 
-class Paused(Exception):
-    """Raised at a step boundary when the user pressed Pause; the checkpoint is already saved."""
-
-
-_pause = threading.local()
-
-
 def set_pause_check(fn) -> None:
-    _pause.fn = fn
+    stopper.set_checks(fn)
 
 
 def pause_point() -> None:
-    fn = getattr(_pause, "fn", None)
-    if fn and fn():
+    stopper.check()
+    if stopper.pause_requested():
         raise Paused()
 
 
@@ -400,7 +397,7 @@ def done_line(report: dict) -> str:
 # ---- checkpoints: resume a failed video from its last finished step ----
 
 CHECKPOINT = "checkpoint.json"
-STAGE_DONE = {"revise": "script (revising after review)", "scripted": "script and fact-check", "voiced": "script and voiceover",
+STAGE_DONE = {"revise": "script (revising after review)", "checking": "script (part of the fact-check)", "scripted": "script and fact-check", "voiced": "script and voiceover",
               "footage": "script, voiceover and footage", "rendered": "script, voiceover, footage and edit"}
 
 

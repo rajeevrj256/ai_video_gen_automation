@@ -82,8 +82,26 @@ class ReelScript(BaseModel):
     music: str = Field(default="", description="Background track name from the music list, or 'none'.")
 
 
-STYLES = ("facts", "story", "comedy")
-STYLE_NAMES = {"facts": "true story (fact-checked)", "story": "fiction short story", "comedy": "comedy / jokes"}
+STYLES = ("facts", "story", "comedy")  # what "mix" rotates through
+STYLE_NAMES = {"facts": "true story (fact-checked)", "story": "fiction short story", "comedy": "comedy / jokes",
+               "news": "latest news (fact-checked)"}
+TRUE_STYLES = ("facts", "news")  # fact-checked, with sources; "news" is "facts" about this week's news
+
+
+def news_rules() -> str:
+    """The extra rules of the 'news' style (Shorts and long videos): one real story from the last 7 days."""
+    from datetime import date
+    today = date.today()
+    return (f"\n\nLatest news: today is {today:%A %d %B %Y}. This video reports ONE real news story published in the "
+            "last 7 days. Search the web first and confirm it on at least two reputable news outlets (or the "
+            "primary source: the agency, journal, company or league that announced it) dated within 7 days; "
+            "an older story is not news, pick another. Say when it happened in the narration ('on Tuesday', "
+            "'this week'). Report only what the reports confirm and say who says so ('according to NASA'); no "
+            "speculation, no rumours, no predictions presented as fact. Give the background a viewer needs and "
+            "why it matters to them. Never politics, elections, wars, crime or gossip about named people: pick "
+            "science, space, technology, health research, business, sport, nature or a discovery. Put the "
+            "articles you used in sources/facts_checked.")
+
 
 INTRO = "You write for a faceless short-form channel (Instagram Reels, YouTube Shorts). "
 
@@ -273,6 +291,7 @@ every scene.
 
 
 def system_prompt(style: str) -> str:
+    news = news_rules() if style == "news" else ""
     style = style if style in STYLES else "facts"
     shared = """It is read by text-to-speech: no abbreviations, symbols, emojis, or URLs in narration; \
 write numbers the way they're spoken.
@@ -283,7 +302,7 @@ one twice in a row: a list video might alternate slide and zoom, a tech story gl
 nature or history piece fade and zoom.
 
 """
-    return INTRO + VOICE[style] + "\n" + HOOK[style] + DEPTH + shared + GRAPHICS[style] + RULES[style]
+    return INTRO + VOICE[style] + "\n" + HOOK[style] + DEPTH + shared + GRAPHICS[style] + RULES[style] + news
 
 
 SYSTEM_PROMPT = system_prompt("facts")
@@ -321,7 +340,7 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
     prompt += "\n\n" + media.prompt_block(cfg)
     from .repeats import prompt_block as made_block
 
-    prompt += made_block(cfg, ("short",))
+    prompt += made_block(cfg, ("short", "long"))
     if topic_is_manual(candidates) and candidates[0].context.startswith("Subject:"):
         prompt += f"\n\nThe user's topic is narrowed to this one subject; make the video about it: {candidates[0].context}"
     if feedback:
@@ -330,6 +349,9 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
             prompt += (f"\n\nThe rejected draft:\n{previous.model_dump_json(indent=1)}\n"
                        "Rewrite the lines the reviewer flagged — don't reuse a flagged claim in softer "
                        "words; replace it with one that is clearly true, or drop it.")
+    if cfg.video_style == "news" and topic_is_manual(candidates):
+        prompt += (f"\n\nThe user asked for news about: {candidates[0].title}. Find this week's story on it; if "
+                   "there is none from the last 7 days, take this week's closest story in the same field.")
     if style != "facts" and topic_is_manual(candidates):
         prompt += f"\n\nThe user asked for this theme: {candidates[0].title}. Use it."
 

@@ -340,7 +340,7 @@
       <h2>New video</h2>
       <label>Style</label>
       <div class="segmented" id="style">
-        <button data-style="facts" class="on">📚 Facts</button><button data-style="story">🎭 Fiction</button><button data-style="comedy">😂 Jokes</button><button data-style="mix">🔀 Mix</button>
+        <button data-style="facts" class="on">📚 Facts</button><button data-style="news">📰 News</button><button data-style="story">🎭 Fiction</button><button data-style="comedy">😂 Jokes</button><button data-style="mix">🔀 Mix</button>
       </div>
       <p class="hint" id="styleHint"></p>
       <label>Length</label>
@@ -546,7 +546,7 @@
           <div><label for="a-length">Length</label>
             <select id="a-length"><option value="short">📱 Short · 30s</option><option value="medium">🎞️ Medium · 5–6 min</option><option value="long">🎬 Long · 8–10 min</option></select></div>
           <div><label for="a-style">Style</label>
-            <select id="a-style"><option value="facts">📚 Facts</option><option value="story">🎭 Fiction</option><option value="comedy">😂 Jokes</option><option value="mix">🔀 Mix</option></select></div>
+            <select id="a-style"><option value="facts">📚 Facts</option><option value="news">📰 Latest news</option><option value="story">🎭 Fiction</option><option value="comedy">😂 Jokes</option><option value="mix">🔀 Mix</option></select></div>
         </div>
         <label for="a-captions">Subtitles</label>
         <select id="a-captions"><option value="false">🚫 CC off</option><option value="true">💬 CC on</option></select>
@@ -560,6 +560,7 @@
       <label for="s-video_style">Default style (Create page)</label>
       <select id="s-video_style">
         <option value="facts">📚 True stories (fact-checked)</option>
+        <option value="news">📰 Latest news (this week, fact-checked)</option>
         <option value="story">🎭 Fiction short stories</option>
         <option value="comedy">😂 Jokes and comedy</option>
         <option value="mix">🔀 Mix of all three</option>
@@ -1415,7 +1416,7 @@ function jobCard(j) {
     && ((j.folders || []).length || j.skipped || j.status === "paused");
   const pauseBtn = running || j.status === "queued"
     ? (j.pause ? `<button disabled style="width:100%;margin-top:8px">⏸️ Pausing after the current step…</button>`
-               : `<button class="pausebtn" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">⏸️ Pause after this step</button>`)
+               : `<button class="pausebtn" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">⏸️ Pause after this step (resume later)</button>`)
     : "";
   const usage = sumUsage(j.usage);
   const resumeBtn = canResume ? `<button class="primary resume" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">
@@ -1430,7 +1431,9 @@ function jobCard(j) {
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
     ${body}${usageHtml(usage)}${errBox}${pauseBtn}${resumeBtn}${thumbs}
-    ${running || j.status === "queued" ? "" : `<button class="mini removejob" data-job="${esc(j.id)}" data-unfinished="${canResume ? 1 : 0}" style="margin-top:8px">✕ Remove from list</button>`}
+    ${running || j.status === "queued"
+      ? `<button class="mini danger removejob" data-job="${esc(j.id)}" data-stop="1" data-unfinished="${j.started ? 1 : 0}" style="margin-top:8px">⏹ Stop now and remove</button>`
+      : `<button class="mini removejob" data-job="${esc(j.id)}" data-unfinished="${canResume ? 1 : 0}" style="margin-top:8px">✕ Remove from list</button>`}
     <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
   </div>`;
 }
@@ -1475,10 +1478,12 @@ document.addEventListener("click", async (e) => {
 
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("button.removejob"); if (!b) return;
+  // Stop: the Claude call or render it is on is killed at once (Pause waits for the step to end).
+  if (b.dataset.stop && !confirm("Stop this job now and remove it from the list?\nWhatever it is doing (writing, fact-checking, rendering) is stopped at once.")) return;
   // A failed job's half-made video can be kept (resume it later from "Unfinished videos") or deleted.
   const discard = b.dataset.unfinished === "1"
     && confirm("Also delete this job's unfinished video?\nOK = delete it too · Cancel = keep it under Unfinished videos");
-  try { await api(`/api/jobs/${b.dataset.job}?discard=${discard}`, { method: "DELETE" }); loadJobs(); }
+  try { await api(`/api/jobs/${b.dataset.job}?discard=${discard}`, { method: "DELETE" }); if (b.dataset.stop) toast("Stopped and removed"); loadJobs(); }
   catch (err) { toast(err.message); }
 });
 $("#clearJobs").onclick = async () => {
@@ -1773,9 +1778,10 @@ document.querySelectorAll("#count button").forEach((b) => b.onclick = () => {
     (countValue > 1 && $("#topic").value.trim() ? " Each video takes a different angle on your topic." : "");
 });
 // Style picker: each style has its own topic ideas and a one-line explanation.
-const STYLE_TAG = { facts: "📚 Facts", story: "🎭 Fiction", comedy: "😂 Jokes", mix: "🔀 Mix" };
+const STYLE_TAG = { facts: "📚 Facts", news: "📰 News", story: "🎭 Fiction", comedy: "😂 Jokes", mix: "🔀 Mix" };
 const STYLE_HINT = {
   facts: "Real stories behind the news and history, every fact checked before the edit.",
+  news: "One real story from the last 7 days (science, tech, space, business, sport; no politics), confirmed by two sources and fact-checked.",
   story: "Original short fiction with a hook and a twist ending. Marked as a story, never as news.",
   comedy: "Clean, relatable jokes about everyday life, with the biggest laugh at the end.",
   mix: "A batch rotates true story, fiction and jokes.",
@@ -1784,6 +1790,9 @@ const IDEAS = {
   facts: [["🔥 Trending now", ""], ["🏝️ How places began", "How a famous country or city was founded"],
           ["💰 Money", "The story behind a money habit that builds wealth"], ["🏛️ History", "An invention that happened by accident"],
           ["🧠 Body & brain", "Why the human body does something strange"], ["💡 Tech", "The origin story of an everyday technology"]],
+  news: [["🔥 This week", ""], ["🚀 Space", "Space and astronomy news"], ["💡 Tech", "Technology and AI news"],
+         ["🧬 Science & health", "A new scientific or medical finding"], ["💰 Business", "Business and markets news"],
+         ["🏏 Sport", "A record or upset in sport this week"]],
   story: [["🎲 Surprise me", ""], ["🕵️ Mystery", "A mystery with a twist ending"], ["😨 Suspense", "A late-night suspense story"],
           ["💛 Emotional", "A small act of kindness with an emotional twist"], ["🧠 Clever escape", "A clever escape from an impossible situation"]],
   comedy: [["🎲 Surprise me", ""], ["👩 Indian parents", "Things Indian parents always say"], ["🏢 Office life", "Office life and meetings"],
