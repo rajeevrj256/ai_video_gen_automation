@@ -153,9 +153,14 @@ const Extra: React.FC<{accessory: Accessory; shape: MascotShape; color: string}>
   }
 };
 
+// The newer moods (people have their own faces for them) drawn with the mascot's nearest face, plus a tear
+// for crying and a sweat drop for worry.
+const FACE_FOR: Partial<Record<Mood, Mood>> = {laughing: 'happy', crying: 'sad', proud: 'smug', determined: 'angry', confused: 'neutral', worried: 'scared'};
+
 export const Mascot: React.FC<{
   shape: MascotShape; color: string; accessory: Accessory; mood: Mood; tint?: Tint; frame: number; size: number; flip?: boolean;
-}> = ({shape, color, accessory, mood, tint = 'normal', frame, size, flip}) => {
+}> = ({shape, color, accessory, mood: given, tint = 'normal', frame, size, flip}) => {
+  const mood = FACE_FOR[given] ?? given;
   const body = TINTS[tint] ?? color;
   const ink = '#14213D';
   const y = FACE_Y[shape];
@@ -174,6 +179,8 @@ export const Mascot: React.FC<{
       <Eyes mood={mood} y={y} blink={blink} ink={ink} />
       <Mouth mood={mood} y={y} ink={ink} />
       {mood === 'sleepy' ? <text x={150} y={40 + Math.sin(frame / 10) * 4} fontSize={30} fontWeight={900} fill={ink}>z</text> : null}
+      {given === 'crying' ? <path d={`M70 ${y + 12 + (frame % 30)} q6 10 0 16 q-6 -6 0 -16 Z`} fill="#7cc6ff" /> : null}
+      {given === 'confused' ? <text x={162} y={46} fontSize={40} fontWeight={900} fill={ink} textAnchor="middle" transform={flip ? 'translate(324 0) scale(-1 1)' : undefined}>?</text> : null}
       {mood === 'scared' ? <path d="M160 70 q6 10 0 16 q-6 -6 0 -16 Z" fill="#7cc6ff" /> : null}
       <Extra accessory={accessory} shape={shape} color={body} />
     </svg>

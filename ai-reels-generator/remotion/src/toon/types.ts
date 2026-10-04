@@ -6,7 +6,8 @@ import type {Cue, Span} from '../types';
 export type MascotShape = 'bubble' | 'blob' | 'bot' | 'cube' | 'coin' | 'drop' | 'ghost' | 'sun' | 'flame' | 'planet' | 'virus'
   | 'chip' | 'battery' | 'shield' | 'heart' | 'cloud' | 'star';
 export type Accessory = 'none' | 'headset' | 'antenna' | 'cap' | 'glasses' | 'crown' | 'bowtie';
-export type Mood = 'neutral' | 'happy' | 'wink' | 'smug' | 'angry' | 'sad' | 'scared' | 'shocked' | 'sleepy' | 'evil' | 'cool';
+export type Mood = 'neutral' | 'happy' | 'wink' | 'smug' | 'angry' | 'sad' | 'scared' | 'shocked' | 'sleepy' | 'evil' | 'cool'
+  | 'confused' | 'laughing' | 'crying' | 'proud' | 'determined' | 'worried';
 export type Tint = 'normal' | 'red' | 'grey' | 'gold' | 'green';
 export type Pos = 'left' | 'center' | 'right';
 export type Backdrop = 'grid' | 'flat' | 'dots' | 'sky' | 'city' | 'space' | 'lab' | 'stage' | 'desk';
@@ -18,18 +19,22 @@ export type Camera = 'push' | 'pull' | 'pan' | 'still';
 export type Enter = 'cut' | 'whip' | 'zoom' | 'flash';
 
 export type Hair = 'short' | 'side' | 'curly' | 'bun' | 'long' | 'bald' | 'spiky' | 'cap';
-export type Pose = 'stand' | 'point' | 'shrug' | 'hands-up' | 'hands-head' | 'think' | 'wave' | 'run' | 'sit' | 'present';
+export type Pose = 'stand' | 'point' | 'shrug' | 'hands-up' | 'hands-head' | 'think' | 'wave' | 'run' | 'sit' | 'present'
+  | 'arms-crossed' | 'celebrate' | 'typing' | 'sneak' | 'cower' | 'facepalm' | 'hold-up';
 export type Look = {
   skin: string; hair: Hair; hairColor: string; beard: 'none' | 'stubble' | 'full' | 'mustache';
   glasses: boolean; shirt: string; tie: string | null; pants: string; coat: string | null;
+  age?: 'child' | 'young' | 'adult' | 'elder'; build?: 'slim' | 'average' | 'broad';
+  outfit?: 'shirt' | 'suit' | 'lab-coat' | 'hoodie' | 'uniform' | 'robe' | 'dress' | 'overalls' | 'period-coat' | 'jacket' | 't-shirt';
+  headwear?: string; held?: string | null; heldSvg?: string | null; // heldSvg: a drawing Claude made (sanitised)
 };
 
 export type PersonSpec = {
   look: Look; pose: Pose; mood: Mood; pos: 'far-left' | 'left' | 'center' | 'right' | 'far-right';
-  talking: boolean; seated: boolean; flip: boolean;
+  talking: boolean; seated: boolean; flip: boolean; moodAfter?: Mood | null; personality?: string;
 };
 
-export type Item = {icon: string; label?: string | null; badge?: boolean};
+export type Item = {icon: string; label?: string | null; badge?: boolean; svg?: string | null}; // svg: Claude's own drawing
 export type Word = {text: string; start: number; end: number}; // seconds from the start of the shot's voice
 
 export type ToonShot = {
@@ -42,7 +47,7 @@ export type ToonShot = {
   segment: number;
   backdrop: Backdrop;
   tone: number; // which of the palette's tones colours this shot
-  mascot?: {mood: Mood; tint: Tint; pos: Pos; size: 's' | 'm' | 'l'} | null;
+  mascot?: {mood: Mood; tint: Tint; pos: Pos; size: 's' | 'm' | 'l'; moodAfter?: Mood | null} | null;
   people?: PersonSpec[]; // cartoon people acting the line out (a podium, a desk, a street...)
   crowd?: boolean; // small running people across the scene
   items: Item[];
@@ -53,6 +58,15 @@ export type ToonShot = {
   values?: number[]; // bars: heights (any scale)
   camera: Camera;
   enter: Enter;
+  // The director's choices: how important the line is, the words it hangs on and what happens on them.
+  importance?: 'low' | 'medium' | 'high' | 'critical';
+  kind?: string;
+  emphasis?: {text: string; at: number; end: number} | null; // seconds into the shot
+  emphasisFx?: ('text' | 'zoom' | 'shake' | 'flash' | 'glow' | 'rain' | 'react' | 'pause')[];
+  backdropAfter?: Backdrop | null; // the setting switches on the emphasised words
+  speed?: number; // seconds the action takes (critical lines move faster)
+  sceneArt?: string | null; // a drawing Claude made for this scene (sanitised SVG fragment, 200x200)
+  sceneArtPos?: 'left' | 'center' | 'right' | 'back';
 };
 
 export type ToonPalette = {

@@ -1,5 +1,5 @@
 import React from 'react';
-import {Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Audio} from '../Audio';
 import {Cues, Music} from '../Sound';
 import {FONT, clamp, useFonts} from '../theme';
@@ -17,6 +17,59 @@ import type {PersonSpec, ToonProps, ToonShot} from './types';
 const MASCOT_X = {left: 520, center: 960, right: 1400};
 const MASCOT_S = {s: 300, m: 420, l: 560};
 const PERSON_X = {'far-left': 260, left: 600, center: 960, right: 1320, 'far-right': 1660};
+const ART_X = {left: 430, center: 960, right: 1490};
+
+// The emphasised words of a line, big and on their syllables: a count-up when they hold a number, else
+// word by word in one of three styles (rotating per shot so no two lines move the same way).
+const countUp = (text: string, k: number) => text.replace(/\d[\d,]*(\.\d+)?/, (m) => {
+  const n = parseFloat(m.replace(/,/g, ''));
+  const dec = (m.split('.')[1] ?? '').length;
+  const v = n * k;
+  return m.includes(',') ? v.toLocaleString('en-US', {minimumFractionDigits: dec, maximumFractionDigits: dec}) : v.toFixed(dec);
+});
+
+// top: 'high' over everything (nothing tall on screen), 'top' at the very edge above standing heads, 'low' near the
+// bottom (over a desk or a podium, where the people fill the top of the frame).
+const Emphasis: React.FC<{text: string; t: number; at: number; end: number; style: number; pal: ToonProps['palette']; place: 'high' | 'top' | 'low'; fps: number}> = ({text, t, at, end, style, pal, place, fps}) => {
+  const span = Math.max(0.35, end - at);
+  const k = interpolate(t, [at, at + span], [0, 1], {...clamp});
+  const hasNum = /\d/.test(text);
+  const words = text.split(' ');
+  const base: React.CSSProperties = {fontFamily: FONT, fontWeight: 900, fontSize: place === 'top' ? (text.length > 18 ? 76 : 92) : text.length > 18 ? 96 : 128, textTransform: 'uppercase', whiteSpace: 'nowrap', lineHeight: 1};
+  const look: React.CSSProperties = style === 0
+    ? {...base, color: '#fff', WebkitTextStroke: '12px #15151c', paintOrder: 'stroke', textShadow: `0 12px 0 ${shade(pal.accent, -0.3)}`}
+    : style === 1
+      ? {...base, color: pal.accent, background: '#15151c', padding: '12px 36px', borderRadius: 18, boxShadow: `0 12px 0 ${shade(pal.accent, -0.35)}`}
+      : {...base, color: pal.accent, WebkitTextStroke: '10px #fff', paintOrder: 'stroke', textShadow: '0 10px 0 rgba(0,0,0,0.35)'};
+  const pop = spring({frame: Math.round((t - at) * fps), fps, config: {damping: 9, mass: 0.5}});
+  const body = hasNum
+    ? <span>{countUp(text, interpolate(k, [0, 1], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)}))}</span>
+    : words.map((w, i) => {
+      const wa = at + (span * i) / words.length; // each word lands as it is said
+      const s = spring({frame: Math.round((t - wa) * fps), fps, config: {damping: 10, mass: 0.5}});
+      const dx = style === 2 ? (1 - s) * (i % 2 ? 160 : -160) : 0;
+      return <span key={i} style={{display: 'inline-block', marginRight: '0.28em', opacity: Math.min(1, s * 2), transform: `translate(${dx}px, ${style === 1 ? 0 : (1 - s) * 60}px) scale(${style === 0 ? 0.6 + 0.4 * s : 1})`}}>{w}</span>;
+    });
+  return (
+    <div style={{position: 'absolute', left: 0, right: 0, top: place === 'low' ? 800 : place === 'top' ? 26 : 96, display: 'flex', justifyContent: 'center', transform: `scale(${hasNum || style === 1 ? pop : 1})`}}>
+      <div style={look}>{body}</div>
+    </div>
+  );
+};
+
+const SceneArt: React.FC<{svg: string; pos: NonNullable<ToonShot['sceneArtPos']>; frame: number; fps: number}> = ({svg, pos, frame, fps}) => {
+  const back = pos === 'back';
+  const S = back ? 860 : 500;
+  const x = back ? 960 : ART_X[pos];
+  const s = spring({frame: frame - 2, fps, config: {damping: 13}});
+  return (
+    <div style={{position: 'absolute', left: x - S / 2, top: back ? 110 : 330, width: S, height: S, opacity: back ? 0.9 * s : s,
+      transform: `scale(${0.7 + 0.3 * s}) translateY(${Math.sin(frame / 20) * 5}px)`}}>
+      <svg viewBox="0 0 200 200" width={S} height={S} style={{overflow: 'visible'}} dangerouslySetInnerHTML={{__html: svg}} />
+    </div>
+  );
+};
+
 const OWN_STAGE = new Set(['toggle-off', 'toggle-on', 'gauge-up', 'gauge-down', 'bars', 'arrow-up', 'arrow-down', 'fly-out', 'rain', 'versus']);
 
 const Slam: React.FC<{text: string; style: ToonProps['style']['slam']; frame: number; fps: number; pal: ToonProps['palette']; low: boolean}> = ({text, style, frame, fps, pal, low}) => {
@@ -111,7 +164,7 @@ const Foreground: React.FC<{kind: string; tone: string}> = ({kind, tone}) =>
     </svg>
   ) : null;
 
-const PersonView: React.FC<{spec: PersonSpec; frame: number; talk: number; backdrop: string}> = ({spec, frame, talk, backdrop}) => {
+const PersonView: React.FC<{spec: PersonSpec; frame: number; talk: number; backdrop: string; reacted: number | null}> = ({spec, frame, talk, backdrop, reacted}) => {
   const seated = spec.seated || backdrop === 'desk';
   const atPodium = backdrop === 'stage' && spec.pos === 'center';
   // Chest-up behind a desk or a podium (big, like a close-up), full figure elsewhere.
@@ -119,9 +172,12 @@ const PersonView: React.FC<{spec: PersonSpec; frame: number; talk: number; backd
   const x = PERSON_X[spec.pos] ?? 960;
   const top = seated ? 700 - (410 / 600) * H : atPodium ? 690 - (300 / 600) * H : 1010 - (590 / 600) * H;
   const enter = spring({frame, fps: 30, config: {damping: 14}});
+  // A reaction on the emphasised words: the face changes with a little hop.
+  const mood = reacted !== null && spec.moodAfter ? spec.moodAfter : spec.mood;
+  const hop = reacted !== null && spec.moodAfter ? Math.sin(Math.min(1, reacted / 9) * Math.PI) * 26 : 0;
   return (
-    <div style={{position: 'absolute', left: x - H / 4, top: top + (1 - enter) * 60, opacity: enter}}>
-      <Person look={spec.look} pose={seated ? (spec.pose === 'stand' ? 'sit' : spec.pose) : spec.pose} mood={spec.mood} talk={talk} frame={frame} height={H} flip={spec.flip} seated={seated} />
+    <div style={{position: 'absolute', left: x - H / 4, top: top + (1 - enter) * 60 - hop, opacity: enter}}>
+      <Person look={spec.look} pose={seated ? (spec.pose === 'stand' ? 'sit' : spec.pose) : spec.pose} mood={mood} talk={talk} frame={frame} height={H} flip={spec.flip} seated={seated} />
     </div>
   );
 };
@@ -133,7 +189,17 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
   const t = frame / fps;
   const frames = Math.max(1, Math.round(shot.duration * fps));
   const tone = pal.tones[shot.tone % pal.tones.length];
-  const p = Math.max(0, (t - shot.at) / 0.9); // the action, from its word
+  const p = Math.max(0, (t - shot.at) / (shot.speed || 0.9)); // the action, from its word, at the line's pace
+  // The director's beat: on the emphasised words the face changes, the setting may switch, the camera
+  // punches in, the words land on screen...
+  const em = shot.emphasis ?? null;
+  const fx = new Set(shot.emphasisFx ?? []);
+  const emF = em ? Math.round(em.at * fps) : null;
+  const after = emF !== null && frame >= emF;
+  const sinceEm = after ? frame - emF! : null;
+  const reactAt = emF ?? Math.round(shot.at * fps); // without emphasis a mood change follows the action
+  const reacted = frame >= reactAt ? frame - reactAt : null;
+  const backdrop = after && shot.backdropAfter ? shot.backdropAfter : shot.backdrop;
   const ownStage = OWN_STAGE.has(shot.action);
   const given = shot.mascot && !shot.card?.kind.startsWith('number') ? shot.mascot : null;
   // An action that fills the middle (switch, gauge, chart, versus...) moves the mascot to the side, smaller.
@@ -147,6 +213,7 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
       const x = PERSON_X[sp.pos] ?? 960, half = sp.seated || shot.backdrop === 'desk' ? 270 : 200;
       return [x - half, x + half] as [number, number];
     }),
+    ...(shot.sceneArt && shot.sceneArtPos && shot.sceneArtPos !== 'back' ? [[ART_X[shot.sceneArtPos] - 260, ART_X[shot.sceneArtPos] + 260] as [number, number]] : []),
     ...(shot.backdrop === 'stage' ? [[760, 1160] as [number, number]] : []),
   ];
   const base = items.length > 3 ? 200 : 250;
@@ -158,27 +225,34 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
   const cam = shot.camera === 'push' ? interpolate(frame, [0, frames], [1, 1.07]) : shot.camera === 'pull' ? interpolate(frame, [0, frames], [1.07, 1]) : 1;
   const pan = shot.camera === 'pan' ? interpolate(frame, [0, frames], [30, -30]) : 0;
   const zoomIn = shot.enter === 'zoom' ? interpolate(frame, [0, 10], [1.25, 1], clamp) : 1;
-  const shake = shot.action === 'shake' && p > 0 && p < 1 ? Math.sin(frame * 3) * 14 : 0;
+  const punch = fx.has('zoom') && sinceEm !== null ? interpolate(sinceEm, [0, 5], [0, 0.12], {...clamp, easing: Easing.out(Easing.back(2))}) : 0;
+  const emShake = fx.has('shake') && sinceEm !== null && sinceEm < 15 ? Math.sin(frame * 3.1) * 16 * (1 - sinceEm / 15) : 0;
+  const shake = (shot.action === 'shake' && p > 0 && p < 1 ? Math.sin(frame * 3) * 14 : 0) + emShake;
   // Who is talking: the mouth moves while the narrator says a word (the people act the line).
   const now = t - shot.lead;
   const speaking = shot.words.some((w) => now >= w.start && now <= w.end);
   const talk = speaking ? 0.5 + 0.5 * Math.sin(frame * 1.3) : 0;
   return (
     <Layer name={`shot ${index + 1}`}>
-      <div style={{position: 'absolute', inset: 0, transform: `scale(${cam * zoomIn}) translate(${pan + shake}px, ${shake * 0.5}px)`}}>
-        <BackdropView kind={isNumber ? 'flat' : shot.backdrop} p={pal} tone={tone} seed={props.style.seed + shot.segment * 13} frame={frame} />
+      <div style={{position: 'absolute', inset: 0, transform: `scale(${cam * zoomIn * (1 + punch)}) translate(${pan + shake}px, ${shake * 0.5}px)`}}>
+        <BackdropView kind={isNumber ? 'flat' : backdrop} p={pal} tone={tone} seed={props.style.seed + shot.segment * 13} frame={frame} />
         {isNumber ? (
           <NumberCard text={shot.card!.text} sub={shot.card!.sub} style={props.style.card} frame={frame} fps={fps} pal={pal} />
         ) : (
           <>
+            {shot.sceneArt ? <SceneArt svg={shot.sceneArt} pos={shot.sceneArtPos ?? 'back'} frame={frame} fps={fps} /> : null}
+            {fx.has('glow') && sinceEm !== null ? (
+              <div style={{position: 'absolute', inset: 0, background: `radial-gradient(circle at 50% 50%, ${pal.glow} 0%, transparent 60%)`,
+                opacity: interpolate(sinceEm, [0, 4, 30], [0, 0.7, 0.25], clamp) * (0.85 + 0.15 * Math.sin(frame / 4))}} />
+            ) : null}
             {shot.crowd ? Array.from({length: 6}, (_, i) => {
               const x = ((frame * (9 + i)) + i * 360) % 2300 - 200;
               return <div key={`c${i}`} style={{position: 'absolute', left: x, top: 760 + (i % 2) * 40}}>
                 <Person look={{...(shot.people?.[0]?.look ?? defaultLook), shirt: ['#E5484D', '#2F7DE1', '#2FB36D', '#F2B705', '#9b5de5', '#ff8fab'][i], skin: ['#F6D3B3', '#B97A50', '#EBB98F', '#8D5A3B', '#D69A6C', '#F6D3B3'][i], tie: null, coat: null}} pose="run" mood="scared" talk={0} frame={frame + i * 4} height={300} />
               </div>;
             }) : null}
-            {(shot.people ?? []).map((sp, i) => <PersonView key={`p${i}`} spec={sp} frame={frame} talk={sp.talking ? talk : 0} backdrop={shot.backdrop} />)}
-            <Foreground kind={shot.people?.length ? shot.backdrop : ''} tone={tone} />
+            {(shot.people ?? []).map((sp, i) => <PersonView key={`p${i}`} spec={sp} frame={frame} talk={sp.talking ? talk : 0} backdrop={shot.backdrop} reacted={reacted} />)}
+            <Foreground kind={shot.people?.length ? backdrop : ''} tone={tone} />
 {shot.action === 'connect' ? ( // the lines run behind the objects, never across their labels
                         <ActionLayer action={shot.action} p={p} frame={frame} fps={fps} pal={pal} items={shot.items} spots={spots} mascotAt={mascotAt}
               mascot={props.mascot} values={shot.values} seed={props.style.seed + index} />
@@ -195,8 +269,10 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
             {m ? (() => {
               const size = MASCOT_S[m.size];
               const enter = spring({frame: frame - (shot.action === 'burst' ? Math.round(shot.at * fps) : 0), fps, config: {damping: 12}});
-              return <div style={{position: 'absolute', left: mascotAt!.x - size / 2, top: mascotAt!.y - size / 2, transform: `scale(${enter})`}}>
-                <Mascot shape={props.mascot.shape} color={props.mascot.color} accessory={props.mascot.accessory} mood={m.mood} tint={m.tint} frame={frame} size={size} flip={m.pos === 'right'} />
+              const changes = reacted !== null && m.moodAfter;
+              const hop = changes ? Math.sin(Math.min(1, reacted! / 9) * Math.PI) * 30 : 0;
+              return <div style={{position: 'absolute', left: mascotAt!.x - size / 2, top: mascotAt!.y - size / 2 - hop, transform: `scale(${enter})`}}>
+                <Mascot shape={props.mascot.shape} color={props.mascot.color} accessory={props.mascot.accessory} mood={changes ? m.moodAfter! : m.mood} tint={m.tint} frame={frame} size={size} flip={m.pos === 'right'} />
               </div>;
             })() : null}
 {shot.action === 'connect' ? null : (
@@ -207,11 +283,25 @@ const ShotView: React.FC<{shot: ToonShot; props: ToonProps; index: number}> = ({
               <Slam text={shot.slam} style={props.style.slam} frame={frame - Math.round(Math.max(0, shot.at - 0.1) * fps)} fps={fps} pal={pal}
                 low={ownStage || shot.action === 'strings' || shot.action === 'strings-burn'} />
             ) : null}
+            {fx.has('rain') && sinceEm !== null && sinceEm < 50 ? (
+              <ActionLayer action="rain" p={Math.min(1, sinceEm / 6) * (sinceEm > 40 ? (50 - sinceEm) / 10 : 1)} frame={frame} fps={fps} pal={pal}
+                items={shot.items.length ? shot.items : [{icon: 'coins'}]} spots={spots} mascotAt={mascotAt} mascot={props.mascot} values={shot.values} seed={props.style.seed + index} />
+            ) : null}
             {shot.card?.kind === 'date' ? <DateCard text={shot.card.text} frame={frame} fps={fps} /> : null}
             {shot.card?.kind === 'title' ? <TitleCard text={shot.card.text} frame={frame} fps={fps} pal={pal} /> : null}
           </>
         )}
       </div>
+      {/* the emphasised words sit outside the camera's zoom, so a punch-in never crops them */}
+      {!isNumber && em && fx.has('text') && !shot.slam && after ? (
+        <Emphasis text={em.text} t={t} at={em.at} end={em.end} style={(props.style.seed + index) % 3} pal={pal} fps={fps}
+          place={ownStage || shot.action === 'strings' || shot.action === 'strings-burn' || shot.card?.kind === 'title' || shot.card?.kind === 'date'
+            || (shot.people ?? []).some((sp) => sp.seated || backdrop === 'desk' || (backdrop === 'stage' && sp.pos === 'center')) ? 'low'
+            : shot.people?.length || shot.sceneArt ? 'top' : 'high'} />
+      ) : null}
+      {(fx.has('flash') || (shot.backdropAfter && shot.backdropAfter !== shot.backdrop)) && sinceEm !== null && sinceEm < 8 ? (
+        <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(sinceEm, [0, 7], [fx.has('flash') ? 0.85 : 0.5, 0], clamp)}} />
+      ) : null}
       {shot.enter === 'flash' ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(frame, [0, 8], [0.9, 0], clamp)}} /> : null}
       {shot.enter === 'whip' && frame < 12 ? (
         <div style={{position: 'absolute', top: -200, bottom: -200, width: 900, left: interpolate(frame, [0, 11], [-300, 2300]), background: pal.paper, transform: 'skewX(-24deg)', boxShadow: `0 0 0 40px ${pal.accent}`}} />

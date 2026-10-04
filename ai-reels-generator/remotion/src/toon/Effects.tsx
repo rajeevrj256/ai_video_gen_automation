@@ -50,7 +50,9 @@ const ITEM_COLORS = ['#FF9F1C', '#2F9BFF', '#2FB36D', '#E5484D', '#8E5CF7', '#14
 export const ItemView: React.FC<{item: Item; s: number; p: ToonPalette; frame: number; color?: string; k?: number}> = ({item, s, p, frame, color, k = 0}) => {
   const name = item.icon.toLowerCase();
   let body: React.ReactNode;
-  if (item.badge) {
+  if (item.svg) { // Claude's own drawing for this scene (sanitised in toon.clean_svg), in a 200x200 box
+    body = <svg viewBox="0 0 200 200" width={s} height={s} style={{overflow: 'visible'}} dangerouslySetInnerHTML={{__html: item.svg}} />;
+  } else if (item.badge) {
     body = (
       <div style={{background: p.paper, color: '#15151c', borderRadius: 22, padding: `${s * 0.12}px ${s * 0.22}px`, fontWeight: 900,
         fontSize: s * 0.26, boxShadow: '0 10px 0 rgba(0,0,0,0.18)', border: `6px solid ${shade(p.paper, -0.2)}`, whiteSpace: 'nowrap'}}>

@@ -34,7 +34,7 @@ from .categories import CATEGORIES
 from .config import Config
 from .llm import ask
 from .longform import LSource, verify_sources, with_sources
-from .script_writer import AI_CLICHES
+from .script_writer import AI_CLICHES, SoundCue
 from .sfx import write_sfx
 from .verify import probe
 from .video import FFMPEG, _remotion_cli, _render_remotion, media_seconds
@@ -63,12 +63,25 @@ Shape = Literal["bubble", "blob", "bot", "cube", "coin", "drop", "ghost", "sun",
                 "battery", "shield", "heart", "cloud", "star"]
 GENERIC = ("bubble", "blob", "cube", "ghost", "star", "drop")  # bodies that say nothing about the subject
 Accessory = Literal["none", "headset", "antenna", "cap", "glasses", "crown", "bowtie"]
-Mood = Literal["neutral", "happy", "wink", "smug", "angry", "sad", "scared", "shocked", "sleepy", "evil", "cool"]
+Mood = Literal["neutral", "happy", "wink", "smug", "angry", "sad", "scared", "shocked", "sleepy", "evil", "cool",
+               "confused", "laughing", "crying", "proud", "determined", "worried"]
 Backdrop = Literal["grid", "flat", "dots", "sky", "city", "space", "lab", "stage", "desk"]
 Action = Literal["none", "pop", "crack", "clone", "flood", "unlock", "lock", "toggle-off", "toggle-on", "gauge-up",
                  "gauge-down", "strings", "strings-burn", "burst", "fly-out", "crosshair", "sparks", "cage", "connect",
                  "orbit", "rain", "arrow-up", "arrow-down", "versus", "bars", "shake"]
-Pose = Literal["stand", "point", "shrug", "hands-up", "hands-head", "think", "wave", "run", "sit", "present"]
+Pose = Literal["stand", "point", "shrug", "hands-up", "hands-head", "think", "wave", "run", "sit", "present",
+               "arms-crossed", "celebrate", "typing", "sneak", "cower", "facepalm", "hold-up"]
+Outfit = Literal["shirt", "suit", "lab-coat", "hoodie", "uniform", "robe", "dress", "overalls", "period-coat", "jacket", "t-shirt"]
+Headwear = Literal["none", "hard-hat", "cap", "top-hat", "tricorn", "headscarf", "crown", "helmet", "beanie", "hood",
+                   "bowler", "turban", "chef-hat", "graduation-cap"]
+Kind = Literal["fact", "explanation", "question", "surprise", "warning", "comparison", "statistic", "conclusion",
+               "emotional", "humor", "call-to-action", "reveal"]
+Tone = Literal["calm", "firm", "dramatic", "excited", "urgent", "curious", "soft", "playful", "confident", "direct"]
+# How each tone is spoken (edge-tts has no styles): rate % added to the chosen speed, pitch Hz, volume %.
+TONES = {"calm": (0, 0, 0), "firm": (-6, -10, 6), "dramatic": (-10, -18, 0), "excited": (8, 22, 10),
+         "urgent": (10, -4, 14), "curious": (0, 18, 0), "soft": (-12, -6, -14), "playful": (5, 26, 6),
+         "confident": (-4, -12, 10), "direct": (4, 0, 10)}
+EmphasisFx = Literal["text", "zoom", "shake", "flash", "glow", "rain", "react", "pause"]
 Hair = Literal["short", "side", "curly", "bun", "long", "bald", "spiky", "cap"]
 MusicMood = Literal["mystery", "suspense", "curious", "dark", "energetic", "uplifting", "playful", "quirky", "emotional"]
 
@@ -135,6 +148,14 @@ class TMascot(BaseModel):
 class TPerson(BaseModel):
     id: str = Field(description="Short id used in the shots, e.g. 'eng', 'ceo'.")
     role: str = Field(description="Who they are in the story (an engineer, a minister, a farmer...). Never a real, named person.")
+    personality: str = Field(default="", description="2-4 words that set how they move and react (nervous intern, smug executive...).")
+    age: Literal["child", "young", "adult", "elder"] = "adult"
+    build: Literal["slim", "average", "broad"] = "average"
+    outfit: Outfit = Field(default="shirt", description="Fits the role and the period: a hacker in a hoodie, an official in a "
+                           "suit, a scientist in a lab coat, a 19th-century clerk in a period coat, a worker in overalls.")
+    headwear: Headwear = "none"
+    held: str = Field(default="", description="A lucide icon name they hold (phone, briefcase, clipboard, wrench...), or empty.")
+    held_svg: str = Field(default="", description="Only if no icon fits what they hold: a small flat SVG drawing of it (see Custom drawings).")
     skin: int = Field(ge=0, le=5, description="Skin tone 0 (light) to 5 (dark); vary across the cast.")
     hair: Hair
     hair_color: str = Field(description="#RRGGBB")
@@ -147,6 +168,8 @@ class TPerson(BaseModel):
 
 
 class TOnScreen(BaseModel):
+    svg: str = Field(default="", description="A custom flat drawing of this object when no icon really shows it (see Custom "
+                     "drawings); the icon is then only its fallback.")
     icon: str = Field(description="A lucide icon name in kebab-case for the object (shield, server, brain-circuit, coins, "
                       "virus, factory...), or 'crate' (a mystery box), 'padlock' or 'server' (drawn by hand). For a named "
                       "organisation or product use badge=true and its name as the label.")
@@ -158,12 +181,31 @@ class TActor(BaseModel):
     id: str = Field(description="A cast id.")
     pose: Pose
     mood: Mood
+    mood_after: Mood | Literal[""] = Field(default="", description="Their face changes to this on the emphasised phrase (a reaction), or empty.")
     pos: Literal["far-left", "left", "center", "right", "far-right"]
     talking: bool = Field(default=False, description="True if this person is the one saying/announcing the line (their mouth moves).")
 
 
 class TShot(BaseModel):
+    # Think first, like a director: what must the viewer see, feel and understand at this exact moment?
     line: str = Field(description="One spoken sentence, 4-26 words. The whole video is these lines in order.")
+    meaning: str = Field(description="What the viewer must understand from this line, in a few words.")
+    kind: Kind
+    importance: Literal["low", "medium", "high", "critical"] = Field(description="low: connective/background (subtle motion). "
+                        "medium: a supporting point (a character move + a supporting visual). high: a key fact (a new "
+                        "visual, camera move, emphasis). critical: the hook, a reveal, a turn (everything hits at once). "
+                        "Most lines are low or medium; critical is rare.")
+    tone: Tone = Field(description="How the narrator says it: calm (explaining), firm (an important fact), dramatic (a "
+                       "reveal), excited (a surprise), urgent (a warning), curious (a question), soft (an emotional moment), "
+                       "playful (humour), confident (a conclusion), direct (a call to action).")
+    emphasis: str = Field(default="", description="The few words of the line that carry it (copied exactly, e.g. 'millions "
+                          "of dollars in losses'), or empty for low lines. Never every word.")
+    emphasis_fx: list[EmphasisFx] = Field(default_factory=list, description="What happens on the emphasised words: text (big "
+                                          "animated words), zoom (camera punches in), shake, flash, glow, rain (the first object "
+                                          "rains down, e.g. money), react (faces change to mood_after / mascot_after), pause (a "
+                                          "beat of silence after the line). 0 for low, 1-2 for medium/high, 3-4 for critical.")
+    visual_idea: str = Field(description="The visual concept for this line in one sentence: who/what we see and what happens, "
+                             "a metaphor for anything abstract.")
     backdrop: Backdrop = Field(description="grid: a glowing digital room (inside computers, networks, AI). flat: plain colour "
                                "for ideas and objects. dots: playful colour. sky / city: the outside world, the public. space: "
                                "global scale. lab: scientists, research. stage: a podium with microphones (statements, press, "
@@ -172,6 +214,12 @@ class TShot(BaseModel):
     mascot_tint: Literal["normal", "red", "grey", "gold", "green"] = Field(default="normal", description="red = danger/angry, grey = a copy or powerless, gold = winning, green = healthy.")
     mascot_pos: Literal["left", "center", "right"] = "center"
     mascot_size: Literal["s", "m", "l"] = "m"
+    mascot_after: Mood | Literal[""] = Field(default="", description="The mascot's face on the emphasised words, or empty.")
+    backdrop_after: Backdrop | Literal[""] = Field(default="", description="The setting switches to this on the emphasised "
+                                                  "words ('Then everything changed'), or empty.")
+    scene_art: str = Field(default="", description="A custom flat drawing for this scene when the built-in settings and "
+                           "objects can't show it (a pyramid, a 1850s telegraph office, a dam, a volcano...): see Custom drawings.")
+    scene_art_pos: Literal["left", "center", "right", "back"] = Field(default="back", description="back = a large element behind everything.")
     people: list[TActor] = Field(default_factory=list, description="0-3 cast members acting the line out.")
     crowd: bool = Field(default=False, description="Ordinary people running across a city/sky scene (panic, the public).")
     objects: list[TOnScreen] = Field(default_factory=list, description="0-4 objects that show what the line says.")
@@ -182,6 +230,8 @@ class TShot(BaseModel):
     values: list[float] = Field(default_factory=list, description="bars only: the real figures from the line, in order.")
     camera: Literal["push", "pull", "pan", "still"] = "push"
     enter: Literal["cut", "whip", "zoom", "flash"] = "cut"
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects from the sound list on exact words "
+                                   "(the user's own files when they fit); most lines get none, the action already has one.")
 
 
 class TSegment(BaseModel):
@@ -204,14 +254,18 @@ class ToonScript(BaseModel):
     tags: list[str] = Field(description="10-20 search tags.")
     hashtags: list[str] = Field(description="3 hashtags without '#'.")
     category: str = Field(default="", description="One of " + ", ".join(CATEGORIES) + ".")
-    mood: MusicMood = Field(description="The composed music's mood.")
+    mood: MusicMood = Field(description="The composed music's mood (when music is 'compose').")
+    music: str = Field(default="compose", description="The main music: one of the user's own tracks from the music list when "
+                       "it truly fits the whole video, else 'compose' (a new track in your mood).")
+    hook_track: str = Field(default="", description="One of the user's own tracks for the cold open when it fits, else empty "
+                            "(an energetic trailer track is composed).")
     mascot: TMascot
     cast: list[TPerson] = Field(default_factory=list, description="0-5 cartoon people used in the shots (generic roles, never real named people).")
     sources: list[LSource] = Field(default_factory=list, description="3-10 pages you opened that confirm every real fact.")
     segments: list[TSegment]
 
 
-def _system(minutes: float, form: str, recent: str) -> str:
+def _system(minutes: float, form: str, recent: str, sounds: str = "") -> str:
     words = int(minutes * 60 * WORDS_PER_SECOND)
     form_rule = (f"Use the form: {form}: {FORMS[form]}." if form in FORMS else
                  "Choose the form that fits the material best:\n" + "\n".join(f"- {k}: {v}" for k, v in FORMS.items()))
@@ -235,24 +289,47 @@ cliffhanger line that leads straight into the title card. The segments start aft
 people as characters, no politics or rumours about real people.
 - Write your own words: never copy another channel's script, titles, characters or jokes.
 
-The pictures (one shot per line):
-- Something happens in every shot: pick the `action` that shows the line literally (a line about breaking out → \
-burst or crack; about control → strings; about turning off the grid → toggle-off; about spreading → clone or flood). \
-Fire it on the word that says it (`action_word`). Never the same action two shots in a row.
-- The mascot is the subject (an AI, a virus, money...): design it from what the video is about (the solar storm → a \
-sun, malware → a virus, savings → a coin), a new design each video, and set its face as hidden in every shot if \
-nothing in the story can be a character. It appears in most shots; its face and tint follow the story \
-(happy → smug → red and angry). Clone and flood it when the subject spreads.
-- Cartoon people act out lines about humans: engineers at a desk, an official at the stage podium (talking=true), \
-scientists in the lab, a running crowd in the city. Keep each cast member's look the same all video.
-- Objects are simple icons; a named company or place is a badge. 0-4 per shot, never clutter.
-- A slam (1-3 huge words) only on a beat's punchline, about 1 shot in 6. A date card when a real dated event comes in.
-- Backdrops change with the meaning; never more than 3 shots in a row on the same one. Use whip/zoom/flash cuts \
-between segments and on big turns; plain cuts elsewhere.
+You are the animation director, not an asset picker. For every line, think in this order before choosing anything:
+narration → meaning → emotion → visual concept → characters → animation → camera → text → sound → timing, and ask:
+"what must the audience see, feel and understand at this exact moment?" Fill `meaning`, `kind`, `importance`, `tone`,
+`emphasis` and `visual_idea` first, then the visuals that serve them.
+
+Directing rules:
+- Visual hierarchy by importance. low: one subtle visual, camera still or a slow pan, no text. medium: a character
+move or reaction plus one supporting visual. high: a new visual, a camera move, the emphasised words on screen.
+critical (the hook's key lines, reveals, turns): strong action + character reaction + big typography + camera punch
++ sound, all on the same word. Most lines are low or medium, so the high ones land.
+- Emphasis: pick only the words that carry the line ("millions of dollars in losses", not the whole sentence) and what
+happens on them (`emphasis_fx`): big words, a zoom, a reaction (`mood_after` / `mascot_after`), money raining, a
+flash. "Then everything changed": on "changed" the faces change, the setting changes (`backdrop_after`), the camera
+pushes in and a sound hits. Never emphasise every line.
+- Every sentence gets the picture of its own meaning, never generic motion behind the voice. Abstract ideas become a
+visual metaphor (inflation → a shrinking coin; a bottleneck → a funnel jammed with packets).
+- Characters are cast per scene from what the line is about: an AI engineer, a government official, a hacker in a
+hoodie at a glowing screen, a 19th-century telegraph operator in a period coat. Give each its age, build, outfit,
+headwear, what it holds and its personality; the same person keeps their look, but bring in new people whenever the
+story needs someone else. Poses and faces act the line out (cowering, celebrating, typing, arms crossed...).
+- The mascot is the subject (an AI, a virus, money...): designed from what the video is about (a solar storm → a sun,
+malware → a virus, savings → a coin), new each video; hidden in every shot if nothing can be a character. Its face
+and tint follow the story; clone or flood it when the subject spreads.
+- Something happens in every shot (`action` on its `action_word`), never the same action, pose, camera move or cut
+twice in a row, and never more than 3 shots on the same setting. One consistent style, constant variation.
+- Objects: an icon when one shows it exactly, a badge for a named company or place, and a custom drawing when neither
+does. A date card when a real dated event comes in. Slams only for punchlines.
+- Tone of voice follows the sentence: an important fact is firmer and slower, a reveal dramatic, a warning urgent, a
+question curious, an emotional moment soft, a conclusion confident.
 - countdown: each segment is one entry with its `number` and `heading`; its first line is that entry's setup.
 
+Custom drawings (`svg`, `scene_art`, `held_svg`): when nothing built in shows the thing, draw it yourself as flat,
+bold cartoon vector art in the style of the video: an SVG fragment (no <svg> wrapper) for a 200x200 box using only
+path, circle, ellipse, rect, polygon, polyline, line and g, solid fills, dark outlines (stroke #15151c, width 4-6),
+2-5 colours, simple shapes, no text, no images, no scripts, under 1500 characters. Use them where they matter (about
+1 shot in 4), not for things an icon already shows.
+
 Actions:
-{ACTION_HELP}"""
+{ACTION_HELP}
+
+{sounds}"""
 
 
 def _history(cfg: Config) -> list[dict]:
@@ -285,7 +362,8 @@ def write_script(cfg: Config, req: ToonRequest, avoid: str = "") -> ToonScript:
     if avoid:
         prompt += f"\n\n{avoid}"
     prompt += ("\n- Research budget: at most 8 web searches and 6 opened pages, then write.")
-    return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, req.form, recent), prompt, ToonScript,
+    sounds = media.prompt_block(cfg) + "\nIn this video, `music` and `hook_track` name the user's own tracks only when they fit; otherwise 'compose' / empty."
+    return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, req.form, recent, sounds), prompt, ToonScript,
                allow_web=True, effort=cfg.claude_effort, timeout=2400)
 
 
@@ -359,7 +437,9 @@ def check_facts(cfg: Config, sc: ToonScript, progress: Progress) -> tuple[ToonSc
 
 def _look(p: TPerson) -> dict:
     return {"skin": SKINS[p.skin % len(SKINS)], "hair": p.hair, "hairColor": p.hair_color, "beard": p.beard,
-            "glasses": p.glasses, "shirt": p.shirt, "tie": p.tie or None, "pants": p.pants, "coat": p.coat or None}
+            "glasses": p.glasses, "shirt": p.shirt, "tie": p.tie or None, "pants": p.pants, "coat": p.coat or None,
+            "age": p.age, "build": p.build, "outfit": p.outfit, "headwear": p.headwear,
+            "held": p.held.strip().lower()[:40] or None, "heldSvg": clean_svg(p.held_svg, f"h{p.id}") or None}
 
 
 def _style(cfg: Config, seed: int) -> dict:
@@ -379,6 +459,64 @@ def _spoken_number(n: int) -> str:
 
 
 TITLE_SECONDS = 2.4  # the title card after the cold open
+# Importance sets the visual intensity: how fast the action plays (seconds), the camera, the default emphasis.
+INTENSITY = {"low": (1.3, "still"), "medium": (0.9, "push"), "high": (0.6, "push"), "critical": (0.4, "push")}
+POSE_SWAP = {"stand": "think", "point": "present", "shrug": "arms-crossed", "think": "point", "hands-head": "cower",
+             "present": "point", "sit": "typing", "arms-crossed": "shrug", "wave": "celebrate", "typing": "think",
+             "celebrate": "hands-up", "hands-up": "celebrate", "cower": "hands-head", "facepalm": "shrug",
+             "hold-up": "present", "run": "run", "sneak": "sneak"}
+
+
+def _norm(w: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", w.lower())
+
+
+def _find_phrase(words, phrase: str) -> tuple[float, float] | None:
+    """Where in the line's audio the emphasised phrase is spoken (start of its first word, end of its last).
+    Matched on the letters, since edge-tts times some word groups as one ('90 percent', 'In 1859')."""
+    want = "".join(_norm(w) for w in phrase.split())
+    if not want or not words:
+        return None
+    text, owner = "", []
+    for k, w in enumerate(words):
+        n = _norm(w.text)
+        text += n
+        owner += [k] * len(n)
+    at = text.find(want)
+    if at < 0:  # not said as written: its first word, if it is there
+        first = _norm(phrase.split()[0])
+        at, want = text.find(first), first
+        if not first or at < 0:
+            return None
+    return words[owner[at]].start, words[owner[at + len(want) - 1]].end
+
+
+def _direct(shots: list[dict]) -> None:
+    """The director's last pass in code: intensity follows importance, and no camera move, cut, setting or pose
+    repeats too often (the writer is told the same; this makes sure)."""
+    cams = {"low": ["still", "pan"], "medium": ["push", "pan", "pull"], "high": ["push", "pull"], "critical": ["push"]}
+    last_pose: dict[str, str] = {}
+    for i, s in enumerate(shots):
+        if s.get("card") and s["card"]["kind"] in ("number", "title"):
+            continue
+        imp = s.get("importance", "medium")
+        if imp == "low":
+            s["slam"], s["emphasisFx"] = None, [fx for fx in s.get("emphasisFx", []) if fx in ("react",)]
+        if imp == "critical" and s.get("emphasis"):
+            s["emphasisFx"] = list(dict.fromkeys([*s.get("emphasisFx", []), "text", "zoom", "react"]))[:4]
+        prev = [x for x in shots[max(0, i - 2):i] if not x.get("card") or x["card"]["kind"] == "date"]
+        if s["camera"] not in cams[imp] or (len(prev) == 2 and all(x["camera"] == s["camera"] for x in prev)):
+            options = [c for c in cams[imp] if not prev or c != prev[-1]["camera"]] or cams[imp]
+            s["camera"] = options[i % len(options)]
+        if len(prev) == 2 and all(x["enter"] == s["enter"] for x in prev) and s["enter"] != "cut":
+            s["enter"] = "cut"
+        if len(prev) >= 2 and all(x["backdrop"] == s["backdrop"] for x in prev):
+            s["tone"] = (s["tone"] + 1 + i) % 5  # a fourth shot in the same setting at least changes its colour
+        for pp in s.get("people") or []:
+            key = pp["look"]["shirt"] + pp["look"]["hair"]
+            if last_pose.get(key) == pp["pose"] and pp["pose"] not in ("run", "sit", "typing"):
+                pp["pose"] = POSE_SWAP.get(pp["pose"], "think")
+            last_pose[key] = pp["pose"]
 
 
 def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: Progress, seed: int) -> tuple[dict, dict]:
@@ -391,15 +529,29 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
         if sc.form == "countdown" and seg.number:
             plan.append(("number", si, None, f"Number {_spoken_number(seg.number)}."))
         plan += [("line", si, sh, sh.line) for sh in seg.shots]
+    # Each run of lines in the same tone is one take (calm explaining, a firm fact, a dramatic reveal, an urgent
+    # warning...): the delivery follows the sentence, and within a run the voice still flows.
     progress("Recording the voiceover")
-    rate = f"+{max(0, min(40, req.speed))}%"
     voice = req.voice if req.voice in VOICES else "en-US-AndrewMultilingualNeural"
-    audio = synthesize_scenes([text for *_, text in plan], voice, work / "audio", cfg.tts_engine, cfg.kokoro_voice, rate)
+    tone_of = lambda item: item[2].tone if item[2] is not None else "firm"  # noqa: E731
+    audio: list = [None] * len(plan)
+    i = 0
+    while i < len(plan):
+        j = i
+        while j + 1 < len(plan) and tone_of(plan[j + 1]) == tone_of(plan[i]):
+            j += 1
+        pace, pitch, loud = TONES.get(tone_of(plan[i]), (0, 0, 0))
+        takes = synthesize_scenes([text for *_, text in plan[i:j + 1]], voice, work / "audio" / f"take{i:03d}",
+                                  cfg.tts_engine, cfg.kokoro_voice, f"{max(-30, min(50, req.speed + pace)):+d}%",
+                                  f"{pitch:+d}Hz", f"{loud:+d}%")
+        audio[i:j + 1] = takes
+        i = j + 1
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     cast = {p.id: p for p in sc.cast}
-    shots, cues, spoken = [], [], []
+    looks = {p.id: _look(p) for p in sc.cast}
+    shots, cues, spoken, used = [], [], [], {}
     tones = len(PALETTES[style["palette"]]["tones"])
     cue = lambda name, at, vol: cues.append({"src": rel(sfx[name]), "at": round(max(0.0, at), 3), "volume": vol, "name": name}) if name in sfx else None  # noqa: E731
     m = sc.mascot
@@ -418,13 +570,16 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
         t += TITLE_SECONDS
         music_from = max(0.0, t - 0.4)
 
-    for i, ((kind, si, sh, text), sa) in enumerate(zip(plan, audio)):
-        if kind != "hook" and not any(s.get("card", {}) and s["card"].get("kind") == "title" for s in shots):
+    for n, ((kind, si, sh, text), sa) in enumerate(zip(plan, audio)):
+        if kind != "hook" and not any((x.get("card") or {}).get("kind") == "title" for x in shots):
             title_card()  # once, after the cold open (first, if there is none)
         seg = sc.segments[si] if si >= 0 else None
-        lead = 0.35 if kind == "number" else 0.12
+        imp = sh.importance if sh is not None else "high"
+        # A beat of silence before a reveal or a critical line, and after one that asks for a pause.
+        lead = 0.35 if kind == "number" else 0.45 if sh is not None and (imp == "critical" or sh.kind == "reveal") else 0.12
         talk = media_seconds(sa.path)
-        duration = round(lead + talk + (0.55 if kind == "number" else 0.22), 3)
+        tail = 0.55 if kind == "number" else 0.6 if sh is not None and "pause" in sh.emphasis_fx else 0.22
+        duration = round(lead + talk + tail, 3)
         words = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words]
         tone = (si if si >= 0 else 2) % tones
         if kind == "number":
@@ -433,95 +588,158 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
             cue("whoosh", t - 0.05, 0.6)
             cue("impact", t + 0.25, 0.7)
         else:
-            key = re.sub(r"[^a-z0-9]", "", sh.action_word.lower())
-            hit = next((w for w in sa.words if key and re.sub(r"[^a-z0-9]", "", w.text.lower()) == key), None)
+            key = _norm(sh.action_word)
+            hit = next((w for w in sa.words if key and _norm(w.text) == key), None)
             at = round(lead + (hit.start if hit else talk * 0.35), 3)
-            people = [{"look": _look(cast[a.id]), "pose": a.pose, "mood": a.mood, "pos": a.pos, "talking": a.talking,
-                       "seated": sh.backdrop == "desk", "flip": a.pos in ("right", "far-right")}
+            span = _find_phrase(sa.words, sh.emphasis) if sh.emphasis.strip() else None
+            emph = {"text": sh.emphasis.strip()[:48], "at": round(lead + span[0], 3), "end": round(lead + span[1], 3)} if span else None
+            people = [{"look": looks[a.id], "pose": a.pose, "mood": a.mood, "moodAfter": a.mood_after or None, "pos": a.pos,
+                       "talking": a.talking, "seated": sh.backdrop == "desk", "flip": a.pos in ("right", "far-right"),
+                       "personality": cast[a.id].personality}
                       for a in sh.people[:3] if a.id in cast]
             if sh.backdrop == "stage" and people:  # the speaker stands at the podium, anyone else to the side
                 speaker = next((x for x in people if x["talking"]), people[0])
                 others = iter(["far-left", "far-right"])
                 for x in people:
                     x["pos"] = "center" if x is speaker else (x["pos"] if x["pos"] in ("far-left", "far-right") else next(others, "far-right"))
+            items = []
+            for k, o in enumerate(sh.objects[:4]):
+                art = clean_svg(o.svg, f"o{n}-{k}")
+                items.append({"icon": o.icon.strip().lower()[:40] or "sparkles", "label": o.label[:28] or None,
+                              "badge": o.badge, "svg": art or None})
+            speed, _ = INTENSITY.get(imp, INTENSITY["medium"])
             shot = {"backdrop": sh.backdrop, "tone": tone, "action": sh.action, "at": at, "camera": sh.camera,
-                    "enter": "whip" if kind == "hook" and sh.enter == "cut" else sh.enter,
-                    "items": [{"icon": o.icon.strip().lower()[:40] or "sparkles", "label": o.label[:28] or None, "badge": o.badge}
-                              for o in sh.objects[:4]],
+                    "enter": "whip" if kind == "hook" and sh.enter == "cut" else sh.enter, "items": items,
                     "mascot": None if sh.mascot == "hidden" else {"mood": sh.mascot, "tint": sh.mascot_tint,
-                                                                   "pos": sh.mascot_pos, "size": sh.mascot_size},
+                                                                   "pos": sh.mascot_pos, "size": sh.mascot_size,
+                                                                   "moodAfter": sh.mascot_after or None},
                     "people": people, "crowd": sh.crowd, "slam": sh.slam[:24].upper() or None,
                     "card": {"kind": "date", "text": sh.date[:20]} if sh.date else None,
-                    "values": [float(v) for v in sh.values[:5]]}
-            # Sounds: the action on its word, a whoosh on whip cuts, a light swish on every other cut, a pop on slams.
-            cue(ACTION_SOUND.get(sh.action, ""), t + at, 0.85 if kind == "hook" else 0.75)
+                    "values": [float(v) for v in sh.values[:5]], "importance": imp, "kind": sh.kind,
+                    "emphasis": emph, "emphasisFx": list(dict.fromkeys(sh.emphasis_fx))[:4] if emph else [],
+                    "backdropAfter": sh.backdrop_after or None, "speed": speed,
+                    "sceneArt": clean_svg(sh.scene_art, f"s{n}") or None, "sceneArtPos": sh.scene_art_pos}
+            # Sounds: the action on its word, the emphasis hit, a whoosh on whip cuts, a swish on other cuts, the
+            # writer's own cues (the user's files when they fit).
+            loud = {"low": 0.55, "medium": 0.7, "high": 0.8, "critical": 0.9}.get(imp, 0.7)
+            cue(ACTION_SOUND.get(sh.action, ""), t + at, loud)
+            if emph and imp in ("high", "critical"):
+                cue("impact" if imp == "critical" else "pop", t + emph["at"], loud)
+                if imp == "critical":
+                    cue("shimmer", t + emph["at"] + 0.15, 0.5)
             if shot["enter"] == "whip":
                 cue("whoosh", t - 0.05, 0.6)
             elif shots:
                 cue("swish", t - 0.03, 0.3)
             if shot["slam"]:
                 cue("pop", t + max(0.0, at - 0.1), 0.6)
+            cues += media.resolve_cues(sh.sounds, sa.words, t + lead, cfg, work / "sfx", rel, 2, used)
             if kind == "hook":
                 hook_cuts.append(t)
         shots.append({"start": round(t, 3), "duration": duration, "lead": lead, "audio": rel(sa.path), "text": text,
                       "words": words, "segment": si, **shot})
         spoken += [(t + lead + w.start, t + lead + w.end) for w in sa.words]
         t += duration
-    if not any((s.get("card") or {}).get("kind") == "title" for s in shots):
+    if not any((x.get("card") or {}).get("kind") == "title" for x in shots):
         title_card()
+    _direct(shots)
     t = round(t + 0.8, 3)
     (work / "music").mkdir(parents=True, exist_ok=True)
-    # The hook gets its own trailer track (a style the last videos didn't use), the rest a track composed for
-    # this video in a mood the last videos didn't use, rising with each segment's intensity.
-    hook_music = None
+    mine = {mm.name for mm in media.music(cfg) if mm.path is not None}
+    # The hook: one of the user's own tracks when Claude picked one that fits (and no recent video used), else a
+    # trailer track in a style the last videos didn't use.
+    hook_music, choice_hook = None, ""
     if hook_cuts:
-        used = [h.get("trailer") for h in _history(cfg)[-3:]]
-        trailer = random.Random(seed).choice([x for x in variety.TRAILERS if x not in used] or list(variety.TRAILERS))
-        style["trailer"] = trailer
-        hook_music = composer.trailer(trailer, music_from + 0.4, [c for c in hook_cuts[1:]] + [music_from], seed,
-                                      work / "music" / "hook.wav")
-    recent_moods = [n[5:] for n in media.recent_music(cfg) if n.startswith("mood:")][-3:]
-    mood = sc.mood if sc.mood not in recent_moods else media.fresh_mood(cfg, tuple(MusicMood.__args__), seed)
-    seg_starts = [next(s["start"] for s in shots if s["segment"] == si) for si in range(len(sc.segments))]
-    bounds = list(zip(seg_starts, [*seg_starts[1:], t]))
-    sections = [composer.Section(max(0.0, a - music_from), b - music_from, sc.segments[si].intensity) for si, (a, b) in enumerate(bounds)]
-    track = composer.compose(mood, sections, t - music_from, seed, work / "music" / "score.wav")
-    media.note_music(cfg, f"mood:{mood}")
+        if sc.hook_track in mine and media.fresh_track(cfg, sc.hook_track):
+            hook_music = media.pick_music(cfg, sc.hook_track, work / "music", music_from + 0.4)
+            choice_hook = sc.hook_track
+            media.note_music(cfg, sc.hook_track)
+        else:
+            used_t = [h.get("trailer") for h in _history(cfg)[-3:]]
+            trailer = random.Random(seed).choice([x for x in variety.TRAILERS if x not in used_t] or list(variety.TRAILERS))
+            style["trailer"], choice_hook = trailer, f"trailer ({trailer})"
+            hook_music = composer.trailer(trailer, music_from + 0.4, [c for c in hook_cuts[1:]] + [music_from], seed,
+                                          work / "music" / "hook.wav")
+    # The rest: the user's own track when it fits, else a track composed in a mood the last videos didn't use.
+    if sc.music in mine and media.fresh_track(cfg, sc.music):
+        track, mood = media.pick_music(cfg, sc.music, work / "music", t - music_from), sc.music
+        media.note_music(cfg, sc.music)
+    else:
+        recent_moods = [x[5:] for x in media.recent_music(cfg) if x.startswith("mood:")][-3:]
+        mood = sc.mood if sc.mood not in recent_moods else media.fresh_mood(cfg, tuple(MusicMood.__args__), seed)
+        seg_starts = [next(x["start"] for x in shots if x["segment"] == si) for si in range(len(sc.segments))]
+        bounds = list(zip(seg_starts, [*seg_starts[1:], t]))
+        sections = [composer.Section(max(0.0, a - music_from), b - music_from, sc.segments[si].intensity)
+                    for si, (a, b) in enumerate(bounds)]
+        track = composer.compose(mood, sections, t - music_from, seed, work / "music" / "score.wav")
+        media.note_music(cfg, f"mood:{mood}")
     props = {
         "fps": cfg.fps, "duration": t, "title": sc.title, "palette": PALETTES[style["palette"]],
         "mascot": {"shape": m.shape, "color": m.color if re.fullmatch(r"#[0-9a-fA-F]{6}", m.color) else "#2F9BFF",
                    "accessory": m.accessory, "name": m.name},
         "style": {"slam": style["slam"], "card": style["card"], "seed": style["seed"]},
         "shots": shots, "captions": req.captions, "watermark": req.watermark.strip()[:40] or None,
-        "music": rel(track), "musicFrom": round(music_from, 3), "musicMood": mood,
+        "music": rel(track) if track else None, "musicFrom": round(music_from, 3), "musicMood": mood,
+        "musicChoice": mood if mood in mine else f"composed ({mood})", "hookChoice": choice_hook,
         "hookMusic": rel(hook_music) if hook_music else None, "hookEnd": round(music_from + 0.4, 3),
         "speech": media.speech_spans(spoken), "cues": cues,
     }
-    props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
+    props["sfxLevels"] = media.level_sounds(props, work, [x["audio"] for x in shots if x.get("audio")])
     return props, style
 
 
-def _fresh_mascot(cfg: Config, sc: ToonScript, seed: int) -> None:
-    """Never the same mascot as the last 3 videos: a repeated generic body gets another one, and a repeated
-    colour another colour (a body that fits the subject, like a sun for a solar storm, is kept)."""
-    rng = random.Random(seed)
-    past = _history(cfg)[-3:]
-    shapes = [str(h.get("mascot", "")).split(" ")[0] for h in past]
-    colors = [str(h.get("mascot_color", "")).lower() for h in past]
-    m = sc.mascot
-    if m.shape in shapes and m.shape in GENERIC:
-        m.shape = rng.choice([g for g in GENERIC if g not in shapes] or list(GENERIC))
-    if m.color.lower() in colors or any(_close(m.color, c) for c in colors if c):
-        pool = ["#2F9BFF", "#FF5D8F", "#2FB36D", "#8E5CF7", "#14B8A6", "#F15BB5", "#FFB703", "#E5484D", "#00BBF9", "#FF8C42"]
-        m.color = rng.choice([c for c in pool if not any(_close(c, x) for x in colors if x)] or pool)
+# ---------- custom drawings Claude makes (sanitised) ----------
+
+SVG_TAGS = {"g", "path", "circle", "ellipse", "rect", "polygon", "polyline", "line", "defs", "linearGradient",
+            "radialGradient", "stop"}
+SVG_ATTRS = {"d", "cx", "cy", "r", "rx", "ry", "x", "y", "width", "height", "x1", "y1", "x2", "y2", "points", "fill",
+             "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity",
+             "transform", "id", "offset", "stop-color", "stop-opacity", "gradientUnits", "fx", "fy", "fill-rule",
+             "stroke-dasharray"}
+_SAFE_VALUE = re.compile(r"^[#\w\s.,()%:+-]*$")
 
 
-def _close(a: str, b: str) -> bool:
+def clean_svg(fragment: str, uid: str) -> str:
+    """A drawing Claude wrote, reduced to plain vector shapes: only whitelisted elements and attributes,
+    no scripts, links, images, events or styles; ids made unique per drawing; empty if it isn't valid."""
+    import xml.etree.ElementTree as ET
+
+    text = re.sub(r"</?svg[^>]*>", "", (fragment or "").strip(), flags=re.I)
+    text = re.sub(r"\sxmlns(:\w+)?=\"[^\"]*\"", "", text)
+    if not text or len(text) > 6000:
+        return ""
     try:
-        x, y = int(a.lstrip("#"), 16), int(b.lstrip("#"), 16)
-    except ValueError:
-        return False
-    return sum(abs(((x >> k) & 255) - ((y >> k) & 255)) for k in (16, 8, 0)) < 90
+        root = ET.fromstring(f"<g>{text}</g>")
+    except ET.ParseError:
+        return ""
+    count = 0
+
+    def walk(el) -> bool:
+        nonlocal count
+        count += 1
+        tag = el.tag.split("}")[-1]
+        if tag not in SVG_TAGS or count > 160:
+            return False
+        for k in list(el.attrib):
+            v = el.attrib[k]
+            key = k.split("}")[-1]
+            if key not in SVG_ATTRS or not _SAFE_VALUE.match(v) or "javascript" in v.lower():
+                del el.attrib[k]
+            elif key == "id":
+                el.attrib[k] = f"{uid}-{v}"
+            elif "url(#" in v:
+                el.attrib[k] = re.sub(r"url\(#([\w-]+)\)", lambda m_: f"url(#{uid}-{m_.group(1)})", v)
+        el.text = el.tail = None
+        for child in list(el):
+            if not walk(child):
+                el.remove(child)
+        return True
+
+    walk(root)
+    if count < 2 or not len(root):
+        return ""
+    out = "".join(ET.tostring(child, encoding="unicode") for child in root)
+    return re.sub(r"\sxmlns(:\w+)?=\"[^\"]*\"", "", out)[:8000]
 
 
 # ---------- the run ----------
