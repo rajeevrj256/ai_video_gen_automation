@@ -250,7 +250,8 @@ def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = 
     if (proc.returncode != 0 or not out_path.exists()) and gpu:
         # GPU encoding (NVENC) fails outright on machines without a usable NVIDIA GPU
         # rather than falling back, so retry once with normal CPU encoding.
-        _gpu_failed(proc)
+        if _gpu_error(proc):
+            _gpu_failed(proc)
         cmd = _remotion_cmd(cli, composition, out_path, props_path, crf, False)
         proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
@@ -274,10 +275,21 @@ def _gpu_wanted() -> bool:
     return bool(_env("REEL_HWACCEL")) and _env("REEL_HWACCEL") != "disable" and not _gpu_broken["why"]
 
 
+_GPU_ERROR = re.compile(r"nvenc|nvcuda|cuda|OpenEncodeSession|hardware.?accelerat|No capable devices|"
+                        r"driver does not support|Cannot load .*nv|encoder .* not available", re.I)
+
+
+def _gpu_error(proc) -> bool:
+    """Whether a failed render failed because of the GPU encoder. Only then is the GPU switched off:
+    a part that timed out loading the page ('Waiting for root component to load') once turned GPU
+    encoding off for every later render."""
+    return bool(_GPU_ERROR.search(_ANSI.sub("", (proc.stderr or "") + (proc.stdout or ""))))
+
+
 def _gpu_failed(proc) -> None:
-    tail = (proc.stderr.strip() or proc.stdout.strip())[-400:]
-    _gpu_broken["why"] = tail or "GPU encoding failed"
-    log.warning("GPU encoding failed, using CPU encoding from now on: %s", tail)
+    why = _first_error(proc)
+    _gpu_broken["why"] = why or "GPU encoding failed"
+    log.warning("GPU encoding failed, using CPU encoding from now on: %s", why)
 
 
 def _free_ram_gb() -> float | None:
@@ -349,7 +361,10 @@ def _remotion_cmd(cli: Path, composition: str, out: Path, props_path: Path, crf:
            # bt709 tags the file as standard TV-range colour, so phones don't show it washed out.
            "--codec=h264", "--color-space=bt709", "--overwrite",
            # Frames go to the encoder as JPEG; the default quality (80) softens text edges.
-           "--jpeg-quality=95", f"--concurrency={concurrency or _concurrency()}"]
+           "--jpeg-quality=95", f"--concurrency={concurrency or _concurrency()}",
+           # Remotion waits 30 s for each browser tab to load the video page; on a busy laptop a tab
+           # took longer ('A delayRender() "Waiting for root component to load" ... timed out').
+           f"--timeout={RENDER_TAB_TIMEOUT}"]
     # Remotion downloads its own headless Chrome on first render. Where that
     # download is blocked, REEL_CHROME can point at an installed Chrome/Chromium.
     # REEL_CHROME=chrome-for-testing uses Remotion's full test browser instead of the headless
@@ -372,6 +387,7 @@ def _remotion_cmd(cli: Path, composition: str, out: Path, props_path: Path, crf:
     return cmd + _port_args() + (extra or [])
 
 
+RENDER_TAB_TIMEOUT = 180000  # ms a browser tab may take to load the page or a frame's media
 PART_TRIES = 3  # a part that fails is rendered again in a fresh process, up to this many times in all
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -436,9 +452,10 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
             if proc.returncode == 0 and part.exists():
                 ok.write_text("gpu" if gpu else "cpu")
                 break
-            if gpu:  # GPU encoding failed: this part and the rest on the CPU (not counted as a try)
+            if gpu and _gpu_error(proc):  # the GPU encoder failed: this part and the rest on the CPU
                 _gpu_failed(proc)
-                progress("GPU encoding didn't work on this computer; encoding on the CPU instead")
+                progress(f"GPU encoding didn't work on this computer ({_gpu_broken['why'][:160]}); "
+                         "encoding on the CPU instead")
                 gpu, tries = False, tries - 1
                 continue
             why = _first_error(proc)
