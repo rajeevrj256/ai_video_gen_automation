@@ -314,14 +314,42 @@ def _concurrency() -> int:
     return cores if free is None else max(2, min(cores, int(free / 0.9)))
 
 
+def _free_port() -> int:
+    """A free port for one render's file server, picked at random from a high range. Remotion picks the
+    first free one from 3000 up in each process, and two at once (Remotion Studio on 3000, a second job's
+    render or preview) can land on the same port."""
+    import socket
+
+    for _ in range(50):
+        port = random.randint(20000, 39999)
+        try:
+            for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+                try:
+                    with socket.socket(family, socket.SOCK_STREAM) as sock:
+                        sock.bind((host, port))
+                except OSError as exc:
+                    if family == socket.AF_INET6 and getattr(exc, "errno", None) in (97, 99, 10047, 10049):
+                        continue  # no IPv6 on this machine
+                    raise
+            return port
+        except OSError:
+            continue
+    return 0
+
+
+def _port_args() -> list[str]:
+    port = _free_port()
+    return [f"--port={port}"] if port else []
+
+
 def _remotion_cmd(cli: Path, composition: str, out: Path, props_path: Path, crf: int, gpu: bool,
-                  extra: list[str] | None = None) -> list[str]:
+                  extra: list[str] | None = None, concurrency: int | None = None) -> list[str]:
     cmd = [str(cli), "render", "src/index.ts", composition, str(out),
            f"--props={props_path}", f"--public-dir={props_path.parent}",
            # bt709 tags the file as standard TV-range colour, so phones don't show it washed out.
            "--codec=h264", "--color-space=bt709", "--overwrite",
            # Frames go to the encoder as JPEG; the default quality (80) softens text edges.
-           "--jpeg-quality=95", f"--concurrency={_concurrency()}"]
+           "--jpeg-quality=95", f"--concurrency={concurrency or _concurrency()}"]
     # Remotion downloads its own headless Chrome on first render. Where that
     # download is blocked, REEL_CHROME can point at an installed Chrome/Chromium.
     # REEL_CHROME=chrome-for-testing uses Remotion's full test browser instead of the headless
@@ -341,7 +369,20 @@ def _remotion_cmd(cli: Path, composition: str, out: Path, props_path: Path, crf:
         cmd += [f"--hardware-acceleration={_env('REEL_HWACCEL')}", f"--video-bitrate={bitrate}"]
     else:
         cmd.append(f"--crf={crf}")
-    return cmd + (extra or [])
+    return cmd + _port_args() + (extra or [])
+
+
+PART_TRIES = 3  # a part that fails is rendered again in a fresh process, up to this many times in all
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _first_error(proc) -> str:
+    """The first error Remotion printed, without colour codes (the end of the output is often only the
+    clean-up that followed it)."""
+    text = _ANSI.sub("", (proc.stderr or "") + "\n" + (proc.stdout or ""))
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    first = next((ln for ln in lines if re.search(r"\berror\b", ln, re.I)), "")
+    return (first or " ".join(lines[-3:]))[:600]
 
 
 def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, composition: str, crf: int,
@@ -364,6 +405,11 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
         for old in parts.glob("*"):
             old.unlink()
         mark.write_text(stamp)
+    # The picture parts load no sound (props `silent`, remotion/src/Audio.tsx): a --muted render still
+    # downloads every sound in the background, and one that started in a part's last frames failed the
+    # whole render with ECONNREFUSED once the part's file server had closed.
+    silent_path = props_path.with_name("props-silent.json")
+    silent_path.write_text(json.dumps({**props, "silent": True}, ensure_ascii=False), encoding="utf-8")
     step = PART_SECONDS * fps
     ranges = [(a, min(a + step, total) - 1) for a in range(0, total, step)]
     files, drawn, started = [], 0, time.time()
@@ -372,26 +418,36 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
         files.append(part)
         if part.exists() and ok.exists():
             continue
-        gpu = _gpu_wanted()
-        for attempt in (gpu, False) if gpu else (False,):
-            cmd = _remotion_cmd(cli, composition, part, props_path, crf, attempt, [f"--frames={a}-{b}", "--muted"])
-            log.info("Rendering part %d/%d: %s", i + 1, len(ranges), " ".join(cmd))
+        gpu, tries, t0 = _gpu_wanted(), 0, time.time()
+        while True:
+            # A failed part is tried again in a fresh process (twice; the last time with half the browser
+            # tabs, in case memory ran out) before the render gives up: one bad minute must not cost hours.
+            tries += 1
+            cmd = _remotion_cmd(cli, composition, part, silent_path, crf, gpu, [f"--frames={a}-{b}", "--muted"],
+                                max(1, _concurrency() // 2) if tries == PART_TRIES else None)
+            log.info("Rendering part %d/%d (try %d): %s", i + 1, len(ranges), tries, " ".join(cmd))
             t0 = time.time()
             try:
                 proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
-                                      errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
+                                   errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
             except subprocess.TimeoutExpired:
                 raise RuntimeError(f"Part {i + 1} of {len(ranges)} (one minute of video) took over an hour, so the "
                                    "render stopped; the finished parts are kept and Resume continues from here.")
             if proc.returncode == 0 and part.exists():
-                ok.write_text("gpu" if attempt else "cpu")
+                ok.write_text("gpu" if gpu else "cpu")
                 break
-            if attempt:  # GPU encoding failed: this part and the rest on the CPU
+            if gpu:  # GPU encoding failed: this part and the rest on the CPU (not counted as a try)
                 _gpu_failed(proc)
                 progress("GPU encoding didn't work on this computer; encoding on the CPU instead")
+                gpu, tries = False, tries - 1
                 continue
-            tail = (proc.stderr.strip() or proc.stdout.strip())[-1500:]
-            raise RuntimeError(f"Remotion render failed on part {i + 1} ({proc.returncode}): {tail}")
+            why = _first_error(proc)
+            if tries < PART_TRIES:
+                log.warning("Part %d failed (try %d): %s", i + 1, tries, why)
+                progress(f"Editing: part {i + 1} of {len(ranges)} failed ({why[:120]}); trying it again")
+                continue
+            raise RuntimeError(f"Remotion render failed on part {i + 1} of {len(ranges)} after {tries} tries "
+                               f"({proc.returncode}): {why}. The finished parts are kept; Resume continues from here.")
         drawn += b - a + 1
         rate = (b - a + 1) / max(0.1, time.time() - t0)
         left = (total - b - 1) / max(0.01, drawn / max(0.1, time.time() - started)) / 60
@@ -401,7 +457,7 @@ def _render_in_parts(cli: Path, props: dict, props_path: Path, out_path: Path, c
     audio = parts / "audio.wav"
     if not audio.exists():
         cmd = [str(cli), "render", "src/index.ts", composition, str(audio), f"--props={props_path}",
-               f"--public-dir={props_path.parent}", "--codec=wav", "--overwrite"]
+               f"--public-dir={props_path.parent}", "--codec=wav", "--overwrite", *_port_args()]
         proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=PART_TIMEOUT, stdin=subprocess.DEVNULL)
         if proc.returncode != 0 or not audio.exists():

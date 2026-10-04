@@ -1,5 +1,6 @@
 import React from 'react';
-import {Html5Audio, Sequence, interpolate, staticFile, useVideoConfig} from 'remotion';
+import {Sequence, interpolate, staticFile, useVideoConfig} from 'remotion';
+import {Audio} from './Audio';
 import {clamp} from './theme';
 import type {Cue, Span} from './types';
 
@@ -32,7 +33,7 @@ export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: n
     }
     return (duck + (full - duck) * k) * fade * away;
   };
-  return <Html5Audio src={staticFile(src)} loop={loop} loopVolumeCurveBehavior="extend" volume={level} />;
+  return <Audio src={staticFile(src)} loop={loop} loopVolumeCurveBehavior="extend" volume={level} />;
 };
 
 // An effect that lands while the narrator is speaking plays at this share of its level, so the voice
@@ -47,7 +48,7 @@ export const Cues: React.FC<{cues: Cue[]; speech?: Span[]}> = ({cues, speech = [
       {cues.map((c, i) => (
         // No durationInFrames: every effect plays out its own tail.
         <Sequence key={i} name={`sound ${c.name}`} from={Math.round(c.at * fps)}>
-          <Html5Audio src={staticFile(c.src)} volume={c.volume * (inSpeech(c.at, speech) ? SPEECH_DUCK : 1)}
+          <Audio src={staticFile(c.src)} volume={c.volume * (inSpeech(c.at, speech) ? SPEECH_DUCK : 1)}
             trimBefore={Math.round((c.trim ?? 0) * fps) || undefined} />
         </Sequence>
       ))}

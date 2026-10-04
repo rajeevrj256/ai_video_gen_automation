@@ -1,5 +1,6 @@
 import React from 'react';
-import {Easing, Html5Audio, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Audio} from '../Audio';
 import {COLORS, FONT, clamp, exitProgress, useFonts} from '../theme';
 import {Layer} from '../Layer';
 import type {CaptionGroup} from '../types';
@@ -94,14 +95,14 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
       {(hook?.shots ?? []).map((s, i) =>
         s.audio ? (
           <Sequence key={`h${i}`} name={`hook voice ${i + 1}`} from={f(s.start)}>
-            <Html5Audio src={staticFile(s.audio)} />
+            <Audio src={staticFile(s.audio)} />
           </Sequence>
         ) : null,
       )}
       {beats.map((b, i) =>
         b.audio ? (
           <Sequence key={`a${i}`} name={`voice ${i + 1}`} from={f(b.start)}>
-            <Html5Audio src={staticFile(b.audio)} />
+            <Audio src={staticFile(b.audio)} />
           </Sequence>
         ) : null,
       )}
@@ -134,7 +135,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
             .filter((c) => c.card > 0 && !c.style) // newer breaks bring their own sound in the cues (Claude's pick)
             .map((c) => (
               <Sequence key={`s${c.index}`} name={`sfx chapter ${c.index}`} from={Math.max(0, f(c.start) - 3)} durationInFrames={f(1.2)}>
-                <Html5Audio src={staticFile(sfx.whoosh)} volume={0.3} />
+                <Audio src={staticFile(sfx.whoosh)} volume={0.3} />
               </Sequence>
             ))
         : null}
@@ -144,7 +145,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
 
 // A quiet bed under a chapter, faded in and out.
 const Ambience: React.FC<{src: string; frames: number}> = ({src, frames}) => (
-  <Html5Audio
+  <Audio
     src={staticFile(src)}
     loop
     volume={(fr) => interpolate(fr, [0, 30, frames - 30, frames], [0, 0.1, 0.1, 0], clamp)}

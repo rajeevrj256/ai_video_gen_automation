@@ -1,6 +1,7 @@
 import '@fontsource/permanent-marker/400.css';
 import React, {useEffect, useState} from 'react';
-import {Easing, Html5Audio, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Audio} from '../Audio';
 import {FONT, clamp, useFonts} from '../theme';
 import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
@@ -104,7 +105,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
       {shots.map((s, i) =>
         s.audio ? (
           <Sequence key={`v${i}`} name={`voice ${i + 1}`} from={f(s.start + s.lead)}>
-            <Html5Audio src={staticFile(s.audio)} />
+            <Audio src={staticFile(s.audio)} />
           </Sequence>
         ) : null,
       )}
