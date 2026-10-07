@@ -198,6 +198,26 @@ def _toon(m: Mixer, p: dict) -> None:
     _cues(m, p.get("cues"), speech)
 
 
+def _anim(m: Mixer, p: dict) -> None:
+    """remotion/src/anim/Anim.tsx: each shot's voice at its start + lead, the cold open's track, one track per
+    chapter (each over its own span, with Music's fades), the cues."""
+    f = lambda s: round(float(s) * m.fps)  # noqa: E731
+    speech = p.get("speech") or []
+    for s in p.get("shots") or []:
+        if s.get("audio"):
+            m.add(s["audio"], f(float(s["start"]) + float(s.get("lead") or 0)))
+    hook_end = float(p.get("hookEnd") or 0)
+    if p.get("hookMusic"):
+        n = f(hook_end + 4.2)
+        m.add(p["hookMusic"], 0, length_frames=n, volume=_music_level(
+            m.fps, min(n, m.frames), [s_ for s_ in speech if s_[0] < hook_end], 0.55, 0.2))
+    for x in p.get("musicParts") or []:
+        start, n = f(x["from"]), max(1, f(float(x["to"]) - float(x["from"])))
+        m.add(x["src"], start, length_frames=n, loop=True, volume=_music_level(
+            m.fps, min(n, m.frames - start), [(a - x["from"], b - x["from"]) for a, b in speech], 0.26, 0.13))
+    _cues(m, p.get("cues"), speech)
+
+
 def mix(props: dict, composition: str, public: Path, out: Path, ffmpeg: str) -> None:
     """Write the soundtrack of `props` to `out` (48 kHz stereo WAV, exactly the video's length)."""
     fps = int(props.get("fps") or 30)
@@ -209,6 +229,8 @@ def mix(props: dict, composition: str, public: Path, out: Path, ffmpeg: str) -> 
         _story(m, props)
     elif composition == "Toon":
         _toon(m, props)
+    elif composition == "Anim":
+        _anim(m, props)
     else:
         raise ValueError(f"No soundtrack mixer for {composition}")
     m.write(out)

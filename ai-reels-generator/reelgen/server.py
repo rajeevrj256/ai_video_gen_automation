@@ -59,9 +59,9 @@ class UpdateBody(BaseModel):
 
 
 def job_label(job: dict) -> str:
-    inp = job.get("toon_input") or job.get("stick_input") or job.get("script_input") or {}
+    inp = job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input") or {}
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
-    kind = ("Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
+    kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
@@ -161,6 +161,9 @@ class JobManager:
                 from .rerender import rerender
                 r = job["rerender"]
                 reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress)]
+            elif job.get("anim_input"):  # Animated videos (reelgen/animated.py), new or resumed
+                from .animated import AnimRequest, run_anim_job
+                reports = run_anim_job(cfg, AnimRequest(**job["anim_input"]), job["count"], progress, job.get("anim_resume"))
             elif job.get("toon_input"):  # Toon Explainers (reelgen/toon.py), new or resumed
                 from .toon import ToonRequest, run_toon_job
                 reports = run_toon_job(cfg, ToonRequest(**job["toon_input"]), job["count"], progress, job.get("toon_resume"))
@@ -346,6 +349,12 @@ def script_view(d: dict) -> dict:
                  + (f": {(b.get('visual') or {}).get('headline')}" if (b.get("visual") or {}).get("headline") else "")}
                 for b in c.get("beats") or []]})
         title = d.get("youtube_title") or d.get("topic", "")
+    elif "cold_open" in d and "chapters" in d:  # Animated video (reelgen/animated.py)
+        for name, shots in [("Cold open", d.get("cold_open") or [])] + [
+                (f"{i}. {c.get('title', '')}", c.get("shots") or []) for i, c in enumerate(d.get("chapters") or [], 1)]:
+            sections.append({"heading": name, "lines": [
+                {"text": sh.get("line", ""), "note": sh.get("scene", "")[:140]} for sh in shots]})
+        title = d.get("title", "")
     elif "segments" in d:  # Toon Explainer (reelgen/toon.py)
         for i, seg in enumerate(d.get("segments") or [], 1):
             head = (f"#{seg['number']} " if seg.get("number") else f"{i}. ") + (seg.get("heading") or "")
@@ -426,6 +435,20 @@ class ToonRequestBody(BaseModel):
     voice: str = "en-US-AndrewMultilingualNeural"
     speed: int = 12
     captions: bool = True
+    watermark: str = ""
+    count: int = 1
+
+
+class AnimRequestBody(BaseModel):
+    """Animated videos: every shot an AI picture and clip, made on this computer (reelgen/animated.py)."""
+    topic: str = ""
+    minutes: float = 7
+    style: str = "auto"
+    motion: str = "full"  # full | key | stills
+    quality: str = "standard"
+    voice: str = "en-US-AndrewMultilingualNeural"
+    speed: int = 8
+    captions: bool = False
     watermark: str = ""
     count: int = 1
 
@@ -900,6 +923,43 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "toon", "facts", "toon",
                            toon_input=given, captions=given["captions"])
 
+    @app.get("/api/anim/options")
+    def anim_options():
+        from .animated import ART_STYLES
+        from .toon import VOICES
+
+        return {"styles": {k: v[0] for k, v in ART_STYLES.items()}, "voices": VOICES}
+
+    @app.get("/api/anim/setup")
+    def anim_setup():
+        from . import anim_engine
+        return anim_engine.status()
+
+    @app.post("/api/anim/setup")
+    def anim_install():
+        from . import anim_engine
+        if not anim_engine.install():
+            raise HTTPException(409, "Already installing")
+        return {"ok": True}
+
+    @app.post("/api/anim")
+    def anim(body: AnimRequestBody):
+        from . import anim_engine
+        from .animated import ART_STYLES
+        from .toon import VOICES
+
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (the panel above the button).")
+        given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
+                 "style": body.style if body.style in ART_STYLES else "auto",
+                 "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
+                 "quality": "high" if body.quality == "high" else "standard",
+                 "voice": body.voice if body.voice in VOICES else "en-US-AndrewMultilingualNeural",
+                 "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
+                 "watermark": body.watermark.strip()[:40]}
+        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 3)), "anim", "facts", "anim",
+                           anim_input=given, captions=given["captions"])
+
     @app.post("/api/script-video")
     def script_video(body: ScriptVideoRequest):
         from .scriptvideo import parse_script
@@ -984,9 +1044,10 @@ def create_app(cfg: Config) -> FastAPI:
     @app.delete("/api/unfinished/{folder_id}")
     def discard_unfinished(folder_id: str):
         from .pipeline import CHECKPOINT
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT
         from .toon import CHECKPOINT as TOON_CHECKPOINT
         path = (cfg.output_dir / folder_id).resolve()
-        if path.parent != cfg.output_dir.resolve() or not ((path / CHECKPOINT).exists() or (path / TOON_CHECKPOINT).exists()):
+        if path.parent != cfg.output_dir.resolve() or not any((path / c).exists() for c in (CHECKPOINT, TOON_CHECKPOINT, ANIM_CHECKPOINT)):
             raise HTTPException(404, "Not an unfinished video")
         if folder_id in busy_folders():
             raise HTTPException(409, "It's being made right now")
@@ -998,16 +1059,25 @@ def create_app(cfg: Config) -> FastAPI:
         """Videos that stopped part-way (failed, or the app was closed) and can be resumed."""
         from .pipeline import unfinished
 
+        from .animated import anim_unfinished
         from .toon import toon_unfinished
 
         busy = busy_folders()
-        return [u for u in unfinished(cfg) + toon_unfinished(cfg) if u["id"] not in busy]
+        return [u for u in unfinished(cfg) + toon_unfinished(cfg) + anim_unfinished(cfg) if u["id"] not in busy]
 
     @app.post("/api/resume")
     def resume(body: dict):
         from .pipeline import unfinished
         from .toon import CHECKPOINT as TOON_CHECKPOINT, unfinished_toons
 
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT, unfinished_anims
+
+        anims = [f for f in body.get("folders", []) if f in unfinished_anims(cfg) and f not in busy_folders()]
+        if anims:  # Animated videos resume through their own pipeline too
+            saved = json.loads((cfg.output_dir / anims[0] / ANIM_CHECKPOINT).read_text(encoding="utf-8"))
+            given = saved.get("request") or {}
+            return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(anims), "resume",
+                               "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"))
         toons = [f for f in body.get("folders", []) if f in unfinished_toons(cfg) and f not in busy_folders()]
         if toons:  # Toon videos resume through their own pipeline, never the Shorts/long one
             saved = json.loads((cfg.output_dir / toons[0] / TOON_CHECKPOINT).read_text(encoding="utf-8"))
@@ -1043,6 +1113,13 @@ def create_app(cfg: Config) -> FastAPI:
         job = next((j for j in jobs.jobs if j["id"] == job_id), None)
         if job is None:
             raise HTTPException(404, "No such job")
+        if job.get("anim_input"):  # an Animated job resumes its own saved videos (anim-checkpoint.json)
+            from .animated import unfinished_anims
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_anims(cfg) and f not in busy_folders()]
+            if not saved:
+                raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
+            return jobs.submit(job["topic"], len(saved), "resume", "facts", "anim", anim_input=job["anim_input"],
+                               anim_resume=saved, captions=job.get("captions"))
         if job.get("toon_input"):  # a Toon job resumes its own saved videos (toon-checkpoint.json)
             from .toon import unfinished_toons
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_toons(cfg) and f not in busy_folders()]

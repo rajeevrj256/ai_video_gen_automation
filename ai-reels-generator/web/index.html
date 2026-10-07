@@ -320,7 +320,7 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
-        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="script">📜 Your script</button>
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="script">📜 Your script</button>
       </div></details>
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
@@ -493,6 +493,52 @@
       </div>
       <button class="primary" id="toBtn">✨ Make it</button>
       <p class="hint" id="toMsg"></p>
+    </div>
+  </section>
+
+  <section class="view" id="view-anim">
+    <div class="panel">
+      <h2>AI engine on this computer</h2>
+      <p class="hint">Animated videos are drawn, animated and scored by AI models running on your own graphics card: SDXL-Lightning
+        (pictures), LTX-Video (motion) and ACE-Step (music). No subscription; the first install downloads PyTorch (about 6 GB) and
+        each model the first time it's used (about 45 GB in all, into <code>tools/</code>).</p>
+      <div class="status-list" id="anSetup">Checking…</div>
+      <button id="anInstall" hidden>⬇ Install the AI engine</button>
+      <pre class="hint" id="anLog" hidden style="max-height:220px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
+    </div>
+    <div class="panel">
+      <h2>Animated video</h2>
+      <p class="hint">A 6-8 minute 16:9 film where every shot is new AI animation: Claude writes and directs it (fact-checked, sources
+        in the description), designs the characters and picks an art style the last videos didn't use; every shot gets its own
+        picture and moving clip, every chapter its own music. On a 4 GB card a 7-minute video with every shot animated takes about
+        a day: it saves every picture and clip as it goes, so Pause, Stop or a restart lose at most one clip.</p>
+      <label for="anTopic">Topic (optional)</label>
+      <textarea class="edit" id="anTopic" rows="2" placeholder="e.g. How the Great Molasses Flood happened / What lives at the bottom of the ocean. Leave empty and Claude picks one."></textarea>
+      <div class="grid2">
+        <div><label for="anStyle">Art style</label><select id="anStyle"><option value="auto">🎲 Claude picks (never the last 3)</option></select></div>
+        <div><label for="anMinutes">Length</label>
+          <select id="anMinutes"><option value="1">About 1 min (test)</option><option value="3">About 3 min</option><option value="6">About 6 min</option><option value="7" selected>About 7 min</option><option value="8">About 8 min</option></select></div>
+      </div>
+      <div class="grid2">
+        <div><label for="anMotion">Animation</label>
+          <select id="anMotion"><option value="full" selected>🎬 Every shot animated (slowest, ~1 day)</option>
+            <option value="key">✨ Hook + key shots animated, the rest camera moves (~half)</option>
+            <option value="stills">🖼️ Pictures with camera moves only (a few hours)</option></select></div>
+        <div><label for="anQuality">Clip resolution</label>
+          <select id="anQuality"><option value="standard" selected>832×480, upscaled (faster)</option><option value="high">1024×576 (about 1.5× slower)</option></select></div>
+      </div>
+      <div class="grid2">
+        <div><label for="anVoice">Narrator</label><select id="anVoice"></select></div>
+        <div><label for="anSpeed">Speaking speed</label>
+          <select id="anSpeed"><option value="0">Normal</option><option value="8" selected>A little faster (+8%)</option><option value="15">Fast (+15%)</option></select></div>
+      </div>
+      <div class="grid2">
+        <div><label for="anCaptions">Subtitles</label>
+          <select id="anCaptions"><option value="false" selected>🚫 None</option><option value="true">💬 Small subtitles</option></select></div>
+        <div><label for="anMark">Channel name on screen (optional)</label><input id="anMark" placeholder="e.g. your channel name"></div>
+      </div>
+      <button class="primary" id="anBtn">🎬 Make it</button>
+      <p class="hint" id="anMsg"></p>
     </div>
   </section>
 
@@ -686,6 +732,7 @@
   <button data-view="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Script</button>
   <button data-view="stick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><path d="M12 8v7M12 15l-4 6M12 15l4 6M7 11h10"/></svg>Stick</button>
   <button data-view="toon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a8 7 0 0 1 16 0c0 4-3.6 7-8 7-1.2 0-2.3-.2-3.3-.6L4 19l1-3.5A6.6 6.6 0 0 1 4 11z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/><path d="M9.5 13.5c1.4 1 3.6 1 5 0"/></svg>Toon</button>
+  <button data-view="anim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5l2 4M12 5l2 4M17 5l2 4"/><path d="M10 12.5v4l3.5-2z"/></svg>Anim</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
@@ -770,7 +817,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: loadAnimSetup }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -821,7 +868,7 @@ function renderLibrary() {
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : String(+!!v.verified) === libOk))
-    && (!libType || (libType === "ai" ? !["stick", "script", "toon"].includes(v.source) : v.source === libType));
+    && (!libType || (libType === "ai" ? !["stick", "script", "toon", "anim"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
@@ -1010,7 +1057,7 @@ async function openVideo(id) {
     ${verdict}
     ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
-    <div ${v.source === "stick" ? "hidden" : ""}>
+    <div ${["stick", "anim"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice &amp; subtitles</h4>
     <p class="hint">Re-make this video with another voice or with subtitles on/off. Same script and footage, no Claude tokens.</p>
     <div class="row">
@@ -1350,7 +1397,9 @@ const STICK_STEPS = [["Writing", /writing the (episode|Short)/], ["Voices", /Rec
   ["Checks", /Verifying/]];
 const TOON_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
   ["Editing", /Editing|Mixing/], ["Checks", /Verifying/]];
-const stepsOf = (j) => j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
+const ANIM_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
+  ["Pictures", /Drawing the pictures/], ["Animation", /motion prompts|Animating/], ["Music", /^Music|Music \(/], ["Editing", /Editing/], ["Checks", /Verifying/]];
+const stepsOf = (j) => j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
@@ -1421,7 +1470,7 @@ function jobCard(j) {
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
     + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
-      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "toon" ? " · 🎨 Toon" : "");
+      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -1495,7 +1544,7 @@ async function loadUnfinished() {
       <h2>Unfinished videos</h2>
       <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
-          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : "📱 Short"}</span></div>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : u.length === "anim" ? "🎬 Animated" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
@@ -2065,6 +2114,49 @@ $("#toBtn").onclick = async () => {
     show("create");
   } catch (e) { $("#toMsg").textContent = "Couldn't start it: " + e.message; }
   finally { $("#toBtn").disabled = false; }
+};
+
+// Animated videos (reelgen/animated.py): AI pictures, clips and music made by the local AI engine.
+async function loadAnimSetup() {
+  try {
+    const st = await api("/api/anim/setup");
+    const g = st.gpu || {};
+    $("#anSetup").innerHTML = [
+      ["AI engine", st.installed ? "✅ Installed" : st.installing ? "⏳ Installing…" : "Not installed yet"],
+      ["Graphics card", st.installed ? (g.cuda ? `${g.name} · ${g.vram_gb} GB` : "⚠️ none found: the engine would run on the CPU, far too slow") : "—"],
+      ["Downloaded models", `${st.models_gb} GB`], ["Free disk space", `${st.disk_free_gb} GB` + (st.disk_free_gb < 50 && st.models_gb < 40 ? " ⚠️ about 45 GB needed" : "")],
+      ...(st.error ? [["Last error", "⚠️ " + st.error]] : []),
+    ].map(([a, b]) => `<div><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join("");
+    $("#anInstall").hidden = st.installed || st.installing;
+    $("#anLog").hidden = !(st.installing || st.error);
+    $("#anLog").textContent = (st.log || []).join("\n");
+    $("#anLog").scrollTop = 1e9;
+    $("#anBtn").disabled = !st.installed;
+    if (st.installing && current === "anim") setTimeout(loadAnimSetup, 3000);
+  } catch (e) { $("#anSetup").textContent = "Couldn't check the engine: " + e.message; }
+}
+$("#anInstall").onclick = async () => {
+  if (!confirm("Install the AI engine? It downloads PyTorch for your graphics card and the AI libraries (several GB, 10-30 minutes). The app keeps working meanwhile.")) return;
+  try { await api("/api/anim/setup", { method: "POST" }); } catch (e) { alert(e.message); }
+  loadAnimSetup();
+};
+api("/api/anim/options").then((o) => {
+  $("#anVoice").innerHTML = Object.entries(o.voices).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
+  $("#anStyle").innerHTML += Object.entries(o.styles).map(([k, v]) => `<option value="${esc(k)}" title="${esc(v)}">${esc(k.replace(/-/g, " "))}</option>`).join("");
+}).catch(() => { $("#anVoice").innerHTML = '<option value="en-US-AndrewMultilingualNeural">Andrew (US)</option>'; });
+try { $("#anMark").value = localStorage.getItem("animMark") || ""; } catch (e) {}
+$("#anBtn").onclick = async () => {
+  const body = { topic: $("#anTopic").value, minutes: Number($("#anMinutes").value), style: $("#anStyle").value,
+                 motion: $("#anMotion").value, quality: $("#anQuality").value, voice: $("#anVoice").value,
+                 speed: Number($("#anSpeed").value), captions: $("#anCaptions").value === "true", watermark: $("#anMark").value, count: 1 };
+  try { localStorage.setItem("animMark", body.watermark); } catch (e) {}
+  $("#anBtn").disabled = true;
+  try {
+    await api("/api/anim", { method: "POST", body: JSON.stringify(body) });
+    $("#anMsg").textContent = "Started. Follow it on the Create tab (Pictures → Animation → Music → Editing).";
+    show("create");
+  } catch (e) { $("#anMsg").textContent = "Couldn't start it: " + e.message; }
+  finally { $("#anBtn").disabled = false; }
 };
 
 // Script Video: your own title, description, hook and script through the long-video pipeline.

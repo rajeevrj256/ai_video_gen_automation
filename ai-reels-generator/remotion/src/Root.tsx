@@ -14,6 +14,8 @@ import {StickStory} from './story/Story';
 import {storyDemoProps} from './story/demo';
 import type {StoryProps} from './story/types';
 import {Toon} from './toon/Toon';
+import {Anim} from './anim/Anim';
+import type {AnimProps} from './anim/types';
 import {toonDemoProps} from './toon/demo';
 import type {ToonProps} from './toon/types';
 
@@ -42,6 +44,13 @@ const calculateToonMetadata: CalculateMetadataFunction<ToonProps> = ({props}) =>
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
 });
+const calculateAnimMetadata: CalculateMetadataFunction<AnimProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+});
+// Real props come from reelgen/animated.py (AI pictures and clips in the video's folder); the demo is empty.
+const animDemoProps: AnimProps = {fps: 30, duration: 3, title: 'Animated', style: 'flat-vector', accent: '#FFB703', shots: [],
+  captions: false, hookEnd: 0, musicParts: [], speech: [], cues: []};
 const calculateThumbMetadata: CalculateMetadataFunction<ThumbProps> = ({props}) => thumbSize(props.wide);
 const thumbDemo: ThumbProps = {src: 'thumb/frame.jpg', text: 'Why no tax cut', highlight: 'tax cut', side: 'left',
   focusX: 0.6, focusY: 0.5, zoom: 1.1, accent: '#ffd23f', accent2: '#ffd23f', wide: true};
@@ -101,6 +110,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={toonDemoProps}
     calculateMetadata={calculateToonMetadata}
+  />
+  {/* 16:9 fully AI-animated video: pictures, clips and music made on this computer: reelgen/animated.py */}
+  <Composition
+    id="Anim"
+    component={Anim}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={90}
+    defaultProps={animDemoProps}
+    calculateMetadata={calculateAnimMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition
