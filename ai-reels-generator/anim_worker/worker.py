@@ -366,9 +366,40 @@ def ltx_pipeline(job: dict, dtype):
             pipe.enable_model_cpu_offload()
         else:
             pipe.to("cpu")
+        lean_vae(pipe)
     else:
         place(pipe, job)
     return pipe, mode
+
+
+def lean_vae(pipe) -> None:
+    """Keep the VAE (encoder 1.29 GB + decoder 1.03 GB in half precision) off the card while the model computes.
+    Model offload loads it to encode the picture a clip starts from and leaves it there (the chain only sends the
+    model before it away): the 8 steps ran with 1.9 + 2.3 GB of weights and up to 1.4 GB of activations on the
+    user's 4 GB GTX 1650, Windows lent the rest from system RAM (Task Manager: 3.7 GB dedicated + 1.6 GB shared)
+    and a step took 28 s. It now leaves right after encoding, and the encoder stays off during the decode (whole
+    VAE + a Fast clip's 1.2 GB of decode activations = 3.5 GB; decoder alone 2.3 GB). Measured on meta tensors."""
+    import torch
+
+    vae = pipe.vae
+    encode = vae.encode  # through the offload hook, which brings the whole VAE onto the card
+
+    def free() -> None:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def encode_and_leave(*args, **kwargs):
+        out = encode(*args, **kwargs)
+        vae.to("cpu")
+        free()
+        return out
+
+    def decoder_alone(module, args) -> None:
+        vae.encoder.to("cpu")
+        free()
+
+    vae.encode = encode_and_leave
+    vae.decoder.register_forward_pre_hook(decoder_alone)
 
 
 def ltx_mode(job: dict) -> str:
@@ -396,6 +427,7 @@ def clips(job: dict) -> None:
     if not todo:
         return
     dtype = pick_dtype(job, "ltx")
+    free0 = torch.cuda.mem_get_info()[0] if torch.cuda.is_available() else 0  # the card's own memory left for us
     pipe, mode = ltx_pipeline(job, dtype)
     W, H, fps = job.get("width", 832), job.get("height", 480), job.get("fps", 24)
     cal = calibration(job)
@@ -420,6 +452,17 @@ def clips(job: dict) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         return clips({**job, "ltx_mode": "stream"})
+
+    # The first clip of a run says where the card's memory went: past what was free, Windows lends system RAM
+    # without a word and every step gets several times slower (the VAE left beside the model did that).
+    watch = {"on": torch.cuda.is_available(), "steps": 0, "t": 0.0}
+
+    def at_step(p, i, t, kw):
+        if watch["on"]:
+            torch.cuda.synchronize()
+            watch["steps"] = max(watch["steps"], torch.cuda.memory_reserved())
+            watch["t"] = time.time()
+        return {}
     n = 0
     for s in todo:
         t0 = time.time()
@@ -428,6 +471,8 @@ def clips(job: dict) -> None:
         frames = int(s.get("frames", 97))
         frames = max(9, (frames - 1) // 8 * 8 + 1)  # LTX takes 8k+1 frames
         g = torch.Generator("cpu").manual_seed(int(s.get("seed", 0)))
+        if watch["on"]:
+            torch.cuda.reset_peak_memory_stats()
         try:
             result = pipe(
                 conditions=[LTXVideoCondition(image=image, frame_index=0)],
@@ -437,13 +482,24 @@ def clips(job: dict) -> None:
                 width=W, height=H, num_frames=frames, frame_rate=fps,
                 timesteps=job.get("timesteps") or DISTILLED_STEPS, guidance_scale=1.0,
                 decode_timestep=0.05, decode_noise_scale=0.025, image_cond_noise_scale=0.0,
-                generator=g, output_type="pil",
+                generator=g, output_type="pil", callback_on_step_end=at_step,
             ).frames[0]
         except RuntimeError as exc:  # out of memory, or an 8-bit cast this card can't do (clips done so far stay)
             if mode != "fp8":
                 raise
             del pipe
             return without_fp8(str(exc))
+        if watch["on"]:
+            watch["on"] = False
+            torch.cuda.synchronize()
+            gb = 2 ** 30
+            top, dec = torch.cuda.max_memory_reserved(), time.time() - watch["t"]
+            say("note", msg=f"Card memory: {watch['steps'] / gb:.1f} GB while animating, {top / gb:.1f} GB at the "
+                            f"most, {free0 / gb:.1f} GB free; decoding the frames took {dec:.0f} s")
+            if top > free0:
+                say("warn", msg=f"The graphics card ran out of its own memory ({top / gb:.1f} GB needed, {free0 / gb:.1f} "
+                                "GB free), so Windows lends it system RAM and every step gets several times slower. "
+                                "Close other programs that use the card" + (", or choose Fast clips" if W > 640 else ""))
         if not checked and mode == "fp8":
             if broken(result[len(result) // 2]):
                 del pipe, result
