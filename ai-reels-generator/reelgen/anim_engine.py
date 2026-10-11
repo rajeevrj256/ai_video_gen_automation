@@ -48,6 +48,7 @@ MARK = "@@REEL@@"  # anim_worker/worker.py prefixes its JSON progress lines with
 
 state: dict = {"installing": False, "log": [], "error": "", "done": False}
 _lock = threading.Lock()
+_gpu = threading.Lock()  # one AI stage on the graphics card at a time (two would not fit in 4 GB)
 
 
 def python() -> Path:
@@ -176,6 +177,18 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str)
     """Run one worker stage to the end. Stop or Pause kills it at once; finished items stay on disk."""
     if not installed():
         raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
+    if not _gpu.acquire(blocking=False):
+        progress(f"{label}: waiting for the graphics card (another AI step is using it)")
+        while not _gpu.acquire(timeout=1):
+            if stopper.stop_requested() or stopper.pause_requested():
+                raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
+    try:
+        _run_stage(stage, job, work, progress, label)
+    finally:
+        _gpu.release()
+
+
+def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str) -> None:
     job = {**job, "hf_home": str(MODELS / "hf"), "calibration": str(CALIBRATION)}
     for items in (job.get("characters", []), job.get("shots", []), job.get("tracks", [])):  # every output's folder
         for it in items:
@@ -236,3 +249,67 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str)
     if proc.wait() != 0:
         raise RuntimeError(f"{label} failed: {error or ' / '.join(tail[-3:]) or f'exit {proc.returncode}'}")
     log.info("AI stage %s finished in %.1f min", stage, (time.time() - started) / 60)
+
+
+# ---------- trying the music model on its own (Anim tab: "Try the music model") ----------
+
+music_test: dict = {"running": False, "log": [], "error": "", "name": "", "stop": False, "started": 0.0}
+TEST_DIR = "music-tests"
+
+
+def music_tests(output_dir: Path) -> list[dict]:
+    """The tracks made so far, newest first (<output>/music-tests/<stamp>/track.wav + info.json)."""
+    out = []
+    for info in sorted((output_dir / TEST_DIR).glob("*/info.json"), reverse=True)[:12]:
+        try:
+            data = json.loads(info.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (info.parent / "track.wav").exists():
+            out.append({**data, "name": info.parent.name})
+    return out
+
+
+def start_music_test(output_dir: Path, caption: str, seconds: float, bpm: int | None) -> bool:
+    """Make one track in the background; False if one is being made already."""
+    with _lock:
+        if music_test["running"]:
+            return False
+        name = time.strftime("%Y%m%d-%H%M%S")
+        music_test.update(running=True, log=[], error="", name=name, stop=False, started=time.time())
+    threading.Thread(target=_music_test, args=(output_dir / TEST_DIR / name, caption, seconds, bpm), daemon=True).start()
+    return True
+
+
+def _music_test(folder: Path, caption: str, seconds: float, bpm: int | None) -> None:
+    import random
+
+    from .animated import _loudnorm
+
+    def progress(line: str) -> None:
+        music_test["log"] = (music_test["log"] + [line])[-30:]
+
+    stop = lambda: music_test["stop"]  # noqa: E731
+    stop.stop = stop  # type: ignore[attr-defined]
+    stopper.set_checks(stop)
+    folder.mkdir(parents=True, exist_ok=True)
+    track = folder / "track.wav"
+    try:
+        run_stage("music", {"tracks": [{"id": "test", "out": str(track), "caption": caption, "duration": seconds,
+                                        "bpm": bpm, "seed": random.randrange(2**31)}], "ace_root": str(ENGINE)},
+                  folder, progress, "Music")
+        _loudnorm(track)
+        took = round(time.time() - music_test["started"])
+        (folder / "info.json").write_text(json.dumps({"caption": caption, "seconds": seconds, "bpm": bpm, "took": took},
+                                                     ensure_ascii=False), encoding="utf-8")
+        progress(f"Done in {took // 60} min {took % 60} s")
+    except stopper.Paused:
+        music_test["error"] = "Stopped"
+        shutil.rmtree(folder, ignore_errors=True)
+    except Exception as exc:  # noqa: BLE001 - shown in the app
+        log.exception("Music test failed")
+        music_test["error"] = str(exc)
+        shutil.rmtree(folder, ignore_errors=True)
+    finally:
+        stopper.set_checks(None)
+        music_test["running"] = False

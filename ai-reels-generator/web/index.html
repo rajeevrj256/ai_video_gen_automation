@@ -506,6 +506,23 @@
       <button id="anInstall" hidden>⬇ Install the AI engine</button>
       <pre class="hint" id="anLog" hidden style="max-height:220px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
     </div>
+    <div class="panel" id="mtPanel">
+      <h2>🎵 Try the music model</h2>
+      <p class="hint">Describe a track and ACE-Step writes it on your graphics card: brand-new instrumental music, no singing, yours to
+        use (nothing is downloaded, so no Content ID claims). The first time it loads the model; a track then takes a few minutes.</p>
+      <label for="mtCaption">What should it sound like?</label>
+      <textarea class="edit" id="mtCaption" rows="2" placeholder="e.g. tense cinematic strings with deep drums, slowly building, dark and mysterious"></textarea>
+      <div class="chips" id="mtIdeas"></div>
+      <div class="grid2">
+        <div><label for="mtSeconds">Length</label>
+          <select id="mtSeconds"><option value="15">15 s</option><option value="30" selected>30 s</option><option value="60">1 min</option><option value="120">2 min</option></select></div>
+        <div><label for="mtBpm">Tempo (beats per minute)</label><input id="mtBpm" type="number" min="40" max="220" placeholder="auto"></div>
+      </div>
+      <button id="mtBtn" class="primary">🎵 Make music</button>
+      <button id="mtStop" class="danger" hidden>⏹ Stop</button>
+      <p class="hint" id="mtMsg"></p>
+      <div id="mtList"></div>
+    </div>
     <div class="panel">
       <h2>Animated video</h2>
       <p class="hint">A 6-8 minute 16:9 film where every shot is new AI animation: Claude writes and directs it (fact-checked, sources
@@ -819,7 +836,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: loadAnimSetup }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => { loadAnimSetup(); loadMusicTests(); } }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -2136,9 +2153,40 @@ async function loadAnimSetup() {
     $("#anLog").textContent = (st.log || []).join("\n");
     $("#anLog").scrollTop = 1e9;
     $("#anBtn").disabled = !st.installed;
+    $("#mtBtn").disabled = !st.installed;
     if (st.installing && current === "anim") setTimeout(loadAnimSetup, 3000);
   } catch (e) { $("#anSetup").textContent = "Couldn't check the engine: " + e.message; }
 }
+// "Try the music model": one ACE-Step track from a description (anim_engine.start_music_test).
+const MT_IDEAS = { "Cinematic trailer": "epic cinematic trailer, big drums, rising strings and brass, tense and powerful",
+  "Lo-fi chill": "lo-fi hip hop, soft piano chords, dusty drums, warm vinyl crackle, relaxed",
+  "Indian classical": "indian classical, sitar melody over tabla rhythm and tanpura drone, calm and spiritual",
+  "Upbeat pop": "upbeat electronic pop, bright synths, punchy drums, happy and energetic",
+  "Dark mystery": "dark ambient mystery, low drones, ticking clock, sparse piano, suspenseful",
+  "Documentary": "light documentary background, marimba and pizzicato strings, curious and playful" };
+$("#mtIdeas").innerHTML = Object.keys(MT_IDEAS).map((k) => `<button class="chip" data-idea="${esc(k)}">${esc(k)}</button>`).join("");
+document.querySelectorAll("[data-idea]").forEach((b) => b.onclick = () => { $("#mtCaption").value = MT_IDEAS[b.dataset.idea]; });
+let mtTimer = null;
+async function loadMusicTests() {
+  clearTimeout(mtTimer);
+  try {
+    const st = await api("/api/anim/music-test");
+    $("#mtBtn").hidden = st.running; $("#mtStop").hidden = !st.running;
+    const last = (st.log || []).slice(-1)[0] || "Starting…";
+    $("#mtMsg").textContent = st.running ? `${last} · ⏱ ${Math.floor(st.elapsed / 60)}:${String(st.elapsed % 60).padStart(2, "0")}`
+      : st.error ? "⚠️ " + st.error : "";
+    $("#mtList").innerHTML = (st.tests || []).map((t) => `<div class="auto"><div class="what">${esc(t.caption)}</div>
+        <div class="hint">${t.seconds} s${t.bpm ? ` · ${t.bpm} BPM` : ""} · made in ${Math.floor(t.took / 60)} min ${t.took % 60} s</div>
+        <audio controls preload="none" style="width:100%" src="/api/anim/music-test/${esc(t.name)}/track.wav"></audio></div>`).join("");
+    if (st.running && current === "anim") mtTimer = setTimeout(loadMusicTests, 3000);
+  } catch (e) { $("#mtMsg").textContent = "Couldn't check: " + e.message; }
+}
+$("#mtBtn").onclick = async () => {
+  const body = { caption: $("#mtCaption").value, seconds: Number($("#mtSeconds").value), bpm: Number($("#mtBpm").value) || null };
+  try { await api("/api/anim/music-test", { method: "POST", body: JSON.stringify(body) }); } catch (e) { $("#mtMsg").textContent = "⚠️ " + e.message; return; }
+  loadMusicTests();
+};
+$("#mtStop").onclick = async () => { try { await api("/api/anim/music-test", { method: "DELETE" }); } catch (e) {} loadMusicTests(); };
 $("#anInstall").onclick = async () => {
   if (!confirm("Install the AI engine? It downloads PyTorch for your graphics card and the AI libraries (several GB, 10-30 minutes). The app keeps working meanwhile.")) return;
   try { await api("/api/anim/setup", { method: "POST" }); } catch (e) { alert(e.message); }

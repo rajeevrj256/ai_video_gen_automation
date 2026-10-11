@@ -439,6 +439,13 @@ class ToonRequestBody(BaseModel):
     count: int = 1
 
 
+class MusicTestBody(BaseModel):
+    """Anim tab, "Try the music model": one track from ACE-Step, described in words."""
+    caption: str
+    seconds: float = 30
+    bpm: int | None = None
+
+
 class AnimRequestBody(BaseModel):
     """Animated videos: every shot an AI picture and clip, made on this computer (reelgen/animated.py)."""
     topic: str = ""
@@ -941,6 +948,40 @@ def create_app(cfg: Config) -> FastAPI:
         if not anim_engine.install():
             raise HTTPException(409, "Already installing")
         return {"ok": True}
+
+    @app.get("/api/anim/music-test")
+    def music_test_state():
+        from . import anim_engine
+        st = {k: v for k, v in anim_engine.music_test.items() if k != "stop"}
+        st["elapsed"] = round(time.time() - st["started"]) if st["running"] else 0
+        return {**st, "tests": anim_engine.music_tests(cfg.output_dir)}
+
+    @app.post("/api/anim/music-test")
+    def music_test_start(body: MusicTestBody):
+        from . import anim_engine
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (the panel above).")
+        caption = body.caption.strip()[:500]
+        if not caption:
+            raise HTTPException(400, "Describe the music first.")
+        bpm = body.bpm if body.bpm and 40 <= body.bpm <= 220 else None
+        if not anim_engine.start_music_test(cfg.output_dir, caption, min(240.0, max(10.0, float(body.seconds))), bpm):
+            raise HTTPException(409, "A track is being made already.")
+        return {"ok": True}
+
+    @app.delete("/api/anim/music-test")
+    def music_test_stop():
+        from . import anim_engine
+        anim_engine.music_test["stop"] = True
+        return {"ok": True}
+
+    @app.get("/api/anim/music-test/{name}/track.wav")
+    def music_test_file(name: str):
+        from . import anim_engine
+        path = cfg.output_dir / anim_engine.TEST_DIR / name / "track.wav"
+        if not re.fullmatch(r"\d{8}-\d{6}", name) or not path.exists():
+            raise HTTPException(404, "No such track")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.post("/api/anim")
     def anim(body: AnimRequestBody):
