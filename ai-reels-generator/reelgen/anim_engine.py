@@ -223,7 +223,7 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str)
                      + (f"{left / 3600:.1f} h left" if left > 5400 else f"{left / 60:.0f} min left"))
         elif kind == "start" and msg.get("todo"):
             progress(f"{label}: {msg['todo']} to make" + (f" ({msg['total'] - msg['todo']} already done)" if msg["total"] > msg["todo"] else ""))
-        elif kind == "warn":
+        elif kind in ("warn", "note"):
             progress(f"{label}: {msg.get('msg')}")
         elif kind == "error":
             error = msg.get("msg", "")

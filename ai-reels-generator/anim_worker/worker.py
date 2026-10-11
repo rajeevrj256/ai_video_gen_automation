@@ -38,6 +38,17 @@ def say(kind: str, **data) -> None:
     print(MARK + json.dumps({"kind": kind, **data}), flush=True)  # json.dumps escapes non-ASCII
 
 
+def loading(what: str, gb: float, repo: str, filename: str) -> None:
+    """Say which model is loading. The first time it is a big one-off download (minutes to an hour on home
+    Wi-Fi) during which nothing else moves, so say so instead of looking stuck."""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        cached = isinstance(try_to_load_from_cache(repo, filename), str)
+    except Exception:  # noqa: BLE001
+        cached = False
+    say("note", msg=f"Loading {what}" if cached else f"Downloading {what} ({gb:g} GB, only before the first video)...")
+
+
 def done(path: str | Path) -> bool:
     p = Path(path)
     return p.exists() and Path(str(p) + ".ok").exists()
@@ -145,6 +156,8 @@ def sdxl_pipeline(job: dict, dtype):
     else:
         from accelerate import init_empty_weights
 
+        loading("the picture model (SDXL-Lightning)", 5.1, *LIGHTNING)
+        loading("SDXL's text encoders", 1.8, base, "text_encoder_2/model.fp16.safetensors")
         with init_empty_weights():  # no full-precision copy in memory first: the weights go straight in
             unet = UNet2DConditionModel.from_config(UNet2DConditionModel.load_config(base, subfolder="unet"))
         unet.load_state_dict(load_file(hf_hub_download(*LIGHTNING)), assign=True)
@@ -159,6 +172,7 @@ def sdxl_pipeline(job: dict, dtype):
     if job.get("ip_adapter", True) and not job.get("tiny"):
         try:
             repo, sub, weight, encoder = IP_ADAPTER
+            loading("IP-Adapter (keeps the characters the same)", 3.4, repo, f"{encoder}/model.safetensors")
             pipe.load_ip_adapter(repo, subfolder=sub, weight_name=weight, image_encoder_folder=encoder)
             ip = True
         except Exception as exc:  # noqa: BLE001 - pictures still work, characters just drift more
@@ -245,6 +259,8 @@ def embed(job: dict) -> None:
         tok = T5TokenizerFast.from_pretrained(job["text_model"], subfolder="tokenizer")
         enc = T5EncoderModel.from_pretrained(job["text_model"], subfolder="text_encoder")
     else:
+        loading("the text model for animation (T5-XXL; it runs on the CPU, too big for a 4 GB card)", 9.5, T5_BF16,
+                "model.safetensors")
         tok = T5TokenizerFast.from_pretrained(LTX_TEXT, subfolder="tokenizer")
         enc = T5EncoderModel.from_pretrained(T5_BF16, torch_dtype=torch.bfloat16)
     enc.eval()
@@ -268,6 +284,7 @@ def ltx_pipeline(job: dict, dtype):
     if job.get("tiny"):  # tests: components built in code
         tr, vae = job["_tiny_parts"]
     else:
+        loading("the animation model (LTX-Video 2B)", 6.3, *LTX_FILE)
         path = hf_hub_download(*LTX_FILE)
         tr = LTXVideoTransformer3DModel.from_single_file(path, torch_dtype=dtype)
         vae = AutoencoderKLLTXVideo.from_single_file(path, torch_dtype=dtype)
@@ -351,6 +368,9 @@ def music(job: dict) -> None:
     from acestep.llm_inference import LLMHandler
 
     vram = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0
+    ckpt = Path(os.environ.get("ACESTEP_CHECKPOINTS_DIR") or Path(root) / "checkpoints") / "acestep-v15-turbo"
+    say("note", msg="Loading the music model (ACE-Step)" if ckpt.exists() else
+        "Downloading the music model (ACE-Step, 10 GB, only before the first video)...")
     dit = AceStepHandler()
     status, ok = dit.initialize_service(
         project_root=root, config_path="acestep-v15-turbo", device="auto",
