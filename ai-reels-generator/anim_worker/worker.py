@@ -246,36 +246,81 @@ LTX_PIPE = "Lightricks/LTX-Video-0.9.7-distilled"  # the condition pipeline's sc
 DISTILLED_STEPS = [1000, 993, 987, 981, 975, 909, 725, 0.03]
 
 
-def embed(job: dict) -> None:
-    """T5-XXL for every clip's prompt, on the CPU (it needs ~10 GB, far over a small card), saved to disk."""
+def _t5(job: dict, on_card: bool):
+    """The T5-XXL encoder. On a graphics card: fp16, streamed through it layer by layer (accelerate's
+    cpu_offload), so a 4 GB card runs a 9.5 GB model. Without one, or if fp16 failed on this card: bf16 on the
+    CPU, which is very slow on CPUs without bf16 instructions (97 s per prompt on the user's i5-10300H, with
+    RAM at 95%)."""
     import torch
-    from transformers import T5EncoderModel, T5TokenizerFast
+    from transformers import T5EncoderModel
+
+    if job.get("text_model"):  # tests: a tiny T5 laid out like the LTX repos
+        enc = T5EncoderModel.from_pretrained(job["text_model"], subfolder="text_encoder",
+                                             torch_dtype=torch.float16 if on_card else torch.float32)
+    elif on_card:
+        keep = T5EncoderModel._keep_in_fp32_modules
+        T5EncoderModel._keep_in_fp32_modules = None  # all fp16: fp32 'wo' layers would add 2 GB of system RAM;
+        try:                                         # T5 clamps fp16 overflow itself and the output is checked
+            enc = T5EncoderModel.from_pretrained(T5_BF16, torch_dtype=torch.float16)
+        finally:
+            T5EncoderModel._keep_in_fp32_modules = keep
+    else:
+        enc = T5EncoderModel.from_pretrained(T5_BF16, torch_dtype=torch.bfloat16)
+    enc.eval()
+    if on_card:
+        from accelerate import cpu_offload
+        cpu_offload(enc, execution_device=torch.device(job.get("_t5_device") or "cuda:0"))  # outputs come back to the CPU
+    return enc
+
+
+def embed(job: dict) -> None:
+    """T5-XXL for every clip's prompt, saved to disk, in batches (the weights pass through the card once per
+    batch, not once per prompt)."""
+    import torch
+    from transformers import T5TokenizerFast
 
     todo = [s for s in job["shots"] if not done(s["emb"])]
     say("start", stage="embed", total=len(job["shots"]), todo=len(todo))
     if not todo:
         return
-    if job.get("text_model"):  # tests: a tiny T5 laid out like the LTX repos
+    on_card = (torch.cuda.is_available() or bool(job.get("_t5_device"))) and not calibration(job).get("t5_cpu")
+    if job.get("text_model"):
         tok = T5TokenizerFast.from_pretrained(job["text_model"], subfolder="tokenizer")
-        enc = T5EncoderModel.from_pretrained(job["text_model"], subfolder="text_encoder")
     else:
-        loading("the text model for animation (T5-XXL; it runs on the CPU, too big for a 4 GB card)", 9.5, T5_BF16,
-                "model.safetensors")
+        loading("the text model for animation (T5-XXL" + (", streamed through the graphics card)" if on_card else
+                ", on the CPU)"), 9.5, T5_BF16, "model.safetensors")
         tok = T5TokenizerFast.from_pretrained(LTX_TEXT, subfolder="tokenizer")
-        enc = T5EncoderModel.from_pretrained(T5_BF16, torch_dtype=torch.bfloat16)
-    enc.eval()
+    enc = _t5(job, on_card)
+    checked = not on_card or bool(calibration(job).get("t5_ok"))
+    batch = int(job.get("batch", 8))
     n = 0
     with torch.no_grad():
-        for s in todo:
+        i = 0
+        while i < len(todo):
+            part = todo[i:i + batch]
             t0 = time.time()
-            ids = tok(s["prompt"], padding="max_length", max_length=job.get("max_tokens", 128), truncation=True,
-                      return_tensors="pt")
-            out = enc(ids.input_ids, attention_mask=ids.attention_mask)[0]
-            Path(s["emb"]).parent.mkdir(parents=True, exist_ok=True)  # clips/ doesn't exist before the first clip
-            torch.save({"embeds": out.float(), "mask": ids.attention_mask}, s["emb"])
-            mark(s["emb"])
-            n += 1
-            say("item", stage="embed", n=n, of=len(todo), id=s.get("id", ""), secs=round(time.time() - t0, 1))
+            ids = tok([s["prompt"] for s in part], padding="max_length", max_length=job.get("max_tokens", 128),
+                      truncation=True, return_tensors="pt")
+            out = enc(ids.input_ids, attention_mask=ids.attention_mask)[0].float().cpu()
+            if not checked:
+                if not torch.isfinite(out).all() or float(out.std()) == 0.0:
+                    say("warn", msg="The text model gave broken numbers in half precision on this card; using the CPU (slower)")
+                    remember(job, "t5_cpu", True)
+                    del enc
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    on_card, checked = False, True
+                    enc = _t5(job, False)
+                    continue  # this batch again, on the CPU
+                remember(job, "t5_ok", True)
+                checked = True
+            for k, s in enumerate(part):
+                Path(s["emb"]).parent.mkdir(parents=True, exist_ok=True)  # clips/ doesn't exist before the first clip
+                torch.save({"embeds": out[k:k + 1].clone(), "mask": ids.attention_mask[k:k + 1].clone()}, s["emb"])
+                mark(s["emb"])
+                n += 1
+                say("item", stage="embed", n=n, of=len(todo), id=s.get("id", ""), secs=round((time.time() - t0) / len(part), 1))
+            i += batch
 
 
 def ltx_pipeline(job: dict, dtype):
