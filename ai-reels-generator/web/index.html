@@ -1900,6 +1900,7 @@ async function updateNow() {
   if (!res.ok) { alert("Update failed: " + ((await res.json().catch(() => ({}))).detail || res.statusText)); return; }
   const box = $("#updating"); box.hidden = false; box.style.display = "flex";
   const t0 = Date.now();
+  const quick = location.hostname.endsWith(".trycloudflare.com"); // a quick tunnel gets a new address every start
   let wentDown = false;
   const tick = async () => {
     const secs = Math.round((Date.now() - t0) / 1000);
@@ -1909,6 +1910,10 @@ async function updateNow() {
       if (wentDown && (r.ok || r.status === 401)) { location.reload(); return; }
       if (!r.ok && r.status !== 401) wentDown = true;
     } catch { wentDown = true; }
+    if (wentDown && quick) {
+      box.innerHTML = `⬆ Reel Studio is restarting on the computer<br><span style="font-size:14px;opacity:.8">This link stops working now: the free tunnel gets a new address every time the app starts. The new link comes on Telegram in a minute or two (and in Settings on the computer).</span>`;
+      return;
+    }
     if (secs > 600) { box.innerHTML = "The app hasn't come back after 10 minutes. Look at the Reel Studio window on the computer (or output/update.log)."; return; }
     setTimeout(tick, 2000);
   };

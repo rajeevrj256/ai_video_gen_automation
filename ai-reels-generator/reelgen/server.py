@@ -651,10 +651,13 @@ def create_app(cfg: Config) -> FastAPI:
         serve_args = argv[1:] if argv[:1] == ["serve"] else []
         updater.start(cfg.output_dir, cfg.port, serve_args)
 
+        from . import anim_engine
+        anim_engine.music_test["stop"] = True  # a music test's worker is killed like a video's
+
         def quit_soon() -> None:
-            time.sleep(1.0)  # let this answer reach the page first
+            time.sleep(1.5)  # let this answer reach the page first
             tunnel.stop()
-            os._exit(75)  # start.bat closes its window on 75 instead of waiting for a key
+            updater.hard_exit(75)  # start.bat closes its window on 75 instead of waiting for a key
 
         threading.Thread(target=quit_soon, daemon=True).start()
         return {"ok": True, "stopped": len(active)}
@@ -1328,8 +1331,18 @@ def print_banner(cfg: Config) -> None:
 def serve(cfg: Config) -> None:
     import uvicorn
 
+    from . import updater
+
     cfg = load_settings(cfg)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    wait = float(os.environ.pop("REEL_WAIT_PORT", "0") or 0)  # set by the updater: the old app may still be closing
+    if not updater.port_bindable(cfg.port, wait):
+        owner = updater.port_owner(cfg.port)
+        print(f"\n  Port {cfg.port} is already in use" + (f" by {owner}" if owner else "") + ", so Reel Studio can't start.\n"
+              "  Another Reel Studio may still be open: close its window"
+              + (f", or end PID {owner.split('PID ')[-1].rstrip(')')} in Task Manager (Details tab)" if "PID" in owner else "")
+              + ", then start again.\n")
+        sys.exit(1)
     print_banner(cfg)
     tunnel.start(cfg)
     uvicorn.run(create_app(cfg), host="0.0.0.0", port=cfg.port, log_level="warning")
