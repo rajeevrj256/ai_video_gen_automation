@@ -407,6 +407,29 @@ def clips(job: dict) -> None:
 
 # ---------- music: ACE-Step 1.5 (turbo, no language model: fits a 4 GB card) ----------
 
+# ACE-Step always picks fp16 before Ampere, and on the user's GTX 1650 that gave "Generation produced NaN or
+# Inf latents" on the first track. bf16 has fp32's range at the same size; fp32 is the last resort (~2x memory).
+ACE_PRECISIONS = ["auto", "bfloat16", "float32"]
+
+
+def _ace_precision(prec: str) -> None:
+    """Make ACE-Step load in `prec`. Its only switch is the ROCm one (ACESTEP_ROCM_DTYPE, read when the card
+    counts as ROCm), which sets the model's and the VAE's precision together; nothing else checks that flag
+    on a 7.5 card."""
+    if prec == "auto":
+        return
+    from acestep import gpu_config
+    from acestep.core.generation.handler import memory_utils
+
+    os.environ["ACESTEP_ROCM_DTYPE"] = prec
+    gpu_config.is_rocm_available = memory_utils.is_rocm_available = lambda: True
+
+
+def _precision_problem(err: str) -> bool:
+    import re
+
+    return bool(re.search(r"\bnan\b|\binf\b|bfloat16|not implemented for", err, re.I))
+
 def music(job: dict) -> None:
     import shutil
 
@@ -424,15 +447,41 @@ def music(job: dict) -> None:
     from acestep.llm_inference import LLMHandler
 
     vram = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0
+    prec = job.get("ace_dtype") or calibration(job).get("ace_dtype") or "auto"
+    if prec not in ACE_PRECISIONS:
+        prec = "auto"
+    _ace_precision(prec)
     ckpt = Path(os.environ.get("ACESTEP_CHECKPOINTS_DIR") or Path(root) / "checkpoints") / "acestep-v15-turbo"
-    say("note", msg="Loading the music model (ACE-Step)" if ckpt.exists() else
-        "Downloading the music model (ACE-Step, 10 GB, only before the first video)...")
+    say("note", msg=("Loading the music model (ACE-Step" + ("" if prec == "auto" else f", {prec}") + ")") if ckpt.exists()
+        else "Downloading the music model (ACE-Step, 10 GB, only before the first video)...")
+
+    def wider(err: str):
+        """This card can't run the music model in `prec`: start the stage again one step wider (the tracks
+        already made are kept), and remember it for the next video."""
+        if not _precision_problem(err) or prec == ACE_PRECISIONS[-1]:
+            return None
+        nxt = ACE_PRECISIONS[ACE_PRECISIONS.index(prec) + 1]
+        names = {"auto": "half precision", "bfloat16": "bf16", "float32": "full precision (more memory, slower)"}
+        say("warn", msg=f"The music came out broken in {names[prec]} on this card; trying {names[nxt]}")
+        remember(job, "ace_dtype", nxt)
+        return {**job, "ace_dtype": nxt}
+
+    def again(retry: dict) -> None:
+        gc.collect()  # the model just dropped leaves the card and memory before the wider one loads
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        music(retry)
+
     dit = AceStepHandler()
     status, ok = dit.initialize_service(
         project_root=root, config_path="acestep-v15-turbo", device="auto",
         offload_to_cpu=vram < 16, offload_dit_to_cpu=vram < 12,
         quantization="int8_weight_only" if 0 < vram < 12 else None)
     if not ok:
+        retry = wider(str(status))
+        if retry:
+            del dit
+            return again(retry)
         raise RuntimeError(f"ACE-Step didn't start: {status}")
     lm = LLMHandler()  # not initialised: the DiT alone writes instrumentals
     n = 0
@@ -445,9 +494,17 @@ def music(job: dict) -> None:
         config = GenerationConfig(batch_size=1, audio_format="wav", use_random_seed=False, seeds=[int(m.get("seed", 0))])
         tmp = Path(m["out"]).parent / "ace-tmp"
         tmp.mkdir(parents=True, exist_ok=True)
-        result = generate_music(dit, lm, params, config, save_dir=str(tmp))
-        if not result.success or not result.audios:
-            raise RuntimeError(f"ACE-Step failed on {m.get('id')}: {result.error}")
+        try:
+            result = generate_music(dit, lm, params, config, save_dir=str(tmp))
+            error = "" if result.success and result.audios else str(result.error)
+        except Exception as exc:  # noqa: BLE001 - a precision the card lacks can raise instead of returning NaN
+            error = f"{type(exc).__name__}: {exc}"
+        if error:
+            retry = wider(error)
+            if retry:
+                del dit, lm
+                return again(retry)
+            raise RuntimeError(f"ACE-Step failed on {m.get('id')}: {error}")
         shutil.move(result.audios[0]["path"], m["out"])
         shutil.rmtree(tmp, ignore_errors=True)
         mark(m["out"])
