@@ -525,7 +525,9 @@
             <option value="key">✨ Hook + key shots animated, the rest camera moves (~half)</option>
             <option value="stills">🖼️ Pictures with camera moves only (a few hours)</option></select></div>
         <div><label for="anQuality">Clip resolution</label>
-          <select id="anQuality"><option value="standard" selected>832×480, upscaled (faster)</option><option value="high">1024×576 (about 1.5× slower)</option></select></div>
+          <select id="anQuality"><option value="auto" selected>Auto: Fast on cards under 6 GB</option>
+            <option value="fast">⚡ Fast: 640×352, clips up to 3 s (much quicker, softer)</option>
+            <option value="standard">832×480, clips up to 5 s</option><option value="high">1024×576 (about 1.5× slower)</option></select></div>
       </div>
       <div class="grid2">
         <div><label for="anVoice">Narrator</label><select id="anVoice"></select></div>
@@ -1547,10 +1549,12 @@ async function loadUnfinished() {
           <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : u.length === "anim" ? "🎬 Animated" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
+          ${u.length === "anim" && u.quality !== "fast" ? `<button data-resume-fast="${esc(u.id)}" title="The clips still to make come out 640×352, up to 3 s each">⚡ Resume with fast clips</button>` : ""}
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
       ${items.length > 1 ? `<button id="resumeAll" style="width:100%">↻ Resume all ${items.length}</button>` : ""}
     </div>` : "";
   document.querySelectorAll("[data-resume]").forEach((b) => b.onclick = () => startResume([b.dataset.resume]));
+  document.querySelectorAll("[data-resume-fast]").forEach((b) => b.onclick = () => startResume([b.dataset.resumeFast], "fast"));
   document.querySelectorAll("[data-discard]").forEach((b) => b.onclick = async () => {
     if (!confirm("Delete this unfinished video? It can't be resumed after that.")) return;
     try { await api("/api/unfinished/" + encodeURIComponent(b.dataset.discard), { method: "DELETE" }); toast("Discarded"); loadJobs(); }
@@ -1558,8 +1562,8 @@ async function loadUnfinished() {
   });
   if ($("#resumeAll")) $("#resumeAll").onclick = () => startResume(items.map((u) => u.id));
 }
-async function startResume(folders) {
-  try { await api("/api/resume", { method: "POST", body: JSON.stringify({ folders }) }); toast("Resuming"); lastBusy = true; loadJobs(); }
+async function startResume(folders, quality) {
+  try { await api("/api/resume", { method: "POST", body: JSON.stringify(quality ? { folders, quality } : { folders }) }); toast("Resuming"); lastBusy = true; loadJobs(); }
   catch (e) { toast(e.message); }
 }
 document.addEventListener("click", async (e) => {

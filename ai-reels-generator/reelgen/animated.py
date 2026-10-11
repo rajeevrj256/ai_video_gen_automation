@@ -86,7 +86,7 @@ class AnimRequest:
     minutes: float = 7.0
     style: str = "auto"  # an ART_STYLES key, or auto (Claude picks one the last videos didn't use)
     motion: str = "full"  # full | key | stills
-    quality: str = "standard"  # standard (832x480 clips) | high (1024x576)
+    quality: str = "auto"  # CLIP_SIZES key, or auto (fast on cards under 6 GB, else standard)
     voice: str = "en-US-AndrewMultilingualNeural"
     speed: int = 8
     captions: bool = False
@@ -310,10 +310,23 @@ def _style_of(sc: AnimScript, req: AnimRequest, cfg: Config, seed: int) -> str:
     return random.Random(seed).choice([k for k in ART_STYLES if k not in recent] or list(ART_STYLES))
 
 
-def _frames(seconds: float, fps: int = 24) -> int:
-    """Frames to generate for a shot shown `seconds` long: up to 5 s (longer shots slow the clip down a little and
-    then hold its last frame), always 8k+1 for LTX."""
-    target = min(5.0, max(2.0, seconds))
+# Clip size and longest clip per quality. LTX's work grows with width x height x frames (and attention with its
+# square): a GTX 1650 took ~13.6 min for an 832x480, 5 s clip; fast is about a third of the pixels and frames.
+CLIP_SIZES = {"fast": (640, 352, 3.0), "standard": (832, 480, 5.0), "high": (1024, 576, 5.0)}
+QUALITIES = ("auto", *CLIP_SIZES)
+
+
+def clip_quality(req: AnimRequest) -> str:
+    if req.quality in CLIP_SIZES:
+        return req.quality
+    vram = float(anim_engine.probe().get("vram_gb") or 0)
+    return "fast" if vram < 6 else "standard"
+
+
+def _frames(seconds: float, longest: float = 5.0, fps: int = 24) -> int:
+    """Frames to generate for a shot shown `seconds` long: up to `longest` s (longer shots slow the clip down a
+    little and then hold its last frame), always 8k+1 for LTX."""
+    target = min(longest, max(2.0, seconds))
     return min(121, max(25, math.ceil(target * fps / 8) * 8 + 1))
 
 
@@ -375,7 +388,7 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
                 "words": [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words],
                 "chapter": ci, "image": f"keyframes/s{n:03d}.jpg", "clip": None, "camera": sh.camera, "transition": tr,
                 "importance": imp, "emphasis": emph, "emphasisFx": list(dict.fromkeys(sh.emphasis_fx))[:4] if emph else [],
-                "onScreen": sh.on_screen.strip()[:28] or None, "frames": _frames(duration)}
+                "onScreen": sh.on_screen.strip()[:28] or None}
         loud = {"low": 0.5, "medium": 0.6, "high": 0.75, "critical": 0.85}[imp]
         if tr in TRANSITION_SOUND and shots:
             name, vol = TRANSITION_SOUND[tr]
@@ -427,15 +440,15 @@ def clip_jobs(sc: AnimScript, tl: dict, style: str, req: AnimRequest, work: Path
     look = ART_STYLES[style][0]
     plan = [sh for sh in sc.cold_open] + [sh for ch in sc.chapters for sh in ch.shots]
     rows = [x for x in tl["shots"] if x["type"] == "shot"]
+    W, H, longest = CLIP_SIZES[clip_quality(req)]
     shots = []
     for n, (row, sh) in enumerate(zip(rows, plan)):
         if not _motion_wanted(row, req.motion):
             continue
         shots.append({"id": row["id"], "image": str(work / row["image"]), "out": str(work / "clips" / f"{row['id']}.mp4"),
-                      "emb": str(work / "clips" / f"{row['id']}.pt"), "frames": row["frames"], "seed": seed + 500 + n,
+                      "emb": str(work / "clips" / f"{row['id']}.pt"), "frames": _frames(row["duration"], longest), "seed": seed + 500 + n,
                       "prompt": f"{sh.motion.strip()} {CAMERAS.get(sh.camera, '')}. {sh.scene} {look}. Smooth, natural "
                                 f"animation, consistent character, no text."})
-    W, H = (1024, 576) if req.quality == "high" else (832, 480)
     return {"shots": shots}, {"shots": shots, "width": W, "height": H, "fps": 24}
 
 
@@ -597,6 +610,8 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
     save(stage="pictures")
     emb, clipjob = clip_jobs(sc, tl, style, req, work, seed)
     if clipjob["shots"]:
+        q = clip_quality(req)
+        progress(f"Clips: {q}, {CLIP_SIZES[q][0]}x{CLIP_SIZES[q][1]}, up to {CLIP_SIZES[q][2]:.0f} s each")
         anim_engine.run_stage("embed", emb, work, progress, "Reading the motion prompts")
         anim_engine.run_stage("clips", clipjob, work, progress, "Animating the shots")
     save(stage="clips")
@@ -706,6 +721,6 @@ def anim_unfinished(cfg: Config) -> list[dict]:
         clips_done = len(list((cfg.output_dir / folder / "clips").glob("*.mp4.ok")))
         out.append({"id": folder, "topic": script.get("subject") or (state.get("request") or {}).get("topic") or "Animated",
                     "title": script.get("title", ""), "style": "facts", "length": "anim", "attempt": 1,
-                    "done": done.get(state.get("stage") or "", "nothing yet") + (f" ({clips_done} clips)" if clips_done else ""),
-                    "updated": path.stat().st_mtime})
+                    "done": done.get(state.get("stage") or "", "nothing yet") + (f" ({clips_done} clip{'s' * (clips_done > 1)})" if clips_done else ""),
+                    "quality": (state.get("request") or {}).get("quality", "auto"), "updated": path.stat().st_mtime})
     return out

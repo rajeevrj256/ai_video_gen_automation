@@ -347,7 +347,7 @@ def clips(job: dict) -> None:
     import torch
     from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
     from diffusers.utils import export_to_video
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     todo = [s for s in job["shots"] if not done(s["out"])]
     say("start", stage="clips", total=len(job["shots"]), todo=len(todo))
@@ -357,11 +357,19 @@ def clips(job: dict) -> None:
     pipe = ltx_pipeline(job, dtype)
     W, H, fps = job.get("width", 832), job.get("height", 480), job.get("fps", 24)
     checked = bool(calibration(job).get("ltx_ok")) or dtype == torch.float32
+    if not torch.cuda.is_available():
+        how = "on the CPU (very slow)"
+    elif dtype == torch.float32:
+        how = "full precision" + (", since half gave black frames on this card (about twice as slow)"
+                                  if calibration(job).get("ltx_fp32") else "")
+    else:
+        how = "half precision"
+    say("note", msg=f"{W}x{H} clips, {how}")
     n = 0
     for s in todo:
         t0 = time.time()
         emb = torch.load(s["emb"])
-        image = Image.open(s["image"]).convert("RGB").resize((W, H))
+        image = ImageOps.fit(Image.open(s["image"]).convert("RGB"), (W, H), Image.LANCZOS)  # cropped, never stretched
         frames = int(s.get("frames", 97))
         frames = max(9, (frames - 1) // 8 * 8 + 1)  # LTX takes 8k+1 frames
         g = torch.Generator("cpu").manual_seed(int(s.get("seed", 0)))

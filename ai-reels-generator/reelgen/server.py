@@ -445,7 +445,7 @@ class AnimRequestBody(BaseModel):
     minutes: float = 7
     style: str = "auto"
     motion: str = "full"  # full | key | stills
-    quality: str = "standard"
+    quality: str = "auto"  # auto | fast | standard | high (animated.CLIP_SIZES)
     voice: str = "en-US-AndrewMultilingualNeural"
     speed: int = 8
     captions: bool = False
@@ -945,7 +945,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/anim")
     def anim(body: AnimRequestBody):
         from . import anim_engine
-        from .animated import ART_STYLES
+        from .animated import ART_STYLES, QUALITIES
         from .toon import VOICES
 
         if not anim_engine.installed():
@@ -953,7 +953,7 @@ def create_app(cfg: Config) -> FastAPI:
         given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
-                 "quality": "high" if body.quality == "high" else "standard",
+                 "quality": body.quality if body.quality in QUALITIES else "auto",
                  "voice": body.voice if body.voice in VOICES else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}
@@ -1070,12 +1070,14 @@ def create_app(cfg: Config) -> FastAPI:
         from .pipeline import unfinished
         from .toon import CHECKPOINT as TOON_CHECKPOINT, unfinished_toons
 
-        from .animated import CHECKPOINT as ANIM_CHECKPOINT, unfinished_anims
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT, QUALITIES, unfinished_anims
 
         anims = [f for f in body.get("folders", []) if f in unfinished_anims(cfg) and f not in busy_folders()]
         if anims:  # Animated videos resume through their own pipeline too
             saved = json.loads((cfg.output_dir / anims[0] / ANIM_CHECKPOINT).read_text(encoding="utf-8"))
             given = saved.get("request") or {}
+            if body.get("quality") in QUALITIES:  # "Resume with fast clips": the clips still to make use it
+                given = {**given, "quality": body["quality"]}
             return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(anims), "resume",
                                "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"))
         toons = [f for f in body.get("folders", []) if f in unfinished_toons(cfg) and f not in busy_folders()]
