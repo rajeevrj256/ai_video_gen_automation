@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -211,6 +212,18 @@ def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str
 
     threading.Thread(target=read, daemon=True).start()
     error, tail, started, times = "", [], time.time(), []
+    # A live line while an item is being made (the first clip takes minutes before any time per item is known):
+    # sent as "§live", which the app shows in place of the last log line without adding to the log.
+    live = {"n": 0, "of": 0, "since": time.time(), "step": "", "sent": 0.0}
+
+    def tell_live(force: bool = False) -> None:
+        if not live["of"] or (not force and time.time() - live["sent"] < 4):
+            return
+        secs = int(time.time() - live["since"])
+        progress(f"§live {label}: making {live['n'] + 1} of {live['of']}" + (f" · {live['step']}" if live["step"] else "")
+                 + f" · {secs // 60}:{secs % 60:02d} so far")
+        live["sent"] = time.time()
+
     while True:
         try:
             line = lines.get(timeout=1)
@@ -222,9 +235,16 @@ def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str
             if stopper.stop_requested() or stopper.pause_requested():
                 stopper._kill(proc)
                 raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
+            tell_live()
             continue
         if MARK not in line:
-            if line.strip():
+            bar = re.search(r"\|\s*(\d+)/(\d+) \[[\d:]+<[\d:?]+,\s*([\d.]+)(s/it|it/s)", line)  # a tqdm progress bar
+            if bar:
+                rate = float(bar[3])
+                per = rate if bar[4] == "s/it" else (1 / rate if rate else 0)
+                live["step"] = f"step {bar[1]} of {bar[2]}" + (f" ({per:.0f} s each)" if per >= 2 else "")
+                tell_live()
+            elif line.strip():
                 tail = (tail + [line.rstrip()])[-25:]
             continue
         try:
@@ -235,11 +255,13 @@ def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str
         if kind == "item":
             times.append(float(msg.get("secs") or 0))
             n, of = int(msg["n"]), int(msg["of"])
+            live.update(n=n, of=of, since=time.time(), step="")
             each = sum(times[-8:]) / len(times[-8:])
             left = (of - n) * each
             progress(f"{label}: {n} of {of} done · {each:.0f} s each · about "
                      + (f"{left / 3600:.1f} h left" if left > 5400 else f"{left / 60:.0f} min left"))
         elif kind == "start" and msg.get("todo"):
+            live.update(n=0, of=int(msg["todo"]), since=time.time(), step="")
             progress(f"{label}: {msg['todo']} to make" + (f" ({msg['total'] - msg['todo']} already done)" if msg["total"] > msg["todo"] else ""))
         elif kind in ("warn", "note"):
             progress(f"{label}: {msg.get('msg')}")
@@ -287,7 +309,10 @@ def _music_test(folder: Path, caption: str, seconds: float, bpm: int | None) -> 
     from .animated import _loudnorm
 
     def progress(line: str) -> None:
-        music_test["log"] = (music_test["log"] + [line])[-30:]
+        live = line.startswith("§live ")  # a live line replaces the one before it instead of piling up
+        log_ = music_test["log"][:-1] if live and music_test.get("live") else music_test["log"]
+        music_test["log"] = (log_ + [line.replace("§live ", "", 1)])[-30:]
+        music_test["live"] = live
 
     stop = lambda: music_test["stop"]  # noqa: E731
     stop.stop = stop  # type: ignore[attr-defined]

@@ -947,5 +947,6 @@ def anim_unfinished(cfg: Config) -> list[dict]:
         out.append({"id": folder, "topic": script.get("subject") or (state.get("request") or {}).get("topic") or "Animated",
                     "title": script.get("title", ""), "style": "facts", "length": "anim", "attempt": 1,
                     "done": done.get(state.get("stage") or "", "nothing yet") + (f" ({clips_done} clip{'s' * (clips_done > 1)})" if clips_done else ""),
-                    "quality": (state.get("request") or {}).get("quality", "auto"), "updated": path.stat().st_mtime})
+                    "quality": (state.get("request") or {}).get("quality", "auto"),
+                    "motion": (state.get("request") or {}).get("motion", "full"), "updated": path.stat().st_mtime})
     return out

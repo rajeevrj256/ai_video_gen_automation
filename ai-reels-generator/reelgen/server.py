@@ -118,6 +118,9 @@ class JobManager:
     def _run_job(self, job: dict) -> None:
         def progress(msg: str, job=job) -> None:
             job["status"] = "running"
+            if "§live " in msg:  # what the current step is doing right now: shown, never logged
+                job["live"] = {"msg": msg.replace("§live ", ""), "t": time.time()}
+                return
             if "§usage " in msg or "§done " in msg or "§skip " in msg:  # token counts / finished video: data, not a log line
                 tag, _, rest = msg.partition("§")
                 kind, _, payload = rest.partition(" ")
@@ -1140,6 +1143,8 @@ def create_app(cfg: Config) -> FastAPI:
             given = saved.get("request") or {}
             if body.get("quality") in QUALITIES:  # "Resume with fast clips": the clips still to make use it
                 given = {**given, "quality": body["quality"]}
+            if body.get("motion") in ("key", "stills"):  # "Resume, key shots only": fewer clips from here on
+                given = {**given, "motion": body["motion"]}
             return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(anims), "resume",
                                "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"))
         toons = [f for f in body.get("folders", []) if f in unfinished_toons(cfg) and f not in busy_folders()]

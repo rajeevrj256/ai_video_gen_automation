@@ -339,6 +339,7 @@ def embed(job: dict) -> None:
 
 
 def ltx_pipeline(job: dict, dtype):
+    import torch
     from diffusers import AutoencoderKLLTXVideo, LTXConditionPipeline, LTXVideoTransformer3DModel
     from huggingface_hub import hf_hub_download
 
@@ -354,8 +355,34 @@ def ltx_pipeline(job: dict, dtype):
     sched = FlowMatchEulerDiscreteScheduler.from_pretrained(job.get("scheduler_repo") or LTX_PIPE, subfolder="scheduler")
     pipe = LTXConditionPipeline(scheduler=sched, vae=vae, text_encoder=None, tokenizer=None, transformer=tr)
     pipe.vae.enable_tiling()
-    place(pipe, job)
-    return pipe
+    mode = ltx_mode(job)
+    if mode == "fp8":
+        # The 2B model is 3.8 GB in half precision: on a 4 GB card it was streamed in layer by layer for every one
+        # of the 8 steps of every clip (288 s a clip on the user's GTX 1650). Stored in 8 bits it is 1.9 GB and
+        # stays on the card; each layer is widened to `dtype` only while it computes (diffusers' layerwise
+        # casting; norms stay full width). The VAE comes onto the card after it, for the decode.
+        tr.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=dtype)
+        if torch.cuda.is_available():
+            pipe.enable_model_cpu_offload()
+        else:
+            pipe.to("cpu")
+    else:
+        place(pipe, job)
+    return pipe, mode
+
+
+def ltx_mode(job: dict) -> str:
+    """fp8: weights kept on the card in 8 bits; stream: the usual offload (place). fp8 on cards too small to hold
+    the model in half precision, unless this card already failed with it."""
+    import torch
+
+    forced = job.get("ltx_mode") or calibration(job).get("ltx_mode")
+    if forced in ("fp8", "stream"):
+        return forced
+    if not torch.cuda.is_available():
+        return "stream"
+    vram = torch.cuda.get_device_properties(0).total_memory / 2**30
+    return "fp8" if vram < 10 else "stream"
 
 
 def clips(job: dict) -> None:
@@ -369,17 +396,30 @@ def clips(job: dict) -> None:
     if not todo:
         return
     dtype = pick_dtype(job, "ltx")
-    pipe = ltx_pipeline(job, dtype)
+    pipe, mode = ltx_pipeline(job, dtype)
     W, H, fps = job.get("width", 832), job.get("height", 480), job.get("fps", 24)
-    checked = bool(calibration(job).get("ltx_ok")) or dtype == torch.float32
+    cal = calibration(job)
+    # the first clip is checked until this card has shown the setup works (black frames = broken numbers)
+    checked = bool(cal.get("ltx_fp8_ok")) if mode == "fp8" else bool(cal.get("ltx_ok")) or dtype == torch.float32
     if not torch.cuda.is_available():
         how = "on the CPU (very slow)"
     elif dtype == torch.float32:
         how = "full precision" + (", since half gave black frames on this card (about twice as slow)"
-                                  if calibration(job).get("ltx_fp32") else "")
+                                  if cal.get("ltx_fp32") else "")
     else:
         how = "half precision"
+    if torch.cuda.is_available():
+        how += ", model kept on the card in 8 bits" if mode == "fp8" else ", model streamed through the card"
     say("note", msg=f"{W}x{H} clips, {how}")
+
+    def without_fp8(why: str):
+        """8-bit weights failed on this card: the same stage the usual way (nothing of this run is saved yet)."""
+        say("warn", msg=f"Keeping the model on the card in 8 bits didn't work ({why[:100]}); streaming it instead (slower)")
+        remember(job, "ltx_mode", "stream")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return clips({**job, "ltx_mode": "stream"})
     n = 0
     for s in todo:
         t0 = time.time()
@@ -388,16 +428,28 @@ def clips(job: dict) -> None:
         frames = int(s.get("frames", 97))
         frames = max(9, (frames - 1) // 8 * 8 + 1)  # LTX takes 8k+1 frames
         g = torch.Generator("cpu").manual_seed(int(s.get("seed", 0)))
-        result = pipe(
-            conditions=[LTXVideoCondition(image=image, frame_index=0)],
-            # precomputed embeddings aren't moved by the pipeline: put them where its own would be
-            prompt_embeds=emb["embeds"].to(device=pipe._execution_device, dtype=dtype),
-            prompt_attention_mask=emb["mask"].bool().to(pipe._execution_device),
-            width=W, height=H, num_frames=frames, frame_rate=fps,
-            timesteps=job.get("timesteps") or DISTILLED_STEPS, guidance_scale=1.0,
-            decode_timestep=0.05, decode_noise_scale=0.025, image_cond_noise_scale=0.0,
-            generator=g, output_type="pil",
-        ).frames[0]
+        try:
+            result = pipe(
+                conditions=[LTXVideoCondition(image=image, frame_index=0)],
+                # precomputed embeddings aren't moved by the pipeline: put them where its own would be
+                prompt_embeds=emb["embeds"].to(device=pipe._execution_device, dtype=dtype),
+                prompt_attention_mask=emb["mask"].bool().to(pipe._execution_device),
+                width=W, height=H, num_frames=frames, frame_rate=fps,
+                timesteps=job.get("timesteps") or DISTILLED_STEPS, guidance_scale=1.0,
+                decode_timestep=0.05, decode_noise_scale=0.025, image_cond_noise_scale=0.0,
+                generator=g, output_type="pil",
+            ).frames[0]
+        except RuntimeError as exc:  # out of memory, or an 8-bit cast this card can't do (clips done so far stay)
+            if mode != "fp8":
+                raise
+            del pipe
+            return without_fp8(str(exc))
+        if not checked and mode == "fp8":
+            if broken(result[len(result) // 2]):
+                del pipe, result
+                return without_fp8("black frames")
+            remember(job, "ltx_fp8_ok", True)
+            checked = True
         if not checked:
             if broken(result[len(result) // 2]):
                 if dtype == torch.float32 or job.get("_retried") or job.get("dtype"):

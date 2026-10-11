@@ -1516,7 +1516,7 @@ function jobCard(j) {
         const dot = i < v.step ? "✓" : i === v.step ? '<span class="spinner"></span>' : "";
         return `<div class="step ${cls} tap" data-sheet="${esc(j.id)}" data-video="${v.n}" data-step="${i}" title="Open">${`<div class="dot">${dot}</div>`}${name}</div>`;
       }).join("")}</div>
-      <div class="now-line">${esc(v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
+      <div class="now-line">${esc((j.live && j.live.t >= end && j.live.msg.replace(/^\[V\d+\] /, "")) || v.lines[v.lines.length - 1].replace(/^\[attempt \d+\/\d+\] /, ""))}</div>
       <div class="timer">⏱ ${liveSince(v.start)}</div>`;
   } else if (running) {
     // A batch: one row per video, running side by side, each with its own token count.
@@ -1551,7 +1551,13 @@ function jobCard(j) {
                : `<button class="pausebtn" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">⏸️ Pause after this step (resume later)</button>`)
     : "";
   const usage = sumUsage(j.usage);
-  const resumeBtn = canResume ? `<button class="primary resume" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">
+  // A paused card whose video another job has already picked up again: no second Resume (it would find
+  // nothing free to resume and say "Nothing saved").
+  const mine = new Set(j.folders || []);
+  const takenOver = mine.size && (JOBS || []).some((o) => o.id !== j.id && ["queued", "running"].includes(o.status)
+    && [...(o.folders || []), ...(o.resume || []), ...(o.anim_resume || []), ...(o.toon_resume || [])].some((f) => mine.has(f)));
+  const resumeBtn = canResume && takenOver ? `<div class="hint" style="margin-top:8px">↻ Resumed: it's continuing in the job above.</div>`
+    : canResume ? `<button class="primary resume" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">
       ↻ Resume from where it stopped</button>` : "";
   const thumbs = made ? `<div class="thumbs">${j.results.map((id) =>
       `<img src="/media/${encodeURIComponent(id)}/thumbnail.jpg" alt="" onclick="openVideo('${esc(id)}')">`).join("")}</div>` : "";
@@ -1581,11 +1587,13 @@ async function loadUnfinished() {
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           ${u.length === "anim" && u.quality !== "fast" ? `<button data-resume-fast="${esc(u.id)}" title="The clips still to make come out 640×352, up to 3 s each">⚡ Resume with fast clips</button>` : ""}
+          ${u.length === "anim" && (u.motion || "full") === "full" ? `<button data-resume-key="${esc(u.id)}" title="Only the hook and the important shots are animated from here on; the others get camera moves over their picture (clips already made are kept)">✨ Resume, key shots only</button>` : ""}
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
       ${items.length > 1 ? `<button id="resumeAll" style="width:100%">↻ Resume all ${items.length}</button>` : ""}
     </div>` : "";
   document.querySelectorAll("[data-resume]").forEach((b) => b.onclick = () => startResume([b.dataset.resume]));
   document.querySelectorAll("[data-resume-fast]").forEach((b) => b.onclick = () => startResume([b.dataset.resumeFast], "fast"));
+  document.querySelectorAll("[data-resume-key]").forEach((b) => b.onclick = () => startResume([b.dataset.resumeKey], null, "key"));
   document.querySelectorAll("[data-discard]").forEach((b) => b.onclick = async () => {
     if (!confirm("Delete this unfinished video? It can't be resumed after that.")) return;
     try { await api("/api/unfinished/" + encodeURIComponent(b.dataset.discard), { method: "DELETE" }); toast("Discarded"); loadJobs(); }
@@ -1593,12 +1601,16 @@ async function loadUnfinished() {
   });
   if ($("#resumeAll")) $("#resumeAll").onclick = () => startResume(items.map((u) => u.id));
 }
-async function startResume(folders, quality) {
-  try { await api("/api/resume", { method: "POST", body: JSON.stringify(quality ? { folders, quality } : { folders }) }); toast("Resuming"); lastBusy = true; loadJobs(); }
+async function startResume(folders, quality, motion) {
+  const body = { folders, ...(quality ? { quality } : {}), ...(motion ? { motion } : {}) };
+  try { await api("/api/resume", { method: "POST", body: JSON.stringify(body) }); toast("Resuming"); lastBusy = true; loadJobs(); }
   catch (e) { toast(e.message); }
 }
 document.addEventListener("click", async (e) => {
   const p = e.target.closest("button.pausebtn"); if (!p) return;
+  const pj = (JOBS || []).find((x) => x.id === p.dataset.job) || {};
+  // Cards move when a new job appears at the top: a tap meant for another card must not pause this one.
+  if (!confirm(`Pause "${pj.topic || "this job"}" after its current step?\nIts progress is saved; press Resume to carry on.`)) return;
   p.disabled = true;
   try { await api(`/api/jobs/${p.dataset.job}/pause`, { method: "POST" }); toast("Pausing after the current step"); loadJobs(); }
   catch (err) { toast(err.message); p.disabled = false; }
