@@ -302,7 +302,21 @@ def embed(job: dict) -> None:
             t0 = time.time()
             ids = tok([s["prompt"] for s in part], padding="max_length", max_length=job.get("max_tokens", 128),
                       truncation=True, return_tensors="pt")
-            out = enc(ids.input_ids, attention_mask=ids.attention_mask)[0].float().cpu()
+            # The inputs go where the model computes: T5 builds its attention mask from them, and a mask left on
+            # the CPU met the card's numbers ("Expected all tensors to be on the same device ... cuda:0 and cpu").
+            dev = torch.device(job.get("_t5_device") or "cuda:0") if on_card else torch.device("cpu")
+            try:
+                out = enc(ids.input_ids.to(dev), attention_mask=ids.attention_mask.to(dev))[0].float().cpu()
+            except RuntimeError as exc:  # out of memory, or anything else the card can't do: the CPU, slower
+                if not on_card:
+                    raise
+                say("warn", msg=f"The text model failed on the graphics card ({str(exc)[:120]}); using the CPU (slower)")
+                del enc
+                gc.collect()
+                torch.cuda.empty_cache()
+                on_card, checked = False, True
+                enc = _t5(job, False)
+                continue  # this batch again, on the CPU
             if not checked:
                 if not torch.isfinite(out).all() or float(out.std()) == 0.0:
                     say("warn", msg="The text model gave broken numbers in half precision on this card; using the CPU (slower)")
