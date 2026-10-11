@@ -157,6 +157,9 @@ class JobManager:
                 from .myvoice import finish
                 r = job["myvoice"]
                 reports = [finish(cfg, video_dir(cfg, r["id"]), r["mode"], r["fit"], progress)]
+            elif job.get("anim_hd"):  # a finished animated video, its clips upscaled and re-edited
+                from .animated import sharpen_video
+                reports = [sharpen_video(cfg, video_dir(cfg, job["anim_hd"]["id"]), progress)]
             elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
@@ -453,6 +456,7 @@ class AnimRequestBody(BaseModel):
     style: str = "auto"
     motion: str = "full"  # full | key | stills
     quality: str = "auto"  # auto | fast | standard | high (animated.CLIP_SIZES)
+    upscale: bool = True  # sharpen clips and pictures to full HD (AI upscaler)
     voice: str = "en-US-AndrewMultilingualNeural"
     speed: int = 8
     captions: bool = False
@@ -722,6 +726,20 @@ def create_app(cfg: Config) -> FastAPI:
                            report.get("format", "short"),
                            rerender={"id": video_id, "voice": body.get("voice") or None,
                                      "captions": None if body.get("captions") is None else bool(body.get("captions"))})
+
+    @app.post("/api/videos/{video_id}/sharpen")
+    def sharpen_video_route(video_id: str):
+        """An animated video re-edited with its clips and pictures upscaled to full HD (animated.sharpen_video)."""
+        from . import anim_engine
+        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "anim":
+            raise HTTPException(400, "Only animated videos can be sharpened this way")
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (Anim tab).")
+        if any(j.get("anim_hd", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being sharpened")
+        return jobs.submit(f"Full HD: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
+                           anim_hd={"id": video_id})
 
     # ---- your own voiceover ----
     @app.get("/api/videos/{video_id}/myvoice")
@@ -997,7 +1015,7 @@ def create_app(cfg: Config) -> FastAPI:
         given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
-                 "quality": body.quality if body.quality in QUALITIES else "auto",
+                 "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
                  "voice": body.voice if body.voice in VOICES else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}

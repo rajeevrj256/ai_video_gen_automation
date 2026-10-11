@@ -87,6 +87,7 @@ class AnimRequest:
     style: str = "auto"  # an ART_STYLES key, or auto (Claude picks one the last videos didn't use)
     motion: str = "full"  # full | key | stills
     quality: str = "auto"  # CLIP_SIZES key, or auto (fast on cards under 6 GB, else standard)
+    upscale: bool = True  # sharpen clips and pictures to full HD with the AI upscaler (anim_worker `upscale`)
     voice: str = "en-US-AndrewMultilingualNeural"
     speed: int = 8
     captions: bool = False
@@ -114,8 +115,9 @@ class AShot(BaseModel):
                                   "screen), zoom (punch-in), shake, flash, pause (a beat after the line). 0 for low lines.")
     scene: str = Field(description="The picture of this moment for the image model, 25-70 words: who/what is in frame "
                        "doing what (pose, expression), the setting, composition (close-up / wide / over-the-shoulder / "
-                       "bird's-eye...), lighting and mood. Concrete and visual; a metaphor for anything abstract. Never "
-                       "text, signs, labels, numbers, logos or screens with writing (the editor adds words).")
+                       "bird's-eye...), lighting and mood. Concrete and visual; a metaphor for anything abstract. At most "
+                       "two people near the camera, each fully in frame with the face visible; groups only small in the "
+                       "distance. Never text, signs, labels, numbers, logos or screens with writing (the editor adds words).")
     characters: list[str] = Field(default_factory=list, description="Cast ids in frame (0-2), the main one first.")
     same_place: bool = Field(default=False, description="True when this shot continues in the same place as the shot "
                              "before (its picture is drawn from that one, so the setting stays the same).")
@@ -192,7 +194,9 @@ light. Vary the shot size and angle (wide establishing, medium, close-up on hand
 low angle) and never the same composition twice in a row. Abstract ideas become visual metaphors.
 - Characters: design 1-5 recurring characters in `characters` (their `design` is reused in every shot, so it is
 specific and fixed) and list who is in frame per shot (main first). Bring in scenes without them too (places, objects,
-crowds, nature) so the film breathes.
+distant crowds, nature) so the film breathes. The image model breaks close groups (people without heads, merged
+bodies, extra arms): at most two people near the camera, each whole and inside the frame with the face showing; a
+crowd only far away; hands simple (resting, pointing, holding one big object).
 - `same_place`: true when the shot stays in the previous shot's location (a new angle or moment there); a chapter usually
 has 2-3 places.
 - `motion`: one clear action the video model can show in 4-5 seconds, plus small life (wind, light, crowds). Big
@@ -316,6 +320,62 @@ CLIP_SIZES = {"fast": (640, 352, 3.0), "standard": (832, 480, 5.0), "high": (102
 QUALITIES = ("auto", *CLIP_SIZES)
 
 
+# The AI upscaler (Real-ESRGAN compact, anim_worker `upscale`): the anime model keeps flat and inked styles
+# crisp, the general one suits painted and 3D looks; pixel art is left alone (it would smear its pixels).
+SR_FOR = {"flat-vector": "anime", "anime": "anime", "comic": "anime", "retro-cartoon": "anime", "neon-synth": "anime",
+          "paper-cutout": "anime", "pixel-art": None}
+HD_CLIP = (1920, 1080)
+HD_PICTURE = (2560, 1440)  # the camera moves zoom into the pictures
+
+
+def _hd(path: Path) -> Path:
+    """clips/s000.mp4 -> clips/s000.hd.mp4 (its last frame: s000.hd.last.jpg)."""
+    return path.with_name(path.stem + ".hd" + path.suffix)
+
+
+def _ready(path: Path) -> bool:
+    return path.exists() and Path(str(path) + ".ok").exists()
+
+
+def upscale_job(shots: list[dict], style: str, work: Path) -> dict | None:
+    """Every finished clip, and the pictures shown as pictures (shots without a clip, title and chapter cards)."""
+    model = SR_FOR.get(style, "general")
+    if not model:
+        return None
+    items, seen = [], set()
+    for x in shots:
+        clip = work / "clips" / f"{x['id']}.mp4"
+        if x["type"] == "shot" and _ready(clip):
+            items.append({"id": x["id"], "src": str(clip), "out": str(_hd(clip)), "kind": "video",
+                          "w": HD_CLIP[0], "h": HD_CLIP[1]})
+            continue
+        img = work / x["image"]
+        if img.exists() and img not in seen and not img.stem.endswith(".hd"):
+            seen.add(img)
+            items.append({"id": img.stem, "src": str(img), "out": str(_hd(img)), "kind": "image",
+                          "w": HD_PICTURE[0], "h": HD_PICTURE[1]})
+    return {"items": items, "model": model, "sr_dir": str(anim_engine.MODELS / "upscale")}
+
+
+def _hd_props(shots: list[dict], work: Path) -> list[dict]:
+    """Point the editor at the upscaled clips and pictures that exist."""
+    out = []
+    for x in shots:
+        x = dict(x)
+        if x.get("clip"):
+            hd = _hd(work / x["clip"])
+            if _ready(hd) and not x["clip"].endswith(".hd.mp4"):
+                x["clip"] = hd.relative_to(work).as_posix()
+                x["clipSeconds"] = round(media_seconds(hd), 3)
+                last = hd.with_suffix(".last.jpg")
+                x["last"] = last.relative_to(work).as_posix() if last.exists() else x.get("last")
+        hd = _hd(work / x["image"])
+        if _ready(hd) and not x["image"].endswith(".hd.jpg"):
+            x["image"] = hd.relative_to(work).as_posix()
+        out.append(x)
+    return out
+
+
 def clip_quality(req: AnimRequest) -> str:
     if req.quality in CLIP_SIZES:
         return req.quality
@@ -413,7 +473,10 @@ def _motion_wanted(shot: dict, motion: str) -> bool:
     return motion == "full" or shot["chapter"] < 0 or shot["importance"] in ("high", "critical")
 
 
-def keyframe_job(sc: AnimScript, tl: dict, style: str, work: Path, seed: int) -> dict:
+def keyframe_job(sc: AnimScript, tl: dict, style: str, work: Path, seed: int, fixes: dict | None = None) -> dict:
+    """`fixes`: pictures the picture check sent back, {id: {"prompt": easier scene, "round": n}}: drawn again from
+    that prompt with a new seed."""
+    fixes = fixes or {}
     look = f"{ART_STYLES[style][0]}, {sc.style_notes.strip()}".strip(", ")
     designs = {c.id: c for c in sc.characters}
     chars = [{"id": f"char-{c.id}", "out": str(work / "keyframes" / f"char-{c.id}.jpg"), "seed": seed + 7 + k,
@@ -433,7 +496,120 @@ def keyframe_job(sc: AnimScript, tl: dict, style: str, work: Path, seed: int) ->
         if sh.same_place and n > 0:
             item.update(init=str(work / shot_rows[n - 1]["image"]), strength=0.62)
         items.append(item)
+    for it in chars + items:
+        fix = fixes.get(it["id"])
+        if fix:
+            it["seed"] += 1000 * int(fix.get("round", 1))
+            it["prompt"] = (f"Character design: {fix['prompt']}. Full body, standing, front view, centered, plain light "
+                            f"background. {look}" if it["id"].startswith("char-") else
+                            f"{fix['prompt']} {look}, cinematic composition, highly detailed")
+            it.pop("init", None)  # drawn fresh, not from the shot before
     return {"characters": chars, "shots": items, "negative": NEGATIVE, "width": 1344, "height": 768, "steps": 4}
+
+
+# ---------- the picture check: Claude looks at every picture before anything is animated ----------
+
+class PicIssue(BaseModel):
+    id: str = Field(description="The label printed on the picture, e.g. s012 or char-mira.")
+    problem: str = Field(description="What is wrong, a few words: 'man on the left has no head'.")
+    prompt: str = Field(description="A new picture prompt for it, 25-70 words: the same moment, made easy to draw "
+                        "(see the rules). No art-style words: the style is added.")
+
+
+class PicReview(BaseModel):
+    broken: list[PicIssue] = Field(default_factory=list)
+
+
+PIC_SYSTEM = """You check AI-drawn pictures for an animated film before they are animated (each one becomes a moving clip, minutes of work, so a broken picture must be caught now). Each tile has its label in the corner and the line it illustrates is listed in the prompt. Flag only defects a viewer would notice: a person without a head or face, a face cut off by the frame edge or melted, extra or missing arms, legs or fingers, bodies merged or duplicated, a recurring character drawn as someone else, garbled writing or fake letters, or a picture that plainly shows something else than its line. Style quirks, soft backgrounds and small imperfections are fine; when unsure, let it pass. For each broken picture give its label, the problem, and a new prompt for the same moment that the image model can draw: at most two people near the camera, each whole and inside the frame, faces fully visible (front or three-quarter view), a crowd only small in the distance, simple hands, nothing written."""
+PIC_ROUNDS = 2  # check, redraw what failed, check those again, redraw once more
+PIC_TILE = (640, 360)
+PIC_PER_SHEET = 12
+
+
+def _pic_sheets(pics: list[tuple[str, Path]], out_dir: Path) -> list[Path]:
+    from PIL import Image, ImageDraw, ImageFont
+
+    try:
+        font = ImageFont.load_default(size=30)
+    except TypeError:  # Pillow before 10.1
+        font = ImageFont.load_default()
+    sheets = []
+    for k in range(0, len(pics), PIC_PER_SHEET):
+        part = pics[k:k + PIC_PER_SHEET]
+        rows = (len(part) + 2) // 3
+        sheet = Image.new("RGB", (PIC_TILE[0] * 3, PIC_TILE[1] * rows), "black")
+        for i, (label, path) in enumerate(part):
+            tile = Image.open(path).convert("RGB")
+            tile.thumbnail((PIC_TILE[0] - 6, PIC_TILE[1] - 6))
+            x, y = (i % 3) * PIC_TILE[0] + 3, (i // 3) * PIC_TILE[1] + 3
+            sheet.paste(tile, (x, y))
+            d = ImageDraw.Draw(sheet)
+            d.rectangle([x, y, x + 16 + 18 * len(label), y + 42], fill=(0, 0, 0))
+            d.text((x + 8, y + 4), label, fill=(255, 220, 0), font=font)
+        path = out_dir / f"picture-check-{k // PIC_PER_SHEET + 1}.jpg"
+        sheet.save(path, quality=88)
+        sheets.append(path)
+    return sheets
+
+
+def check_pictures(cfg: Config, sc: AnimScript, tl: dict, work: Path, ids: list[str] | None = None) -> list[PicIssue]:
+    """The pictures Claude finds broken (all of them, or only `ids`)."""
+    plan = [sh for sh in sc.cold_open] + [sh for ch in sc.chapters for sh in ch.shots]
+    rows = [x for x in tl["shots"] if x["type"] == "shot"]
+    lines = {"title": f"title card behind \"{sc.title}\""}
+    lines.update({f"char-{c.id}": f"character sheet of {c.name}: {c.design}" for c in sc.characters})
+    lines.update({row["id"]: f"{sh.line} (meant: {sh.scene})" for row, sh in zip(rows, plan)})
+    pics = []
+    for label in lines:
+        path = work / "keyframes" / f"{label}.jpg"
+        if path.exists() and (ids is None or label in ids):
+            pics.append((label, path))
+    if not pics:
+        return []
+    sheets = _pic_sheets(pics, work)
+    names = {c.name for c in sc.characters}
+    prompt = (f"Film: {sc.title}. Recurring characters: {', '.join(names) or 'none'}.\n"
+              + "\n".join(f"{label}: {lines[label]}" for label, _ in pics)
+              + f"\n\n{len(sheets)} contact sheet(s) attached. List only the broken pictures.")
+    review = ask(cfg.ai_backend, cfg.claude_model, PIC_SYSTEM, prompt, PicReview, images=sheets,
+                 effort=cfg.claude_effort, timeout=900)
+    known = {label for label, _ in pics}
+    return [b for b in review.broken if b.id in known and b.prompt.strip()]
+
+
+def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Path, seed: int, state: dict,
+                    progress: Progress, save) -> list[dict]:
+    """Check every picture, redraw the broken ones from easier prompts, check those again (PIC_ROUNDS)."""
+    from .pipeline import Paused
+
+    fixes: dict = state.get("pic_fixes") or {}
+    found: list[dict] = state.get("pic_found") or []
+    ids = None
+    for rnd in range(int(state.get("pic_round") or 0), PIC_ROUNDS):
+        progress("Checking the pictures for broken people and objects" if ids is None
+                 else f"Checking the {len(ids)} redrawn pictures")
+        try:
+            broken = check_pictures(cfg, sc, tl, work, ids)
+        except Paused:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a check that can't run never stops the video
+            log.warning("Picture check failed: %s", exc)
+            progress(f"Picture check skipped ({str(exc)[:120]})")
+            break
+        if not broken:
+            break
+        for b in broken:
+            fixes[b.id] = {"prompt": b.prompt.strip(), "round": rnd + 1}
+            found.append({"id": b.id, "problem": b.problem, "round": rnd + 1})
+            for f in (work / "keyframes" / f"{b.id}.jpg", work / "keyframes" / f"{b.id}.jpg.ok"):
+                f.unlink(missing_ok=True)
+        progress(f"Redrawing {len(broken)} picture(s): " + "; ".join(f"{b.id} {b.problem}" for b in broken[:6]))
+        save(pic_fixes=fixes, pic_found=found, pic_round=rnd + 1)
+        anim_engine.run_stage("keyframes", keyframe_job(sc, tl, style, work, seed, fixes), work, progress,
+                              "Drawing the pictures")
+        ids = [b.id for b in broken]
+    save(pic_fixes=fixes, pic_found=found, pic_round=PIC_ROUNDS, pics_checked=True)
+    return found
 
 
 def clip_jobs(sc: AnimScript, tl: dict, style: str, req: AnimRequest, work: Path, seed: int) -> tuple[dict, dict]:
@@ -548,6 +724,7 @@ def props_for(sc: AnimScript, tl: dict, style: str, req: AnimRequest, cfg: Confi
         if not (work / x["image"]).exists():  # a picture that couldn't be made: the nearest one before it
             x["image"] = next((s["image"] for s in reversed(shots) if (work / s["image"]).exists()), x["image"])
         shots.append(x)
+    shots = _hd_props(shots, work)
     accent = ART_STYLES[style][1]
     props = {"fps": cfg.fps, "duration": tl["duration"], "title": sc.title, "style": style, "accent": accent,
              "shots": shots, "captions": req.captions, "watermark": req.watermark.strip()[:40] or None,
@@ -606,14 +783,22 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         save(stage="voiced", timeline=tl, style=style)
     progress(f"Art style: {style}. {len([s for s in tl['shots'] if s['type'] == 'shot'])} shots, "
              f"{tl['duration'] / 60:.1f} min")
-    anim_engine.run_stage("keyframes", keyframe_job(sc, tl, style, work, seed), work, progress, "Drawing the pictures")
+    anim_engine.run_stage("keyframes", keyframe_job(sc, tl, style, work, seed, state.get("pic_fixes")), work, progress,
+                          "Drawing the pictures")
     save(stage="pictures")
+    pic_found = state.get("pic_found") or []
+    if not state.get("pics_checked") and not any((work / "clips").glob("*.mp4.ok")):  # a redrawn picture's clip
+        # would be the old one, so a video resumed after animation began (older checkpoints) keeps its pictures
+        pic_found = _picture_rounds(cfg, sc, tl, style, work, seed, state, progress, save)
     emb, clipjob = clip_jobs(sc, tl, style, req, work, seed)
     if clipjob["shots"]:
         q = clip_quality(req)
         progress(f"Clips: {q}, {CLIP_SIZES[q][0]}x{CLIP_SIZES[q][1]}, up to {CLIP_SIZES[q][2]:.0f} s each")
         anim_engine.run_stage("embed", emb, work, progress, "Reading the motion prompts")
         anim_engine.run_stage("clips", clipjob, work, progress, "Animating the shots")
+    up = upscale_job(tl["shots"], style, work) if req.upscale else None
+    if up and up["items"]:
+        anim_engine.run_stage("upscale", up, work, progress, "Sharpening to full HD")
     save(stage="clips")
     if state.get("music"):
         hook, parts, music_choice = state["music"]
@@ -664,6 +849,7 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         "youtube_hashtags": sc.hashtags[:3], "youtube_tags": sc.tags, "caption": sc.youtube_description.strip(),
         "hashtags": sc.hashtags, "fact_check": findings, "sources": sources, "sources_unreachable": dropped,
         "art_style": style, "motion": req.motion, "animated_shots": f"{animated} of {total}", "music": music_choice,
+        "upscaled": up["model"] if up and up["items"] else None, "picture_check": pic_found,
         "characters": [c.model_dump() for c in sc.characters],
     }
     (final / "script.json").write_text(sc.model_dump_json(indent=2), encoding="utf-8")
@@ -671,6 +857,45 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
     report["usage"] = summarize_usage(meter_records())
     (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
+    return report
+
+
+def sharpen_video(cfg: Config, folder: Path, progress: Progress = log.info) -> dict:
+    """A finished animated video re-edited with its clips and pictures upscaled to full HD: no new animation,
+    no Claude. The old edit stays as reel-sd.mp4."""
+    from .pipeline import _render_slot, set_pause_check
+
+    set_pause_check(getattr(progress, "should_pause", None))
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    props = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    if not anim_engine.installed():
+        raise RuntimeError("The AI engine isn't installed: open the Anim tab and press 'Install the AI engine'")
+    up = upscale_job(props["shots"], report.get("art_style", ""), folder)
+    if not up:
+        raise RuntimeError("Pixel art stays as it is: an upscaler would smear its pixels")
+    if up["items"]:
+        anim_engine.run_stage("upscale", up, folder, progress, "Sharpening to full HD")
+    props["shots"] = _hd_props(props["shots"], folder)
+    cli = _remotion_cli()
+    if cli is None:
+        raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
+    progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
+    out = folder / "reel-hd.mp4"
+    with _render_slot(cfg):
+        _render_remotion(cli, props, out, composition="Anim", crf=18, progress=progress)
+    progress("Verifying video quality")
+    info = probe(out)
+    if (info.get("width"), info.get("height")) != HD_CLIP or not info.get("has_audio"):
+        raise RuntimeError(f"The new edit came out {info.get('width')}x{info.get('height')}"
+                           + ("" if info.get("has_audio") else " without sound") + "; the old video is kept")
+    if not (folder / "reel-sd.mp4").exists():
+        (folder / "reel.mp4").replace(folder / "reel-sd.mp4")
+    out.replace(folder / "reel.mp4")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "8", "-i", str(folder / "reel.mp4"), "-frames:v", "1",
+                    "-q:v", "3", str(folder / "thumbnail.jpg")], check=False)
+    report.update(upscaled=up["model"], checks={**report.get("checks", {}), "probe": info})
+    (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    progress("Done: sharpened to full HD (the old edit is kept as reel-sd.mp4)")
     return report
 
 

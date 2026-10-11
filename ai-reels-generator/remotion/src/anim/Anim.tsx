@@ -4,6 +4,7 @@ import {Audio} from '../Audio';
 import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
 import {FONT, clamp, useFonts} from '../theme';
+import {type Face, LABEL, SOFT_SHADOW, faceFor, splitTitle, useAnimFonts} from './type';
 import type {AnimCamera, AnimProps, AnimShot} from './types';
 
 // Animated videos (reelgen/animated.py). The pictures and clips are AI-made; this times them to the voice and
@@ -69,39 +70,54 @@ const countUp = (text: string, k: number) => text.replace(/\d[\d,]*(\.\d+)?/, (m
   return m.includes(',') ? v.toLocaleString('en-US', {minimumFractionDigits: dec, maximumFractionDigits: dec}) : v.toFixed(dec);
 });
 
-// The emphasised words, landing word by word as they are said (a number counts up), in one of three looks.
-const Emphasis: React.FC<{text: string; t: number; at: number; end: number; look: number; accent: string; fps: number}> = ({text, t, at, end, look, accent, fps}) => {
+// Words revealed one by one: rising a little, from soft focus to sharp.
+const Reveal: React.FC<{words: string[]; t: number; at: number; span: number; fps: number}> = ({words, t, at, span, fps}) => (
+  <>
+    {words.map((w, i) => {
+      const s = spring({frame: Math.round((t - at - (span * i) / Math.max(1, words.length)) * fps), fps, config: {damping: 16, mass: 0.6}});
+      return <span key={i} style={{display: 'inline-block', marginRight: '0.24em', opacity: Math.min(1, s * 1.6),
+        transform: `translateY(${(1 - s) * 26}px)`, filter: `blur(${(1 - Math.min(1, s)) * 8}px)`}}>{w}</span>;
+    })}
+  </>
+);
+
+// The emphasised words, landing word by word as they are said (a number counts up), in one of three looks:
+// the display face with an accent rule wiping in under it, an accent tag, or the display face in the accent colour.
+const Emphasis: React.FC<{text: string; t: number; at: number; end: number; look: number; accent: string; fps: number; face: Face}> = ({text, t, at, end, look, accent, fps, face}) => {
   const span = Math.max(0.35, end - at);
   const words = text.split(' ');
   const hasNum = /\d/.test(text);
   const out = interpolate(t, [end + 1.6, end + 2.0], [1, 0], clamp);
-  const base: React.CSSProperties = {fontFamily: FONT, fontWeight: 900, fontSize: text.length > 18 ? 92 : 124, textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap'};
-  const box: React.CSSProperties = look === 0
-    ? {...base, color: '#fff', WebkitTextStroke: '12px #111', paintOrder: 'stroke', textShadow: `0 10px 0 ${accent}`}
-    : look === 1
-      ? {...base, color: '#111', background: accent, padding: '12px 36px', borderRadius: 16, boxShadow: '0 14px 30px rgba(0,0,0,0.45)'}
-      : {...base, color: accent, WebkitTextStroke: '10px #111', paintOrder: 'stroke', textShadow: '0 8px 24px rgba(0,0,0,0.6)'};
   const k = interpolate(t, [at, at + span], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
-  const pop = spring({frame: Math.round((t - at) * fps), fps, config: {damping: 10, mass: 0.5}});
+  const rule = interpolate(t, [at + span * 0.4, at + span + 0.3], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  const long = text.length > 18;
+  const display: React.CSSProperties = {fontFamily: face.family, fontWeight: face.weight, textTransform: face.upper ? 'uppercase' : 'none',
+    letterSpacing: face.tracking, fontSize: (long ? 82 : 108) * face.size, lineHeight: 1.05, whiteSpace: 'nowrap', textShadow: SOFT_SHADOW};
+  const body = hasNum ? countUp(text, k) : <Reveal words={words} t={t} at={at} span={span} fps={fps} />;
   return (
-    <div style={{position: 'absolute', left: 0, right: 0, top: 110, display: 'flex', justifyContent: 'center', opacity: out}}>
-      <div style={{...box, transform: `scale(${hasNum ? pop : 1})`}}>
-        {hasNum ? countUp(text, k) : words.map((w, i) => {
-          const s = spring({frame: Math.round((t - at - (span * i) / words.length) * fps), fps, config: {damping: 11, mass: 0.5}});
-          return <span key={i} style={{display: 'inline-block', marginRight: '0.28em', opacity: Math.min(1, s * 2),
-            transform: `translateY(${(1 - s) * 50}px) scale(${look === 0 ? 0.7 + 0.3 * s : 1})`}}>{w}</span>;
-        })}
-      </div>
+    <div style={{position: 'absolute', left: 0, right: 0, top: 0, height: 460, paddingTop: 96, display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: out,
+      background: 'linear-gradient(to bottom, rgba(0,0,0,0.42), rgba(0,0,0,0))'}}>
+      {look === 1 ? (
+        <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: long ? 56 : 70, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#0b0b0f',
+          background: accent, padding: '10px 30px 12px', borderRadius: 6, transform: `rotate(-1.5deg) scale(${0.92 + 0.08 * Math.min(1, k * 2)})`,
+          boxShadow: '0 12px 34px rgba(0,0,0,0.4)', whiteSpace: 'nowrap'}}>{body}</div>
+      ) : (
+        <>
+          <div style={{...display, color: look === 2 ? accent : '#fff', fontStyle: look === 2 ? face.italic : 'normal'}}>{body}</div>
+          {look === 0 ? <div style={{marginTop: 14, height: 4, width: 260 * rule, background: accent, borderRadius: 2, boxShadow: '0 2px 10px rgba(0,0,0,0.35)'}} /> : null}
+        </>
+      )}
     </div>
   );
 };
 
 const OnScreen: React.FC<{text: string; frame: number; fps: number; accent: string}> = ({text, frame, fps, accent}) => {
-  const s = spring({frame: frame - 10, fps, config: {damping: 14}});
+  const s = spring({frame: frame - 10, fps, config: {damping: 16}});
   return (
-    <div style={{position: 'absolute', left: 90, bottom: 140, transform: `translateX(${(1 - s) * -600}px)`, display: 'flex', alignItems: 'stretch', fontFamily: FONT}}>
-      <div style={{width: 14, background: accent}} />
-      <div style={{background: 'rgba(10,10,14,0.82)', color: '#fff', fontWeight: 900, fontSize: 64, padding: '10px 30px', textTransform: 'uppercase', letterSpacing: 1}}>{text}</div>
+    <div style={{position: 'absolute', left: 90, bottom: 130, opacity: Math.min(1, s * 1.5), transform: `translateX(${(1 - s) * -60}px)`,
+      display: 'flex', alignItems: 'stretch', fontFamily: LABEL, boxShadow: '0 10px 30px rgba(0,0,0,0.35)'}}>
+      <div style={{width: 6, background: accent}} />
+      <div style={{background: 'rgba(12,12,16,0.74)', color: '#fff', fontWeight: 700, fontSize: 44, padding: '12px 28px 14px', textTransform: 'uppercase', letterSpacing: '0.08em'}}>{text}</div>
     </div>
   );
 };
@@ -116,30 +132,45 @@ const Caption: React.FC<{shot: AnimShot; t: number}> = ({shot, t}) => {
   const from = Math.floor(i / per) * per;
   return (
     <div style={{position: 'absolute', left: 0, right: 0, bottom: 54, display: 'flex', justifyContent: 'center'}}>
-      <div style={{fontFamily: FONT, fontWeight: 800, fontSize: 36, color: '#fff', background: 'rgba(0,0,0,0.55)', padding: '6px 18px', borderRadius: 10, maxWidth: 1200, textAlign: 'center'}}>
+      <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: 36, color: '#fff', background: 'rgba(0,0,0,0.55)', padding: '6px 18px', borderRadius: 10, maxWidth: 1200, textAlign: 'center'}}>
         {w.slice(from, from + per).map((x) => x.text).join(' ')}
       </div>
     </div>
   );
 };
 
-const Card: React.FC<{shot: AnimShot; frame: number; frames: number; fps: number; accent: string}> = ({shot, frame, frames, fps, accent}) => {
+// A small tracked label between two thin rules: "— CHAPTER 3 OF 5 —".
+const Kicker: React.FC<{text: string; accent: string; k: number}> = ({text, accent, k}) => (
+  <div style={{display: 'flex', alignItems: 'center', gap: 22, opacity: k, transform: `translateY(${(1 - k) * 12}px)`}}>
+    <div style={{width: 70 * k, height: 2, background: accent, opacity: 0.9}} />
+    <div style={{fontFamily: LABEL, fontWeight: 600, fontSize: 28, letterSpacing: '0.42em', marginRight: '-0.42em', textTransform: 'uppercase',
+      color: '#fff', textShadow: '0 2px 12px rgba(0,0,0,0.6)'}}>{text}</div>
+    <div style={{width: 70 * k, height: 2, background: accent, opacity: 0.9}} />
+  </div>
+);
+
+// Title and chapter cards, set like a film's: the picture darkened from below, a kicker, the line revealed word
+// by word in the style's display face, a thin rule.
+const Card: React.FC<{shot: AnimShot; frame: number; frames: number; fps: number; accent: string; face: Face}> = ({shot, frame, frames, fps, accent, face}) => {
   const title = shot.type === 'title';
-  const s = spring({frame: frame - 4, fps, config: {damping: 13}});
-  const text = shot.cardText ?? '';
-  const typed = title ? text : text.slice(0, Math.round(interpolate(frame, [8, 8 + text.length * 1.4], [0, text.length], clamp)));
+  const t = frame / fps;
+  const [kick, main] = title ? splitTitle(shot.cardText ?? '') : ['', shot.cardText ?? ''];
+  const kicker = title ? kick : shot.chapterNo ? `Chapter ${shot.chapterNo}${shot.chapters ? ` of ${shot.chapters}` : ''}` : '';
+  const k = spring({frame: frame - 2, fps, config: {damping: 18}});
+  const words = main.split(' ');
+  const base = title ? (main.length > 40 ? 92 : 112) : (main.length > 32 ? 80 : 96);
+  const rule = spring({frame: frame - 6 - words.length * 3, fps, config: {damping: 20}});
   return (
     <>
       <Picture src={shot.image} camera="push-in" frame={frame} frames={frames} />
-      <div style={{position: 'absolute', inset: 0, background: title ? 'radial-gradient(circle at 50% 55%, rgba(0,0,0,0.15), rgba(0,0,0,0.7))' : 'rgba(0,0,0,0.62)'}} />
-      <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 26, fontFamily: FONT}}>
-        {!title && shot.chapterNo ? (
-          <div style={{color: accent, fontWeight: 900, fontSize: 34, letterSpacing: 10, opacity: s}}>CHAPTER {shot.chapterNo}{shot.chapters ? ` / ${shot.chapters}` : ''}</div>
-        ) : null}
-        <div style={{color: '#fff', fontWeight: 900, fontSize: title ? (text.length > 42 ? 86 : 104) : 84, textAlign: 'center', maxWidth: 1500, lineHeight: 1.08,
-          textTransform: 'uppercase', transform: `scale(${title ? 0.85 + 0.15 * s : 1})`, opacity: title ? s : 1,
-          WebkitTextStroke: title ? '10px #111' : undefined, paintOrder: 'stroke', textShadow: `0 10px 0 ${title ? accent : 'transparent'}`}}>{typed}</div>
-        <div style={{width: interpolate(s, [0, 1], [0, 420]), height: 8, background: accent, borderRadius: 4}} />
+      <div style={{position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.5) 45%, rgba(0,0,0,0.38) 100%)'}} />
+      <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 30, padding: '0 160px'}}>
+        {kicker ? <Kicker text={kicker} accent={accent} k={k} /> : null}
+        <div style={{fontFamily: face.family, fontWeight: face.weight, fontSize: base * face.size, letterSpacing: face.tracking, lineHeight: face.upper ? 0.98 : 1.06,
+          textTransform: face.upper ? 'uppercase' : 'none', color: '#fff', textAlign: 'center', maxWidth: 1560, textWrap: 'balance', textShadow: SOFT_SHADOW} as React.CSSProperties}>
+          <Reveal words={words} t={t} at={0.1} span={Math.min(0.75, 0.08 * words.length)} fps={fps} />
+        </div>
+        <div style={{width: 220 * rule, height: 3, background: accent, borderRadius: 2, opacity: 0.95}} />
       </div>
     </>
   );
@@ -166,12 +197,12 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
     <Layer name={`${shot.type} ${index + 1}`} style={{opacity, backgroundColor: '#000'}}>
       <div style={{position: 'absolute', inset: 0, transform: `scale(${zoomIn * (1 + punch)}) translate(${whip * 900 + shake}px, ${shake * 0.4}px) skewX(${whip * -12}deg)`}}>
         {shot.type === 'shot' ? <Visual shot={shot} frame={Math.max(0, frame)} frames={frames} />
-          : <Card shot={shot} frame={Math.max(0, frame)} frames={frames} fps={fps} accent={props.accent} />}
+          : <Card shot={shot} frame={Math.max(0, frame)} frames={frames} fps={fps} accent={props.accent} face={faceFor(props.style)} />}
         {/* a soft vignette ties the AI frames together */}
         <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.38) 100%)'}} />
       </div>
       {shot.onScreen ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} /> : null}
-      {em && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} /> : null}
+      {em && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} /> : null}
       {tr === 'dip' && early ? <div style={{position: 'absolute', inset: 0, background: '#000', opacity: interpolate(raw, [0, early, early + 10], [0, 1, 0], clamp)}} /> : null}
       {tr === 'flash' ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(frame, [0, 9], [0.9, 0], clamp)}} /> : null}
       {fx.has('flash') && sinceEm !== null && sinceEm < 8 ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(sinceEm, [0, 7], [0.8, 0], clamp)}} /> : null}
@@ -182,6 +213,7 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
 
 export const Anim: React.FC<AnimProps> = (props) => {
   useFonts();
+  useAnimFonts();
   const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const {shots} = props;
@@ -200,7 +232,7 @@ export const Anim: React.FC<AnimProps> = (props) => {
         );
       })}
       {!props.soundOnly && props.watermark ? (
-        <div style={{position: 'absolute', left: 36, bottom: 28, fontFamily: FONT, fontWeight: 900, fontSize: 28, color: '#fff', opacity: 0.8, textShadow: '0 3px 6px rgba(0,0,0,0.6)'}}>{props.watermark}</div>
+        <div style={{position: 'absolute', left: 36, bottom: 28, fontFamily: LABEL, fontWeight: 700, fontSize: 26, letterSpacing: '0.06em', color: '#fff', opacity: 0.75, textShadow: '0 2px 8px rgba(0,0,0,0.6)'}}>{props.watermark}</div>
       ) : null}
       {shots.map((s) => (s.audio ? (
         <Sequence key={`v-${s.id}`} name={`voice ${s.id}`} from={f(s.start + (s.lead ?? 0))}>

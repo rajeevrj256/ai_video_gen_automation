@@ -6,6 +6,7 @@ when it ends:
     python worker.py keyframes job.json   # SDXL-Lightning pictures; IP-Adapter keeps each character's look
     python worker.py embed job.json       # LTX-Video's T5 text encoder on the CPU, once for every clip
     python worker.py clips job.json       # LTX-Video 2B distilled: each picture becomes a moving clip
+    python worker.py upscale job.json     # Real-ESRGAN compact: clips and pictures sharpened to full HD
     python worker.py music job.json       # ACE-Step 1.5: new instrumental tracks
 
 Built for small graphics cards (the user's GTX 1650 has 4 GB): models stream in layer by layer from system
@@ -405,6 +406,150 @@ def clips(job: dict) -> None:
             frames=frames)
 
 
+# ---------- upscale: Real-ESRGAN compact video models, 4x, then fitted to full HD ----------
+
+# The clips come out 640x352 / 832x480 and the pictures 1344x768; stretched to 1920x1080 by the editor they
+# looked soft. These small models (BSD-3-Clause, 2.5 / 4.9 MB) restore the edges: anime for flat and inked
+# styles, general for painted and 3D ones. Checksums pinned: the file is loaded as model weights.
+SR_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
+SR_MODELS = {
+    "anime": ("realesr-animevideov3.pth", 16, "b8a8376811077954d82ca3fcf476f1ac3da3e8a68a4f4d71363008000a18b75d"),
+    "general": ("realesr-general-x4v3.pth", 32, "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292"),
+}
+
+
+def _sr_net(num_conv: int):
+    """SRVGGNetCompact (Real-ESRGAN): convolutions at the input size, then a 4x pixel shuffle."""
+    import torch
+    from torch import nn
+
+    class Net(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            layers = [nn.Conv2d(3, 64, 3, 1, 1), nn.PReLU(64)]
+            for _ in range(num_conv):
+                layers += [nn.Conv2d(64, 64, 3, 1, 1), nn.PReLU(64)]
+            layers.append(nn.Conv2d(64, 48, 3, 1, 1))
+            self.body = nn.ModuleList(layers)
+            self.up = nn.PixelShuffle(4)
+
+        def forward(self, x):
+            out = x
+            for layer in self.body:
+                out = layer(out)
+            return self.up(out) + torch.nn.functional.interpolate(x, scale_factor=4, mode="nearest")
+
+    return Net()
+
+
+def sr_model(job: dict, name: str, device, dtype):
+    import hashlib
+    import urllib.request
+
+    import torch
+
+    file, num_conv, sha = SR_MODELS[name]
+    path = Path(job.get("sr_dir") or ".") / file
+    if not path.exists():
+        say("note", msg=f"Downloading the upscaler ({file}, a few MB, only once)...")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".part")
+        urllib.request.urlretrieve(SR_URL + file, tmp)
+        if hashlib.sha256(tmp.read_bytes()).hexdigest() != sha:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"The upscaler download ({file}) didn't match its checksum")
+        tmp.replace(path)
+    net = _sr_net(num_conv)
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    net.load_state_dict({k.replace("upsampler", "up"): v for k, v in (state.get("params") or state["params_ema"]).items()})
+    return net.eval().to(device=device, dtype=dtype)
+
+
+def _fit(img, W: int, H: int):
+    """A (1,3,h,w) picture scaled to cover WxH and centre-cropped: the clips aren't exactly 16:9."""
+    import torch.nn.functional as F
+
+    h, w = img.shape[-2:]
+    k = max(W / w, H / h)
+    nh, nw = max(H, round(h * k)), max(W, round(w * k))
+    img = F.interpolate(img, size=(nh, nw), mode="bicubic", antialias=True, align_corners=False)
+    y, x = (nh - H) // 2, (nw - W) // 2
+    return img[..., y:y + H, x:x + W]
+
+
+def upscale(job: dict) -> None:
+    import imageio
+    import numpy as np
+    import torch
+
+    todo = [it for it in job["items"] if not done(it["out"])]
+    say("start", stage="upscale", total=len(job["items"]), todo=len(todo))
+    if not todo:
+        return
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = pick_dtype(job, "sr")
+    net = sr_model(job, job.get("model") or "general", device, dtype)
+    checked = bool(calibration(job).get("sr_ok")) or dtype == torch.float32
+
+    def sharpen(frame, W: int, H: int):
+        """One RGB uint8 frame -> W x H uint8, through the model."""
+        x = torch.from_numpy(np.array(frame)).to(device).permute(2, 0, 1)[None].to(dtype) / 255
+        with torch.no_grad():
+            y = _fit(net(x).float(), W, H).clamp_(0, 1)  # after the resize: bicubic overshoots, and a byte wraps
+        return (y[0].permute(1, 2, 0) * 255).round().byte().cpu().numpy()
+
+    n = 0
+    for it in todo:
+        t0 = time.time()
+        W, H = int(it["w"]), int(it["h"])
+        out = Path(it["out"])
+        tmp = out.with_name(out.stem + ".part" + out.suffix)
+        if it.get("kind") == "image":
+            from PIL import Image
+
+            first = sharpen(np.asarray(Image.open(it["src"]).convert("RGB")), W, H)
+            frames = [first]
+            Image.fromarray(first).save(tmp, quality=93)
+        else:
+            reader = imageio.get_reader(it["src"])
+            fps = reader.get_meta_data().get("fps", 24)
+            writer = imageio.get_writer(str(tmp), format="FFMPEG", fps=fps, codec="libx264", quality=None,
+                                        pixelformat="yuv420p", macro_block_size=8,
+                                        ffmpeg_params=["-crf", "17", "-preset", "medium"])
+            frames = []
+            try:
+                for i, frame in enumerate(reader):
+                    up = sharpen(frame, W, H)
+                    if i == 0:
+                        frames.append(up)
+                    last = up
+                    writer.append_data(up)
+            finally:
+                writer.close()
+                reader.close()
+            frames.append(last)
+        if not checked:
+            from PIL import Image
+
+            if broken(Image.fromarray(frames[0])):
+                tmp.unlink(missing_ok=True)
+                if dtype == torch.float32 or job.get("_retried") or job.get("dtype"):
+                    raise RuntimeError("The upscaler gives black frames even in full precision: check the graphics driver")
+                say("warn", msg="Half precision gave black frames on this card; upscaling in full precision")
+                remember(job, "sr_fp32", True)
+                return upscale({**job, "_retried": True, "dtype": "fp32"})
+            remember(job, "sr_ok", True)
+            checked = True
+        tmp.replace(out)
+        if it.get("kind") != "image":
+            from PIL import Image
+
+            Image.fromarray(frames[-1]).save(str(out.with_suffix(".last.jpg")), quality=93)
+        mark(out)
+        n += 1
+        say("item", stage="upscale", n=n, of=len(todo), id=it.get("id", ""), secs=round(time.time() - t0, 1))
+
+
 # ---------- music: ACE-Step 1.5 (turbo, no language model: fits a 4 GB card) ----------
 
 # ACE-Step always picks fp16 before Ampere, and on the user's GTX 1650 that gave "Generation produced NaN or
@@ -512,7 +657,7 @@ def music(job: dict) -> None:
         say("item", stage="music", n=n, of=len(todo), id=m.get("id", ""), secs=round(time.time() - t0, 1))
 
 
-STAGES = {"keyframes": keyframes, "embed": embed, "clips": clips, "music": music}
+STAGES = {"keyframes": keyframes, "embed": embed, "clips": clips, "upscale": upscale, "music": music}
 
 
 def main() -> int:

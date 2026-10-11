@@ -546,6 +546,9 @@
             <option value="fast">⚡ Fast: 640×352, clips up to 3 s (much quicker, softer)</option>
             <option value="standard">832×480, clips up to 5 s</option><option value="high">1024×576 (about 1.5× slower)</option></select></div>
       </div>
+      <label for="anUpscale">Sharpen to full HD</label>
+      <select id="anUpscale"><option value="true" selected>✨ On: an AI upscaler sharpens every clip and picture to 1920×1080 (a little extra time per clip)</option>
+        <option value="false">Off: the editor stretches them (softer)</option></select>
       <div class="grid2">
         <div><label for="anVoice">Narrator</label><select id="anVoice"></select></div>
         <div><label for="anSpeed">Speaking speed</label>
@@ -1088,6 +1091,10 @@ async function openVideo(id) {
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
       <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
     </div>
+    ${v.source === "anim" ? `<h4 class="section">Picture quality</h4>
+    <p class="hint">${v.upscaled ? "✨ Sharpened to full HD with the AI upscaler." : "The AI clips were made smaller than full HD and stretched by the editor, so they look soft."}
+      ${v.upscaled ? "" : "This upscales every clip and picture with AI and edits the video again: no new animation, no Claude, the old edit kept as reel-sd.mp4."}</p>
+    ${v.upscaled ? "" : `<button id="hdGo" style="width:100%">✨ Sharpen to full HD</button>`}` : ""}
     <details class="used" id="usedBox">
       <summary>🎛️ Effects &amp; media used <span class="hint">(music, sound effects, 3D models, footage, visual effects)</span></summary>
       <div id="usedList" class="hint">Loading…</div>
@@ -1188,6 +1195,13 @@ async function openVideo(id) {
   $("#usedBox").ontoggle = () => { if ($("#usedBox").open && !$("#usedBox").dataset.loaded) loadUsed(id); };
   $("#myVoice").onclick = () => { $("#video").pause(); openVoiceStudio(id, v.title); };
   if ($("#playMine")) $("#playMine").onclick = (e) => { e.preventDefault(); $("#video").src = "/media/" + encodeURIComponent(id) + "/reel-myvoice.mp4?" + v.my_voice.made; $("#video").play(); };
+  if ($("#hdGo")) $("#hdGo").onclick = async () => {
+    $("#hdGo").disabled = true;
+    try {
+      await api(`/api/videos/${encodeURIComponent(id)}/sharpen`, { method: "POST" });
+      toast("Sharpening to full HD — follow it on the Create page");
+    } catch (e) { toast(e.message); $("#hdGo").disabled = false; }
+  };
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {
@@ -1417,7 +1431,7 @@ const STICK_STEPS = [["Writing", /writing the (episode|Short)/], ["Voices", /Rec
 const TOON_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
   ["Editing", /Editing|Mixing/], ["Checks", /Verifying/]];
 const ANIM_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
-  ["Pictures", /Drawing the pictures/], ["Animation", /motion prompts|Animating/], ["Music", /^Music|Music \(/], ["Editing", /Editing/], ["Checks", /Verifying/]];
+  ["Pictures", /Drawing the pictures|Checking the|Redrawing/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(/], ["Editing", /Editing/], ["Checks", /Verifying/]];
 const stepsOf = (j) => j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.
@@ -2204,7 +2218,7 @@ api("/api/anim/options").then((o) => {
 try { $("#anMark").value = localStorage.getItem("animMark") || ""; } catch (e) {}
 $("#anBtn").onclick = async () => {
   const body = { topic: $("#anTopic").value, minutes: Number($("#anMinutes").value), style: $("#anStyle").value,
-                 motion: $("#anMotion").value, quality: $("#anQuality").value, voice: $("#anVoice").value,
+                 motion: $("#anMotion").value, quality: $("#anQuality").value, upscale: $("#anUpscale").value === "true", voice: $("#anVoice").value,
                  speed: Number($("#anSpeed").value), captions: $("#anCaptions").value === "true", watermark: $("#anMark").value, count: 1 };
   try { localStorage.setItem("animMark", body.watermark); } catch (e) {}
   $("#anBtn").disabled = true;
