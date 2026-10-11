@@ -338,13 +338,14 @@ def embed(job: dict) -> None:
             i += batch
 
 
-def ltx_pipeline(job: dict, dtype):
+def ltx_pipeline(job: dict, dtype, compute=None):
     import torch
     from diffusers import AutoencoderKLLTXVideo, LTXConditionPipeline, LTXVideoTransformer3DModel
     from huggingface_hub import hf_hub_download
 
-    if job.get("tiny"):  # tests: components built in code
-        tr, vae = job["_tiny_parts"]
+    if job.get("tiny"):  # tests: components built in code (a function when a fallback loads them again)
+        parts = job["_tiny_parts"]
+        tr, vae = parts() if callable(parts) else parts
     else:
         loading("the animation model (LTX-Video 2B)", 6.3, *LTX_FILE)
         path = hf_hub_download(*LTX_FILE)
@@ -361,7 +362,12 @@ def ltx_pipeline(job: dict, dtype):
         # of the 8 steps of every clip (288 s a clip on the user's GTX 1650). Stored in 8 bits it is 1.9 GB and
         # stays on the card; each layer is widened to `dtype` only while it computes (diffusers' layerwise
         # casting; norms stay full width). The VAE comes onto the card after it, for the decode.
-        tr.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=dtype)
+        compute = compute or dtype
+        tr.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=compute)
+        if compute != dtype:  # what the casting leaves out (norms, embeddings, the blocks' tables) computes so too
+            for t in [*tr.parameters(), *tr.buffers()]:
+                if t.is_floating_point() and t.dtype != torch.float8_e4m3fn:
+                    t.data = t.data.to(compute)
         if torch.cuda.is_available():
             pipe.enable_model_cpu_offload()
         else:
@@ -394,12 +400,50 @@ def lean_vae(pipe) -> None:
         free()
         return out
 
-    def decoder_alone(module, args) -> None:
+    def decoder_alone(module, args):
         vae.encoder.to("cpu")
         free()
+        dt = next(module.parameters()).dtype  # latents come in the model's precision (32 bits on some cards)
+        return tuple(a.to(dt) if torch.is_tensor(a) and a.is_floating_point() else a for a in args)
 
     vae.encode = encode_and_leave
     vae.decoder.register_forward_pre_hook(decoder_alone)
+
+
+def card_speed() -> dict:
+    """How fast this card multiplies in 16 and 32 bits, at the video model's layer shape (2200 tokens x 2048 ->
+    8192), and whether the memory-efficient attention kernel runs in 32 bits. GTX 16xx cards have no tensor
+    cores: on the user's GTX 1650 a step of the 2B model took ~25 s in 16 bits, which is ~0.3 TFLOPS, a tenth of
+    the card's 32-bit rating. A few seconds, measured at the start of every clips stage."""
+    import torch
+    import torch.nn.functional as F
+
+    out = {}
+    for name, dt in (("fp16", torch.float16), ("fp32", torch.float32)):
+        a = torch.randn(2200, 2048, device="cuda", dtype=dt)
+        b = torch.randn(2048, 8192, device="cuda", dtype=dt)
+        a @ b
+        torch.cuda.synchronize()
+        t, n = time.time(), 0
+        while n < 3 or (n < 20 and time.time() - t < 1.5):
+            a @ b
+            torch.cuda.synchronize()
+            n += 1
+        out[name] = round(2 * 2200 * 2048 * 8192 * n / (time.time() - t) / 1e12, 2)
+        del a, b
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+
+        q = torch.randn(1, 32, 2200, 64, device="cuda", dtype=torch.float32)
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            F.scaled_dot_product_attention(q, q, q)
+        torch.cuda.synchronize()
+        out["attn32"] = True
+        del q
+    except Exception:  # noqa: BLE001 - no such kernel for 32 bits here: attention would take far more memory
+        out["attn32"] = False
+    torch.cuda.empty_cache()
+    return out
 
 
 def ltx_mode(job: dict) -> str:
@@ -427,17 +471,35 @@ def clips(job: dict) -> None:
     if not todo:
         return
     dtype = pick_dtype(job, "ltx")
-    free0 = torch.cuda.mem_get_info()[0] if torch.cuda.is_available() else 0  # the card's own memory left for us
-    pipe, mode = ltx_pipeline(job, dtype)
-    W, H, fps = job.get("width", 832), job.get("height", 480), job.get("fps", 24)
     cal = calibration(job)
+    W, H, fps = job.get("width", 832), job.get("height", 480), job.get("fps", 24)
+    compute, speed = dtype, {}
+    if torch.cuda.is_available():
+        speed = card_speed()
+        # 32-bit maths where this card does them clearly faster (no tensor cores): the weights stay 8 bits on the
+        # card, and the efficient attention kernel keeps the activations small (without it ~2.8 GB more)
+        wanted = job.get("ltx_compute") or cal.get("ltx_compute")
+        if ltx_mode(job) == "fp8" and dtype == torch.float16 and wanted != "fp16" and speed["attn32"] and (
+                wanted == "fp32" or speed["fp32"] > 1.3 * speed["fp16"]):
+            compute = torch.float32
+        frames = max(int(s.get("frames", 97)) for s in todo)
+        tokens = (W // 32) * (H // 32) * ((frames - 1) // 8 + 1)
+        flops = 2 * 1.92e9 * tokens + 4 * tokens ** 2 * 2048 * 28  # one step of the 2B model
+        rate = speed["fp32" if compute == torch.float32 else "fp16"]
+        say("note", msg=f"Card speed: {speed['fp16']} TFLOPS in 16 bits, {speed['fp32']} in 32 bits; about "
+                        f"{flops / max(rate, 0.01) / 1e12:.0f} s a step expected")
+    free0 = torch.cuda.mem_get_info()[0] if torch.cuda.is_available() else 0  # the card's own memory left for us
+    pipe, mode = ltx_pipeline(job, dtype, compute)
     # the first clip is checked until this card has shown the setup works (black frames = broken numbers)
-    checked = bool(cal.get("ltx_fp8_ok")) if mode == "fp8" else bool(cal.get("ltx_ok")) or dtype == torch.float32
+    fp8_ok = "ltx_fp8_ok" if compute == dtype else "ltx_fp8_32_ok"
+    checked = bool(cal.get(fp8_ok)) if mode == "fp8" else bool(cal.get("ltx_ok")) or dtype == torch.float32
     if not torch.cuda.is_available():
         how = "on the CPU (very slow)"
     elif dtype == torch.float32:
         how = "full precision" + (", since half gave black frames on this card (about twice as slow)"
                                   if cal.get("ltx_fp32") else "")
+    elif compute == torch.float32:
+        how = "32-bit maths (faster on this card)"
     else:
         how = "half precision"
     if torch.cuda.is_available():
@@ -452,6 +514,14 @@ def clips(job: dict) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         return clips({**job, "ltx_mode": "stream"})
+
+    def without_32(why: str):
+        """32-bit maths failed (memory, a cast): 16 bits again, still 8-bit weights on the card."""
+        say("warn", msg=f"32-bit maths didn't work on this card ({why[:100]}); back to 16 bits")
+        remember(job, "ltx_compute", "fp16")
+        gc.collect()
+        torch.cuda.empty_cache()
+        return clips({**job, "ltx_compute": "fp16"})
 
     # The first clip of a run says where the card's memory went: past what was free, Windows lends system RAM
     # without a word and every step gets several times slower (the VAE left beside the model did that).
@@ -477,7 +547,7 @@ def clips(job: dict) -> None:
             result = pipe(
                 conditions=[LTXVideoCondition(image=image, frame_index=0)],
                 # precomputed embeddings aren't moved by the pipeline: put them where its own would be
-                prompt_embeds=emb["embeds"].to(device=pipe._execution_device, dtype=dtype),
+                prompt_embeds=emb["embeds"].to(device=pipe._execution_device, dtype=compute),
                 prompt_attention_mask=emb["mask"].bool().to(pipe._execution_device),
                 width=W, height=H, num_frames=frames, frame_rate=fps,
                 timesteps=job.get("timesteps") or DISTILLED_STEPS, guidance_scale=1.0,
@@ -488,7 +558,7 @@ def clips(job: dict) -> None:
             if mode != "fp8":
                 raise
             del pipe
-            return without_fp8(str(exc))
+            return without_32(str(exc)) if compute != dtype else without_fp8(str(exc))
         if watch["on"]:
             watch["on"] = False
             torch.cuda.synchronize()
@@ -496,15 +566,19 @@ def clips(job: dict) -> None:
             top, dec = torch.cuda.max_memory_reserved(), time.time() - watch["t"]
             say("note", msg=f"Card memory: {watch['steps'] / gb:.1f} GB while animating, {top / gb:.1f} GB at the "
                             f"most, {free0 / gb:.1f} GB free; decoding the frames took {dec:.0f} s")
-            if top > free0:
-                say("warn", msg=f"The graphics card ran out of its own memory ({top / gb:.1f} GB needed, {free0 / gb:.1f} "
-                                "GB free), so Windows lends it system RAM and every step gets several times slower. "
-                                "Close other programs that use the card" + (", or choose Fast clips" if W > 640 else ""))
+            if watch["steps"] > free0:
+                say("warn", msg=f"The graphics card ran out of its own memory ({watch['steps'] / gb:.1f} GB needed, "
+                                f"{free0 / gb:.1f} GB free), so Windows lends it system RAM and every step gets several "
+                                "times slower. Close other programs that use the card"
+                                + (", or choose Fast clips" if W > 640 else ""))
+            elif top > free0:  # a moment over, while encoding or decoding: only that part is slower
+                say("note", msg=f"Decoding went over the card's own memory for a moment ({top / gb:.1f} of {free0 / gb:.1f} GB); "
+                                "the animation steps fit")
         if not checked and mode == "fp8":
             if broken(result[len(result) // 2]):
                 del pipe, result
-                return without_fp8("black frames")
-            remember(job, "ltx_fp8_ok", True)
+                return without_32("black frames") if compute != dtype else without_fp8("black frames")
+            remember(job, fp8_ok, True)
             checked = True
         if not checked:
             if broken(result[len(result) // 2]):
