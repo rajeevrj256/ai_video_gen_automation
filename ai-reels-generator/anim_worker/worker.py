@@ -14,7 +14,9 @@ NaNs (black pictures), so the first item of each stage checks its output and the
 precision for good (written to the calibration file the job names).
 
 Every finished item is written next to a `.ok` file and skipped next time, so a crash, a Pause or a closed
-app costs only the item in progress. Progress goes to stdout as lines starting with `§` (JSON).
+app costs only the item in progress. Progress goes to stdout as lines starting with `@@REEL@@` (JSON). Plain
+ASCII on purpose: run with -I, Python ignores PYTHONIOENCODING, and on Windows a '§' marker came out in the
+console code page and was never recognised ("The engine installed but didn't start").
 """
 
 from __future__ import annotations
@@ -29,8 +31,11 @@ import traceback
 from pathlib import Path
 
 
+MARK = "@@REEL@@"
+
+
 def say(kind: str, **data) -> None:
-    print("§" + json.dumps({"kind": kind, **data}), flush=True)
+    print(MARK + json.dumps({"kind": kind, **data}), flush=True)  # json.dumps escapes non-ASCII
 
 
 def done(path: str | Path) -> bool:
@@ -378,6 +383,11 @@ STAGES = {"keyframes": keyframes, "embed": embed, "clips": clips, "music": music
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):  # library messages with non-ASCII must not crash a cp1252 pipe
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     if len(sys.argv) >= 2 and sys.argv[1] == "probe":
         try:
             say("probe", **device_info())

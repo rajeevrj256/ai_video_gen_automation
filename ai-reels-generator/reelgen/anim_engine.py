@@ -13,7 +13,7 @@ tools/ai-models (Hugging Face cache and ACE-Step checkpoints), downloaded on fir
     plus PyTorch and the libraries        ~6 GB   -> about 45 GB in all
 
 `install` runs in a background thread with its log in `state`; `run_stage` starts the worker, turns its
-`§` lines into progress, and kills it when the job is stopped or paused (finished items are kept).
+`@@REEL@@` lines into progress, and kills it when the job is stopped or paused (finished items are kept).
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ CALIBRATION = MODELS / "calibration.json"
 ACE_REPO = "https://github.com/ace-step/ACE-Step-1.5.git"
 EXTRA = ["sentencepiece", "imageio", "imageio-ffmpeg", "protobuf"]
 WINDOWS = os.name == "nt"
+MARK = "@@REEL@@"  # anim_worker/worker.py prefixes its JSON progress lines with this
 
 state: dict = {"installing": False, "log": [], "error": "", "done": False}
 _lock = threading.Lock()
@@ -71,21 +72,32 @@ def probe(refresh: bool = False) -> dict:
     cache = MODELS / "probe.json"
     if not refresh and cache.exists():
         try:
-            return json.loads(cache.read_text(encoding="utf-8"))
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+            if not cached.get("error"):
+                return cached
         except ValueError:
             pass
     if not python().exists():
         return {"error": "not installed"}
     proc = subprocess.run([str(python()), "-I", str(WORKER), "probe"], capture_output=True, text=True, env=env(),
                           timeout=300, encoding="utf-8", errors="replace")
-    info = next((json.loads(line[1:]) for line in proc.stdout.splitlines() if line.startswith("§")), None)
-    info = info or {"error": (proc.stderr or proc.stdout)[-500:]}
+    info = next((json.loads(line.split(MARK, 1)[1]) for line in proc.stdout.splitlines() if MARK in line), None)
+    if not info:
+        return {"error": (proc.stderr or proc.stdout)[-500:]}
     info.pop("kind", None)
-    cache.write_text(json.dumps(info), encoding="utf-8")
+    if not info.get("error"):
+        cache.write_text(json.dumps(info), encoding="utf-8")
     return info
 
 
 def status() -> dict:
+    if python().exists() and not installed() and not state["installing"]:
+        # Everything installed but the last check failed (an older version misread the worker's answer on
+        # Windows): if the engine answers now, it is installed; no need to download it all again.
+        info = probe()
+        if not info.get("error"):
+            (ENGINE / ".reel-installed").write_text(time.strftime("%Y-%m-%d %H:%M"), encoding="utf-8")
+            state["error"] = ""
     free = shutil.disk_usage(PROJECT_ROOT).free / 2**30
     used = sum(f.stat().st_size for f in MODELS.rglob("*") if f.is_file()) / 2**30 if MODELS.exists() else 0.0
     return {"installed": installed(), "installing": state["installing"], "error": state["error"],
@@ -193,12 +205,12 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str)
                 stopper._kill(proc)
                 raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
             continue
-        if not line.startswith("§"):
+        if MARK not in line:
             if line.strip():
                 tail = (tail + [line.rstrip()])[-25:]
             continue
         try:
-            msg = json.loads(line[1:])
+            msg = json.loads(line.split(MARK, 1)[1])
         except ValueError:
             continue
         kind = msg.get("kind")
