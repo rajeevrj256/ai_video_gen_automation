@@ -177,6 +177,11 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str)
     if not installed():
         raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
     job = {**job, "hf_home": str(MODELS / "hf"), "calibration": str(CALIBRATION)}
+    for items in (job.get("characters", []), job.get("shots", []), job.get("tracks", [])):  # every output's folder
+        for it in items:
+            for key in ("out", "emb"):
+                if it.get(key):
+                    Path(it[key]).parent.mkdir(parents=True, exist_ok=True)
     jobfile = work / f"ai-{stage}.json"
     jobfile.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     kw: dict = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}  # type: ignore[attr-defined]

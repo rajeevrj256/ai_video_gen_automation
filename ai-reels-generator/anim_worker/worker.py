@@ -271,6 +271,7 @@ def embed(job: dict) -> None:
             ids = tok(s["prompt"], padding="max_length", max_length=job.get("max_tokens", 128), truncation=True,
                       return_tensors="pt")
             out = enc(ids.input_ids, attention_mask=ids.attention_mask)[0]
+            Path(s["emb"]).parent.mkdir(parents=True, exist_ok=True)  # clips/ doesn't exist before the first clip
             torch.save({"embeds": out.float(), "mask": ids.attention_mask}, s["emb"])
             mark(s["emb"])
             n += 1
@@ -321,7 +322,9 @@ def clips(job: dict) -> None:
         g = torch.Generator("cpu").manual_seed(int(s.get("seed", 0)))
         result = pipe(
             conditions=[LTXVideoCondition(image=image, frame_index=0)],
-            prompt_embeds=emb["embeds"].to(dtype), prompt_attention_mask=emb["mask"],
+            # precomputed embeddings aren't moved by the pipeline: put them where its own would be
+            prompt_embeds=emb["embeds"].to(device=pipe._execution_device, dtype=dtype),
+            prompt_attention_mask=emb["mask"].bool().to(pipe._execution_device),
             width=W, height=H, num_frames=frames, frame_rate=fps,
             timesteps=job.get("timesteps") or DISTILLED_STEPS, guidance_scale=1.0,
             decode_timestep=0.05, decode_noise_scale=0.025, image_cond_noise_scale=0.0,
