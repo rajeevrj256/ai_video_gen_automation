@@ -163,6 +163,9 @@ class JobManager:
             elif job.get("anim_hd"):  # a finished animated video, its clips upscaled and re-edited
                 from .animated import sharpen_video
                 reports = [sharpen_video(cfg, video_dir(cfg, job["anim_hd"]["id"]), progress)]
+            elif job.get("anim_music"):  # a finished animated video, its music made by ACE-Step again
+                from .animated import redo_music
+                reports = [redo_music(cfg, video_dir(cfg, job["anim_music"]["id"]), progress)]
             elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
@@ -743,6 +746,23 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "This video is already being sharpened")
         return jobs.submit(f"Full HD: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
                            anim_hd={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/music")
+    def redo_music_route(video_id: str):
+        """An animated video whose music was composed (or partly so) gets ACE-Step's tracks: the ones already made
+        are kept, the missing ones generated, the soundtrack mixed under the same picture (animated.redo_music)."""
+        from . import anim_engine
+        from .animated import music_redoable
+        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        if not music_redoable(report):
+            raise HTTPException(400, "This video's music is already generated (or your own track)")
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (Anim tab).")
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("anim_music", "anim_hd")
+               if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being worked on")
+        return jobs.submit(f"New music: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
+                           anim_music={"id": video_id})
 
     # ---- your own voiceover ----
     @app.get("/api/videos/{video_id}/myvoice")

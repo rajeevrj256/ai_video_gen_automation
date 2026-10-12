@@ -1095,6 +1095,11 @@ async function openVideo(id) {
     <p class="hint">${v.upscaled ? "✨ Sharpened to full HD with the AI upscaler." : "The AI clips were made smaller than full HD and stretched by the editor, so they look soft."}
       ${v.upscaled ? "" : "This upscales every clip and picture with AI and edits the video again: no new animation, no Claude, the old edit kept as reel-sd.mp4."}</p>
     ${v.upscaled ? "" : `<button id="hdGo" style="width:100%">✨ Sharpen to full HD</button>`}` : ""}
+    ${v.source === "anim" && (v.music === "composed" || String(v.music || "").startsWith("generated (ACE-Step) for")) ? `<h4 class="section">Music</h4>
+    <p class="hint">${v.music === "composed" ? "The AI music model didn't finish, so this video got composed music."
+      : "Only some tracks came from the AI music model: " + esc(v.music) + "."}
+      This makes the missing tracks with the AI music model (the ones already made are kept) and puts the new soundtrack under the same picture: no new edit, no Claude.</p>
+    <button id="musicGo" style="width:100%">🎵 Redo the music with AI</button>` : ""}
     <details class="used" id="usedBox">
       <summary>🎛️ Effects &amp; media used <span class="hint">(music, sound effects, 3D models, footage, visual effects)</span></summary>
       <div id="usedList" class="hint">Loading…</div>
@@ -1195,6 +1200,13 @@ async function openVideo(id) {
   $("#usedBox").ontoggle = () => { if ($("#usedBox").open && !$("#usedBox").dataset.loaded) loadUsed(id); };
   $("#myVoice").onclick = () => { $("#video").pause(); openVoiceStudio(id, v.title); };
   if ($("#playMine")) $("#playMine").onclick = (e) => { e.preventDefault(); $("#video").src = "/media/" + encodeURIComponent(id) + "/reel-myvoice.mp4?" + v.my_voice.made; $("#video").play(); };
+  if ($("#musicGo")) $("#musicGo").onclick = async () => {
+    $("#musicGo").disabled = true;
+    try {
+      await api(`/api/videos/${encodeURIComponent(id)}/music`, { method: "POST" });
+      toast("Making the music — follow it on the Create page");
+    } catch (e) { toast(e.message); $("#musicGo").disabled = false; }
+  };
   if ($("#hdGo")) $("#hdGo").onclick = async () => {
     $("#hdGo").disabled = true;
     try {

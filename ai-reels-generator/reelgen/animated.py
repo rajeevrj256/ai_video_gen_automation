@@ -865,6 +865,7 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         "youtube_hashtags": sc.hashtags[:3], "youtube_tags": sc.tags, "caption": sc.youtube_description.strip(),
         "hashtags": sc.hashtags, "fact_check": findings, "sources": sources, "sources_unreachable": dropped,
         "art_style": style, "motion": req.motion, "animated_shots": f"{animated} of {total}", "music": music_choice,
+        "seed": seed,
         "upscaled": up["model"] if up and up["items"] else None, "picture_check": pic_found,
         "characters": [c.model_dump() for c in sc.characters],
     }
@@ -912,6 +913,54 @@ def sharpen_video(cfg: Config, folder: Path, progress: Progress = log.info) -> d
     report.update(upscaled=up["model"], checks={**report.get("checks", {}), "probe": info})
     (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     progress("Done: sharpened to full HD (the old edit is kept as reel-sd.mp4)")
+    return report
+
+
+def music_redoable(report: dict) -> bool:
+    """Composed music (ACE-Step failed or wasn't installed then), or only some tracks generated."""
+    return report.get("source") == "anim" and (report.get("music") == "composed"
+                                               or str(report.get("music", "")).startswith("generated (ACE-Step) for"))
+
+
+def redo_music(cfg: Config, folder: Path, progress: Progress = log.info) -> dict:
+    """A finished animated video with its music made by ACE-Step again: the tracks it already finished are kept
+    (on the user's laptop 7 of 8 were made, then the model crashed and an older version composed all of it), only
+    the missing ones are generated, and the new soundtrack is mixed and put under the same picture (no new edit)."""
+    import hashlib
+
+    from .pipeline import set_pause_check
+    from .soundtrack import mix
+
+    set_pause_check(getattr(progress, "should_pause", None))
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    props = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    sc = AnimScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
+    if not anim_engine.installed():
+        raise RuntimeError("The AI engine isn't installed: open the Anim tab and press 'Install the AI engine'")
+    tl = {"hookEnd": props["hookEnd"], "duration": props["duration"],
+          "chapterAt": {int(s_["chapter"]): s_["start"] for s_ in props["shots"] if s_.get("type") == "chapter"}}
+    seed = int(report.get("seed") or int(hashlib.sha1(folder.name.encode()).hexdigest(), 16) % 2**31)
+    hook, parts, choice = make_music(sc, tl, folder, seed, cfg, progress)
+    if choice == "composed":
+        raise RuntimeError("ACE-Step made no track this time either; the video keeps its music")
+    props.update(hookMusic=hook, musicParts=parts, musicChoice=choice)
+    progress("Mixing the new soundtrack")
+    sound, out = folder / "soundtrack-new.wav", folder / "reel-newmusic.mp4"
+    mix(props, "Anim", folder, sound, FFMPEG)
+    proc = subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(folder / "reel.mp4"), "-i", str(sound),
+                           "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k", "-shortest",
+                           "-movflags", "+faststart", str(out)], capture_output=True, text=True)
+    sound.unlink(missing_ok=True)
+    info = probe(out) if proc.returncode == 0 and out.exists() else {}
+    if not info.get("has_audio") or abs(float(info.get("duration") or 0) - props["duration"]) > 1.0:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"Putting the new music under the video failed{': ' + proc.stderr[-300:] if proc.stderr else ''}; "
+                           "the old video is kept")
+    out.replace(folder / "reel.mp4")
+    (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+    report.update(music=choice, seed=seed, checks={**report.get("checks", {}), "probe": info})
+    (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    progress(f"Done: the music is now {choice}")
     return report
 
 
