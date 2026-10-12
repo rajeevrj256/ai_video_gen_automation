@@ -1599,6 +1599,7 @@ async function loadUnfinished() {
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           ${u.length === "anim" && u.quality !== "fast" ? `<button data-resume-fast="${esc(u.id)}" title="The clips still to make come out 640×352, up to 3 s each">⚡ Resume with fast clips</button>` : ""}
+          ${u.length === "anim" && u.music_redo ? `<button data-resume-music="${esc(u.id)}" title="The AI music step didn't finish and composed music was used instead. This runs it again${u.music_made ? ` (the ${u.music_made} track${u.music_made > 1 ? "s" : ""} it already made are kept, only the missing ones are made)` : ""}, then edits the video with that music">🎵 Resume with AI music${u.music_made ? ` (${u.music_made} track${u.music_made > 1 ? "s" : ""} kept)` : ""}</button>` : ""}
           ${u.length === "anim" && (u.motion || "full") === "full" ? `<button data-resume-key="${esc(u.id)}" title="Only the hook and the important shots are animated from here on; the others get camera moves over their picture (clips already made are kept)">✨ Resume, key shots only</button>` : ""}
           <button class="danger" data-discard="${esc(u.id)}">🗑 Discard</button></div></div>`).join("")}
       ${items.length > 1 ? `<button id="resumeAll" style="width:100%">↻ Resume all ${items.length}</button>` : ""}
@@ -1606,6 +1607,7 @@ async function loadUnfinished() {
   document.querySelectorAll("[data-resume]").forEach((b) => b.onclick = () => startResume([b.dataset.resume]));
   document.querySelectorAll("[data-resume-fast]").forEach((b) => b.onclick = () => startResume([b.dataset.resumeFast], "fast"));
   document.querySelectorAll("[data-resume-key]").forEach((b) => b.onclick = () => startResume([b.dataset.resumeKey], null, "key"));
+  document.querySelectorAll("[data-resume-music]").forEach((b) => b.onclick = () => startResume([b.dataset.resumeMusic], null, null, "redo"));
   document.querySelectorAll("[data-discard]").forEach((b) => b.onclick = async () => {
     if (!confirm("Delete this unfinished video? It can't be resumed after that.")) return;
     try { await api("/api/unfinished/" + encodeURIComponent(b.dataset.discard), { method: "DELETE" }); toast("Discarded"); loadJobs(); }
@@ -1613,8 +1615,8 @@ async function loadUnfinished() {
   });
   if ($("#resumeAll")) $("#resumeAll").onclick = () => startResume(items.map((u) => u.id));
 }
-async function startResume(folders, quality, motion) {
-  const body = { folders, ...(quality ? { quality } : {}), ...(motion ? { motion } : {}) };
+async function startResume(folders, quality, motion, music) {
+  const body = { folders, ...(quality ? { quality } : {}), ...(motion ? { motion } : {}), ...(music ? { music } : {}) };
   try { await api("/api/resume", { method: "POST", body: JSON.stringify(body) }); toast("Resuming"); lastBusy = true; loadJobs(); }
   catch (e) { toast(e.message); }
 }

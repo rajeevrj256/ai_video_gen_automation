@@ -997,6 +997,24 @@ def unfinished_anims(cfg: Config) -> list[str]:
     return sorted(p.parent.name for p in cfg.output_dir.glob(f"*-anim-working/{CHECKPOINT}"))
 
 
+def music_failed(state: dict) -> bool:
+    """The saved music is composed, or only partly from ACE-Step: the AI music step didn't finish."""
+    m = state.get("music")
+    return bool(m) and len(m) > 2 and (m[2] == "composed" or str(m[2]).startswith("generated (ACE-Step) for"))
+
+
+def forget_music(work: Path) -> None:
+    """'Resume with AI music': the checkpoint forgets its music, so the resumed video runs the music step again
+    (the tracks ACE-Step already finished are kept, only the missing ones are made) and edits with it. On the
+    user's laptop an older version threw 7 of 8 finished tracks away and composed everything instead."""
+    path = work / CHECKPOINT
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state.pop("music", None)
+    if state.get("stage") in ("music", "rendered"):
+        state["stage"] = "clips"
+    path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
 def anim_unfinished(cfg: Config) -> list[dict]:
     done = {"scripted": "script and fact-check", "voiced": "script and voiceover", "pictures": "pictures",
             "clips": "pictures and animation", "music": "pictures, animation and music", "rendered": "everything but the checks"}
@@ -1013,5 +1031,7 @@ def anim_unfinished(cfg: Config) -> list[dict]:
                     "title": script.get("title", ""), "style": "facts", "length": "anim", "attempt": 1,
                     "done": done.get(state.get("stage") or "", "nothing yet") + (f" ({clips_done} clip{'s' * (clips_done > 1)})" if clips_done else ""),
                     "quality": (state.get("request") or {}).get("quality", "auto"),
-                    "motion": (state.get("request") or {}).get("motion", "full"), "updated": path.stat().st_mtime})
+                    "motion": (state.get("request") or {}).get("motion", "full"), "updated": path.stat().st_mtime,
+                    "music_redo": music_failed(state) and anim_engine.installed(),
+                    "music_made": len(list((cfg.output_dir / folder / "music").glob("*.wav.ok")))})
     return out

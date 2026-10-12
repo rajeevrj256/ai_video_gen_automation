@@ -1155,10 +1155,14 @@ def create_app(cfg: Config) -> FastAPI:
         from .pipeline import unfinished
         from .toon import CHECKPOINT as TOON_CHECKPOINT, unfinished_toons
 
-        from .animated import CHECKPOINT as ANIM_CHECKPOINT, QUALITIES, unfinished_anims
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT, QUALITIES, forget_music, music_failed, unfinished_anims
 
         anims = [f for f in body.get("folders", []) if f in unfinished_anims(cfg) and f not in busy_folders()]
         if anims:  # Animated videos resume through their own pipeline too
+            if body.get("music") == "redo":  # "Resume with AI music": the failed music step runs again
+                for f in anims:
+                    if music_failed(json.loads((cfg.output_dir / f / ANIM_CHECKPOINT).read_text(encoding="utf-8"))):
+                        forget_music(cfg.output_dir / f)
             saved = json.loads((cfg.output_dir / anims[0] / ANIM_CHECKPOINT).read_text(encoding="utf-8"))
             given = saved.get("request") or {}
             if body.get("quality") in QUALITIES:  # "Resume with fast clips": the clips still to make use it
