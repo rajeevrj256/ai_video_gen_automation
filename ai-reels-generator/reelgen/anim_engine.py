@@ -174,8 +174,40 @@ def _install() -> None:
 
 # ---------- running a worker stage ----------
 
+class WorkerCrashed(RuntimeError):
+    """The worker process ended without a Python error of its own: a crash inside the AI libraries or the
+    graphics driver, or the system ending it (out of memory)."""
+
+    def __init__(self, msg: str, why: str) -> None:
+        super().__init__(msg)
+        self.why = why
+
+
+# Windows exit codes of a process that crashed (NTSTATUS); Python's own errors exit 1 after telling us.
+CRASHES = {
+    0xC0000005: "a crash inside the AI libraries (access violation)",
+    0xC0000409: "a crash inside the AI libraries or the graphics driver",
+    0xC00000FD: "a stack overflow",
+    0xC0000017: "out of memory",
+    0xC000012D: "out of memory (Windows ran out of RAM and page file)",
+    0xC0000374: "memory corruption inside the AI libraries",
+    0xC000001D: "an instruction this processor doesn't have",
+}
+
+
+def crash_reason(code: int) -> str:
+    if code < 0 and not WINDOWS:  # a signal
+        return "ended by the system, usually for lack of memory" if -code == 9 else f"signal {-code}"
+    c = code & 0xFFFFFFFF
+    if c in CRASHES:
+        return f"{CRASHES[c]}, code 0x{c:08X}"
+    return f"crashed, code 0x{c:08X}" if c >= 0xC0000000 else f"exit code {code}"
+
+
 def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str) -> None:
-    """Run one worker stage to the end. Stop or Pause kills it at once; finished items stay on disk."""
+    """Run one worker stage to the end. Stop or Pause kills it at once; finished items stay on disk. A worker
+    that crashes is started once more for what's left (the music model once died on the last of 8 tracks with
+    no error of its own, and the 7 made were thrown away)."""
     if not installed():
         raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
     if not _gpu.acquire(blocking=False):
@@ -184,7 +216,11 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str)
             if stopper.stop_requested() or stopper.pause_requested():
                 raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
     try:
-        _run_stage(stage, job, work, progress, label)
+        try:
+            _run_stage(stage, job, work, progress, label)
+        except WorkerCrashed as exc:
+            progress(f"{label}: the AI worker stopped unexpectedly ({exc.why}); starting it again for what's left")
+            _run_stage(stage, job, work, progress, label)
     finally:
         _gpu.release()
 
@@ -269,7 +305,15 @@ def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str
             error = msg.get("msg", "")
             log.error("AI worker %s failed: %s\n%s", stage, error, msg.get("trace", ""))
     if proc.wait() != 0:
-        raise RuntimeError(f"{label} failed: {error or ' / '.join(tail[-3:]) or f'exit {proc.returncode}'}")
+        if error:
+            raise RuntimeError(f"{label} failed: {error}")
+        # no word from the worker: say how it ended and the lines that tell why (never a library's INFO line)
+        why = crash_reason(proc.returncode)
+        log.error("AI worker %s ended (%s); its last output:\n%s", stage, why, "\n".join(tail))
+        telling = [x for x in tail if re.search(r"error|exception|traceback|out of memory|killed|abort|fatal|denied", x, re.I)
+                   and not re.search(r"\|\s*(INFO|DEBUG)\s*\|", x)]
+        raise WorkerCrashed(f"{label} stopped unexpectedly ({why})" + (f": {' / '.join(telling[-2:])[-240:]}" if telling else ""),
+                            why)
     log.info("AI stage %s finished in %.1f min", stage, (time.time() - started) / 60)
 
 

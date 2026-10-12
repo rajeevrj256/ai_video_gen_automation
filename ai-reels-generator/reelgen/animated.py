@@ -653,25 +653,33 @@ def _loudnorm(path: Path) -> None:
         tmp.replace(path)
 
 
-def _music_fallback(sc: AnimScript, tl: dict, work: Path, seed: int, cfg: Config) -> tuple[str | None, list[dict], str]:
-    """Without the engine (or if ACE-Step fails): a trailer for the hook and a composed track per chapter."""
+def _composed_hook(tl: dict, work: Path, seed: int) -> Path:
+    from . import music as composer
+
+    (work / "music").mkdir(parents=True, exist_ok=True)
+    style = random.Random(seed).choice(composer.TRAILERS)
+    return composer.trailer(style, tl["hookEnd"] + TITLE_SECONDS, [], seed, work / "music" / "hook-composed.wav")
+
+
+def _composed_chapter(sc: AnimScript, ci: int, seconds: float, work: Path, seed: int) -> Path:
     from . import music as composer
     from .toon import MusicMood
 
-    rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     (work / "music").mkdir(parents=True, exist_ok=True)
-    hook = None
-    if tl["hookEnd"] > 0:
-        style = random.Random(seed).choice(composer.TRAILERS)
-        hook = rel(composer.trailer(style, tl["hookEnd"] + TITLE_SECONDS, [], seed, work / "music" / "hook-composed.wav"))
+    moods = list(MusicMood.__args__)
+    return composer.compose(moods[(seed + ci) % len(moods)], [composer.Section(0, seconds, sc.chapters[ci].intensity)],
+                            seconds, seed + ci, work / "music" / f"ch{ci + 1}-composed.wav")
+
+
+def _music_fallback(sc: AnimScript, tl: dict, work: Path, seed: int, cfg: Config) -> tuple[str | None, list[dict], str]:
+    """Without the engine (or if ACE-Step made nothing): a trailer for the hook and a composed track per chapter."""
+    rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
+    hook = rel(_composed_hook(tl, work, seed)) if tl["hookEnd"] > 0 else None
     parts = []
     starts = sorted(tl["chapterAt"].items())
-    moods = list(MusicMood.__args__)
     for k, (ci, a) in enumerate(starts):
         b = starts[k + 1][1] if k + 1 < len(starts) else tl["duration"]
-        mood = moods[(seed + ci) % len(moods)]
-        path = composer.compose(mood, [composer.Section(0, b - a + 2, sc.chapters[ci].intensity)], b - a + 2,
-                                seed + ci, work / "music" / f"ch{ci + 1}-composed.wav")
+        path = _composed_chapter(sc, ci, b - a + 2, work, seed)
         parts.append({"src": rel(path), "from": round(max(0.0, a - 1.0), 3), "to": round(min(tl["duration"], b + 1.0), 3)})
     return hook, parts, "composed"
 
@@ -688,23 +696,31 @@ def make_music(sc: AnimScript, tl: dict, work: Path, seed: int, cfg: Config, pro
         hook, _, _ = _music_fallback(sc, {**tl, "chapterAt": {}}, work, seed, cfg)
         return hook, [{"src": rel(track), "from": round(max(0.0, a - 1.0), 3), "to": tl["duration"]}], sc.music_track
     if anim_engine.installed():
+        job = music_job(sc, tl, work, seed)
         try:
-            job = music_job(sc, tl, work, seed)
             anim_engine.run_stage("music", job, work, progress, "Music (ACE-Step)")
-            for m in job["tracks"]:
-                _loudnorm(Path(m["out"]))
-            hook = rel(job["tracks"][0]["out"]) if tl["hookEnd"] > 0 else None
-            parts = []
-            for k, (ci, a) in enumerate(starts):
-                b = starts[k + 1][1] if k + 1 < len(starts) else tl["duration"]
-                parts.append({"src": rel(work / "music" / f"ch{ci + 1}.wav"), "from": round(max(0.0, a - 1.0), 3),
-                              "to": round(min(tl["duration"], b + 1.5), 3)})
-            return hook, parts, "generated (ACE-Step)"
         except Exception as exc:  # noqa: BLE001 - music must never stop the video
             from .stopper import Paused
             if isinstance(exc, Paused):
                 raise
-            progress(f"Music: ACE-Step didn't work ({str(exc)[:160]}); composing instead")
+            progress(f"Music: ACE-Step didn't finish ({str(exc)[:300]}); composing only the tracks it didn't make")
+        # every track ACE-Step finished is used, even when it stopped before the last (7 of 8 were once thrown away)
+        made = {m["id"]: Path(m["out"]) for m in job["tracks"] if _ready(Path(m["out"]))}
+        if made:
+            for path in made.values():
+                _loudnorm(path)
+            hook = None
+            if tl["hookEnd"] > 0:
+                hook = rel(made["hook"] if "hook" in made else _composed_hook(tl, work, seed))
+            parts = []
+            for k, (ci, a) in enumerate(starts):
+                b = starts[k + 1][1] if k + 1 < len(starts) else tl["duration"]
+                ace = made.get(f"ch{ci + 1}")
+                parts.append({"src": rel(ace or _composed_chapter(sc, ci, b - a + 2, work, seed)),
+                              "from": round(max(0.0, a - 1.0), 3), "to": round(min(tl["duration"], b + (1.5 if ace else 1.0)), 3)})
+            total = len(job["tracks"])
+            return hook, parts, ("generated (ACE-Step)" if len(made) == total
+                                 else f"generated (ACE-Step) for {len(made)} of {total} tracks, composed for the rest")
     return _music_fallback(sc, tl, work, seed, cfg)
 
 
