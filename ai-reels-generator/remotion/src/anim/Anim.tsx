@@ -26,38 +26,34 @@ const MOVES: Record<AnimCamera, [number, number, number, number, number, number,
   static: [1.02, 1.05, 0, 0, 0, 0, 0],
 };
 
-const Picture: React.FC<{src: string; camera: AnimCamera; frame: number; frames: number; gentle?: boolean}> = ({src, camera, frame, frames, gentle}) => {
+const Picture: React.FC<{src: string; camera: AnimCamera; frame: number; frames: number}> = ({src, camera, frame, frames}) => {
   const [s0, s1, x0, x1, y0, y1, r] = MOVES[camera] ?? MOVES['push-in'];
   const p = interpolate(frame, [0, frames], [0, 1], {...clamp, easing: Easing.inOut(Easing.sin)});
-  const k = gentle ? 0.35 : 1; // over an AI clip (which moves already) the camera only drifts
   const shakeX = camera === 'handheld' ? Math.sin(frame / 9) * 6 + Math.sin(frame / 23) * 5 : 0;
   const shakeY = camera === 'handheld' ? Math.cos(frame / 11) * 5 : 0;
-  const scale = 1 + (s0 - 1 + (s1 - s0) * p) * k;
+  const scale = s0 + (s1 - s0) * p;
   return (
     <Img src={staticFile(src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-      transform: `scale(${scale}) translate(${(x0 + (x1 - x0) * p) * k + shakeX}px, ${(y0 + (y1 - y0) * p) * k + shakeY}px) rotate(${(p - 0.5) * r * k}deg)`}} />
+      transform: `scale(${scale}) translate(${x0 + (x1 - x0) * p + shakeX}px, ${y0 + (y1 - y0) * p + shakeY}px) rotate(${(p - 0.5) * r}deg)`}} />
   );
 };
 
-// The shot's moving picture: the AI clip (slowed a little when the line is longer, then its last frame held
-// with the camera still drifting) or the AI picture under a camera move.
+// The shot's moving picture: the AI clip at its own speed (the video runs at the clip's 24 fps, so every frame
+// shows once: slowing it, or 24 fps in a 30 fps video, repeated frames unevenly and the motion juddered), then its
+// last frame held, under one gentle drift across the whole shot so the hand-over doesn't jump; or the AI picture
+// under a camera move.
 const Visual: React.FC<{shot: AnimShot; frame: number; frames: number}> = ({shot, frame, frames}) => {
   const {fps} = useVideoConfig();
   if (shot.clip && shot.clipSeconds) {
-    const rate = Math.max(0.75, Math.min(1, shot.clipSeconds / (frames / fps)));
-    const clipFrames = Math.floor((shot.clipSeconds / rate) * fps) - 1;
-    const drift = interpolate(frame, [0, frames], [1, 1.05], clamp);
+    const clipFrames = Math.floor(shot.clipSeconds * fps) - 1;
+    const drift = interpolate(frame, [0, frames], [1, 1.06], {...clamp, easing: Easing.inOut(Easing.sin)});
+    const fill = {position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'} as const;
     return (
-      <>
-        <div style={{position: 'absolute', inset: 0, transform: `scale(${drift})`}}>
-          {frame < clipFrames ? (
-            <OffthreadVideo src={staticFile(shot.clip)} muted playbackRate={rate}
-              style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'}} />
-          ) : (
-            <Picture src={shot.last || shot.image} camera={shot.camera ?? 'push-in'} frame={frame - clipFrames} frames={Math.max(1, frames - clipFrames)} gentle />
-          )}
-        </div>
-      </>
+      <div style={{position: 'absolute', inset: 0, transform: `scale(${drift})`}}>
+        {frame < clipFrames
+          ? <OffthreadVideo src={staticFile(shot.clip)} muted style={fill} />
+          : <Img src={staticFile(shot.last || shot.image)} style={fill} />}
+      </div>
     );
   }
   return <Picture src={shot.image} camera={shot.camera ?? 'push-in'} frame={frame} frames={frames} />;

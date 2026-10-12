@@ -1092,9 +1092,10 @@ async function openVideo(id) {
       <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
     </div>
     ${v.source === "anim" ? `<h4 class="section">Picture quality</h4>
-    <p class="hint">${v.upscaled ? "✨ Sharpened to full HD with the AI upscaler." : "The AI clips were made smaller than full HD and stretched by the editor, so they look soft."}
-      ${v.upscaled ? "" : "This upscales every clip and picture with AI and edits the video again: no new animation, no Claude, the old edit kept as reel-sd.mp4."}</p>
-    ${v.upscaled ? "" : `<button id="hdGo" style="width:100%">✨ Sharpen to full HD</button>`}` : ""}
+    <p class="hint">${v.upscaled === "anime" ? "Sharpened with the anime upscaler, which gives soft clips a flat, painted look. The general upscaler keeps more detail."
+      : v.upscaled ? "✨ Sharpened to full HD with the AI upscaler." : "The AI clips were made smaller than full HD and stretched by the editor, so they look soft."}
+      ${v.upscaled && v.upscaled !== "anime" ? "" : "This upscales every clip and picture with AI and edits the video again: no new animation, no Claude, the old edit kept as reel-sd.mp4."}</p>
+    ${v.upscaled && v.upscaled !== "anime" ? "" : `<button id="hdGo" style="width:100%">✨ ${v.upscaled ? "Sharpen again with the better upscaler" : "Sharpen to full HD"}</button>`}` : ""}
     ${v.source === "anim" && (v.music === "composed" || String(v.music || "").startsWith("generated (ACE-Step) for")) ? `<h4 class="section">Music</h4>
     <p class="hint">${v.music === "composed" ? "The AI music model didn't finish, so this video got composed music."
       : "Only some tracks came from the AI music model: " + esc(v.music) + "."}

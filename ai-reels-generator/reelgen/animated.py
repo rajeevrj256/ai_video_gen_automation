@@ -196,7 +196,9 @@ low angle) and never the same composition twice in a row. Abstract ideas become 
 specific and fixed) and list who is in frame per shot (main first). Bring in scenes without them too (places, objects,
 distant crowds, nature) so the film breathes. The image model breaks close groups (people without heads, merged
 bodies, extra arms): at most two people near the camera, each whole and inside the frame with the face showing; a
-crowd only far away; hands simple (resting, pointing, holding one big object).
+crowd only far away; hands simple (resting, pointing, holding one big object). It draws a face well only when the face
+is big: when a person is the subject, frame a medium shot (waist up) or a close-up, not a small full figure in a wide
+landscape; wide shots are for places, nature and things, with people only as tiny distant figures or none.
 - `same_place`: true when the shot stays in the previous shot's location (a new angle or moment there); a chapter usually
 has 2-3 places.
 - `motion`: one clear action the video model can show in 4-5 seconds, plus small life (wind, light, crowds). Big
@@ -322,8 +324,12 @@ QUALITIES = ("auto", *CLIP_SIZES)
 
 # The AI upscaler (Real-ESRGAN compact, anim_worker `upscale`): the anime model keeps flat and inked styles
 # crisp, the general one suits painted and 3D looks; pixel art is left alone (it would smear its pixels).
-SR_FOR = {"flat-vector": "anime", "anime": "anime", "comic": "anime", "retro-cartoon": "anime", "neon-synth": "anime",
-          "paper-cutout": "anime", "pixel-art": None}
+# Every style but pixel art gets the general model: the anime one turned the soft 640x352 clips into flat patches
+# with dark rims ("looks painted", the user said); on clean SDXL tiles shrunk like a clip it was the softest of the
+# three (scratch test: plain resize, anime, general). Videos made before used anime for these styles.
+SR_FOR = {"pixel-art": None}
+_WAS_ANIME = {"flat-vector", "anime", "comic", "retro-cartoon", "neon-synth", "paper-cutout"}
+ANIM_FPS = 24  # the clips' own rate: at 30 a 24 fps clip (slowed a little too) repeated frames unevenly and juddered
 HD_CLIP = (1920, 1080)
 HD_PICTURE = (2560, 1440)  # the camera moves zoom into the pictures
 
@@ -342,6 +348,13 @@ def upscale_job(shots: list[dict], style: str, work: Path) -> dict | None:
     model = SR_FOR.get(style, "general")
     if not model:
         return None
+    # files sharpened by another model are made again (a finished video's Sharpen, or a resumed one)
+    marker = work / "upscale-model.txt"
+    before = marker.read_text(encoding="utf-8").strip() if marker.exists() else ("anime" if style in _WAS_ANIME else "general")
+    if before != model:
+        for old in [*work.glob("clips/*.hd.*"), *work.glob("keyframes/*.hd.*")]:
+            old.unlink(missing_ok=True)
+    marker.write_text(model, encoding="utf-8")
     items, seen = [], set()
     for x in shots:
         clip = work / "clips" / f"{x['id']}.mp4"
@@ -350,7 +363,9 @@ def upscale_job(shots: list[dict], style: str, work: Path) -> dict | None:
                           "w": HD_CLIP[0], "h": HD_CLIP[1]})
             continue
         img = work / x["image"]
-        if img.exists() and img not in seen and not img.stem.endswith(".hd"):
+        if img.stem.endswith(".hd"):  # a finished video's props point at the sharpened copy: start from the original
+            img = img.with_name(img.stem[:-3] + img.suffix)
+        if img.exists() and img not in seen:
             seen.add(img)
             items.append({"id": img.stem, "src": str(img), "out": str(_hd(img)), "kind": "image",
                           "w": HD_PICTURE[0], "h": HD_PICTURE[1]})
@@ -742,7 +757,7 @@ def props_for(sc: AnimScript, tl: dict, style: str, req: AnimRequest, cfg: Confi
         shots.append(x)
     shots = _hd_props(shots, work)
     accent = ART_STYLES[style][1]
-    props = {"fps": cfg.fps, "duration": tl["duration"], "title": sc.title, "style": style, "accent": accent,
+    props = {"fps": ANIM_FPS, "duration": tl["duration"], "title": sc.title, "style": style, "accent": accent,
              "shots": shots, "captions": req.captions, "watermark": req.watermark.strip()[:40] or None,
              "hookMusic": hook, "hookEnd": tl["hookEnd"], "musicParts": parts, "musicChoice": music_choice,
              "speech": tl["speech"], "cues": tl["cues"]}
@@ -893,6 +908,7 @@ def sharpen_video(cfg: Config, folder: Path, progress: Progress = log.info) -> d
     if up["items"]:
         anim_engine.run_stage("upscale", up, folder, progress, "Sharpening to full HD")
     props["shots"] = _hd_props(props["shots"], folder)
+    props["fps"] = ANIM_FPS  # older videos ran at 30, which juddered their 24 fps clips
     cli = _remotion_cli()
     if cli is None:
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
