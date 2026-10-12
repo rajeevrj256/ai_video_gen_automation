@@ -610,8 +610,8 @@
         <label for="ssText">Your script</label>
         <textarea class="edit" id="ssText" rows="12" placeholder="Paste the whole script. Every word is spoken as you wrote it.&#10;&#10;Mark the parts yourself with a line like:&#10;Part 2&#10;or leave them out and the app cuts it into Shorts by length."></textarea>
         <label for="ssSplit">Shorts</label>
-        <select id="ssSplit"><option value="auto">Auto: one Short when it nearly fits (spoken a little faster), more only when it's much longer or where you write "Part 2"</option>
-          <option value="one">Always one Short, however long</option></select>
+        <select id="ssSplit"><option value="auto">One Short at its natural length (parts only where you write "Part 2")</option>
+          <option value="length">Cut into Shorts by the length limit below</option><option value="one">Always one Short (ignore "Part" lines)</option></select>
         <p class="hint" id="ssEstimate"></p>
       </div>
       <div class="grid2">
@@ -2397,6 +2397,8 @@ function ssUpdate() {
   $("#ssAi").hidden = ssSource !== "ai";
   $("#ssScript").hidden = ssSource !== "script";
   $("#ssAiOpts").hidden = !ai;
+  // your own script runs at its natural length unless you cut it by length
+  $("#ssSeconds").parentElement.style.visibility = ssSource === "script" && $("#ssSplit").value !== "length" ? "hidden" : "";
   $("#ssQuality").parentElement.style.visibility = motion ? "" : "hidden";
   $("#ssUpscale").hidden = $("#ssUpscaleLabel").hidden = !ai;
   const lang = $("#ssLanguage").selectedOptions[0].textContent;
@@ -2415,8 +2417,9 @@ function ssUpdate() {
       try {
         const e = await api(`/api/story/estimate?language=${$("#ssLanguage").value}&seconds=${$("#ssSeconds").value}&split=${$("#ssSplit").value}&text=${encodeURIComponent(text.slice(0, 6000))}`);
         const max = Number($("#ssSeconds").value);
-        $("#ssEstimate").textContent = e.parts.length ? (e.parts.length === 1 ? `One Short, about ${e.parts[0]} s` + (e.parts[0] > max ? ` (over ${max} s: the voice speaks a little faster to fit)` : "")
-          : `${e.parts.length} Shorts: ` + e.parts.map((s) => s + " s").join(", ") + ` (over ${max} s in one: pick a longer limit above or "Always one Short" to keep it whole)`)
+        const byLength = $("#ssSplit").value === "length";
+        $("#ssEstimate").textContent = e.parts.length ? (e.parts.length === 1 ? `One Short, about ${e.parts[0]} s` + (byLength && e.parts[0] > max ? ` (a little over ${max} s: the voice speaks a little faster to fit)` : "")
+          : `${e.parts.length} Shorts: ` + e.parts.map((s) => s + " s").join(", ") + (byLength ? "" : ' (where you wrote "Part")'))
           + (text.length > 6000 ? " (estimate from the first part of the text)" : "") : "";
       } catch (err) { $("#ssEstimate").textContent = ""; }
     }, 500);

@@ -96,7 +96,8 @@ class StoryRequest:
     script: str = ""  # script: the story, optionally with 'Part 2' headings
     title: str = ""  # script: optional series title
     parts: int = 3  # ai: how many Shorts; script: decided by its length (or its Part headings)
-    split: str = "auto"  # script: auto (one Short when it nearly fits, else the fewest parts) | one (always one Short)
+    split: str = "auto"  # script: auto (one Short at its natural length; parts only at the user's 'Part 2' lines) |
+    # length (cut into the fewest parts within `seconds`) | one (always one Short, Part lines ignored)
     seconds: int = 30  # each part at most
     language: str = "english"  # what the voice speaks (and Claude writes in)
     screen_text: str = "english"  # english | voice: the words on screen
@@ -449,9 +450,9 @@ def _lines(text: str) -> list[str]:
 
 
 def split_parts(text: str, language: str, seconds: int, split: str = "auto") -> list[list[str]]:
-    """The user's story as parts of lines: `one` = always one Short; else at their own 'Part 2' marks, else one Short
-    when it fits in `seconds` (up to FIT over: the voice speaks a little faster), else cut by length into the fewest
-    parts that fit (lines are never split between parts)."""
+    """The user's script as parts of lines. `auto`: one Short at whatever length it runs (the user: "use what length
+    goes"), split only at their own 'Part 2' lines; `one`: always one Short; `length`: at their Part lines, else cut by
+    length into the fewest parts within `seconds` (one Short when it is at most FIT over). Lines never split."""
     if split == "one":
         return [ls] if (ls := _lines(text)) else []
     blocks, cur = [], []
@@ -467,23 +468,21 @@ def split_parts(text: str, language: str, seconds: int, split: str = "auto") -> 
     if len(blocks) > 1:
         return [ls for ls in (_lines(b) for b in blocks) if ls]
     lines = _lines(text)
-    if not lines:
-        return []
+    if not lines or split != "length":
+        return [lines] if lines else []
     budget = max(20, (seconds - 3) * WPS.get(language, 2.6))
     total = sum(_words(x) for x in lines)
     if total <= budget * FIT:
         return [lines]
-    n = max(1, math.ceil(total / budget))
-    while True:
-        target, parts, cur, got = total / n, [], [], 0
-        for i, line in enumerate(lines):
-            left = len(lines) - i
-            if cur and (got + _words(line) > budget or (got >= target * 0.9 and len(parts) < n - 1)) and left >= 1:
-                parts.append(cur)
-                cur, got = [], 0
-            cur.append(line)
-            got += _words(line)
-        parts.append(cur)
+    cum, run = [], 0
+    for line in lines:
+        run += _words(line)
+        cum.append(run)
+    n = max(2, math.ceil(total / budget))
+    while True:  # the fewest parts of about equal length (cut at the line nearest each equal share) that all fit
+        cuts = sorted({min(range(len(lines)), key=lambda j: abs(cum[j] - total * k / n)) + 1 for k in range(1, n)})
+        cuts = [c for c in cuts if 0 < c < len(lines)]
+        parts = [lines[a:b] for a, b in zip([0, *cuts], [*cuts, len(lines)])]
         if all(sum(_words(x) for x in p) <= budget for p in parts) or n >= len(lines):
             return parts
         n += 1
@@ -680,6 +679,12 @@ def _find_phrase(words, phrase: str) -> tuple[float, float] | None:
     return words[owner[at]].start, words[owner[at + len(want) - 1]].end
 
 
+def _fit_length(req: StoryRequest) -> bool:
+    """Whether a part must fit `seconds`: Claude's parts, and a script the user asked to cut by length. Otherwise the
+    user's script runs at its natural length and pace."""
+    return req.source != "script" or req.split == "length"
+
+
 def _labels(req: StoryRequest, k: int, n: int) -> tuple[str | None, str | None]:
     if n < 2:
         return None, None
@@ -699,7 +704,7 @@ def voice_part(series: StorySeries, k: int, req: StoryRequest, cfg: Config, work
                                   f"{max(-30, min(50, speed)):+d}%", delivery="hook", sarvam_speed=factor)
         talk = sum(media_seconds(a.path) for a in audio)
         need = talk + 0.12 * len(lines) + 1.3
-        if need <= req.seconds or attempt == 2 or need > req.seconds * (FIT + 0.05):
+        if not _fit_length(req) or need <= req.seconds or attempt == 2 or need > req.seconds * (FIT + 0.05):
             break
         progress(f"Part {k + 1} runs {talk:.0f} s: speaking it a little faster")
         speed, factor = speed + 8, factor * 1.08
@@ -1050,7 +1055,7 @@ class _Finisher:
             mine.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected 1080x1920.")
         if not info.get("has_audio"):
             mine.append("No audio track.")
-        if props["duration"] > req.seconds + 0.5:
+        if _fit_length(req) and props["duration"] > req.seconds + 0.5:
             mine.append(f"Part {k + 1} runs {props['duration']:.0f} s, over {req.seconds} s.")
         final = cfg.output_dir / f"{self.stamp}-{self.slug}-p{k + 1}"
         if folder is not None:  # a part built in its own folder (motion graphics) keeps its files
@@ -1135,7 +1140,8 @@ def _graphics_parts(cfg: Config, req: StoryRequest, series: GSeries, work: Path,
         for attempt in range(3):
             pcfg = replace(cfg, long_voice=voice, voice_rate=f"{max(-30, min(50, speed)):+d}%", captions=req.captions, fps=30)
             props = build_long(script, pcfg, pdir, progress, look=look, voice_opts={"delivery": "hook", "sarvam_speed": factor})
-            if props["duration"] + tail <= req.seconds or attempt == 2 or props["duration"] + tail > req.seconds * (FIT + 0.05):
+            if (not _fit_length(req) or props["duration"] + tail <= req.seconds or attempt == 2
+                    or props["duration"] + tail > req.seconds * (FIT + 0.05)):
                 break
             progress(f"Part {k + 1} runs {props['duration']:.0f} s: speaking it a little faster")
             speed, factor = speed + 8, factor * 1.08

@@ -468,7 +468,7 @@ class StoryBody(BaseModel):
     script: str = ""
     title: str = ""
     parts: int = 3
-    split: str = "auto"  # your script: auto | one (always one Short)
+    split: str = "auto"  # your script: auto (natural length, parts at 'Part 2') | length | one
     seconds: int = 30
     language: str = "english"  # english | hinglish | hindi
     screen_text: str = "english"  # english | voice
@@ -1163,7 +1163,7 @@ def create_app(cfg: Config) -> FastAPI:
         given = {"source": "script" if body.source == "script" else "ai", "topic": body.topic.strip()[:300],
                  "kind": body.kind if body.kind in KINDS else "story", "script": body.script.strip()[:20000],
                  "title": body.title.strip()[:100], "seconds": seconds, "language": language,
-                 "split": "one" if body.split == "one" else "auto",
+                 "split": body.split if body.split in ("one", "length") else "auto",
                  "screen_text": "voice" if body.screen_text == "voice" else "english", "visuals": visuals,
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
@@ -1187,7 +1187,7 @@ def create_app(cfg: Config) -> FastAPI:
         """How the user's story would be cut: parts and their lengths (the Story tab shows it while typing)."""
         from .storyshorts import WPS, split_parts
 
-        parts = split_parts(text[:20000], language, max(15, min(180, seconds)), "one" if split == "one" else "auto")
+        parts = split_parts(text[:20000], language, max(15, min(180, seconds)), split if split in ("one", "length") else "auto")
         return {"parts": [round(sum(len(x.split()) for x in p) / WPS.get(language, 2.6) + 1) for p in parts]}
 
     @app.post("/api/script-video")
