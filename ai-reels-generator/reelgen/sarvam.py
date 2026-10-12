@@ -3,7 +3,7 @@
 Voices are named `sarvam:<speaker>` wherever an edge-tts voice name goes: a bulbul:v4-flash voice ID
 (`sarvam:shubh_enhi_ads`, `<name>_<language>_<style>`; `enhi` = English-Hindi code-mixed, the user tried Shubh on
 v4 Flash in Sarvam's playground) or a bulbul:v3 speaker (`sarvam:shubh`). The key is
-SARVAM_API_KEY (.env, or Settings > Voices, which writes it there); it never goes back to the page.
+SARVAM_API_KEY (.env, or Settings > Long videos, which writes it there); it never goes back to the page.
 API (docs.sarvam.ai, text-to-speech/convert): POST https://api.sarvam.ai/text-to-speech, header
 `api-subscription-key`, body text (≤2500 characters for bulbul:v3) + language_code + speaker + model + pace
 (0.5-2.0) + speech_sample_rate + output_audio_codec; the answer is {"audios": [base64]} with no word timings.
@@ -83,9 +83,10 @@ def language_for(speaker: str) -> str:
 def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav") -> bytes:
     """One take. Rate limits and server hiccups are tried again; a wrong key or used-up credits are said plainly."""
     if not key():
-        raise RuntimeError("Add your Sarvam API key in Settings > Voices to use the Sarvam voices")
+        raise RuntimeError("Add your Sarvam API key in Settings > Long videos to use the Sarvam voices")
     body = {"text": text, "language_code": language_for(speaker), "speaker": speaker, "model": model_for(speaker),
             "pace": round(min(2.0, max(0.5, pace)), 2), "speech_sample_rate": RATE, "output_audio_codec": codec}
+    swapped = False
     for attempt in range(4):
         try:
             resp = requests.post(URL, json=body, headers={"api-subscription-key": key()}, timeout=180)
@@ -107,7 +108,12 @@ def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav") -> bytes
         if code == "insufficient_quota_error":
             raise RuntimeError("Your Sarvam credits have run out (sarvam.ai dashboard)")
         if resp.status_code in (401, 403) or "api_key" in code or code == "authentication_error":
-            raise RuntimeError("Sarvam refused the API key: check it in Settings > Voices")
+            raise RuntimeError("Sarvam refused the API key: check it in Settings > Long videos")
+        if resp.status_code in (400, 422) and "language" in msg.lower() and not swapped:
+            # the REST docs name it language_code, the playground's SDK code target_language_code: try the other once
+            body["target_language_code"] = body.pop("language_code")
+            swapped = True
+            continue
         if resp.status_code in (429, 500, 502, 503, 504) and attempt < 3:
             time.sleep(6 * (attempt + 1))
             continue
