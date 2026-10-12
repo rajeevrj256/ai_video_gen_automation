@@ -932,6 +932,40 @@ def create_app(cfg: Config) -> FastAPI:
 
         return {"names": VOICE_NAMES, "pools": VOICE_POOLS}
 
+    @app.post("/api/voice-test")
+    def voice_test(body: dict):
+        """One line spoken by a voice, as the video would say it (Roman Hinglish in mixed script for the Hindi and
+        multilingual voices when `mix`), so voices can be compared by ear before a video is made."""
+        import asyncio
+        import hashlib
+
+        from . import hinglish
+        from .voice import _edge_synthesize
+
+        voice, text = str(body.get("voice") or ""), str(body.get("text") or "").strip()[:400]
+        if not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or not text:
+            raise HTTPException(400, "Pick a voice and type a line")
+        mix = bool(body.get("mix", True))
+        spoken = hinglish.to_speech([text])[0] if mix and hinglish.needs_mixing(voice, [text], least=0) else text
+        pct = int(re.sub(r"[^\d-]", "", cfg.voice_rate) or 0)
+        key = hashlib.sha1(f"{voice}|{pct}|{spoken}".encode()).hexdigest()[:16]
+        path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                asyncio.run(_edge_synthesize(spoken, voice, f"{pct:+d}%", "+0Hz", path))
+            except Exception as exc:  # noqa: BLE001
+                path.unlink(missing_ok=True)
+                raise HTTPException(502, f"The voice service didn't answer: {exc}")
+        return {"audio": f"/api/voice-test/{key}.mp3", "spoken": spoken, "mixed": spoken != text}
+
+    @app.get("/api/voice-test/{key}.mp3")
+    def voice_test_audio(key: str):
+        path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
+        if not re.fullmatch(r"[0-9a-f]{16}", key) or not path.exists():
+            raise HTTPException(404, "no such sample")
+        return FileResponse(path, media_type="audio/mpeg")
+
     @app.get("/api/stick/voice-preview")
     def stick_voice_preview(voice: str, speed: float = 1.5, name: str = ""):
         from .stickstory import voice_preview

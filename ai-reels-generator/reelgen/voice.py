@@ -94,9 +94,13 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     pct = int(re.sub(r"[^\d-]", "", rate) or 0)
     edge_error = None
     if engine in ("auto", "edge"):
+        speak = narrations
+        from . import hinglish
+        if hinglish.needs_mixing(voice, narrations):  # Roman Hinglish for a Hindi voice: Hindi words in Devanagari
+            speak = hinglish.to_speech(narrations)
         for attempt in range(3):  # a long narration is a lot of text; one network hiccup shouldn't end it
             try:
-                return _edge_scenes(narrations, voice, out_dir, f"{pct:+d}%", pitch, volume)
+                return _shown_as_written(_edge_scenes(speak, voice, out_dir, f"{pct:+d}%", pitch, volume), narrations, speak)
             except Exception as exc:
                 edge_error = exc
                 log.warning("Microsoft voice failed (try %d of 3): %s", attempt + 1, exc)
@@ -114,6 +118,20 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
             "The offline Kokoro voice isn't installed: run  .venv\\Scripts\\python -m pip install kokoro-onnx") from None
     return _kokoro_scenes(narrations, kokoro_voice or KOKORO_FOR_EDGE.get(voice) or _kokoro_default(voice),
                           out_dir, 1 + pct / 100)
+
+
+def _shown_as_written(scenes: list[SceneAudio], narrations: list[str], speak: list[str]) -> list[SceneAudio]:
+    """Spoken in mixed script, shown as written: each scene's words get the user's own words back by position
+    (captions, and sound cues found by their word), where the counts agree."""
+    if speak is narrations or speak == narrations:
+        return scenes
+    from .hinglish import words as split_words
+
+    for scene, text in zip(scenes, narrations):
+        mine = split_words(text)
+        if len(mine) == len(scene.words):
+            scene.words = [Word(m, w.start, w.end) for m, w in zip(mine, scene.words)]
+    return scenes
 
 
 # ---------- one take, cut into scenes ----------
