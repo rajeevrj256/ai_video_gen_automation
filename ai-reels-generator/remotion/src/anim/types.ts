@@ -48,4 +48,8 @@ export type AnimProps = {
   cues: Cue[];
   silent?: boolean;
   soundOnly?: boolean;
+  // Story Shorts (reelgen/storyshorts.py): 1080x1920, with the part's label at the start and the next part's at the end.
+  vertical?: boolean;
+  partLabel?: string | null;
+  nextLabel?: string | null;
 };

@@ -78,6 +78,18 @@ python -m reelgen serve                  # the app (what start.bat/start.sh run)
 
 Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `report.json` (caption, hashtags, verification result, which editor made it), `script.json` and `review_frames.jpg` (the frames Claude reviewed).
 
+## Story Shorts (tab "Story")
+
+One story told as a series of 9:16 Shorts, each at most 30 s (45 or 60 if you pick): part 1 hooks and ends on a
+cliffhanger, part 2 picks the story up, and so on. Each part lands in the library as its own Short. Mix any of:
+
+- **Story**: Claude writes it (an original story, a fact-checked true story, or comedy; 1-6 parts), or paste your
+  own (every word kept; mark parts with a `Part 2` line or let the app cut it by length).
+- **Voice**: English, Hinglish or Hindi (Sarvam voices with your key, else the free Madhur/Andrew voices).
+- **Words on screen**: English, or the voice's own language.
+- **Pictures**: AI animation in every shot, AI animation for the key shots only, AI pictures with camera moves, or
+  stock footage (Pexels). The AI options need the AI engine (Anim tab).
+
 ## YouTube thumbnails (with Gemini, no API key)
 
 On a video's page, **Thumbnail → Design thumbnail**. Claude looks at the video and designs a

@@ -11,7 +11,11 @@ import type {AnimCamera, AnimProps, AnimShot} from './types';
 // adds what an image model can't: the emphasised words landing on their syllables, numbers and names on
 // screen, title and chapter cards, transitions, camera moves on shots that weren't animated, and the sound.
 
-const OVERLAP = 10; // frames a crossfade/dip/zoom shot starts before its cut, over the shot before it
+const OVERLAP = 10;
+
+// Letter-spacing breaks Devanagari's joined letters ("भाग" came out "भा ग"), so Hindi text is never tracked.
+const DEVANAGARI = /[\u0900-\u097F]/;
+const track = (text: string, spacing: string | number) => (DEVANAGARI.test(text) ? 0 : spacing); // frames a crossfade/dip/zoom shot starts before its cut, over the shot before it
 
 // The camera on a picture: [scale from, scale to, x from, x to, y from, y to, rotate].
 const MOVES: Record<AnimCamera, [number, number, number, number, number, number, number]> = {
@@ -79,7 +83,7 @@ const Reveal: React.FC<{words: string[]; t: number; at: number; span: number; fp
 
 // The emphasised words, landing word by word as they are said (a number counts up), in one of three looks:
 // the display face with an accent rule wiping in under it, an accent tag, or the display face in the accent colour.
-const Emphasis: React.FC<{text: string; t: number; at: number; end: number; look: number; accent: string; fps: number; face: Face}> = ({text, t, at, end, look, accent, fps, face}) => {
+const Emphasis: React.FC<{text: string; t: number; at: number; end: number; look: number; accent: string; fps: number; face: Face; vertical?: boolean}> = ({text, t, at, end, look, accent, fps, face, vertical}) => {
   const span = Math.max(0.35, end - at);
   const words = text.split(' ');
   const hasNum = /\d/.test(text);
@@ -88,15 +92,16 @@ const Emphasis: React.FC<{text: string; t: number; at: number; end: number; look
   const rule = interpolate(t, [at + span * 0.4, at + span + 0.3], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   const long = text.length > 18;
   const display: React.CSSProperties = {fontFamily: face.family, fontWeight: face.weight, textTransform: face.upper ? 'uppercase' : 'none',
-    letterSpacing: face.tracking, fontSize: (long ? 82 : 108) * face.size, lineHeight: 1.05, whiteSpace: 'nowrap', textShadow: SOFT_SHADOW};
+    letterSpacing: track(text, face.tracking), fontSize: (long ? 82 : 108) * face.size * (vertical ? 0.9 : 1), lineHeight: 1.05,
+    whiteSpace: vertical ? 'normal' : 'nowrap', maxWidth: vertical ? 920 : undefined, textAlign: 'center', textShadow: SOFT_SHADOW};
   const body = hasNum ? countUp(text, k) : <Reveal words={words} t={t} at={at} span={span} fps={fps} />;
   return (
-    <div style={{position: 'absolute', left: 0, right: 0, top: 0, height: 460, paddingTop: 96, display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: out,
+    <div style={{position: 'absolute', left: 0, right: 0, top: 0, height: vertical ? 900 : 460, paddingTop: vertical ? 430 : 96, display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: out,
       background: 'linear-gradient(to bottom, rgba(0,0,0,0.42), rgba(0,0,0,0))'}}>
       {look === 1 ? (
-        <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: long ? 56 : 70, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#0b0b0f',
+        <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: long ? 56 : 70, letterSpacing: track(text, '0.04em'), textTransform: 'uppercase', color: '#0b0b0f',
           background: accent, padding: '10px 30px 12px', borderRadius: 6, transform: `rotate(-1.5deg) scale(${0.92 + 0.08 * Math.min(1, k * 2)})`,
-          boxShadow: '0 12px 34px rgba(0,0,0,0.4)', whiteSpace: 'nowrap'}}>{body}</div>
+          boxShadow: '0 12px 34px rgba(0,0,0,0.4)', whiteSpace: vertical ? 'normal' : 'nowrap', maxWidth: vertical ? 900 : undefined, textAlign: 'center'}}>{body}</div>
       ) : (
         <>
           <div style={{...display, color: look === 2 ? accent : '#fff', fontStyle: look === 2 ? face.italic : 'normal'}}>{body}</div>
@@ -107,28 +112,30 @@ const Emphasis: React.FC<{text: string; t: number; at: number; end: number; look
   );
 };
 
-const OnScreen: React.FC<{text: string; frame: number; fps: number; accent: string}> = ({text, frame, fps, accent}) => {
+const OnScreen: React.FC<{text: string; frame: number; fps: number; accent: string; vertical?: boolean}> = ({text, frame, fps, accent, vertical}) => {
   const s = spring({frame: frame - 10, fps, config: {damping: 16}});
   return (
-    <div style={{position: 'absolute', left: 90, bottom: 130, opacity: Math.min(1, s * 1.5), transform: `translateX(${(1 - s) * -60}px)`,
+    <div style={{position: 'absolute', left: vertical ? 56 : 90, bottom: vertical ? 600 : 130, opacity: Math.min(1, s * 1.5), transform: `translateX(${(1 - s) * -60}px)`,
       display: 'flex', alignItems: 'stretch', fontFamily: LABEL, boxShadow: '0 10px 30px rgba(0,0,0,0.35)'}}>
       <div style={{width: 6, background: accent}} />
-      <div style={{background: 'rgba(12,12,16,0.74)', color: '#fff', fontWeight: 700, fontSize: 44, padding: '12px 28px 14px', textTransform: 'uppercase', letterSpacing: '0.08em'}}>{text}</div>
+      <div style={{background: 'rgba(12,12,16,0.74)', color: '#fff', fontWeight: 700, fontSize: 44, padding: '12px 28px 14px', textTransform: 'uppercase', letterSpacing: track(text, '0.08em')}}>{text}</div>
     </div>
   );
 };
 
-const Caption: React.FC<{shot: AnimShot; t: number}> = ({shot, t}) => {
+const Caption: React.FC<{shot: AnimShot; t: number; vertical?: boolean}> = ({shot, t, vertical}) => {
   const w = shot.words ?? [];
   if (!w.length) return null;
   const now = t - (shot.lead ?? 0);
+  if (now > w[w.length - 1].end + 0.5) return null; // the line is over: nothing lingers into the pause
   let i = w.findIndex((x) => x.end >= now);
   if (i < 0) i = w.length - 1;
-  const per = Math.ceil(w.length / Math.ceil(w.length / 8));
+  const most = vertical ? 5 : 8;
+  const per = Math.ceil(w.length / Math.ceil(w.length / most));
   const from = Math.floor(i / per) * per;
   return (
-    <div style={{position: 'absolute', left: 0, right: 0, bottom: 54, display: 'flex', justifyContent: 'center'}}>
-      <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: 36, color: '#fff', background: 'rgba(0,0,0,0.55)', padding: '6px 18px', borderRadius: 10, maxWidth: 1200, textAlign: 'center'}}>
+    <div style={{position: 'absolute', left: 0, right: 0, bottom: vertical ? 470 : 54, display: 'flex', justifyContent: 'center'}}>
+      <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: vertical ? 50 : 36, color: '#fff', background: 'rgba(0,0,0,0.55)', padding: '6px 18px', borderRadius: 10, maxWidth: vertical ? 940 : 1200, textAlign: 'center'}}>
         {w.slice(from, from + per).map((x) => x.text).join(' ')}
       </div>
     </div>
@@ -172,6 +179,37 @@ const Card: React.FC<{shot: AnimShot; frame: number; frames: number; fps: number
   );
 };
 
+// Story Shorts: "PART 2/3" and the series title as the Short opens (below the Shorts' top bar), gone after 2.6 s.
+const PartTag: React.FC<{label: string; title: string; accent: string; face: Face}> = ({label, title, accent, face}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const k = spring({frame: frame - 3, fps, config: {damping: 16}});
+  const out = interpolate(frame, [fps * 2.2, fps * 2.6], [1, 0], clamp);
+  return (
+    <div style={{position: 'absolute', left: 0, right: 0, top: 150, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, opacity: Math.min(k, out)}}>
+      <div style={{fontFamily: LABEL, fontWeight: 700, fontSize: 40, letterSpacing: track(label, '0.22em'), marginRight: DEVANAGARI.test(label) ? 0 : '-0.22em', color: '#0b0b0f', background: accent,
+        padding: '8px 26px 10px', borderRadius: 6, transform: `translateY(${(1 - k) * -20}px)`, boxShadow: '0 10px 30px rgba(0,0,0,0.45)'}}>{label}</div>
+      <div style={{fontFamily: face.family, fontWeight: face.weight, fontSize: 54 * face.size, letterSpacing: track(title, face.tracking), textTransform: face.upper ? 'uppercase' : 'none',
+        color: '#fff', textAlign: 'center', maxWidth: 900, lineHeight: 1.08, textShadow: SOFT_SHADOW} as React.CSSProperties}>{title}</div>
+    </div>
+  );
+};
+
+// Story Shorts: "PART 3 →" over the last moment, so the viewer looks for the next part.
+const NextTag: React.FC<{label: string; accent: string; face: Face}> = ({label, accent, face}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const k = spring({frame: frame - 2, fps, config: {damping: 14, mass: 0.7}});
+  return (
+    <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      background: `rgba(0,0,0,${0.6 * Math.min(1, k)})`}}>
+      <div style={{fontFamily: face.family, fontWeight: face.weight, fontSize: 132 * face.size, letterSpacing: track(label, face.tracking), textTransform: face.upper ? 'uppercase' : 'none',
+        color: '#fff', textShadow: SOFT_SHADOW, transform: `scale(${0.8 + 0.2 * k})`, opacity: Math.min(1, k * 1.4)} as React.CSSProperties}>{label}</div>
+      <div style={{marginTop: 18, height: 6, width: 300 * k, background: accent, borderRadius: 3}} />
+    </div>
+  );
+};
+
 const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early: number}> = ({shot, props, index, early}) => {
   const raw = useCurrentFrame();
   const {fps, durationInFrames} = useVideoConfig();
@@ -197,12 +235,12 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
         {/* a soft vignette ties the AI frames together */}
         <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.38) 100%)'}} />
       </div>
-      {shot.onScreen ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} /> : null}
-      {em && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} /> : null}
+      {shot.onScreen ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} /> : null}
+      {em && em.text && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} vertical={props.vertical} /> : null}
       {tr === 'dip' && early ? <div style={{position: 'absolute', inset: 0, background: '#000', opacity: interpolate(raw, [0, early, early + 10], [0, 1, 0], clamp)}} /> : null}
       {tr === 'flash' ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(frame, [0, 9], [0.9, 0], clamp)}} /> : null}
       {fx.has('flash') && sinceEm !== null && sinceEm < 8 ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(sinceEm, [0, 7], [0.8, 0], clamp)}} /> : null}
-      {props.captions && shot.type === 'shot' ? <Caption shot={shot} t={t} /> : null}
+      {props.captions && shot.type === 'shot' ? <Caption shot={shot} t={t} vertical={props.vertical} /> : null}
     </Layer>
   );
 };
@@ -227,8 +265,18 @@ export const Anim: React.FC<AnimProps> = (props) => {
           </Sequence>
         );
       })}
+      {!props.soundOnly && props.partLabel ? (
+        <Sequence name="part label" durationInFrames={f(2.7)}>
+          <PartTag label={props.partLabel} title={props.title} accent={props.accent} face={faceFor(props.style)} />
+        </Sequence>
+      ) : null}
+      {!props.soundOnly && props.nextLabel ? (
+        <Sequence name="next part" from={Math.max(0, total - f(1.15))}>
+          <NextTag label={props.nextLabel} accent={props.accent} face={faceFor(props.style)} />
+        </Sequence>
+      ) : null}
       {!props.soundOnly && props.watermark ? (
-        <div style={{position: 'absolute', left: 36, bottom: 28, fontFamily: LABEL, fontWeight: 700, fontSize: 26, letterSpacing: '0.06em', color: '#fff', opacity: 0.75, textShadow: '0 2px 8px rgba(0,0,0,0.6)'}}>{props.watermark}</div>
+        <div style={{position: 'absolute', left: props.vertical ? 48 : 36, ...(props.vertical ? {top: 120} : {bottom: 28}), fontFamily: LABEL, fontWeight: 700, fontSize: 26, letterSpacing: '0.06em', color: '#fff', opacity: 0.75, textShadow: '0 2px 8px rgba(0,0,0,0.6)'}}>{props.watermark}</div>
       ) : null}
       {shots.map((s) => (s.audio ? (
         <Sequence key={`v-${s.id}`} name={`voice ${s.id}`} from={f(s.start + (s.lead ?? 0))}>

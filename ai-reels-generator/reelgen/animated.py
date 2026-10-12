@@ -343,8 +343,10 @@ def _ready(path: Path) -> bool:
     return path.exists() and Path(str(path) + ".ok").exists()
 
 
-def upscale_job(shots: list[dict], style: str, work: Path) -> dict | None:
-    """Every finished clip, and the pictures shown as pictures (shots without a clip, title and chapter cards)."""
+def upscale_job(shots: list[dict], style: str, work: Path, clip_size: tuple[int, int] = HD_CLIP,
+                picture_size: tuple[int, int] = HD_PICTURE) -> dict | None:
+    """Every finished clip, and the pictures shown as pictures (shots without a clip, title and chapter cards).
+    Story Shorts pass 9:16 sizes."""
     model = SR_FOR.get(style, "general")
     if not model:
         return None
@@ -360,7 +362,7 @@ def upscale_job(shots: list[dict], style: str, work: Path) -> dict | None:
         clip = work / "clips" / f"{x['id']}.mp4"
         if x["type"] == "shot" and _ready(clip):
             items.append({"id": x["id"], "src": str(clip), "out": str(_hd(clip)), "kind": "video",
-                          "w": HD_CLIP[0], "h": HD_CLIP[1]})
+                          "w": clip_size[0], "h": clip_size[1]})
             continue
         img = work / x["image"]
         if img.stem.endswith(".hd"):  # a finished video's props point at the sharpened copy: start from the original
@@ -368,7 +370,7 @@ def upscale_job(shots: list[dict], style: str, work: Path) -> dict | None:
         if img.exists() and img not in seen:
             seen.add(img)
             items.append({"id": img.stem, "src": str(img), "out": str(_hd(img)), "kind": "image",
-                          "w": HD_PICTURE[0], "h": HD_PICTURE[1]})
+                          "w": picture_size[0], "h": picture_size[1]})
     return {"items": items, "model": model, "sr_dir": str(anim_engine.MODELS / "upscale")}
 
 
@@ -541,7 +543,7 @@ PIC_TILE = (640, 360)
 PIC_PER_SHEET = 12
 
 
-def _pic_sheets(pics: list[tuple[str, Path]], out_dir: Path) -> list[Path]:
+def _pic_sheets(pics: list[tuple[str, Path]], out_dir: Path, tile: tuple[int, int] = PIC_TILE, across: int = 3) -> list[Path]:
     from PIL import Image, ImageDraw, ImageFont
 
     try:
@@ -551,13 +553,13 @@ def _pic_sheets(pics: list[tuple[str, Path]], out_dir: Path) -> list[Path]:
     sheets = []
     for k in range(0, len(pics), PIC_PER_SHEET):
         part = pics[k:k + PIC_PER_SHEET]
-        rows = (len(part) + 2) // 3
-        sheet = Image.new("RGB", (PIC_TILE[0] * 3, PIC_TILE[1] * rows), "black")
+        rows = (len(part) + across - 1) // across
+        sheet = Image.new("RGB", (tile[0] * across, tile[1] * rows), "black")
         for i, (label, path) in enumerate(part):
-            tile = Image.open(path).convert("RGB")
-            tile.thumbnail((PIC_TILE[0] - 6, PIC_TILE[1] - 6))
-            x, y = (i % 3) * PIC_TILE[0] + 3, (i // 3) * PIC_TILE[1] + 3
-            sheet.paste(tile, (x, y))
+            pic = Image.open(path).convert("RGB")
+            pic.thumbnail((tile[0] - 6, tile[1] - 6))
+            x, y = (i % across) * tile[0] + 3, (i // across) * tile[1] + 3
+            sheet.paste(pic, (x, y))
             d = ImageDraw.Draw(sheet)
             d.rectangle([x, y, x + 16 + 18 * len(label), y + 42], fill=(0, 0, 0))
             d.text((x + 8, y + 4), label, fill=(255, 220, 0), font=font)
@@ -593,8 +595,11 @@ def check_pictures(cfg: Config, sc: AnimScript, tl: dict, work: Path, ids: list[
 
 
 def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Path, seed: int, state: dict,
-                    progress: Progress, save) -> list[dict]:
-    """Check every picture, redraw the broken ones from easier prompts, check those again (PIC_ROUNDS)."""
+                    progress: Progress, save, check=None, job=None) -> list[dict]:
+    """Check every picture, redraw the broken ones from easier prompts, check those again (PIC_ROUNDS).
+    `check(ids)` and `job(fixes)` replace this pipeline's own (Story Shorts)."""
+    check = check or (lambda ids: check_pictures(cfg, sc, tl, work, ids))
+    job = job or (lambda fixes: keyframe_job(sc, tl, style, work, seed, fixes))
     from .pipeline import Paused
 
     fixes: dict = state.get("pic_fixes") or {}
@@ -604,7 +609,7 @@ def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Pat
         progress("Checking the pictures for broken people and objects" if ids is None
                  else f"Checking the {len(ids)} redrawn pictures")
         try:
-            broken = check_pictures(cfg, sc, tl, work, ids)
+            broken = check(ids)
         except Paused:
             raise
         except Exception as exc:  # noqa: BLE001 - a check that can't run never stops the video
@@ -620,8 +625,7 @@ def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Pat
                 f.unlink(missing_ok=True)
         progress(f"Redrawing {len(broken)} picture(s): " + "; ".join(f"{b.id} {b.problem}" for b in broken[:6]))
         save(pic_fixes=fixes, pic_found=found, pic_round=rnd + 1)
-        anim_engine.run_stage("keyframes", keyframe_job(sc, tl, style, work, seed, fixes), work, progress,
-                              "Drawing the pictures")
+        anim_engine.run_stage("keyframes", job(fixes), work, progress, "Drawing the pictures")
         ids = [b.id for b in broken]
     save(pic_fixes=fixes, pic_found=found, pic_round=PIC_ROUNDS, pics_checked=True)
     return found

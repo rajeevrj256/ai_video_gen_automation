@@ -47,6 +47,8 @@ const calculateToonMetadata: CalculateMetadataFunction<ToonProps> = ({props}) =>
 const calculateAnimMetadata: CalculateMetadataFunction<AnimProps> = ({props}) => ({
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Story Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
 });
 // Real props come from reelgen/animated.py (AI pictures and clips in the video's folder); the demo is empty.
 const animDemoProps: AnimProps = {fps: 30, duration: 3, title: 'Animated', style: 'flat-vector', accent: '#FFB703', shots: [],
