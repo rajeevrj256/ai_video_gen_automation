@@ -26,7 +26,9 @@ _lock = threading.Lock()
 
 
 def is_hindi_voice(voice: str) -> bool:
-    return voice.startswith("hi-IN")
+    """Hindi voices, and Sarvam's (its docs: transliterated input "significantly reduces output quality. Always use
+    native script for Indic words")."""
+    return voice.startswith("hi-IN") or voice.startswith("sarvam:")
 
 
 # Very common Hindi words typed in Roman letters that aren't English words too: how Hinglish text is told apart

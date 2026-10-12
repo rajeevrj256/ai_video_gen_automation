@@ -92,6 +92,10 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     pct = int(re.sub(r"[^\d-]", "", rate) or 0)
+    if voice.startswith("sarvam:"):  # Sarvam's Indian voices: no fallback to another voice mid-video
+        from . import hinglish, sarvam
+        speak = hinglish.to_speech(narrations) if hinglish.needs_mixing(voice, narrations) else narrations
+        return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, 1 + pct / 100), narrations, speak)
     edge_error = None
     if engine in ("auto", "edge"):
         speak = narrations

@@ -943,8 +943,10 @@ def create_app(cfg: Config) -> FastAPI:
         from .voice import _edge_synthesize
 
         voice, text = str(body.get("voice") or ""), str(body.get("text") or "").strip()[:400]
-        if not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or not text:
+        if not (re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or re.fullmatch(r"sarvam:[a-z_]{2,40}", voice)) or not text:
             raise HTTPException(400, "Pick a voice and type a line")
+        from . import sarvam
+
         mix = bool(body.get("mix", True))
         spoken = hinglish.to_speech([text])[0] if mix and hinglish.needs_mixing(voice, [text], least=0) else text
         pct = int(re.sub(r"[^\d-]", "", cfg.voice_rate) or 0)
@@ -953,11 +955,38 @@ def create_app(cfg: Config) -> FastAPI:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                asyncio.run(_edge_synthesize(spoken, voice, f"{pct:+d}%", "+0Hz", path))
+                if sarvam.is_sarvam(voice):
+                    path.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), 1 + pct / 100, codec="mp3"))
+                else:
+                    asyncio.run(_edge_synthesize(spoken, voice, f"{pct:+d}%", "+0Hz", path))
             except Exception as exc:  # noqa: BLE001
                 path.unlink(missing_ok=True)
-                raise HTTPException(502, f"The voice service didn't answer: {exc}")
+                raise HTTPException(502, f"The voice didn't answer: {exc}")
         return {"audio": f"/api/voice-test/{key}.mp3", "spoken": spoken, "mixed": spoken != text}
+
+    @app.get("/api/keys")
+    def keys_state():
+        """Which voice keys are saved (never the keys themselves)."""
+        return {"sarvam": bool(os.environ.get("SARVAM_API_KEY", "").strip())}
+
+    @app.put("/api/keys/sarvam")
+    def save_sarvam_key(body: dict):
+        """Settings > Voices: the Sarvam API key goes into .env on this computer (and the running app); empty removes it."""
+        from .config import PROJECT_ROOT
+
+        value = str(body.get("key") or "").strip()
+        if value and not re.fullmatch(r"[A-Za-z0-9_\-.]{8,200}", value):
+            raise HTTPException(400, "That doesn't look like a Sarvam API key")
+        env = PROJECT_ROOT / ".env"
+        lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
+        lines = [x for x in lines if not re.match(r"\s*SARVAM_API_KEY\s*=", x)]
+        if value:
+            lines.append(f"SARVAM_API_KEY={value}")
+            os.environ["SARVAM_API_KEY"] = value
+        else:
+            os.environ.pop("SARVAM_API_KEY", None)
+        env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return {"sarvam": bool(value)}
 
     @app.get("/api/voice-test/{key}.mp3")
     def voice_test_audio(key: str):

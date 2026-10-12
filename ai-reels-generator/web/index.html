@@ -642,7 +642,23 @@
         <option value="hi-IN-MadhurNeural">Hindi / Hinglish – Madhur, male</option>
         <option value="hi-IN-SwaraNeural">Hindi / Hinglish – Swara, female</option>
         <option value="en-US-AvaMultilingualNeural">Multilingual – Ava, female (English, Hindi, Hinglish)</option>
+        <optgroup label="Sarvam AI – Indian voices (your key below)">
+          <option value="sarvam:shubh_enhi_ads">Sarvam – Shubh, Hinglish, lively (male)</option>
+          <option value="sarvam:shubh_enhi_companion">Sarvam – Shubh, Hinglish, conversational (male)</option>
+          <option value="sarvam:shubh_hi_stories_mixed">Sarvam – Shubh, Hindi storytelling (male)</option>
+          <option value="sarvam:sunny_enhi_customer">Sarvam – Sunny, Hinglish (male)</option>
+          <option value="sarvam:anand_hi_news">Sarvam – Anand, Hindi news (male)</option>
+          <option value="sarvam:simran_enhi_companion">Sarvam – Simran, Hinglish, conversational (female)</option>
+          <option value="sarvam:ishita_enhi_companion">Sarvam – Ishita, Hinglish, conversational (female)</option>
+          <option value="sarvam:shalini_enhi_companion">Sarvam – Shalini, Hinglish (female)</option>
+          <option value="sarvam:simran_hi_narration">Sarvam – Simran, Hindi narration (female)</option>
+          <option value="sarvam:shreya_hi_news">Sarvam – Shreya, Hindi news (female)</option>
+        </optgroup>
       </select>
+      <label for="k-sarvam">Sarvam AI key <span class="hint" id="k-sarvam-state"></span></label>
+      <div class="row"><input id="k-sarvam" type="password" autocomplete="off" placeholder="Paste your key from dashboard.sarvam.ai">
+        <button id="k-sarvam-save" style="flex:0 0 auto">Save key</button></div>
+      <p class="hint">Saved in the .env file on this computer only, never shown again. About ₹25–30 of Sarvam credits per 10-minute video.</p>
     </div>
     <div class="panel">
       <h2>Automations</h2>
@@ -1900,9 +1916,22 @@ function foldSettings() {
 }
 foldSettings();
 
+async function loadKeys() {
+  const k = await api("/api/keys");
+  $("#k-sarvam-state").textContent = k.sarvam ? "· ✓ saved" : "· not set";
+}
+$("#k-sarvam-save").onclick = async () => {
+  const key = $("#k-sarvam").value.trim();
+  if (!key && !confirm("Remove the saved Sarvam key?")) return;
+  try {
+    await api("/api/keys/sarvam", { method: "PUT", body: JSON.stringify({ key }) });
+    $("#k-sarvam").value = ""; toast(key ? "Sarvam key saved" : "Sarvam key removed"); loadKeys();
+  } catch (e) { toast(e.message); }
+};
 async function loadSettings() {
   loadAutomations().catch(() => {});
   loadLibrary().catch(() => {});
+  loadKeys().catch(() => {});
   const [s, st] = await Promise.all([api("/api/settings"), api("/api/status")]);
   for (const [k, v] of Object.entries(s)) {
     const el = $("#s-" + k); if (!el) continue;
