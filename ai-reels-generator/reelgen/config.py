@@ -93,6 +93,9 @@ class Config:
     # picked by ear in the Script tab's voice test
     hook_delivery: str = field(default_factory=lambda: _env("REEL_HOOK_DELIVERY", "normal"))
     hinglish_mix: bool = field(default_factory=lambda: _env("REEL_HINGLISH_MIX", "1").lower() not in ("0", "false", "no", "off"))
+    # Every pipeline's music made by the local AI music model (ACE-Step, reelgen/aimusic.py) when the AI engine is
+    # installed; composed music otherwise, or when this is off.
+    ai_music: bool = field(default_factory=lambda: _env("REEL_AI_MUSIC", "1").lower() not in ("0", "false", "no", "off"))
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
     target_seconds: int = field(default_factory=lambda: int(_env("REEL_SECONDS", str(MAX_SECONDS))))
 
@@ -136,7 +139,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music"]
 
 
 def settings_path(cfg: Config) -> Path:

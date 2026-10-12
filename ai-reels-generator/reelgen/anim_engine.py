@@ -204,17 +204,26 @@ def crash_reason(code: int) -> str:
     return f"crashed, code 0x{c:08X}" if c >= 0xC0000000 else f"exit code {code}"
 
 
-def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str) -> None:
+class EngineBusy(RuntimeError):
+    """The graphics card is busy with another video's AI step for longer than the caller wants to wait."""
+
+
+def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str, wait: float | None = None) -> None:
     """Run one worker stage to the end. Stop or Pause kills it at once; finished items stay on disk. A worker
     that crashes is started once more for what's left (the music model once died on the last of 8 tracks with
-    no error of its own, and the 7 made were thrown away)."""
+    no error of its own, and the 7 made were thrown away). `wait`: give up after that many seconds when another
+    AI step holds the card (EngineBusy): a Short's music never waits hours behind an animated video's clips."""
     if not installed():
         raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
     if not _gpu.acquire(blocking=False):
         progress(f"{label}: waiting for the graphics card (another AI step is using it)")
+        waited = 0.0
         while not _gpu.acquire(timeout=1):
+            waited += 1
             if stopper.stop_requested() or stopper.pause_requested():
                 raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
+            if wait is not None and waited >= wait:
+                raise EngineBusy("the graphics card is busy with another video's AI step")
     try:
         try:
             _run_stage(stage, job, work, progress, label)

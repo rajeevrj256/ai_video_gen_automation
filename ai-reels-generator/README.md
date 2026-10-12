@@ -78,6 +78,18 @@ python -m reelgen serve                  # the app (what start.bat/start.sh run)
 
 Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `report.json` (caption, hashtags, verification result, which editor made it), `script.json` and `review_frames.jpg` (the frames Claude reviewed).
 
+## Music, openings and sound (every pipeline, automatic)
+
+- **New music for every video**: with the AI engine installed (Anim tab), every video, Short or long, gets its own
+  AI-made track (ACE-Step) from its mood, energy and story, in a genre none of the last few videos used. Without the
+  engine (or with Settings > Content > Music set to composed), a new track is composed for each video instead.
+- **Openings**: every writer is told how to open in the first 3-5 seconds (the most surprising concrete thing, no
+  "Did you know" / "In this video" / greeting) and how the last videos opened, so openings don't repeat; a generic
+  opener is rewritten before recording.
+- **Sound**: every narration is levelled to the same loudness, the music sits under the voice (quieter while it
+  speaks, fuller in the pauses), and every finished video is mastered to -14 LUFS, the level YouTube and Instagram
+  play at.
+
 ## Shorts Studio (tab "Shorts+")
 
 Full-screen 9:16 Shorts, one or a series of parts, each at most 30 s (45 or 60 if you pick): part 1 hooks and ends on a

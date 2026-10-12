@@ -21,7 +21,7 @@ from typing import Callable, Literal, get_args
 
 from pydantic import BaseModel, Field
 
-from . import media
+from . import aimusic, media
 from .config import Config
 from .llm import ask
 from .categories import CATEGORIES
@@ -190,6 +190,7 @@ class Episode(BaseModel):
     music: str = Field(default="compose", description="'compose' (a new track made for this video in your mood: the "
                        "usual choice), one of the user's own tracks from the music list only when it truly fits, or 'none'.")
     mood: StickMood = Field(default="playful", description="The composed track's mood; not the same as the recent videos'.")
+    music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
     cast: list[SCast] = Field(description="The characters in this episode (from the given cast; add a minor one only if needed).")
     category: str = Field(default="", description="The library shelf: one of " + ", ".join(CATEGORIES) + ".")
     sources: list[LSource] = Field(default_factory=list, description="Facts only: 2-6 pages you opened with web search "
@@ -454,6 +455,9 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
               + (f"\n\nYour first draft repeated an earlier video ({avoid}). Write a completely different situation."
                  if avoid else "")
               + "\n\n" + media.prompt_block(cfg))
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)
     return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
                allow_web=req.style == "facts", effort=cfg.claude_effort, timeout=1800)
 
@@ -599,7 +603,18 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     # tempo, chords), following each scene's intensity; one of the user's tracks only when Claude picked it.
     choice = (ep.music or "compose").strip()
     mine = {m.name for m in media.music(cfg) if m.path is not None}
-    if choice in mine and media.fresh_track(cfg, choice):  # never the upload a recent video used
+    ai = {}
+    if choice not in mine and choice != "none" and aimusic.available(cfg):  # new music from the AI music model
+        seed = int(uuid.uuid4().int % 2**31)
+        genre = aimusic.pick_genre(cfg, ep.mood, seed)
+        energy = sum(sc_.intensity for sc_ in ep.scenes) / max(1, len(ep.scenes))
+        ai = aimusic.make(cfg, [aimusic.track("main", work / "music" / "ai-main.wav", t + 1, genre, ep.mood, energy,
+                                              ep.music_prompt, seed)], work, progress, "Music (AI)")
+        if ai:
+            aimusic.remember(cfg, genre)
+    if "main" in ai:
+        track, choice = ai["main"], f"generated (ACE-Step, {genre})"
+    elif choice in mine and media.fresh_track(cfg, choice):  # never the upload a recent video used
         track = media.pick_music(cfg, choice, work / "music", t)
     elif choice == "none":
         track = None
@@ -619,6 +634,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()},
     }
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
+    props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "StickStory")  # the music under the voice
     return props
 
 
@@ -648,6 +664,8 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         if twin:
             progress(f"That story was already made (\"{twin.get('title')}\"); Claude is writing a different one")
             ep = write_episode(cfg, req, recent, avoid=f"\"{twin.get('title')}\": {twin.get('logline', '')}")
+        from .hooks import sharpen
+        sharpen(cfg, [next((ln for s in ep.scenes for ln in s.lines if ln.line.strip()), None)], ep.logline, progress)
         # Remembered now, before voices and render: a video made at the same time sees it.
         remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
                        "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": ep.mood})
@@ -688,6 +706,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
             "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
             "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)", "captions": False,
+            "music": props.get("musicChoice", ""),
             "voice": req.language, "youtube_title": ep.title[:100],
             "youtube_description": with_sources(ep.youtube_description.strip(), sources, []), "youtube_hashtags": ep.hashtags[:3],
             "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,

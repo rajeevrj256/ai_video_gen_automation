@@ -94,6 +94,34 @@ def run_once(cfg: Config, topic: str | None = None, progress: Progress = log.inf
             _claimed.discard(claimed)
 
 
+def shorts_music(cfg: Config, script, scenes, run_dir: Path, progress: Progress) -> tuple[Path | None, str]:
+    """A Short's own new track from the AI music model (reelgen/aimusic.py): the bed's mood (not the last ones),
+    a genre none of the last videos used, the writer's music brief, full energy from the first second. None (the
+    composed bed or the user's track, in render_video) when Claude picked the user's track or 'none', or the model
+    isn't available or busy."""
+    import random
+
+    from . import aimusic, media
+    from .video import plan_timeline
+
+    mine = {m.name for m in media.music(cfg) if m.path is not None}
+    if script.music == "none" or (script.music in mine and media.fresh_track(cfg, script.music)) or not aimusic.available(cfg):
+        return None, ""
+    seed = random.randrange(2**31)
+    moods = media.BED_MOODS.get(script.music) or ({"facts": "curious", "news": "curious", "story": "mystery",
+                                                   "comedy": "playful"}.get(cfg.video_style, "curious"),)
+    mood = media.fresh_mood(cfg, moods, seed)
+    genre = aimusic.pick_genre(cfg, mood, seed)
+    seconds = plan_timeline(scenes).total
+    made = aimusic.make(cfg, [aimusic.track("bed", run_dir / "music" / "ai-bed.wav", seconds + 2, genre, mood, 0.7,
+                                            getattr(script, "music_prompt", ""), seed, hook=True)], run_dir, progress)
+    if "bed" not in made:
+        return None, ""
+    aimusic.remember(cfg, genre)
+    media.note_music(cfg, f"mood:{mood}")
+    return made["bed"], f"generated (ACE-Step, {genre})"
+
+
 def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: list, first_script,
                 run_dir, stamp: str, history_path, resume: dict | None = None) -> dict:
     """The attempt loop. After every finished step it saves a checkpoint (checkpoint.json in
@@ -265,12 +293,15 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         if stage == "rendered" and (run_dir / "reel.mp4").exists():
             rendered = resume["rendered"]
         else:
+            ai_track, ai_choice = shorts_music(cfg, script, scenes, run_dir, lambda m: progress(f"{tag} {m}"))
             progress(f"{tag} Editing the video (takes a few minutes)")
             with _render_slot(cfg):  # waits here if other videos are being edited
                 rendered = render_video(script.title, scenes, backgrounds, cfg, run_dir / "reel.mp4",
                                         graphics=[s.graphic for s in script.scenes],
                                         transitions=[s.transition for s in script.scenes],
-                                        sounds=[s.sounds for s in script.scenes], music=script.music)
+                                        sounds=[s.sounds for s in script.scenes], music=script.music,
+                                        music_file=ai_track)
+            rendered["music"] = ai_choice or "composed or yours"
             save(stage="rendered", rendered=rendered)
 
         progress(f"{tag} Verifying video quality")
@@ -342,6 +373,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         **{k: str(final_dir / v) for k, v in (("video", "reel.mp4"), ("thumbnail", "thumbnail.jpg"))},
         "duration_seconds": best["rendered"]["duration_seconds"],
         "editor": best["rendered"].get("editor", ""),
+        "music": best["rendered"].get("music", ""),
     }
     progress("Claude is writing the title, description and trending hashtags")
     try:

@@ -36,7 +36,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field, create_model
 
-from . import anim_engine, animated, media, repeats
+from . import aimusic, anim_engine, animated, media, repeats
 from .animated import ART_STYLES, CAMERAS, NEGATIVE, TRANSITION_SOUND, ACharacter, Camera, Fx, Transition
 from .categories import CATEGORIES
 from .config import Config
@@ -161,8 +161,9 @@ BoardShot = create_model("BoardShot", n=(int, Field(description="The line number
 
 class PartInfo(BaseModel):
     title: str = Field(description="This part's own short title (what happens in it), in the on-screen language.")
-    music: str = Field(description="This part's music for a music model, 10-30 words: genre, instruments, mood, energy; "
-                       "instrumental, building to the part's cliffhanger.")
+    music: str = Field(description="This part's music for a music model, 10-30 words: the feeling, the energy (building to "
+                       "the part's cliffhanger) and 1-2 sound colours from the story's world. No genre name: it is chosen "
+                       "so no two videos sound alike.")
     bpm: int = Field(ge=60, le=170)
     mood: MusicMood = Field(description="The same feeling as a composer mood (used when no music model is available).")
     youtube_title: str = Field(description="This Short's YouTube title, max 70 characters, in the on-screen language, with "
@@ -387,6 +388,9 @@ def write_series(cfg: Config, req: StoryRequest, avoid: str = "") -> StorySeries
     if avoid:
         prompt += f"\n\n{avoid}"
     prompt += f"\n\nWrite exactly {req.parts} part(s)."
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)
     if req.kind in TRUE_KINDS:
         prompt += "\n- Research budget: at most 6 web searches and 5 opened pages, then write."
     return ask(cfg.ai_backend, cfg.claude_model, _system(req, _styles_block(req, cfg), recent, _sounds_block(cfg)), prompt,
@@ -885,8 +889,8 @@ def fetch_footage(series: StorySeries, tls: list[dict], cfg: Config, work: Path,
 
 def make_music(series: StorySeries, tls: list[dict], req: StoryRequest, cfg: Config, work: Path, seed: int,
                progress: Progress) -> tuple[list[str], str]:
-    """One track per part: the user's track when Claude picked one that fits, else the music model (AI pictures,
-    engine installed) with a composed track for any it didn't make, else composed."""
+    """One track per part: the user's track when Claude picked one that fits, else the AI music model (reelgen/aimusic.py,
+    any look) with a composed track for any it didn't make, else composed."""
     from . import music as composer
 
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
@@ -899,21 +903,17 @@ def make_music(series: StorySeries, tls: list[dict], req: StoryRequest, cfg: Con
             media.note_music(cfg, series.music_track)
             return [rel(x) for x in picked], series.music_track
     made: dict[str, Path] = {}
+    genre = ""
     tracks = [{"id": f"p{k + 1}", "out": str(work / "music" / f"p{k + 1}.wav"), "seed": seed + 20 + k, "bpm": p.bpm,
                "caption": f"{p.music}, instrumental, no vocals", "duration": round(min(120, tl["duration"] + 2), 1)}
               for k, (p, tl) in enumerate(zip(series.parts, tls))]
-    if _ai_pictures(req) and anim_engine.installed():
-        try:
-            anim_engine.run_stage("music", {"tracks": tracks, "ace_root": str(anim_engine.ENGINE)}, work, progress,
-                                  "Music (ACE-Step)")
-        except Exception as exc:  # noqa: BLE001 - music must never stop the video
-            from .stopper import Paused
-            if isinstance(exc, Paused):
-                raise
-            progress(f"Music: ACE-Step didn't finish ({str(exc)[:300]}); composing the tracks it didn't make")
-        made = {t["id"]: Path(t["out"]) for t in tracks if animated._ready(Path(t["out"]))}
-        for path in made.values():
-            animated._loudnorm(path)
+    if aimusic.available(cfg):  # one genre for the series (none of the last videos'), each part at its own energy
+        genre = aimusic.pick_genre(cfg, series.parts[0].mood, seed)
+        tracks = [aimusic.track(t["id"], Path(t["out"]), t["duration"], genre, p.mood, min(1.0, 0.6 + 0.1 * k), p.music,
+                                t["seed"], hook=True) for k, (t, p) in enumerate(zip(tracks, series.parts))]
+        made = aimusic.make(cfg, tracks, work, progress, "Music (AI)")
+        if made:
+            aimusic.remember(cfg, genre)
     out = []
     for k, (p, tl) in enumerate(zip(series.parts, tls)):
         path = made.get(f"p{k + 1}")
@@ -921,8 +921,8 @@ def make_music(series: StorySeries, tls: list[dict], req: StoryRequest, cfg: Con
             path = composer.compose(p.mood, [composer.Section(0, tl["duration"] + 1, min(1.0, 0.45 + 0.12 * k))],
                                     tl["duration"] + 1, seed + k, work / "music" / f"p{k + 1}-composed.wav")
         out.append(rel(path))
-    choice = ("generated (ACE-Step)" if len(made) == len(tracks) else
-              f"generated (ACE-Step) for {len(made)} of {len(tracks)} parts, composed for the rest" if made else "composed")
+    choice = (f"generated (ACE-Step, {genre})" if len(made) == len(tracks) else
+              f"generated (ACE-Step, {genre}) for {len(made)} of {len(tracks)} parts, composed for the rest" if made else "composed")
     media.note_music(cfg, *dict.fromkeys(f"mood:{p.mood}" for k, p in enumerate(series.parts) if f"p{k + 1}" not in made))
     return out, choice
 
@@ -954,6 +954,7 @@ def props_for(series: StorySeries, k: int, tl: dict, req: StoryRequest, style: s
              "musicParts": [{"src": music_src, "from": 0, "to": tl["duration"]}], "musicChoice": music_choice,
              "speech": tl["speech"], "cues": tl["cues"], "partLabel": label, "nextLabel": nxt}
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
+    props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "Anim")  # the music under the voice
     return props
 
 
@@ -1000,6 +1001,8 @@ def run_story(cfg: Config, req: StoryRequest, progress: Progress = log.info, res
             else:
                 series = repeats.guard(cfg, series, repeats.EVERY, lambda why: write_series(cfg, req, why), progress)
             series = trim_parts(cfg, req, series, progress)
+            from .hooks import sharpen
+            sharpen(cfg, [p.shots[0] for p in series.parts if p.shots], series.premise, progress)  # every part's hook
             (work / "draft.json").write_text(series.model_dump_json(indent=1), encoding="utf-8")
             issues, findings = [], []
             if req.kind in TRUE_KINDS:
@@ -1109,7 +1112,7 @@ def _long_script(series: GSeries, part, req: StoryRequest) -> LongScript:
     chapter = LChapter(title=part.title, beats=beats, intensity=part.intensity, ambience=part.ambience, backdrop=part.backdrop)
     return LongScript(topic=series.subject, why_chosen=series.premise, facts_checked="", category="Stories",
                       subject=series.subject, hook_question="", answer="", youtube_title=part.youtube_title or series.title,
-                      hook=[], mood=series.mood, chapters=[chapter], music=mine)
+                      hook=[], mood=series.mood, chapters=[chapter], music=mine, music_prompt=part.music)
 
 
 def _graphics_parts(cfg: Config, req: StoryRequest, series: GSeries, work: Path, state: dict, save, issues: list[str],
@@ -1154,8 +1157,8 @@ def _graphics_parts(cfg: Config, req: StoryRequest, series: GSeries, work: Path,
         progress(f"Editing part {k + 1} of {n} ({props['duration']:.0f} s)")
         with _render_slot(cfg):
             _render_remotion(cli, props, out, composition="Long", crf=18, progress=progress)
-        music = series.music_track if script.music not in ("compose", "none") else "composed"
-        reports.append(finish(k, props, out, issues, {"editor": "remotion (Long, 9:16)", "music": music}, folder=pdir))
+        reports.append(finish(k, props, out, issues, {"editor": "remotion (Long, 9:16)", "music": props.get("musicChoice", "")},
+                              folder=pdir))
     return reports
 
 

@@ -250,7 +250,14 @@ def write_script(cfg: Config, req: AnimRequest, avoid: str = "") -> AnimScript:
                   "the human body, money) that would make a gripping animated story.") + repeats.prompt_block(cfg, repeats.EVERY)
     if avoid:
         prompt += f"\n\n{avoid}"
+    from . import aimusic
+    if aimusic.recent_genres(cfg):  # every pipeline's videos: this one's music sounds different
+        prompt += ("\n- The last videos' music was " + ", ".join(g.replace("-", " ") for g in aimusic.recent_genres(cfg))
+                   + ": describe other genres and instruments for this one.")
     prompt += "\n- Research budget: at most 8 web searches and 6 opened pages, then write."
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)
     sounds = media.prompt_block(cfg) + "\nIn this video `music_track` names one of the user's own tracks only when it fits; otherwise 'generate'."
     return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, styles, recent, sounds), prompt, AnimScript,
                allow_web=True, effort=cfg.claude_effort, timeout=2400)
@@ -766,6 +773,7 @@ def props_for(sc: AnimScript, tl: dict, style: str, req: AnimRequest, cfg: Confi
              "hookMusic": hook, "hookEnd": tl["hookEnd"], "musicParts": parts, "musicChoice": music_choice,
              "speech": tl["speech"], "cues": tl["cues"]}
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
+    props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "Anim")  # the music under the voice
     return props
 
 
@@ -805,6 +813,8 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
             repeats.claim(cfg, {"title": sc.title, "subject": sc.subject, "topic": req.topic.strip(), "kind": "long"})
         else:
             sc = repeats.guard(cfg, sc, repeats.EVERY, lambda why: write_script(cfg, req, why), progress, kind="long")
+        from .hooks import sharpen
+        sharpen(cfg, sc.cold_open[:1] or [s for ch in sc.chapters[:1] for s in ch.shots[:1]], sc.title, progress)
         (work / "draft.json").write_text(sc.model_dump_json(indent=1), encoding="utf-8")
         sc, issues, findings = check_facts(cfg, sc, progress)
         save(stage="scripted", script=sc.model_dump(), issues=issues, findings=findings)
@@ -977,6 +987,8 @@ def redo_music(cfg: Config, folder: Path, progress: Progress = log.info) -> dict
         raise RuntimeError(f"Putting the new music under the video failed{': ' + proc.stderr[-300:] if proc.stderr else ''}; "
                            "the old video is kept")
     out.replace(folder / "reel.mp4")
+    from .audio import master
+    master(folder / "reel.mp4")  # the same loudness as every finished video
     (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
     report.update(music=choice, seed=seed, checks={**report.get("checks", {}), "probe": info})
     (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

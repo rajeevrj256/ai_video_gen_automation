@@ -230,11 +230,30 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
     }
     # Every effect quieter than the narrator, measured, whatever file it came from.
     props["sfxLevels"] = media.level_sounds(props, public_dir, [sp["audio"] for sp in scene_props])
+    props["musicLevels"] = media.level_music(props, public_dir, [sp["audio"] for sp in scene_props], "Reel")  # the music under the voice
     return props
 
 
 def _render_remotion(cli: Path, props: dict, out_path: Path, composition: str = "Reel", crf: int = 18,
                      timeout: int = 1800, progress=None) -> None:
+    """Render with Remotion (`_render_raw`), then master the sound to the loudness YouTube and Instagram play at
+    (reelgen/audio.py), for every pipeline. A failed master keeps the rendered mix."""
+    _render_raw(cli, props, out_path, composition, crf, timeout, progress)
+    from .audio import master
+
+    try:
+        done = master(out_path)
+        if done and progress:
+            progress(f"Sound mastered: {done['before']:.1f} -> {done['after']:.1f} LUFS")
+    except Exception as exc:  # noqa: BLE001 - the video itself is finished
+        from .stopper import Paused
+        if isinstance(exc, Paused):
+            raise
+        log.warning("Mastering skipped: %s", exc)
+
+
+def _render_raw(cli: Path, props: dict, out_path: Path, composition: str = "Reel", crf: int = 18,
+                timeout: int = 1800, progress=None) -> None:
     """Render with Remotion. A long composition (over PART_FROM seconds) is rendered in one-minute parts
     that survive a crash, a timeout or closing the app (`_render_in_parts`); a Short in one go."""
     public_dir = out_path.parent

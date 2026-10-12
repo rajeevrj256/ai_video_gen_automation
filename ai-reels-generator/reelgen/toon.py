@@ -29,7 +29,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
 
-from . import media, repeats
+from . import aimusic, media, repeats
 from .categories import CATEGORIES
 from .config import Config
 from .llm import ask
@@ -257,6 +257,7 @@ class ToonScript(BaseModel):
     mood: MusicMood = Field(description="The composed music's mood (when music is 'compose').")
     music: str = Field(default="compose", description="The main music: one of the user's own tracks from the music list when "
                        "it truly fits the whole video, else 'compose' (a new track in your mood).")
+    music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
     hook_track: str = Field(default="", description="One of the user's own tracks for the cold open when it fits, else empty "
                             "(an energetic trailer track is composed).")
     mascot: TMascot
@@ -363,6 +364,9 @@ def write_script(cfg: Config, req: ToonRequest, avoid: str = "") -> ToonScript:
         prompt += f"\n\n{avoid}"
     prompt += ("\n- Research budget: at most 8 web searches and 6 opened pages, then write.")
     sounds = media.prompt_block(cfg) + "\nIn this video, `music` and `hook_track` name the user's own tracks only when they fit; otherwise 'compose' / empty."
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)
     return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, req.form, recent, sounds), prompt, ToonScript,
                allow_web=True, effort=cfg.claude_effort, timeout=2400)
 
@@ -673,8 +677,30 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
     # The hook: one of the user's own tracks when Claude picked one that fits (and no recent video used), else a
     # trailer track in a style the last videos didn't use.
     hook_music, choice_hook = None, ""
-    if hook_cuts:
-        if sc.hook_track in mine and media.fresh_track(cfg, sc.hook_track):
+    # New music from the AI music model for the hook and the rest (reelgen/aimusic.py) unless the user's own track fits;
+    # composed below for anything it doesn't make.
+    own_main = sc.music in mine and media.fresh_track(cfg, sc.music)
+    own_hook = sc.hook_track in mine and media.fresh_track(cfg, sc.hook_track)
+    ai, genre = {}, ""
+    if aimusic.available(cfg) and (not own_main or (hook_cuts and not own_hook)):
+        recent_moods = [x[5:] for x in media.recent_music(cfg) if x.startswith("mood:")][-3:]
+        ai_mood = sc.mood if sc.mood not in recent_moods else media.fresh_mood(cfg, tuple(MusicMood.__args__), seed)
+        genre = aimusic.pick_genre(cfg, ai_mood, seed)
+        want = []
+        if hook_cuts and not own_hook:
+            want.append(aimusic.track("hook", work / "music" / "ai-hook.wav", music_from + 1.5, genre, ai_mood, 0.9,
+                                      sc.music_prompt, seed + 11, hook=True))
+        if not own_main:
+            energy = sum(seg.intensity for seg in sc.segments) / max(1, len(sc.segments))
+            want.append(aimusic.track("main", work / "music" / "ai-main.wav", t - music_from + 1, genre, ai_mood, energy,
+                                      sc.music_prompt, seed + 20))
+        ai = aimusic.make(cfg, want, work, progress, "Music (AI)")
+        if ai:
+            aimusic.remember(cfg, genre)
+    if hook_cuts and "hook" in ai:
+        hook_music, choice_hook = ai["hook"], f"generated (ACE-Step, {genre})"
+    elif hook_cuts:
+        if own_hook:
             hook_music = media.pick_music(cfg, sc.hook_track, work / "music", music_from + 0.4)
             choice_hook = sc.hook_track
             media.note_music(cfg, sc.hook_track)
@@ -685,7 +711,9 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
             hook_music = composer.trailer(trailer, music_from + 0.4, [c for c in hook_cuts[1:]] + [music_from], seed,
                                           work / "music" / "hook.wav")
     # The rest: the user's own track when it fits, else a track composed in a mood the last videos didn't use.
-    if sc.music in mine and media.fresh_track(cfg, sc.music):
+    if "main" in ai:
+        track, mood = ai["main"], f"generated (ACE-Step, {genre})"
+    elif own_main:
         track, mood = media.pick_music(cfg, sc.music, work / "music", t - music_from), sc.music
         media.note_music(cfg, sc.music)
     else:
@@ -704,11 +732,12 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
         "style": {"slam": style["slam"], "card": style["card"], "seed": style["seed"]},
         "shots": shots, "captions": req.captions, "watermark": req.watermark.strip()[:40] or None,
         "music": rel(track) if track else None, "musicFrom": round(music_from, 3), "musicMood": mood,
-        "musicChoice": mood if mood in mine else f"composed ({mood})", "hookChoice": choice_hook,
+        "musicChoice": mood if mood in mine or mood.startswith("generated") else f"composed ({mood})", "hookChoice": choice_hook,
         "hookMusic": rel(hook_music) if hook_music else None, "hookEnd": round(music_from + 0.4, 3),
         "speech": media.speech_spans(spoken), "cues": cues,
     }
     props["sfxLevels"] = media.level_sounds(props, work, [x["audio"] for x in shots if x.get("audio")])
+    props["musicLevels"] = media.level_music(props, work, [x["audio"] for x in shots if x.get("audio")], "Toon")  # the music under the voice
     return props, style
 
 
@@ -800,6 +829,8 @@ def run_toon(cfg: Config, req: ToonRequest, progress: Progress = log.info, resum
             repeats.claim(cfg, {"title": sc.title, "subject": sc.subject, "topic": req.topic.strip(), "kind": "long"})
         else:  # Claude's own pick: never the same video twice
             sc = repeats.guard(cfg, sc, repeats.EVERY, lambda why: write_script(cfg, req, why), progress, kind="long")
+        from .hooks import sharpen
+        sharpen(cfg, sc.cold_open[:1] or [s for seg in sc.segments[:1] for s in seg.shots[:1]], sc.title, progress)
         (work / "draft.json").write_text(sc.model_dump_json(indent=1), encoding="utf-8")
         sc, issues, findings = check_facts(cfg, sc, progress)
         save(stage="scripted", script=sc.model_dump(), issues=issues, findings=findings)
@@ -847,6 +878,7 @@ def run_toon(cfg: Config, req: ToonRequest, progress: Progress = log.info, resum
         "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info}, "attempts": 1,
         "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
         "duration_seconds": round(props["duration"], 1), "editor": "remotion (Toon)", "captions": req.captions,
+        "music": props.get("musicChoice", ""),
         "voice": req.voice, "youtube_title": sc.title[:100],
         "youtube_description": with_sources(sc.youtube_description.strip(), sources, []),
         "youtube_hashtags": sc.hashtags[:3], "youtube_tags": sc.tags, "caption": sc.youtube_description.strip(),

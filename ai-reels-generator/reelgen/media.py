@@ -486,6 +486,69 @@ def _loudness(path: Path) -> float | None:
     return float(np.sqrt((loud ** 2).mean())) if loud.size else None
 
 
+# Where each composition plays music and at which levels (the editor's <Music full duck>: between lines, while the
+# narrator speaks). Each music file is levelled so that it sits at least FULL_GAP_DB under the voice between lines and
+# at least SPEECH_GAP_DB under it while the narrator speaks (in practice 13-17 dB). Keep in step with the editor.
+MUSIC_SLOTS = {
+    "Reel": [("music", 0.2, 0.07)],
+    "Long": [("hook.music", 0.62, 0.3), ("music", 0.18, 0.065), ("musicParts", 0.16, 0.06)],
+    "Anim": [("hookMusic", 0.55, 0.2), ("musicParts", 0.26, 0.13)],
+    "Toon": [("hookMusic", 0.6, 0.2), ("music", 0.26, 0.13)],
+    "StickStory": [("music", 0.16, 0.06)],
+}
+FULL_GAP_DB = 7.0  # between lines: clearly music, still under the voice
+SPEECH_GAP_DB = 10.0  # at least this far under while the narrator speaks (13 dB under was "inaudible" to the user once)
+
+
+def level_music(props: dict, root: Path, voice_files: list[str], composition: str) -> dict:
+    """Every music track of a video levelled against its narration (a composed track, an AI-made one and an
+    upload all arrive at their own loudness). Each is written again as <name>-mx.wav with the gain that keeps it
+    FULL_GAP_DB under the voice between lines and SPEECH_GAP_DB under it while the narrator speaks; props point at
+    the copy. Returns {file: gain dB}."""
+    voices = [v for v in (_loudness(root / f) for f in voice_files[:12] if f) if v]
+    if not voices:
+        return {}
+    voice = float(np.median(voices))
+    slots: list[tuple[dict, str, float, float]] = []  # (holder, key, full level, duck level)
+    for path, full, duck in MUSIC_SLOTS.get(composition, []):
+        if path == "musicParts":
+            slots += [(m, "src", full, duck) for m in props.get("musicParts") or []]
+        elif "." in path:
+            head, key = path.split(".")
+            if isinstance(props.get(head), dict):
+                slots.append((props[head], key, full, duck))
+        else:
+            slots.append((props, path, full, duck))
+    gains: dict[str, float] = {}
+    from .audio import gain_file
+
+    for holder, key, full, duck in slots:
+        src = holder.get(key)
+        if not src or not (root / src).exists() or Path(src).stem.endswith("-mx"):
+            continue
+        level = _loudness(root / src)
+        if not level:
+            continue
+        gain = min(voice * 10 ** (-FULL_GAP_DB / 20) / (level * full), voice * 10 ** (-SPEECH_GAP_DB / 20) / (level * duck))
+        gain_db = float(np.clip(20 * np.log10(gain), -24, 15))
+        if abs(gain_db) < 0.5:
+            continue
+        out = (root / src).with_name((root / src).stem + "-mx.wav")
+        if not out.exists():
+            import subprocess
+
+            from .video import FFMPEG
+
+            proc = subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(root / src), "-ac", "2", "-ar", "48000",
+                                   "-c:a", "pcm_s16le", str(out)], capture_output=True)
+            if proc.returncode != 0 or not gain_file(out, gain_db, limit=gain_db > 0):
+                out.unlink(missing_ok=True)
+                continue
+        holder[key] = out.relative_to(root).as_posix()
+        gains[src] = round(gain_db, 1)
+    return gains
+
+
 def level_sounds(props: dict, root: Path, voice_files: list[str]) -> dict:
     """Make every sound effect quieter than the voice, whatever its source: built-in, uploaded or
     synthesised. Each effect file louder than SFX_UNDER_VOICE x the narration is written again

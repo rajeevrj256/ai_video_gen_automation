@@ -32,7 +32,7 @@ from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
-from . import music, sound_design, variety
+from . import aimusic, music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
 from . import repeats
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
@@ -213,6 +213,7 @@ class LongScript(BaseModel):
     hook_backdrop: str = Field(default="", description="The background photo behind the hook: a 2-4 word English stock-photo search for the most striking real setting of this story (no named people, brands or logos).")
     chapters: list[LChapter] = Field(description="The chapters in order (as many as the instructions say). The first is the cold open ('Intro').")
     music: str = Field(default="", description="Background track name from the music list (the user's own file when one fits the mood), 'compose' to have one composed for this video, or 'none'.")
+    music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
 
 
 def _system(style: str, language: str, minutes: float = 8) -> str:
@@ -368,6 +369,9 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
         # research run made one script ~900k tokens. The fact-check confirms the claims afterwards.
         prompt += ("\n- Research budget: at most 8 web searches and 6 opened pages in total. Search for what you "
                    "need, then write; don't keep browsing.")
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)  # the trailer hook's and the cold open's first seconds
     script = ask(cfg.ai_backend, cfg.claude_model, _system(cfg.video_style, cfg.long_language, minutes), prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
@@ -504,6 +508,13 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
         result.fail(f"The hook has {len(script.hook)} shots; write 6-9 (curiosity, unexpected, tension, problem, gap).")
     hook_words = sum(len(h.line.split()) for h in script.hook)
     result.checks["hook_words"] = hook_words
+    from .hooks import weak
+    first = next((("H" + str(i + 1), h.line) for i, h in enumerate(script.hook) if h.line.strip()), None)
+    if first is None and script.chapters and script.chapters[0].beats:
+        first = ("1.1", script.chapters[0].beats[0].narration)
+    if first and weak(first[1]):
+        result.fail(f"{first[0]}: the video opens with a generic phrase ('{weak(first[1])}'). Open on the most surprising "
+                    "concrete thing itself (a number, a moment, a contradiction) in the first words, with energy.")
     if hook_words > 62:
         result.fail(f"The hook's lines have {hook_words} words; keep them under 62 so the hook stays within 30 seconds.")
     for hi, h in enumerate(script.hook, 1):
@@ -734,10 +745,6 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     if (script.music and script.music != "none" and media.fresh_track(cfg, script.music)
             and any(m.name == script.music and m.path for m in media.music(cfg))):
         track = media.pick_music(cfg, script.music, work / "music", t - main_start)
-    if track is None and script.music != "none":
-        sections = [music.Section(c["start"] - main_start, c["end"] - main_start, (c["intensity"] - 1) / 4,
-                                  bool(c["drop"])) for c in chapters]
-        track = music.compose(script.mood, sections, t - main_start, seed, work / "music" / "main.wav")
     # The user's own tracks, chapter by chapter where Claude found one that fits (the composed or
     # main track steps aside there); consecutive chapters with the same track share one part.
     own = {m.name: m for m in media.music(cfg) if m.path and media.fresh_track(cfg, m.name)}
@@ -753,6 +760,36 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(own[name].path, dest)
         parts.append({"src": dest.relative_to(work).as_posix(), "from": c["start"], "to": c["end"], "name": name})
+    covered = lambda c: any(p["from"] - 0.5 <= c["start"] < p["to"] for p in parts)  # noqa: E731
+    # Every other chapter (and the hook) gets new music from the AI music model when it's here (reelgen/aimusic.py):
+    # one genre for the video, none of the last videos', each chapter at its own energy; the chapters it didn't make
+    # get the composed score below.
+    choice = script.music if track is not None else ""
+    if track is None and script.music != "none" and aimusic.available(cfg):
+        genre = aimusic.pick_genre(cfg, script.mood, seed)
+        want = [aimusic.track(f"ch{c['index']}", work / "music" / f"ai-ch{c['index']:02d}.wav", c["end"] - c["start"] + 2,
+                              genre, script.mood, (c["intensity"] - 1) / 4, script.music_prompt, seed + 20 + c["index"])
+                for c in chapters if not covered(c)]
+        if hook["shots"] and not hook.get("own"):
+            want.append(aimusic.track("hook", work / "music" / "ai-hook.wav", hook["duration"] + 1.8, genre, script.mood, 0.9,
+                                      script.music_prompt, seed + 11, hook=True))
+        made = aimusic.make(cfg, want, work, progress, "Music (AI)")
+        if made:
+            aimusic.remember(cfg, genre)
+            choice = (f"generated (ACE-Step, {genre})" if len(made) == len(want)
+                      else f"generated (ACE-Step, {genre}) for {len(made)} of {len(want)} tracks, composed for the rest")
+            if "hook" in made:
+                hook["music"], hook["ai"] = made["hook"].relative_to(work).as_posix(), genre
+            for c in chapters:
+                if f"ch{c['index']}" in made:
+                    parts.append({"src": made[f"ch{c['index']}"].relative_to(work).as_posix(), "from": c["start"],
+                                  "to": c["end"], "name": f"AI music ({genre})"})
+            parts.sort(key=lambda p: p["from"])
+    if track is None and script.music != "none" and not all(covered(c) for c in chapters):
+        sections = [music.Section(c["start"] - main_start, c["end"] - main_start, (c["intensity"] - 1) / 4,
+                                  bool(c["drop"])) for c in chapters]
+        track = music.compose(script.mood, sections, t - main_start, seed, work / "music" / "main.wav")
+        choice = choice or f"composed ({script.mood})"
     ambience = []
     for c in chapters:
         if c["ambience"] != "none":
@@ -763,7 +800,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
 
     # Remembered for the next videos: their hook, main track and chapter tracks will differ.
     composed = track is not None and track.name == "main.wav"  # pick_music notes an upload itself
-    media.note_music(cfg, hook.get("own", ""), *[p["name"] for p in parts], f"mood:{script.mood}" if composed else "")
+    media.note_music(cfg, hook.get("own", ""), *[p["name"] for p in parts if not p["name"].startswith("AI music")],
+                     f"mood:{script.mood}" if composed else "")
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))  # the user's whoosh/pop/... where one matches
     props = {
@@ -784,6 +822,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         "cues": cues,
         "speech": media.speech_spans(spoken),
         "currency": currency_of(script),
+        "musicChoice": choice or "none",
     }
     # Sound for every visual action, on top of Claude's word cues.
     auto = sound_design.design(props, look["transition"])
@@ -817,6 +856,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     # Every effect quieter than the narrator, measured, whatever file it came from.
     voice = [b["audio"] for b in beats if b.get("audio")] + [s["audio"] for s in hook["shots"] if s.get("audio")]
     props["sfxLevels"] = media.level_sounds(props, work, voice)
+    props["musicLevels"] = media.level_music(props, work, voice, "Long")  # the music under the voice
     if new_look:
         variety.remember(cfg, look, script.mood, hook["style"], script.story_form,
                          (look.get("breaks") or [""])[0])
@@ -1577,6 +1617,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "thumbnail": str(final_dir / "thumbnail.jpg"),
             "duration_seconds": round(props["duration"], 1),
             "editor": "remotion (Long)",
+            "music": props.get("musicChoice", ""),
         }
         if manual:  # your title and description, as written; the chapter stamps are offered separately
             report.update({"source": "script", "topic_source": "your script", "caption": manual["description"],

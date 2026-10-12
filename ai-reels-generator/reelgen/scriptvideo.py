@@ -153,6 +153,7 @@ class Storyboard(BaseModel):
     hook_track: str = LongScript.model_fields["hook_track"]
     hook_backdrop: str = LongScript.model_fields["hook_backdrop"]
     music: str = LongScript.model_fields["music"]
+    music_prompt: str = LongScript.model_fields["music_prompt"]
     hook: list[BoardShot] = Field(description="The hook's shots in order: every hook line exactly once, in order, plus at most 3 silent shots.")
     chapters: list[BoardChapter] = Field(description="The chapters in order, by their first line.")
     beats: list[BoardBeat] = Field(description="One entry per script line, in order, every line.")
@@ -286,7 +287,7 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
                         category=board.category, subject=board.subject, hook_question=board.hook_question, answer="",
                         youtube_title=given.title, hook=_hook_shots(board, hook) if hook else [], mood=board.mood,
                         hook_music=board.hook_music, hook_track=board.hook_track, hook_backdrop=board.hook_backdrop,
-                        chapters=chapters, music=board.music)
+                        chapters=chapters, music=board.music, music_prompt=board.music_prompt)
     return repair_long_script(script)  # the long pipeline's own free visual fixes; never the words
 
 
