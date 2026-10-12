@@ -630,11 +630,12 @@ def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int
 
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                voices: list[list[SceneAudio]] | None = None, look: dict | None = None,
-               hook_seconds: tuple[float, float] = HOOK_SECONDS) -> dict:
+               hook_seconds: tuple[float, float] = HOOK_SECONDS, voice_opts: dict | None = None) -> dict:
     """Record the voice (one take per chapter) and lay out the hook and every beat on the timeline,
     with this video's look, music, ambience and sound design.
     `voices`: recordings to use instead (the user's own voiceover), one list per chapter.
-    `look`: the look to keep (a re-make); a new video gets a fresh one."""
+    `look`: the look to keep (a re-make); a new video gets a fresh one.
+    `voice_opts`: extra `synthesize_scenes` options for the chapters (the Shorts Studio's delivery and Sarvam speed)."""
     seed = _seed(script)
     new_look = look is None
     look = look or variety.pick_look(cfg, seed)
@@ -704,7 +705,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         else:
             progress(f"Recording voiceover: chapter {ci + 1} of {len(script.chapters)}")
             audio = synthesize_scenes([b.narration for b in chapter.beats], cfg.long_voice, work / "audio" / f"ch{ci:02d}",
-                                      cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate)
+                                      cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate, **(voice_opts or {}))
         for beat, sa in zip(chapter.beats, audio):
             duration = media_seconds(sa.path)
             v = _prep_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids, duration)

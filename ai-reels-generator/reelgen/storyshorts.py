@@ -1,5 +1,6 @@
-"""Story Shorts: one story told as a series of 9:16 Shorts (each at most 30 s), part 1, part 2... each part its
-own hook, its piece of the story and a cliffhanger into the next.
+"""Shorts Studio (tab "Shorts+"; the module kept its first name, Story Shorts): 9:16 Shorts built from the other
+pipelines' pieces in any combination, one Short or a series (part 1, part 2... each at most 30 s, its own hook, its
+piece of the story or explanation and a cliffhanger into the next).
 
 Built from the pieces the other pipelines already have, in any combination (tab "Story", job `story_input`):
 - the story: Claude writes it (`source: ai`: an original story, a true story fact-checked like every pipeline
@@ -7,8 +8,10 @@ Built from the pieces the other pipelines already have, in any combination (tab 
   word changes; one Claude call storyboards it);
 - the voice: English, Hinglish or Hindi (Sarvam and the Hindi voices get the mixed script, `hinglish.py`), with
   the words on screen in English or in the voice's language;
-- the pictures: AI animation (every shot a clip, or only the key shots), AI pictures moved by the camera, or
-  stock footage (Pexels, like the Create tab's Shorts).
+- the pictures: AI animation (every shot a clip, or only the key shots), AI pictures moved by the camera, stock
+  footage (Pexels, like the Create tab's Shorts), or the long videos' motion graphics (`graphics`: numbers, charts,
+  timelines, steps, icons, 3D, photo backdrops, laid out for 9:16 by the Long composition's `vertical` frame);
+- what it is: an original story, a true story, an explainer, this week's news or comedy (true ones fact-checked).
 The AI stages (pictures, picture check, clips, upscale, music) run once over the whole series, then every part is
 edited on its own with the Anim composition in 9:16 (`vertical`), so it lands in the library as its own Short.
 
@@ -22,7 +25,6 @@ import json
 import logging
 import math
 import os
-import random
 import re
 import shutil
 import subprocess
@@ -39,8 +41,9 @@ from .animated import ART_STYLES, CAMERAS, NEGATIVE, TRANSITION_SOUND, ACharacte
 from .categories import CATEGORIES
 from .config import Config
 from .llm import ask
-from .longform import LSource, verify_sources, with_sources
-from .script_writer import AI_CLICHES, SoundCue
+from .longform import (LBeat, LChapter, LongScript, LSource, LVisual, _visual_text, build_long, object_icon,
+                       verify_sources, with_sources)
+from .script_writer import AI_CLICHES, SoundCue, news_rules
 from .sfx import write_sfx
 from .toon import MusicMood, ScriptCheck
 from .verify import probe
@@ -52,8 +55,9 @@ Progress = Callable[[str], None]
 
 CHECKPOINT = "story-checkpoint.json"
 LANGUAGES = ("english", "hinglish", "hindi")
-VISUALS = ("anim", "key", "pictures", "footage")
-KINDS = ("story", "facts", "comedy")
+VISUALS = ("anim", "key", "pictures", "footage", "graphics")  # graphics: the long videos' motion graphics, 9:16
+KINDS = ("story", "facts", "explainer", "news", "comedy")
+TRUE_KINDS = ("facts", "explainer", "news")  # written with web search and fact-checked
 WPS = {"english": 2.7, "hinglish": 2.5, "hindi": 2.4}  # spoken words a second (edge +8%, Sarvam at pace 1)
 MAX_PARTS = 6
 PORTRAIT = (768, 1344)  # SDXL's own 9:16 size
@@ -76,6 +80,11 @@ KIND_RULES = {
              "named in the narration but are never drawn as characters. No politics, no rumours.",
     "comedy": "A funny story: an everyday situation everyone knows that escalates step by step; the jokes come from the "
               "characters and surprises, every part lands a punchline before its cliffhanger. Clean humour.",
+    "explainer": "A clear explainer: one surprising question answered step by step with real facts, numbers and how it "
+                 "works; each part gets one step closer and the full answer lands at the end. Every name, number and date "
+                 "is true and confirmed with web search (put the pages you opened in `sources`). No politics, no rumours.",
+    "news": "One real news story told so a viewer instantly gets why it matters. Every fact confirmed with web search (pages "
+            "in `sources`).",
 }
 
 
@@ -87,6 +96,7 @@ class StoryRequest:
     script: str = ""  # script: the story, optionally with 'Part 2' headings
     title: str = ""  # script: optional series title
     parts: int = 3  # ai: how many Shorts; script: decided by its length (or its Part headings)
+    split: str = "auto"  # script: auto (one Short when it nearly fits, else the fewest parts) | one (always one Short)
     seconds: int = 30  # each part at most
     language: str = "english"  # what the voice speaks (and Claude writes in)
     screen_text: str = "english"  # english | voice: the words on screen
@@ -109,7 +119,7 @@ def default_voice(language: str) -> str:
 
 
 def _ai_pictures(req: StoryRequest) -> bool:
-    return req.visuals != "footage"
+    return req.visuals in ("anim", "key", "pictures")
 
 
 # ---------- what Claude writes ----------
@@ -198,6 +208,99 @@ class StoryBoard(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+# ---------- motion graphics (the long videos' templates, 9:16): one visual per line ----------
+
+LMood = LongScript.model_fields["mood"].annotation
+LAmbience = LChapter.model_fields["ambience"].annotation
+_GVIS = {"visual": (LVisual, Field(description="What we see while it is said: exactly what the line says, laid out for a "
+                                    "tall 9:16 phone screen.")),
+         "sounds": (list[SoundCue], Field(default_factory=list, description="0-2 effects from the sound list on exact "
+                                          "words of the line; most lines get none."))}
+GShot = create_model("GShot", line=(str, Field(description="One spoken sentence, 4-18 words: what the narrator says over this visual.")), **_GVIS)
+BoardGShot = create_model("BoardGShot", n=(int, Field(description="The line number.")), **_GVIS)
+
+
+class GPartInfo(PartInfo):
+    backdrop: str = LChapter.model_fields["backdrop"]
+    intensity: int = LChapter.model_fields["intensity"]
+    ambience: LAmbience = LChapter.model_fields["ambience"]  # type: ignore[valid-type]
+
+
+GPart = create_model("GPart", shots=(list[GShot], Field(description="The visuals in order: 5-9, a new one every 2.5-4.5 seconds.")),
+                     **_fields(GPartInfo))
+
+
+class GSeries(BaseModel):
+    subject: str = Field(description="The one subject or premise, in a few English words.")
+    title: str = Field(description="The series title, max 60 characters, in the on-screen language.")
+    premise: str = Field(description="One English sentence: what it is and why viewers will follow it to the end.")
+    mood: LMood = LongScript.model_fields["mood"]  # type: ignore[valid-type]
+    parts: list[GPart]
+    music_track: str = Field(default="generate", description="One of the user's own tracks from the list when it truly fits, else 'generate'.")
+    sources: list[LSource] = Field(default_factory=list, description="True stories, explainers and news: 2-8 pages you "
+                                   "opened that confirm every real fact. Empty for fiction.")
+    category: str = Field(default="Stories", description="One of " + ", ".join(CATEGORIES) + ".")
+    tags: list[str] = Field(default_factory=list, description="5-12 search tags.")
+
+
+class GBoard(BaseModel):
+    subject: str = Field(description="The one subject or premise, in a few English words.")
+    title: str = Field(description="The series title, max 60 characters, in the on-screen language (the user's title exactly when given).")
+    premise: str = Field(description="One English sentence: what it is.")
+    mood: LMood = LongScript.model_fields["mood"]  # type: ignore[valid-type]
+    parts: list[GPartInfo] = Field(description="One per part, in order.")
+    shots: list[BoardGShot] = Field(description="One per numbered line, in order, every line.")
+    music_track: str = Field(default="generate", description="One of the user's own tracks when it truly fits, else 'generate'.")
+    category: str = Field(default="Stories", description="One of " + ", ".join(CATEGORIES) + ".")
+    tags: list[str] = Field(default_factory=list)
+
+
+def _graphics_rules(req: StoryRequest) -> str:
+    """The long writer's own rules for visuals, minus what a Short has no use for (chapter cards, the hook's own
+    track), plus the tall frame's limits."""
+    from .longform import _system as long_system
+
+    style = {"facts": "facts", "explainer": "facts", "news": "news", "comedy": "comedy"}.get(req.kind, "story")
+    full = long_system(style, "English")
+    rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
+    rules = re.sub(r"\n- (Chapter breaks|Backgrounds):.*?(?=\n- |\n\n)", "", rules, flags=re.S)
+    rules = re.sub(r"Music and sound:.*?\n\n", "", rules, flags=re.S)
+    return f"""Every shot is a motion-graphics visual (the long videos' own templates) on a tall 9:16 phone screen.
+- Tall layout: timelines (2-5 dates) and steps (2-4) stack top to bottom, compare shows two tall bars, a chart has 3-6
+points. Keep the words short: a keyword at most 3 words, a headline at most 6, item labels at most 3 words and item texts
+at most 5.
+- The first visual of every part is the hook: the most striking evidence (a big number, footage, a 3D object, a
+keyword slam), never a slow title card.
+- Each part is one chapter: give it a `backdrop` (a stock-photo search for its real setting), an `intensity` for its
+music and an `ambience` where a place matters.
+- {_screen_rule(req)}
+
+{rules}"""
+
+
+def _safe_visual(line: str) -> LVisual:
+    """A corrected line's visual: an icon, no figures (the old one may show the figure the checker refused)."""
+    return LVisual(type="icons", headline="", sub="", items=[], icons=[object_icon(line)], camera="push")
+
+
+def assemble_graphics(req: StoryRequest, board: GBoard, parts: list[list[str]]) -> GSeries:
+    shots = {sh.n: sh for sh in board.shots}
+    out, n = [], 0
+    for k, lines in enumerate(parts):
+        info = board.parts[k] if k < len(board.parts) else (board.parts[-1] if board.parts else None)
+        rows = []
+        for line in lines:
+            n += 1
+            got = shots.get(n)
+            rows.append(GShot(line=line, visual=got.visual if got else _safe_visual(line), sounds=got.sounds if got else []))
+        meta = info.model_dump() if info else {"title": f"Part {k + 1}", "music": "cinematic", "bpm": 100, "mood": "curious",
+                                               "youtube_title": f"{board.title} Part {k + 1}", "description": "", "hashtags": ["shorts"]}
+        out.append(GPart(shots=rows, **meta))
+    assert [sh.line for p in out for sh in p.shots] == [x for p in parts for x in p]  # not one spoken word changed
+    return GSeries(subject=board.subject, title=req.title.strip() or board.title, premise=board.premise, mood=board.mood,
+                   parts=out, music_track=board.music_track, category=board.category, tags=board.tags)
+
+
 # ---------- the prompts ----------
 
 def _screen_rule(req: StoryRequest) -> str:
@@ -209,6 +312,8 @@ def _screen_rule(req: StoryRequest) -> str:
 
 
 def _directing(req: StoryRequest, styles: str) -> str:
+    if req.visuals == "graphics":
+        return _graphics_rules(req)
     footage = req.visuals == "footage"
     pictures = ("The pictures are stock footage: give every shot a precise `footage` search; `scene` and `motion` are one "
                 "short sentence each (they aren't drawn), `characters` empty." if footage else
@@ -239,7 +344,7 @@ def _system(req: StoryRequest, styles: str, recent: str, sounds: str) -> str:
     return f"""You write and direct short vertical stories for YouTube Shorts and Reels: one story told in {req.parts} \
 part{'s' if many else ''}, each part a Short of at most {req.seconds} seconds (about {words} spoken words, never more).
 
-The story: {KIND_RULES.get(req.kind, KIND_RULES['story'])}
+The story: {KIND_RULES.get(req.kind, KIND_RULES['story'])}{news_rules() if req.kind == "news" else ""}
 - {"One story across the parts: each part moves it forward with its own turn and ends on a cliffhanger that makes the viewer want the next part; the last part pays everything off. " if many else "One complete story in one Short, with a turn and a pay-off. "}\
 Every part works on its own for a viewer who never saw the others.
 - The first line of every part hooks in under 2 seconds (4-10 words: a question, a shock, a contradiction, a mystery).\
@@ -268,7 +373,7 @@ def _sounds_block(cfg: Config) -> str:
             "the whole story; otherwise 'generate'.")
 
 
-def write_series(cfg: Config, req: StoryRequest, avoid: str = "") -> StorySeries:
+def write_series(cfg: Config, req: StoryRequest, avoid: str = "") -> StorySeries | GSeries:
     past = animated._history(cfg)[-6:]
     recent = ("\n- The last videos looked like this; make this one different (characters, palette, music): "
               + "; ".join(f"{p.get('style')} / {p.get('notes', '')[:60]}" for p in past)) if past else ""
@@ -281,16 +386,27 @@ def write_series(cfg: Config, req: StoryRequest, avoid: str = "") -> StorySeries
     if avoid:
         prompt += f"\n\n{avoid}"
     prompt += f"\n\nWrite exactly {req.parts} part(s)."
-    if req.kind == "facts":
+    if req.kind in TRUE_KINDS:
         prompt += "\n- Research budget: at most 6 web searches and 5 opened pages, then write."
     return ask(cfg.ai_backend, cfg.claude_model, _system(req, _styles_block(req, cfg), recent, _sounds_block(cfg)), prompt,
-               StorySeries, allow_web=req.kind == "facts", effort=cfg.claude_effort, timeout=1800)
+               GSeries if req.visuals == "graphics" else StorySeries, allow_web=req.kind in TRUE_KINDS,
+               effort=cfg.claude_effort, timeout=1800)
 
 
 # ---------- the user's own story: lines and parts in code ----------
 
 _SENTENCE = re.compile(r"(?<=[.!?…।])[\"'”’)\]]*\s+")
-_PART = re.compile(r"^\s*(#+\s*)?(part|episode|भाग)\s*\d+\b.*$|^\s*-{3,}\s*$", re.I)
+# Only an explicit "Part 2" / "Episode 2" / "भाग 2" line starts a new part: a '---' scene break once cut a 64-second
+# story into two Shorts.
+_PART = re.compile(r"^\s*[#*_]*\s*(part|episode|भाग)\s*\d+\b.*$", re.I)
+FIT = 1.15  # a script up to 15% over the length stays one Short, spoken a little faster
+
+
+def _plain(text: str) -> str:
+    """Markdown marks the voice would read out ('**To be continued...**', '## Heading', '> quote')."""
+    text = re.sub(r"\*\*|__|~~|`", "", text)
+    text = re.sub(r"(?<!\w)\*(?=\S)|(?<=\S)\*(?!\w)", "", text)
+    return re.sub(r"(?m)^\s*(#{1,6}|>)\s*", "", text)
 
 
 def _words(text: str) -> int:
@@ -311,7 +427,7 @@ def _split_long(sentence: str, limit: int = 18) -> list[str]:
 def _lines(text: str) -> list[str]:
     """Shot-sized lines (about 4-14 words): sentences, a long one cut at a comma, very short ones joined."""
     out: list[str] = []
-    for para in re.split(r"\n\s*\n", text.strip()):
+    for para in re.split(r"\n\s*\n", _plain(text).strip()):
         flat = " ".join(para.split())
         if not flat:
             continue
@@ -332,9 +448,12 @@ def _lines(text: str) -> list[str]:
     return out
 
 
-def split_parts(text: str, language: str, seconds: int) -> list[list[str]]:
-    """The user's story as parts of lines: at their own 'Part 2' / '---' marks, else cut by length so each part's
-    speech fits in `seconds` (lines are never split between parts)."""
+def split_parts(text: str, language: str, seconds: int, split: str = "auto") -> list[list[str]]:
+    """The user's story as parts of lines: `one` = always one Short; else at their own 'Part 2' marks, else one Short
+    when it fits in `seconds` (up to FIT over: the voice speaks a little faster), else cut by length into the fewest
+    parts that fit (lines are never split between parts)."""
+    if split == "one":
+        return [ls] if (ls := _lines(text)) else []
     blocks, cur = [], []
     for row in text.replace("\r\n", "\n").split("\n"):
         if _PART.match(row):
@@ -352,6 +471,8 @@ def split_parts(text: str, language: str, seconds: int) -> list[list[str]]:
         return []
     budget = max(20, (seconds - 3) * WPS.get(language, 2.6))
     total = sum(_words(x) for x in lines)
+    if total <= budget * FIT:
+        return [lines]
     n = max(1, math.ceil(total / budget))
     while True:
         target, parts, cur, got = total / n, [], [], 0
@@ -368,7 +489,7 @@ def split_parts(text: str, language: str, seconds: int) -> list[list[str]]:
         n += 1
 
 
-def storyboard(cfg: Config, req: StoryRequest, parts: list[list[str]]) -> StorySeries:
+def storyboard(cfg: Config, req: StoryRequest, parts: list[list[str]]) -> StorySeries | GSeries:
     """One Claude call: the visuals, characters, music and post text for the user's own lines."""
     numbered, n = [], 0
     for k, lines in enumerate(parts, 1):
@@ -388,6 +509,10 @@ The voice speaks the user's own text ({req.language.title()}).
 {_sounds_block(cfg)}"""
     prompt = ((f"Series title, chosen by the user: {req.title.strip()}\n\n" if req.title.strip() else "")
               + "\n".join(numbered) + f"\n\nReturn {len(parts)} part entries and exactly {n} shots, one per line.")
+    if req.visuals == "graphics":
+        gboard = ask(cfg.ai_backend, cfg.claude_model, system, prompt, GBoard, allow_web=False, effort=cfg.claude_effort,
+                     timeout=1200)
+        return assemble_graphics(req, gboard, parts)
     board = ask(cfg.ai_backend, cfg.claude_model, system, prompt, StoryBoard, allow_web=False, effort=cfg.claude_effort,
                 timeout=1200)
     return assemble(req, board, parts)
@@ -415,6 +540,66 @@ def assemble(req: StoryRequest, board: StoryBoard, parts: list[list[str]]) -> St
                        music_track=board.music_track, category=board.category, tags=board.tags)
 
 
+# ---------- a part Claude wrote too long: shortened before anything is recorded ----------
+
+class LineCut(BaseModel):
+    i: int = Field(description="The line's number in its part (1 = the first).")
+    line: str = Field(description="The line to keep, tightened if needed (same facts, same language), or empty to drop it.")
+
+
+class PartCut(BaseModel):
+    part: int
+    lines: list[LineCut] = Field(description="Every line to keep, in order.")
+
+
+class Cuts(BaseModel):
+    parts: list[PartCut]
+
+
+def _part_words(part) -> int:
+    return sum(_words(sh.line) for sh in part.shots)
+
+
+def trim_parts(cfg: Config, req: StoryRequest, series, progress: Progress, ask_fn=None):
+    """A part over its word budget (it would run past the Short's length, and speaking faster only goes so far) is
+    shortened by Claude: lines tightened or dropped, never a new fact; the hook and the cliffhanger stay. Each kept
+    line keeps its own visual. The user's own script is never touched."""
+    budget = int((req.seconds - 3) * WPS.get(req.language, 2.6))
+    over = [k for k, p in enumerate(series.parts) if _part_words(p) > budget * 1.08]
+    if not over:
+        return series
+    progress(f"Part {', '.join(str(k + 1) for k in over)} {'runs' if len(over) == 1 else 'run'} long: shortening "
+             f"to about {budget} words")
+    blocks = []
+    for k in over:
+        part = series.parts[k]
+        blocks.append(f"Part {k + 1} ({_part_words(part)} words, at most {budget}):\n"
+                      + "\n".join(f"{i}. {sh.line}" for i, sh in enumerate(part.shots, 1)))
+    system = ("You shorten the narration of YouTube Shorts so each part fits its length. Tighten wording and drop the "
+              "least needed lines; keep the first line (the hook) and the last line (the cliffhanger or pay-off) strong; "
+              "never add a fact, a number or a name, never change what a fact says, keep the language and the voice. "
+              "Return every line to keep with its number, in order.")
+    call = ask_fn or (lambda sy, pr: ask(cfg.ai_backend, cfg.claude_model, sy, pr, Cuts, effort="low", timeout=600))
+    try:
+        cuts = call(system, "\n\n".join(blocks))
+    except Exception as exc:  # noqa: BLE001 - a long part is still made (spoken faster), never lost
+        from .stopper import Paused
+        if isinstance(exc, Paused):
+            raise
+        log.warning("Shortening failed: %s", exc)
+        return series
+    for cut in cuts.parts:
+        k = cut.part - 1
+        if k not in over:
+            continue
+        part = series.parts[k]
+        keep = [(c.i, c.line.strip()) for c in cut.lines if 1 <= c.i <= len(part.shots) and c.line.strip()]
+        shots = [part.shots[i - 1].model_copy(update={"line": line}) for i, line in dict(keep).items()]
+        if shots and sum(_words(sh.line) for sh in shots) < _part_words(part):
+            part.shots = shots
+    return series
+
+
 # ---------- fact-check (true stories Claude wrote) ----------
 
 def _refs(series: StorySeries) -> dict:
@@ -422,7 +607,7 @@ def _refs(series: StorySeries) -> dict:
 
 
 def _check(cfg: Config, series: StorySeries, only: set[str] | None = None) -> ScriptCheck:
-    rows = [f"{r}{' >>' if only and r in only else ''} {sh.line}" + (f" (on screen: {sh.on_screen})" if sh.on_screen else "")
+    rows = [f"{r}{' >>' if only and r in only else ''} {sh.line}" + _shown(sh)
             for r, sh in _refs(series).items() if sh.line.strip() and (not only or r in only)]
     system = ("You fact-check a true story told as short videos. Search the web and open reliable pages. A line is "
               "confirmed only if a source you opened says the same; figures and dates must match. Story framing and "
@@ -432,7 +617,14 @@ def _check(cfg: Config, series: StorySeries, only: set[str] | None = None) -> Sc
     return ask(cfg.ai_backend, cfg.fact_model, system, prompt, ScriptCheck, allow_web=True, effort=cfg.fact_effort, timeout=1200)
 
 
-def check_facts(cfg: Config, series: StorySeries, progress: Progress) -> tuple[StorySeries, list[str], list[dict]]:
+def _shown(sh) -> str:
+    """What the viewer reads with the line (checked with it: a figure on screen must be right too)."""
+    if hasattr(sh, "visual"):
+        return " " + _visual_text(sh.visual)
+    return f" (on screen: {sh.on_screen})" if sh.on_screen else ""
+
+
+def check_facts(cfg: Config, series, progress: Progress) -> tuple:
     """Every factual line checked; a wrong one is replaced by the checker's true rewrite and checked once more; one
     still unconfirmed is cut."""
     findings, refs, changed = [], _refs(series), set()
@@ -442,7 +634,11 @@ def check_facts(cfg: Config, series: StorySeries, progress: Progress) -> tuple[S
         sh = refs.get(c.ref)
         if sh is None or c.verdict == "confirmed":
             continue
-        sh.line, sh.on_screen, sh.show = c.fix.strip(), "", ""
+        sh.line = c.fix.strip()
+        if hasattr(sh, "visual"):
+            sh.visual = _safe_visual(sh.line)
+        else:
+            sh.on_screen, sh.show = "", ""
         changed.add(c.ref)
     issues = []
     rewritten = {r for r in changed if refs[r].line}
@@ -502,7 +698,8 @@ def voice_part(series: StorySeries, k: int, req: StoryRequest, cfg: Config, work
         audio = synthesize_scenes(lines, voice, work / "audio" / f"p{k + 1}-{attempt}", cfg.tts_engine, cfg.kokoro_voice,
                                   f"{max(-30, min(50, speed)):+d}%", delivery="hook", sarvam_speed=factor)
         talk = sum(media_seconds(a.path) for a in audio)
-        if talk + 0.12 * len(lines) + 1.3 <= req.seconds or attempt == 2:
+        need = talk + 0.12 * len(lines) + 1.3
+        if need <= req.seconds or attempt == 2 or need > req.seconds * (FIT + 0.05):
             break
         progress(f"Part {k + 1} runs {talk:.0f} s: speaking it a little faster")
         speed, factor = speed + 8, factor * 1.08
@@ -757,8 +954,7 @@ def props_for(series: StorySeries, k: int, tl: dict, req: StoryRequest, style: s
 
 def run_story(cfg: Config, req: StoryRequest, progress: Progress = log.info, resume: str | None = None) -> list[dict]:
     from .fsutil import move
-    from .llm import meter_records, summarize_usage
-    from .pipeline import _render_slot, done_line, pause_point, slugify
+    from .pipeline import pause_point, slugify
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     work = cfg.output_dir / resume if resume else cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-story-working"
@@ -778,12 +974,12 @@ def run_story(cfg: Config, req: StoryRequest, progress: Progress = log.info, res
                            "(or pick stock footage)")
     # 1. the story
     if state.get("series"):
-        series = StorySeries.model_validate(state["series"])
+        series = (GSeries if req.visuals == "graphics" else StorySeries).model_validate(state["series"])
         issues, findings = state.get("issues", []), state.get("findings", [])
         progress("Resuming: the story is already written")
     else:
         if req.source == "script":
-            parts = split_parts(req.script, req.language, req.seconds)
+            parts = split_parts(req.script, req.language, req.seconds, req.split)
             if not parts:
                 raise ValueError("The story is empty.")
             progress(f"Your story: {sum(len(p) for p in parts)} lines in {len(parts)} part(s)")
@@ -798,28 +994,183 @@ def run_story(cfg: Config, req: StoryRequest, progress: Progress = log.info, res
                 repeats.claim(cfg, {"title": series.title, "subject": series.subject, "topic": req.topic.strip(), "kind": "short"})
             else:
                 series = repeats.guard(cfg, series, repeats.EVERY, lambda why: write_series(cfg, req, why), progress)
+            series = trim_parts(cfg, req, series, progress)
             (work / "draft.json").write_text(series.model_dump_json(indent=1), encoding="utf-8")
             issues, findings = [], []
-            if req.kind == "facts":
+            if req.kind in TRUE_KINDS:
                 series, issues, findings = check_facts(cfg, series, progress)
         save(stage="scripted", series=series.model_dump(), issues=issues, findings=findings)
     if not series.parts:
         raise RuntimeError("Nothing left of the story after the fact-check.")
+    cli = _remotion_cli()
+    if cli is None:
+        raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
+    slug = slugify(series.title) if slugify(series.title) != "reel" else (slugify(series.subject) or "story")
+    sources, dropped = verify_sources(series.sources) if series.sources else ([], [])
+    if req.kind in TRUE_KINDS and req.source == "ai" and not sources:
+        issues = [*issues, "No source link could be opened; check the facts before posting."]
+    finish = _Finisher(cfg, req, series, work, stamp, seed, slug, sources, dropped, findings, state, save, progress)
+    if req.visuals == "graphics":
+        reports = _graphics_parts(cfg, req, series, work, state, save, issues, finish, cli, progress)
+    else:
+        reports = _picture_parts(cfg, req, series, work, state, save, issues, finish, cli, seed, progress)
+    (work / CHECKPOINT).unlink(missing_ok=True)
+    if any(work.iterdir()):
+        move(work, cfg.output_dir / f"{stamp}-{slug}-story-files")
+    else:
+        work.rmdir()
+    progress("Done" if all(r["verified"] for r in reports) else "Done, but some parts did not pass every check — review before posting")
+    return reports
+
+
+class _Finisher:
+    """Verifies an edited part, gives it its own library folder and report (shared by every look)."""
+
+    def __init__(self, cfg, req, series, work, stamp, seed, slug, sources, dropped, findings, state, save, progress):
+        self.__dict__.update(cfg=cfg, req=req, series=series, work=work, stamp=stamp, seed=seed, slug=slug, sources=sources,
+                             dropped=dropped, findings=findings, state=state, save=save, progress=progress)
+        self.done = dict(state.get("finals") or {})
+        self.series_id = work.name.replace("-story-working", "")
+
+    def finished(self, k: int) -> dict | None:
+        folder = self.done.get(str(k + 1))
+        path = self.cfg.output_dir / folder / "report.json" if folder else None
+        return json.loads(path.read_text(encoding="utf-8")) if path and path.exists() else None
+
+    def __call__(self, k: int, props: dict, video: Path, issues: list[str], extra: dict, folder: Path | None = None) -> dict:
+        from .llm import meter_records, summarize_usage
+        from .pipeline import done_line
+
+        cfg, req, series = self.cfg, self.req, self.series
+        part = series.parts[k]
+        self.progress(f"Verifying part {k + 1}")
+        info = probe(video)
+        mine = [x for x in issues if not re.match(r"P\d+\.", x) or x.startswith(f"P{k + 1}.")]
+        if (info.get("width"), info.get("height")) != HD_CLIP:
+            mine.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected 1080x1920.")
+        if not info.get("has_audio"):
+            mine.append("No audio track.")
+        if props["duration"] > req.seconds + 0.5:
+            mine.append(f"Part {k + 1} runs {props['duration']:.0f} s, over {req.seconds} s.")
+        final = cfg.output_dir / f"{self.stamp}-{self.slug}-p{k + 1}"
+        if folder is not None:  # a part built in its own folder (motion graphics) keeps its files
+            if final.exists():
+                shutil.rmtree(final)
+            folder.rename(final)
+            video = final / video.name
+        final.mkdir(parents=True, exist_ok=True)
+        if video != final / "reel.mp4":
+            video.replace(final / "reel.mp4")
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "1", "-i", str(final / "reel.mp4"), "-frames:v", "1",
+                        "-q:v", "3", str(final / "thumbnail.jpg")], check=False)
+        (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+        (final / "script.json").write_text(series.model_dump_json(indent=2), encoding="utf-8")
+        desc = part.description.strip()
+        report = {
+            "id": final.name, "format": "short", "length": "short", "source": "storyshorts", "series": self.series_id,
+            "part": k + 1, "parts": len(series.parts), "series_title": series.title,
+            "topic": series.subject, "subject": series.subject, "topic_source": "your script" if req.source == "script" else "shorts studio",
+            "style": req.kind if req.source == "ai" else "story",
+            "category": series.category if series.category in CATEGORIES else "Stories",
+            "title": part.youtube_title or f"{series.title} {k + 1}", "why_chosen": series.premise,
+            "narration": " ".join(sh.line for sh in part.shots), "created_at": self.stamp, "verified": not mine, "score": None,
+            "issues": mine, "checks": {"probe": info}, "attempts": 1, "video": str(final / "reel.mp4"),
+            "thumbnail": str(final / "thumbnail.jpg"), "duration_seconds": round(props["duration"], 1),
+            "captions": req.captions, "voice": req.voice or default_voice(req.language), "language": req.language,
+            "screen_text": req.screen_text, "visuals": req.visuals,
+            "youtube_title": (part.youtube_title or series.title)[:100], "caption": desc,
+            "hashtags": [h.lstrip("#") for h in part.hashtags],
+            "youtube_description": with_sources(desc, self.sources, []) if self.sources else desc,
+            "youtube_hashtags": [h.lstrip("#") for h in part.hashtags][:3], "youtube_tags": series.tags,
+            "fact_check": self.findings if k == 0 else [], "sources": self.sources, "sources_unreachable": self.dropped,
+            "seed": self.seed, **extra,
+        }
+        if k == 0:
+            report["usage"] = summarize_usage(meter_records())
+        (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        self.done[str(k + 1)] = final.name
+        self.save(stage="rendering", finals=self.done)
+        self.progress(done_line(report))
+        return report
+
+
+_PLATE_KEYS = ("plates", "plateUrls", "platesBaked", "hookPlate", "breaks")
+
+
+def _long_script(series: GSeries, part, req: StoryRequest) -> LongScript:
+    """One part as an ordinary long-video script: no trailer hook (the first line is the hook), one chapter."""
+    mine = series.music_track if series.music_track not in ("", "generate") else "compose"
+    beats = [LBeat(narration=sh.line, visual=sh.visual, sounds=sh.sounds) for sh in part.shots]
+    chapter = LChapter(title=part.title, beats=beats, intensity=part.intensity, ambience=part.ambience, backdrop=part.backdrop)
+    return LongScript(topic=series.subject, why_chosen=series.premise, facts_checked="", category="Stories",
+                      subject=series.subject, hook_question="", answer="", youtube_title=part.youtube_title or series.title,
+                      hook=[], mood=series.mood, chapters=[chapter], music=mine)
+
+
+def _graphics_parts(cfg: Config, req: StoryRequest, series: GSeries, work: Path, state: dict, save, issues: list[str],
+                    finish: _Finisher, cli, progress: Progress) -> list[dict]:
+    """Every part built by the long-video builder (voice, sound design, music, backdrop photos, 3D, footage) in its own
+    folder and edited with the Long composition in 9:16. Part 1's look (palette, backdrop style, transitions) is kept
+    for the others, with their own photos."""
+    from dataclasses import replace
+
+    from .pipeline import _render_slot
+
+    voice = req.voice or default_voice(req.language)
+    first_look = state.get("look")
+    reports = []
+    n = len(series.parts)
+    for k, part in enumerate(series.parts):
+        if (old := finish.finished(k)) is not None:
+            reports.append(old)
+            continue
+        pdir = work / f"p{k + 1}"
+        shutil.rmtree(pdir, ignore_errors=True)  # a part stopped half-way is built again
+        script = _long_script(series, part, req)
+        look = None if first_look is None else {key: v for key, v in first_look.items() if key not in _PLATE_KEYS}
+        label, nxt = _labels(req, k + 1, n)
+        tail = 0.9 if nxt else 0.3
+        speed, factor = req.speed, 1.0
+        progress(f"Recording the voiceover for part {k + 1} of {n} ({voice})")
+        for attempt in range(3):
+            pcfg = replace(cfg, long_voice=voice, voice_rate=f"{max(-30, min(50, speed)):+d}%", captions=req.captions, fps=30)
+            props = build_long(script, pcfg, pdir, progress, look=look, voice_opts={"delivery": "hook", "sarvam_speed": factor})
+            if props["duration"] + tail <= req.seconds or attempt == 2 or props["duration"] + tail > req.seconds * (FIT + 0.05):
+                break
+            progress(f"Part {k + 1} runs {props['duration']:.0f} s: speaking it a little faster")
+            speed, factor = speed + 8, factor * 1.08
+            shutil.rmtree(pdir / "audio", ignore_errors=True)
+        if first_look is None:
+            first_look = props["look"]
+            save(look=first_look)
+        props.update(vertical=True, partLabel=label, nextLabel=nxt, duration=round(props["duration"] + tail, 3))
+        out = pdir / "reel.mp4"
+        progress(f"Editing part {k + 1} of {n} ({props['duration']:.0f} s)")
+        with _render_slot(cfg):
+            _render_remotion(cli, props, out, composition="Long", crf=18, progress=progress)
+        music = series.music_track if script.music not in ("compose", "none") else "composed"
+        reports.append(finish(k, props, out, issues, {"editor": "remotion (Long, 9:16)", "music": music}, folder=pdir))
+    return reports
+
+
+def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Path, state: dict, save, issues: list[str],
+                   finish: _Finisher, cli, seed: int, progress: Progress) -> list[dict]:
+    """AI animation, AI pictures or stock footage: the voice, pictures, motion and music for the whole series in one
+    go, then every part edited with the Anim composition in 9:16."""
+    from .pipeline import _render_slot
+
     style = state.get("style") or (animated._style_of(series, req, cfg, seed) if _ai_pictures(req) else "footage")  # type: ignore[arg-type]
-    # 2. the voice, part by part
+    # the voice, part by part
     tls = state.get("timelines") or []
     if len(tls) == len(series.parts) and all((work / s["audio"]).exists() for tl in tls for s in tl["shots"]):
         progress("Resuming: voiceover already recorded")
     else:
         progress(f"Recording the voiceover ({req.voice or default_voice(req.language)})")
         tls = [voice_part(series, k, req, cfg, work, progress) for k in range(len(series.parts))]
-        for k, tl in enumerate(tls):
-            if tl["duration"] > req.seconds + 0.5:
-                issues = [*issues, f"Part {k + 1} runs {tl['duration']:.0f} s, over {req.seconds} s."]
-        save(stage="voiced", timelines=tls, style=style, issues=issues)
+        save(stage="voiced", timelines=tls, style=style)
     progress(f"{len(series.parts)} part(s): " + ", ".join(f"{tl['duration']:.0f} s" for tl in tls)
              + (f"; art style {style}" if _ai_pictures(req) else "; stock footage"))
-    # 3. pictures and motion
+    # pictures and motion
     pic_found, up = state.get("pic_found") or [], None
     if _ai_pictures(req):
         anim_engine.run_stage("keyframes", keyframe_job(series, tls, style, work, seed, state.get("pic_fixes")), work,
@@ -844,84 +1195,33 @@ def run_story(cfg: Config, req: StoryRequest, progress: Progress = log.info, res
     else:
         fetch_footage(series, tls, cfg, work, progress)
     save(stage="clips")
-    # 4. music
+    # music
     if state.get("music"):
         tracks, music_choice = state["music"]
     else:
         tracks, music_choice = make_music(series, tls, req, cfg, work, seed, progress)
         save(stage="music", music=[tracks, music_choice])
-    # 5. every part edited on its own
-    cli = _remotion_cli()
-    if cli is None:
-        raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
-    done = dict(state.get("finals") or {})
-    slug = slugify(series.title) if slugify(series.title) != "reel" else (slugify(series.subject) or "story")
-    sources, dropped = verify_sources(series.sources) if series.sources else ([], [])
-    if req.kind == "facts" and req.source == "ai" and not sources:
-        issues = [*issues, "No source link could be opened; check the facts before posting."]
+    # every part edited on its own
     reports = []
-    series_id = work.name.replace("-story-working", "")
-    for k, (part, tl) in enumerate(zip(series.parts, tls)):
-        if str(k + 1) in done and (cfg.output_dir / done[str(k + 1)] / "report.json").exists():
-            reports.append(json.loads((cfg.output_dir / done[str(k + 1)] / "report.json").read_text(encoding="utf-8")))
+    for k, tl in enumerate(tls):
+        if (old := finish.finished(k)) is not None:
+            reports.append(old)
             continue
         props = props_for(series, k, tl, req, style, cfg, work, tracks[k], music_choice, seed)
         out = work / f"reel-p{k + 1}.mp4"
         progress(f"Editing part {k + 1} of {len(series.parts)} ({tl['duration']:.0f} s)")
         with _render_slot(cfg):
             _render_remotion(cli, props, out, composition="Anim", crf=18, progress=progress)
-        progress(f"Verifying part {k + 1}")
-        info = probe(out)
-        mine = list(issues)
-        if (info.get("width"), info.get("height")) != HD_CLIP:
-            mine.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected 1080x1920.")
-        if not info.get("has_audio"):
-            mine.append("No audio track.")
-        final = cfg.output_dir / f"{stamp}-{slug}-p{k + 1}"
-        final.mkdir(parents=True, exist_ok=True)
-        out.replace(final / "reel.mp4")
-        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "1", "-i", str(final / "reel.mp4"), "-frames:v", "1",
-                        "-q:v", "3", str(final / "thumbnail.jpg")], check=False)
-        (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-        (final / "script.json").write_text(series.model_dump_json(indent=2), encoding="utf-8")
         animated_n = sum(1 for s in props["shots"] if s.get("clip"))
-        desc = part.description.strip()
-        report = {
-            "id": final.name, "format": "short", "length": "short", "source": "storyshorts", "series": series_id,
-            "part": k + 1, "parts": len(series.parts), "series_title": series.title,
-            "topic": series.subject, "subject": series.subject, "topic_source": "your story" if req.source == "script" else "story shorts",
-            "style": req.kind if req.source == "ai" else "story",
-            "category": series.category if series.category in CATEGORIES else "Stories",
-            "title": part.youtube_title or f"{series.title} {k + 1}", "why_chosen": series.premise,
-            "narration": " ".join(sh.line for sh in part.shots), "created_at": stamp, "verified": not mine, "score": None,
-            "issues": mine, "checks": {"probe": info}, "attempts": 1, "video": str(final / "reel.mp4"),
-            "thumbnail": str(final / "thumbnail.jpg"), "duration_seconds": round(tl["duration"], 1),
-            "editor": "remotion (Anim, 9:16)", "captions": req.captions, "voice": req.voice or default_voice(req.language),
-            "language": req.language, "screen_text": req.screen_text, "visuals": req.visuals,
-            "art_style": style if _ai_pictures(req) else None, "music": music_choice,
+        reports.append(finish(k, props, out, issues, {
+            "editor": "remotion (Anim, 9:16)", "art_style": style if _ai_pictures(req) else None, "music": music_choice,
             "animated_shots": f"{animated_n} of {len(props['shots'])}", "picture_check": pic_found if k == 0 else [],
             "upscaled": up["model"] if up and up.get("items") else None,
-            "youtube_title": (part.youtube_title or series.title)[:100], "caption": desc,
-            "hashtags": [h.lstrip("#") for h in part.hashtags],
-            "youtube_description": with_sources(desc, sources, []) if sources else desc,
-            "youtube_hashtags": [h.lstrip("#") for h in part.hashtags][:3], "youtube_tags": series.tags,
-            "fact_check": findings if k == 0 else [], "sources": sources, "sources_unreachable": dropped,
-            "characters": [c.model_dump() for c in series.characters], "seed": seed,
-        }
-        if k == 0:
-            report["usage"] = summarize_usage(meter_records())
-        (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        done[str(k + 1)] = final.name
-        save(stage="rendering", finals=done)
-        reports.append(report)
-        progress(done_line(report))
+            "characters": [c.model_dump() for c in series.characters]}))
     if _ai_pictures(req):
         animated._remember(cfg, {"title": series.title, "subject": series.subject, "style": style,
                                  "notes": series.style_notes, "music": series.parts[0].music[:60], "kind": "story",
                                  "characters": [c.name for c in series.characters]})
-    (work / CHECKPOINT).unlink(missing_ok=True)
-    move(work, cfg.output_dir / f"{stamp}-{slug}-story-files")
-    progress("Done" if all(r["verified"] for r in reports) else "Done, but some parts did not pass every check — review before posting")
     return reports
 
 

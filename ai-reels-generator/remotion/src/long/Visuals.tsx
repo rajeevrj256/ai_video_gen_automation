@@ -4,14 +4,13 @@ import {type LucideIcon} from 'lucide-react';
 import {iconFor} from './icon';
 import {COLORS, FONT, clamp, exitProgress, fitSize, float, formatNumber, parseNumber, payoffPop} from '../theme';
 import type {Item, Visual} from './types';
+import {BOX} from './box';
 
-// One animated visual per beat, in the 16:9 frame. Everything enters with a spring,
-// keeps moving slightly while it holds (so no beat is a still slide), and eases out
-// in the last frames. The area below y=820 is kept free for the subtitles.
+// One animated visual per beat, in the 16:9 frame (or the 9:16 one of a Shorts Studio Short: ./box.ts, where
+// timelines and steps stack top to bottom). Everything enters with a spring, keeps moving slightly while it holds
+// (so no beat is a still slide), and eases out in the last frames. The area below BOX.BOTTOM is kept free for the
+// subtitles.
 
-const W = 1920;
-const SIDE = 170; // left/right margin
-const INNER = W - SIDE * 2;
 
 // `roomy`: subtitles are off, so the bottom band is free: sit in the true centre and grow ~10%.
 export const VisualView: React.FC<{v: Visual; frames: number; accent: string; roomy?: boolean}> = ({v, frames, accent, roomy}) => {
@@ -48,7 +47,7 @@ export const VisualView: React.FC<{v: Visual; frames: number; accent: string; ro
         fontFamily: FONT,
         color: COLORS.text,
         opacity: 1 - exit,
-        transform: `translateY(${roomy ? 75 : 0}px) scale(${push * (1 - 0.04 * exit) * (roomy ? 1.1 : 1)}) translateY(${-30 * exit}px)`,
+        transform: `translateY(${roomy ? (BOX.V ? 50 : 75) : 0}px) scale(${push * (1 - 0.04 * exit) * (roomy ? (BOX.V ? 1.05 : 1.1) : 1)}) translateY(${-30 * exit}px)`,
       }}
     >
       {body}
@@ -64,12 +63,12 @@ const useEnter = (delay = 0, config = {damping: 14, mass: 0.7}) => {
   return spring({frame: frame - delay, fps, config});
 };
 
-const Stage: React.FC<{children: React.ReactNode; top?: number; bottom?: number}> = ({children, top = 110, bottom = 820}) => (
+const Stage: React.FC<{children: React.ReactNode; top?: number; bottom?: number}> = ({children, top = BOX.TOP, bottom = BOX.BOTTOM}) => (
   <div
     style={{
       position: 'absolute',
-      left: SIDE,
-      width: INNER,
+      left: BOX.SIDE,
+      width: BOX.INNER,
       top,
       height: bottom - top,
       display: 'flex',
@@ -95,7 +94,7 @@ const Sub: React.FC<{text: string; delay?: number; size?: number}> = ({text, del
         lineHeight: 1.25,
         opacity: 0.88 * Math.min(1, e),
         transform: `translateY(${(1 - e) * 30}px)`,
-        maxWidth: INNER * 0.85,
+        maxWidth: BOX.INNER * 0.85,
         textWrap: 'balance',
       }}
     >
@@ -116,10 +115,10 @@ const Underline: React.FC<{accent: string; delay?: number; width?: number}> = ({
 
 const Title: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   const words = v.headline.split(/\s+/).filter(Boolean);
-  const size = Math.max(64, fitSize(v.headline, 132, INNER * 1.7));
+  const size = Math.max(64, fitSize(v.headline, 132, BOX.INNER * (BOX.V ? 2.6 : 1.7)));
   return (
     <Stage>
-      <div style={{fontSize: size, fontWeight: 900, lineHeight: 1.08, textWrap: 'balance', maxWidth: INNER}}>
+      <div style={{fontSize: size, fontWeight: 900, lineHeight: 1.08, textWrap: 'balance', maxWidth: BOX.INNER}}>
         {words.map((w, i) => (
           <Word key={i} text={w} delay={i * 3} />
         ))}
@@ -158,7 +157,7 @@ const Stat: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
       <div
         style={{
           // heavy digits are ~0.78 em wide (fitSize assumes 0.66) and the camera may zoom in ~12%
-          fontSize: Math.min(230, Math.floor((INNER * 0.82) / (Math.max(text.length, 1) * 0.78))),
+          fontSize: Math.min(BOX.V ? 260 : 230, Math.floor((BOX.INNER * 0.82) / (Math.max(text.length, 1) * 0.78))),
           fontWeight: 900,
           whiteSpace: 'nowrap', // "5 to 1" must never break as "5 to / 1"
           color: accent,
@@ -185,7 +184,10 @@ const Keyword: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
     <Stage>
       <div
         style={{
-          fontSize: Math.max(110, fitSize(v.headline, 250, INNER * 1.2)),
+          // on a tall frame it may take two lines, but its longest word must fit across (heavy capitals ~0.8 em)
+          fontSize: BOX.V
+            ? Math.min(fitSize(v.headline, 250, BOX.INNER * 1.9), Math.floor((BOX.INNER * 0.95) / (Math.max(...v.headline.split(/\s+/).map((w) => w.length), 1) * 0.8)))
+            : Math.max(110, fitSize(v.headline, 250, BOX.INNER * 1.2)),
           fontWeight: 900,
           textTransform: 'uppercase',
           color: accent,
@@ -215,7 +217,7 @@ const Icons: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
           return <IconDisc key={i} Icon={Icon} delay={i * 6} size={size} accent={accent} bob={float(frame + i * 30, 8, 90)} />;
         })}
       </div>
-      <div style={{marginTop: 48, fontSize: fitSize(v.headline, 76, INNER * 1.6), fontWeight: 900, lineHeight: 1.12, textWrap: 'balance'}}>
+      <div style={{marginTop: 48, fontSize: fitSize(v.headline, 76, BOX.INNER * (BOX.V ? 2.6 : 1.6)), fontWeight: 900, lineHeight: 1.12, textWrap: 'balance'}}>
         {v.headline.split(/\s+/).filter(Boolean).map((w, i) => (
           <Word key={i} text={w} delay={names.length * 6 + i * 2} />
         ))}
@@ -257,7 +259,7 @@ const Quote: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
   return (
     <Stage>
       <div style={{fontSize: 220, lineHeight: 0.6, color: accent, fontWeight: 900, opacity: mark, transform: `scale(${mark})`}}>“</div>
-      <div style={{fontSize: fitSize(v.headline, 72, INNER * 2.2), fontWeight: 800, lineHeight: 1.25, maxWidth: INNER * 0.9, textWrap: 'balance'}}>
+      <div style={{fontSize: fitSize(v.headline, 72, BOX.INNER * (BOX.V ? 4 : 2.2)), fontWeight: 800, lineHeight: 1.25, maxWidth: BOX.INNER * 0.9, textWrap: 'balance'}}>
         {words.map((w, i) => (
           <span key={i} style={{opacity: i < shown ? 1 : 0.12, transition: 'none'}}>
             {w}{' '}
@@ -271,25 +273,69 @@ const Quote: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
 
 const Timeline: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const frame = useCurrentFrame();
+  if (BOX.V) return <TimelineTall v={v} frames={frames} accent={accent} />;
   const items = v.items.slice(0, 5);
   const span = Math.min(Math.max(20, frames * 0.6), 75); // all items on screen within ~2.5 s, never half-built
   const line = interpolate(frame, [4, span], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
-  const gap = INNER / items.length;
+  const gap = BOX.INNER / items.length;
   return (
     <>
       {v.headline ? (
-        <div style={{position: 'absolute', top: 120, left: SIDE, width: INNER, textAlign: 'center', fontSize: 64, fontWeight: 900}}>
+        <div style={{position: 'absolute', top: 120, left: BOX.SIDE, width: BOX.INNER, textAlign: 'center', fontSize: 64, fontWeight: 900}}>
           {v.headline}
         </div>
       ) : null}
-      <div style={{position: 'absolute', top: 470, left: SIDE, height: 8, width: INNER * line, background: accent, borderRadius: 4, boxShadow: `0 0 20px ${accent}`}} />
+      <div style={{position: 'absolute', top: 470, left: BOX.SIDE, height: 8, width: BOX.INNER * line, background: accent, borderRadius: 4, boxShadow: `0 0 20px ${accent}`}} />
       {items.map((it, i) => {
         const at = 4 + (span - 4) * ((i + 0.5) / items.length);
-        return <TimelinePoint key={i} item={it} x={SIDE + gap * (i + 0.5)} delay={at} accent={accent} width={gap - 30} />;
+        return <TimelinePoint key={i} item={it} x={BOX.SIDE + gap * (i + 0.5)} delay={at} accent={accent} width={gap - 30} />;
       })}
     </>
   );
 };
+
+// 9:16: the line runs down the left, each date and event beside its dot.
+const TimelineTall: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
+  const frame = useCurrentFrame();
+  const items = v.items.slice(0, 5);
+  const span = Math.min(Math.max(20, frames * 0.6), 75);
+  const top = BOX.TOP + (v.headline ? 190 : 40);
+  const bottom = BOX.BOTTOM - 20;
+  const line = interpolate(frame, [4, span], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
+  const gap = (bottom - top) / items.length;
+  const x = BOX.SIDE + 60;
+  return (
+    <>
+      {v.headline ? <TallHeading text={v.headline} /> : null}
+      <div style={{position: 'absolute', left: x - 4, top, width: 8, height: (bottom - top) * line, background: accent, borderRadius: 4, boxShadow: `0 0 20px ${accent}`}} />
+      {items.map((it, i) => (
+        <TimelineRow key={i} item={it} x={x} y={top + gap * (i + 0.5)} delay={4 + (span - 4) * ((i + 0.5) / items.length)} accent={accent} />
+      ))}
+    </>
+  );
+};
+
+const TimelineRow: React.FC<{item: Item; x: number; y: number; delay: number; accent: string}> = ({item, x, y, delay, accent}) => {
+  const e = useEnter(delay, {damping: 11, mass: 0.6});
+  return (
+    <>
+      <div style={{position: 'absolute', left: x - 21, top: y - 21, width: 42, height: 42, borderRadius: '50%', boxSizing: 'border-box', background: COLORS.text,
+        border: `9px solid ${accent}`, transform: `scale(${e})`}} />
+      <div style={{position: 'absolute', left: x + 56, top: y - 34, width: BOX.INNER - 150, opacity: Math.min(1, e * 1.5), transform: `translateX(${(1 - e) * 40}px)`}}>
+        <div style={{fontSize: fitSize(item.label, 60, BOX.INNER - 160), fontWeight: 900, color: accent, lineHeight: 1}}>{item.label}</div>
+        {item.text ? <div style={{marginTop: 10, fontSize: 40, fontWeight: 800, lineHeight: 1.2, opacity: 0.92}}>{item.text}</div> : null}
+      </div>
+    </>
+  );
+};
+
+// A heading at the top of a 9:16 frame, wrapping to two lines when it must.
+const TallHeading: React.FC<{text: string; top?: number; color?: string}> = ({text, top = BOX.TOP, color}) => (
+  <div style={{position: 'absolute', top, left: BOX.SIDE, width: BOX.INNER, textAlign: 'center', fontSize: fitSize(text, 70, BOX.INNER * 1.8),
+    fontWeight: 900, lineHeight: 1.1, textWrap: 'balance', color}}>
+    {text}
+  </div>
+);
 
 const TimelinePoint: React.FC<{item: Item; x: number; delay: number; accent: string; width: number}> = ({item, x, delay, accent, width}) => {
   const e = useEnter(delay, {damping: 11, mass: 0.6});
@@ -309,20 +355,32 @@ const Compare: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   const [a, b] = v.items;
   const max = Math.max(Math.abs(a.value), Math.abs(b.value), 1e-9);
   const grow = interpolate(frame, [8, 34], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
-  const barMax = 300;
+  const barMax = BOX.V ? 560 : 300;
   const col = (it: Item, color: string, delay: number) => (
-    <CompareColumn key={it.label} item={it} color={color} height={(barMax * Math.abs(it.value)) / max} grow={grow} delay={delay} />
+    <CompareColumn key={it.label} item={it} color={color} height={(barMax * Math.abs(it.value)) / max} grow={grow} delay={delay} width={BOX.V ? 400 : 360} />
   );
+  if (BOX.V) {
+    return (
+      <>
+        {v.headline ? <TallHeading text={v.headline} color={accent} /> : null}
+        <div style={{position: 'absolute', left: BOX.SIDE, width: BOX.INNER, top: BOX.TOP + 190, height: BOX.BOTTOM - BOX.TOP - 190, display: 'flex',
+          justifyContent: 'center', alignItems: 'flex-end', gap: 100}}>
+          {col(a, 'rgba(255,255,255,0.85)', 0)}
+          {col(b, accent, 6)}
+        </div>
+      </>
+    );
+  }
   return (
     <>
       {v.headline ? (
-        <div style={{position: 'absolute', top: 105, left: SIDE, width: INNER, textAlign: 'center', fontSize: fitSize(v.headline, 70, INNER * 0.95),
+        <div style={{position: 'absolute', top: 105, left: BOX.SIDE, width: BOX.INNER, textAlign: 'center', fontSize: fitSize(v.headline, 70, BOX.INNER * 0.95),
           fontWeight: 900, color: accent, whiteSpace: 'nowrap'}}>
           {v.headline}
         </div>
       ) : null}
       {/* below the title: the tallest bar + its value + a two-line label fit in 250..800 */}
-      <div style={{position: 'absolute', left: SIDE, width: INNER, top: 250, height: 550, display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 220}}>
+      <div style={{position: 'absolute', left: BOX.SIDE, width: BOX.INNER, top: 250, height: 550, display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 220}}>
         {col(a, 'rgba(255,255,255,0.85)', 0)}
         {col(b, accent, 6)}
       </div>
@@ -330,11 +388,11 @@ const Compare: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   );
 };
 
-const CompareColumn: React.FC<{item: Item; color: string; height: number; grow: number; delay: number}> = ({item, color, height, grow, delay}) => {
+const CompareColumn: React.FC<{item: Item; color: string; height: number; grow: number; delay: number; width?: number}> = ({item, color, height, grow, delay, width = 360}) => {
   const e = useEnter(delay);
   return (
-    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', width: 360, opacity: Math.min(1, e * 1.5)}}>
-      <div style={{fontSize: fitSize(item.display, 64, 330), fontWeight: 900, marginBottom: 16, whiteSpace: 'nowrap'}}>{item.display}</div>
+    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', width, opacity: Math.min(1, e * 1.5)}}>
+      <div style={{fontSize: fitSize(item.display, 64, width - 30), fontWeight: 900, marginBottom: 16, whiteSpace: 'nowrap'}}>{item.display}</div>
       <div style={{width: 200, height: Math.max(8, height * grow), background: color, borderRadius: '18px 18px 6px 6px', boxShadow: `0 0 40px ${color}55`}} />
       <div style={{marginTop: 22, fontSize: 40, fontWeight: 800, textAlign: 'center', lineHeight: 1.2}}>{item.label}</div>
     </div>
@@ -344,18 +402,48 @@ const CompareColumn: React.FC<{item: Item; color: string; height: number; grow: 
 const Steps: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const items = v.items.slice(0, 4);
   const span = Math.min(Math.max(20, frames * 0.55), 75);
-  const w = Math.min(470, (INNER - (items.length - 1) * 70) / items.length);
+  if (BOX.V) {
+    return (
+      <>
+        {v.headline ? <TallHeading text={v.headline} /> : null}
+        <div style={{position: 'absolute', left: BOX.SIDE, width: BOX.INNER, top: BOX.TOP + (v.headline ? 180 : 30), bottom: BOX.H - BOX.BOTTOM,
+          display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 30}}>
+          {items.map((it, i) => (
+            <StepRow key={i} n={i + 1} item={it} delay={4 + (span * i) / items.length} accent={accent} />
+          ))}
+        </div>
+      </>
+    );
+  }
+  const w = Math.min(470, (BOX.INNER - (items.length - 1) * 70) / items.length);
   return (
     <>
       {v.headline ? (
-        <div style={{position: 'absolute', top: 120, left: SIDE, width: INNER, textAlign: 'center', fontSize: 64, fontWeight: 900}}>{v.headline}</div>
+        <div style={{position: 'absolute', top: 120, left: BOX.SIDE, width: BOX.INNER, textAlign: 'center', fontSize: 64, fontWeight: 900}}>{v.headline}</div>
       ) : null}
-      <div style={{position: 'absolute', left: SIDE, width: INNER, top: 250, display: 'flex', justifyContent: 'center', alignItems: 'stretch', gap: 70}}>
+      <div style={{position: 'absolute', left: BOX.SIDE, width: BOX.INNER, top: 250, display: 'flex', justifyContent: 'center', alignItems: 'stretch', gap: 70}}>
         {items.map((it, i) => (
           <StepCard key={i} n={i + 1} item={it} width={w} delay={4 + (span * i) / items.length} accent={accent} last={i === items.length - 1} />
         ))}
       </div>
     </>
+  );
+};
+
+const StepRow: React.FC<{n: number; item: Item; delay: number; accent: string}> = ({n, item, delay, accent}) => {
+  const e = useEnter(delay, {damping: 12, mass: 0.6});
+  return (
+    <div style={{display: 'flex', alignItems: 'center', gap: 30, padding: '30px 34px', borderRadius: 30, background: 'rgba(10,10,16,0.55)',
+      border: '2px solid rgba(255,255,255,0.12)', opacity: Math.min(1, e * 1.4), transform: `translateX(${(1 - e) * -70}px)`}}>
+      <div style={{flex: '0 0 auto', width: 84, height: 84, borderRadius: '50%', background: accent, color: COLORS.ink, fontSize: 48, fontWeight: 900,
+        display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+        {n}
+      </div>
+      <div style={{textAlign: 'left'}}>
+        <div style={{fontSize: 48, fontWeight: 900, lineHeight: 1.12}}>{item.label}</div>
+        {item.text ? <div style={{marginTop: 8, fontSize: 38, fontWeight: 800, opacity: 0.85, lineHeight: 1.22}}>{item.text}</div> : null}
+      </div>
+    </div>
   );
 };
 
@@ -391,22 +479,25 @@ const Chart: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
   const vals = pts.map((p) => p.value);
   const lo = Math.min(...vals, 0);
   const hi = Math.max(...vals);
-  const box = {x: SIDE + 120, y: 300, w: INNER - 240, h: 380};
+  const box = BOX.V ? {x: BOX.SIDE + 70, y: BOX.TOP + 340, w: BOX.INNER - 140, h: 560} : {x: BOX.SIDE + 120, y: 300, w: BOX.INNER - 240, h: 380};
+  const labelW = BOX.V ? Math.min(300, Math.max(150, box.w / Math.max(1, pts.length - 1))) : 300;
   const xy = pts.map((p, i) => [box.x + (box.w * i) / Math.max(1, pts.length - 1), box.y + box.h - (box.h * (p.value - lo)) / Math.max(hi - lo, 1e-9)]);
   const draw = interpolate(frame, [6, Math.max(24, frames * 0.5)], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
   const d = xy.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
   const length = xy.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - xy[i - 1][0], p[1] - xy[i - 1][1]) : 0), 0);
   return (
     <>
-      <div style={{position: 'absolute', top: 100, left: SIDE, width: INNER, textAlign: 'center', fontSize: fitSize(v.headline, 64, INNER * 0.95), fontWeight: 900, whiteSpace: 'nowrap'}}>
-        {v.headline}
-      </div>
+      {BOX.V ? <TallHeading text={v.headline} /> : (
+        <div style={{position: 'absolute', top: 100, left: BOX.SIDE, width: BOX.INNER, textAlign: 'center', fontSize: fitSize(v.headline, 64, BOX.INNER * 0.95), fontWeight: 900, whiteSpace: 'nowrap'}}>
+          {v.headline}
+        </div>
+      )}
       {v.sub ? (
-        <div style={{position: 'absolute', top: 182, left: SIDE, width: INNER, textAlign: 'center', fontSize: fitSize(v.sub, 38, INNER * 0.9), opacity: 0.8, fontWeight: 800, whiteSpace: 'nowrap'}}>
+        <div style={{position: 'absolute', top: BOX.V ? BOX.TOP + 180 : 182, left: BOX.SIDE, width: BOX.INNER, textAlign: 'center', fontSize: fitSize(v.sub, 38, BOX.INNER * 0.9), opacity: 0.8, fontWeight: 800, whiteSpace: 'nowrap'}}>
           {v.sub}
         </div>
       ) : null}
-      <svg width={1920} height={1080} style={{position: 'absolute', inset: 0}}>
+      <svg width={BOX.W} height={BOX.H} style={{position: 'absolute', inset: 0}}>
         <line x1={box.x} x2={box.x + box.w} y1={box.y + box.h} y2={box.y + box.h} stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
         <path d={d} fill="none" stroke={accent} strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={length} strokeDashoffset={length * (1 - draw)} style={{filter: `drop-shadow(0 0 14px ${accent})`}} />
         {xy.map((p, i) => {
@@ -417,10 +508,10 @@ const Chart: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
       {xy.map((p, i) => {
         const on = draw >= i / Math.max(1, pts.length - 1) - 0.001;
         return (
-          <div key={i} style={{position: 'absolute', left: p[0] - 150, width: 300, top: p[1] - 90, textAlign: 'center', fontSize: fitSize(pts[i].display, 40, 290),
+          <div key={i} style={{position: 'absolute', left: p[0] - labelW / 2, width: labelW, top: p[1] - 90, textAlign: 'center', fontSize: fitSize(pts[i].display, 40, labelW - 10),
             fontWeight: 900, opacity: on ? 1 : 0, whiteSpace: 'nowrap'}}>
             {pts[i].display}
-            <div style={{position: 'absolute', top: box.y + box.h - p[1] + 110, width: 300, fontSize: 34, fontWeight: 800, opacity: 0.8}}>{pts[i].label}</div>
+            <div style={{position: 'absolute', top: box.y + box.h - p[1] + 110, width: labelW, fontSize: fitSize(pts[i].label, 34, labelW - 10), fontWeight: 800, opacity: 0.8}}>{pts[i].label}</div>
           </div>
         );
       })}

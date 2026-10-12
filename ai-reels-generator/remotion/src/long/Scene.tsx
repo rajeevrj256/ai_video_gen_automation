@@ -4,20 +4,19 @@ import {type LucideIcon} from 'lucide-react';
 import {iconFor} from './icon';
 import {COLORS, FONT, clamp} from '../theme';
 import type {Actor, Visual} from './types';
+import {BOX} from './box';
 
 // A small animated scene: 1-4 icon "actors" act the line out on a stage (a floor line,
 // shadows, speed lines), each starting at its own time (`at`, set by reelgen/sound_design.py,
 // which also places the matching sounds). The idea is told by movement, not words.
 
-const W = 1920;
-const FLOOR = 700;
 
 
 export const SceneView: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const actors = (v.actors ?? []).slice(0, 4);
   const n = Math.max(1, actors.length);
-  const slot = (i: number) => (W / (n + 1)) * (i + 1);
-  const size = n > 2 ? 230 : 290;
+  const slot = (i: number) => (BOX.W / (n + 1)) * (i + 1);
+  const size = BOX.V ? (n > 2 ? 170 : n === 2 ? 230 : 280) : n > 2 ? 230 : 290;
   return (
     <div style={{position: 'absolute', inset: 0, fontFamily: FONT, color: COLORS.text}}>
       <Stage accent={accent} />
@@ -28,7 +27,7 @@ export const SceneView: React.FC<{v: Visual; frames: number; accent: string}> = 
         <ActorView key={i} a={a} x={slot(i)} lead={{x: slot(0)}} frames={frames} accent={accent} size={size} />
       ))}
       {v.headline ? (
-        <div style={{position: 'absolute', top: 100, width: W, textAlign: 'center', fontSize: 58, fontWeight: 900, opacity: 0.95}}>{v.headline}</div>
+        <div style={{position: 'absolute', top: BOX.V ? BOX.TOP : 100, left: BOX.V ? BOX.SIDE : 0, width: BOX.V ? BOX.INNER : BOX.W, textAlign: 'center', fontSize: 58, fontWeight: 900, opacity: 0.95, textWrap: 'balance'}}>{v.headline}</div>
       ) : null}
     </div>
   );
@@ -38,15 +37,15 @@ const Stage: React.FC<{accent: string}> = ({accent}) => {
   const frame = useCurrentFrame();
   return (
     <>
-      <div style={{position: 'absolute', left: 0, right: 0, top: FLOOR, height: 3, background: `linear-gradient(90deg, transparent, ${accent}88, transparent)`}} />
-      <div style={{position: 'absolute', left: 0, right: 0, top: FLOOR, bottom: 0, background: 'linear-gradient(180deg, rgba(255,255,255,0.05), transparent 60%)'}} />
+      <div style={{position: 'absolute', left: 0, right: 0, top: BOX.FLOOR, height: 3, background: `linear-gradient(90deg, transparent, ${accent}88, transparent)`}} />
+      <div style={{position: 'absolute', left: 0, right: 0, top: BOX.FLOOR, bottom: 0, background: 'linear-gradient(180deg, rgba(255,255,255,0.05), transparent 60%)'}} />
       {[0, 1, 2, 3, 4, 5, 6, 7].map((k) => (
         <div
           key={k}
           style={{
             position: 'absolute',
             left: `${(k * 13 + frame * 0.08 * (1 + (k % 3))) % 100}%`,
-            top: 180 + ((k * 97) % 420),
+            top: (BOX.V ? BOX.TOP + 200 : 180) + ((k * 97) % (BOX.V ? 640 : 420)),
             width: 6,
             height: 6,
             borderRadius: 3,
@@ -108,7 +107,7 @@ const Link: React.FC<{from: Actor; to: Actor; fromX: number; toX: number; leadX:
   const flow = (frame * 1.5) % 36;
   const fade = Math.min(A.opacity, B.opacity);
   return (
-    <svg style={{position: 'absolute', left: 0, top: 0, width: W, height: 1080, overflow: 'visible', opacity: 0.9 * fade}}>
+    <svg style={{position: 'absolute', left: 0, top: 0, width: BOX.W, height: BOX.H, overflow: 'visible', opacity: 0.9 * fade}}>
       <path d={`M ${start.x} ${start.y} Q ${c1.x} ${c1.y} ${tip.x - hx * head * 0.6} ${tip.y - hy * head * 0.6}`} fill="none" stroke={accent} strokeWidth={6}
         strokeDasharray="20 16" strokeDashoffset={-flow} strokeLinecap="round" style={{filter: `drop-shadow(0 0 8px ${accent})`}} />
       <path d={`M ${wing(1)} L ${tip.x} ${tip.y} L ${wing(-1)} Z`} fill={accent} stroke={accent} strokeWidth={4} strokeLinejoin="round"
@@ -153,7 +152,7 @@ const actorPose = (a: Actor, x: number, leadX: number, frame: number, fps: numbe
       break;
     case 'walk-across': {
       const w = p(Math.max(1, frames / fps - a.at - 0.3));
-      dx = -700 + 1400 * w - (x - W / 2);
+      dx = (-700 + 1400 * w) * (BOX.W / 1920) - (x - BOX.W / 2);
       dy = -Math.abs(Math.sin(frame / 4)) * 22;
       rot = Math.sin(frame / 4) * 4;
       break;
@@ -211,10 +210,10 @@ const actorPose = (a: Actor, x: number, leadX: number, frame: number, fps: numbe
     rot += settle * Math.sin((frame + start) / 23) * 2.5;
   }
   let ax = x + dx;
-  let ay = FLOOR - size / 2 - 30 + dy;
+  let ay = BOX.FLOOR - size / 2 - 30 + dy;
   if (orbitAngle !== null) {
-    ax = leadX + Math.cos(orbitAngle) * 330;
-    ay = FLOOR - size / 2 - 60 + Math.sin(orbitAngle) * 120;
+    ax = leadX + Math.cos(orbitAngle) * (BOX.V ? 250 : 330);
+    ay = BOX.FLOOR - size / 2 - 60 + Math.sin(orbitAngle) * 120;
   }
   return {x: ax, y: ay, scale, rot, opacity, lines, copies, e};
 };
@@ -248,12 +247,12 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
         style={{
           position: 'absolute',
           left: ax - size * 0.4 * scale,
-          top: FLOOR - 12,
+          top: BOX.FLOOR - 12,
           width: size * 0.8 * scale,
           height: 24,
           borderRadius: '50%',
           background: 'rgba(0,0,0,0.45)',
-          opacity: opacity * interpolate(ay, [FLOOR - size - 400, FLOOR - size / 2], [0.2, 1], clamp),
+          opacity: opacity * interpolate(ay, [BOX.FLOOR - size - 400, BOX.FLOOR - size / 2], [0.2, 1], clamp),
           filter: 'blur(6px)',
         }}
       />
@@ -268,7 +267,7 @@ const ActorView: React.FC<{a: Actor; x: number; lead: {x: number}; frames: numbe
       })}
       {disc(ax, ay, scale)}
       {a.label ? (
-        <div style={{position: 'absolute', left: ax - 300, width: 600, top: Math.max(FLOOR + 30, ay + (size * scale) / 2 + 24), textAlign: 'center', fontSize: 40, fontWeight: 800, opacity: opacity * Math.min(1, e)}}>
+        <div style={{position: 'absolute', left: ax - 300, width: 600, top: Math.max(BOX.FLOOR + 30, ay + (size * scale) / 2 + 24), textAlign: 'center', fontSize: 40, fontWeight: 800, opacity: opacity * Math.min(1, e)}}>
           {a.label}
         </div>
       ) : null}

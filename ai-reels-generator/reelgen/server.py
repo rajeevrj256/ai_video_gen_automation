@@ -63,7 +63,7 @@ def job_label(job: dict) -> str:
            or job.get("story_input") or {})
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
-            else "Story Shorts" if job.get("story_input")
+            else "Shorts Studio" if job.get("story_input")
             else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
@@ -461,17 +461,18 @@ class MusicTestBody(BaseModel):
 
 
 class StoryBody(BaseModel):
-    """Story Shorts: one story as a series of 9:16 Shorts, any mix of story source, voice language and pictures."""
+    """Shorts Studio: 9:16 Shorts (one or a series), any mix of source, kind, voice language and look."""
     source: str = "ai"  # ai | script
     topic: str = ""
-    kind: str = "story"  # story | facts | comedy
+    kind: str = "story"  # story | facts | explainer | news | comedy
     script: str = ""
     title: str = ""
     parts: int = 3
+    split: str = "auto"  # your script: auto | one (always one Short)
     seconds: int = 30
     language: str = "english"  # english | hinglish | hindi
     screen_text: str = "english"  # english | voice
-    visuals: str = "anim"  # anim | key | pictures | footage
+    visuals: str = "anim"  # anim | key | pictures | footage | graphics
     style: str = "auto"
     quality: str = "auto"
     upscale: bool = True
@@ -1148,7 +1149,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .storyshorts import KINDS, LANGUAGES, MAX_PARTS, VISUALS, split_parts
 
         visuals = body.visuals if body.visuals in VISUALS else "anim"
-        if visuals != "footage" and not anim_engine.installed():
+        if visuals in ("anim", "key", "pictures") and not anim_engine.installed():
             raise HTTPException(400, "AI pictures need the AI engine: install it on the Anim tab, or pick stock footage.")
         if visuals == "footage" and not load_settings(Config()).pexels_api_key:
             raise HTTPException(400, "Stock footage needs a Pexels key (Settings), or pick AI pictures.")
@@ -1158,17 +1159,18 @@ def create_app(cfg: Config) -> FastAPI:
         if voice.startswith("sarvam:") and not os.environ.get("SARVAM_API_KEY"):
             raise HTTPException(400, "Sarvam voices need your Sarvam AI key (Settings > Long videos).")
         language = body.language if body.language in LANGUAGES else "english"
-        seconds = max(15, min(60, int(body.seconds)))
+        seconds = max(15, min(180, int(body.seconds)))  # YouTube Shorts run up to 3 minutes
         given = {"source": "script" if body.source == "script" else "ai", "topic": body.topic.strip()[:300],
                  "kind": body.kind if body.kind in KINDS else "story", "script": body.script.strip()[:20000],
                  "title": body.title.strip()[:100], "seconds": seconds, "language": language,
+                 "split": "one" if body.split == "one" else "auto",
                  "screen_text": "voice" if body.screen_text == "voice" else "english", "visuals": visuals,
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
                  "voice": voice, "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}
         if given["source"] == "script":
-            parts = split_parts(given["script"], language, seconds)
+            parts = split_parts(given["script"], language, seconds, given["split"])
             if not parts:
                 raise HTTPException(400, "Paste your story first.")
             if len(parts) > 12:
@@ -1181,11 +1183,11 @@ def create_app(cfg: Config) -> FastAPI:
                            captions=given["captions"])
 
     @app.get("/api/story/estimate")
-    def story_estimate(language: str = "english", seconds: int = 30, text: str = ""):
+    def story_estimate(language: str = "english", seconds: int = 30, text: str = "", split: str = "auto"):
         """How the user's story would be cut: parts and their lengths (the Story tab shows it while typing)."""
         from .storyshorts import WPS, split_parts
 
-        parts = split_parts(text[:20000], language, max(15, min(60, seconds)))
+        parts = split_parts(text[:20000], language, max(15, min(180, seconds)), "one" if split == "one" else "auto")
         return {"parts": [round(sum(len(x.split()) for x in p) / WPS.get(language, 2.6) + 1) for p in parts]}
 
     @app.post("/api/script-video")

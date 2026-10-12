@@ -32,6 +32,8 @@ const calculateStickMetadata: CalculateMetadataFunction<StickProps> = ({props}) 
 const calculateLongMetadata: CalculateMetadataFunction<LongProps> = ({props}) => ({
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Shorts Studio motion-graphics Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
 });
 
 const calculateStoryMetadata: CalculateMetadataFunction<StoryProps> = ({props}) => ({

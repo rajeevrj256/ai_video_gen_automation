@@ -322,7 +322,7 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
-        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📚 Story</button><button class="chip" data-type="script">📜 Your script</button>
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button>
       </div></details>
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
@@ -583,19 +583,21 @@
 
   <section class="view" id="view-story">
     <div class="panel">
-      <h2>📚 Story Shorts</h2>
-      <p class="hint">One story told as a series of Shorts (9:16): part 1 hooks and ends on a cliffhanger, part 2 picks it up,
-        and so on. Mix any story, voice and pictures: Claude writes it or you paste your own, the voice speaks English,
-        Hinglish or Hindi, and every shot is AI animation, an AI picture with a camera move, or stock footage. Each part lands
-        in your library as its own Short.</p>
+      <h2>📱 Shorts Studio</h2>
+      <p class="hint">Full-screen 9:16 Shorts built your way, one or a series (part 1 hooks and ends on a cliffhanger, part 2
+        picks it up...). Mix anything: Claude writes it or you paste your own script; a story, a true story, an explainer, this
+        week's news or comedy; a voice in English, Hinglish or Hindi; and the look of AI animation, AI pictures, stock footage, or
+        the long videos' motion graphics (numbers, charts, timelines, icons, 3D) laid out for a tall screen. Each part lands in
+        your library as its own Short.</p>
       <label>Story</label>
-      <div class="segmented" id="ssSource"><button data-src="ai" class="on">✨ Claude writes it</button><button data-src="script">📜 My own story</button></div>
+      <div class="segmented" id="ssSource"><button data-src="ai" class="on">✨ Claude writes it</button><button data-src="script">📜 My own script</button></div>
       <div id="ssAi">
         <label for="ssTopic">What about? (optional)</label>
         <textarea class="edit" id="ssTopic" rows="2" placeholder="e.g. A village girl sees a satellite falling / The night the lights went out in Mumbai. Leave empty and Claude picks one."></textarea>
         <div class="grid2">
           <div><label for="ssKind">Kind</label>
             <select id="ssKind"><option value="story">📖 Original story (fiction with a twist)</option><option value="facts">✅ True story (fact-checked, sources)</option>
+              <option value="explainer">💡 Explainer (fact-checked)</option><option value="news">📰 This week's news (fact-checked)</option>
               <option value="comedy">😂 Comedy</option></select></div>
           <div><label for="ssParts">Parts</label>
             <select id="ssParts"><option value="1">1 Short</option><option value="2">2 parts</option><option value="3" selected>3 parts</option>
@@ -603,10 +605,13 @@
         </div>
       </div>
       <div id="ssScript" hidden>
-        <label for="ssTitle">Series title (optional)</label>
+        <label for="ssTitle">Title (optional)</label>
         <input class="edit" id="ssTitle" maxlength="100" placeholder="e.g. Meera aur girta hua satellite">
-        <label for="ssText">Your story</label>
-        <textarea class="edit" id="ssText" rows="12" placeholder="Paste the whole story. Every word is spoken as you wrote it.&#10;&#10;Mark the parts yourself with a line like:&#10;Part 2&#10;or leave them out and the app cuts it into Shorts by length."></textarea>
+        <label for="ssText">Your script</label>
+        <textarea class="edit" id="ssText" rows="12" placeholder="Paste the whole script. Every word is spoken as you wrote it.&#10;&#10;Mark the parts yourself with a line like:&#10;Part 2&#10;or leave them out and the app cuts it into Shorts by length."></textarea>
+        <label for="ssSplit">Shorts</label>
+        <select id="ssSplit"><option value="auto">Auto: one Short when it nearly fits (spoken a little faster), more only when it's much longer or where you write "Part 2"</option>
+          <option value="one">Always one Short, however long</option></select>
         <p class="hint" id="ssEstimate"></p>
       </div>
       <div class="grid2">
@@ -616,11 +621,13 @@
           <select id="ssScreen"><option value="english">English</option><option value="voice">Same as the voice</option></select></div>
       </div>
       <div class="grid2">
-        <div><label for="ssVisuals">Pictures</label>
-          <select id="ssVisuals"><option value="anim">🎬 AI animation, every shot</option><option value="key">✨ AI animation for key shots, camera moves for the rest</option>
+        <div><label for="ssVisuals">Look</label>
+          <select id="ssVisuals"><option value="graphics">🎞️ Motion graphics like the long videos (numbers, charts, timelines, icons, 3D)</option>
+            <option value="anim">🎬 AI animation, every shot</option><option value="key">✨ AI animation for key shots, camera moves for the rest</option>
             <option value="pictures">🖼️ AI pictures with camera moves (fastest AI)</option><option value="footage">📹 Stock footage (Pexels)</option></select></div>
-        <div><label for="ssSeconds">Each part at most</label>
-          <select id="ssSeconds"><option value="30" selected>30 s</option><option value="45">45 s</option><option value="60">60 s</option></select></div>
+        <div><label for="ssSeconds">Each Short at most</label>
+          <select id="ssSeconds"><option value="30" selected>30 s</option><option value="45">45 s</option><option value="60">60 s</option>
+            <option value="90">90 s</option><option value="120">2 min</option><option value="180">3 min (YouTube's Shorts limit)</option></select></div>
       </div>
       <div class="grid2" id="ssAiOpts">
         <div><label for="ssStyle">Art style</label><select id="ssStyle"><option value="auto">🎲 Claude picks (never the last 3)</option></select></div>
@@ -641,7 +648,7 @@
       <label for="ssUpscale" id="ssUpscaleLabel">Sharpen to full HD</label>
       <select id="ssUpscale"><option value="true" selected>✨ On: AI upscaler to 1080×1920</option><option value="false">Off</option></select>
       <p class="hint" id="ssCombo"></p>
-      <button class="primary" id="ssBtn">📚 Make the Shorts</button>
+      <button class="primary" id="ssBtn">📱 Make the Shorts</button>
       <p class="hint" id="ssMsg"></p>
     </div>
   </section>
@@ -858,7 +865,7 @@
   <button data-view="stick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><path d="M12 8v7M12 15l-4 6M12 15l4 6M7 11h10"/></svg>Stick</button>
   <button data-view="toon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a8 7 0 0 1 16 0c0 4-3.6 7-8 7-1.2 0-2.3-.2-3.3-.6L4 19l1-3.5A6.6 6.6 0 0 1 4 11z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/><path d="M9.5 13.5c1.4 1 3.6 1 5 0"/></svg>Toon</button>
   <button data-view="anim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5l2 4M12 5l2 4M17 5l2 4"/><path d="M10 12.5v4l3.5-2z"/></svg>Anim</button>
-  <button data-view="story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 9.5v5l4-2.5z"/><path d="M10 18h4"/></svg>Story</button>
+  <button data-view="story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 9.5v5l4-2.5z"/><path d="M10 18h4"/></svg>Shorts+</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
@@ -1549,8 +1556,8 @@ const TOON_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-ch
   ["Editing", /Editing|Mixing/], ["Checks", /Verifying/]];
 const ANIM_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
   ["Pictures", /Drawing the pictures|Checking the|Redrawing/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(/], ["Editing", /Editing/], ["Checks", /Verifying/]];
-const STORY_STEPS = [["Story", /writing the story|storyboarding|Your story/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover|faster/],
-  ["Pictures", /Drawing the pictures|Checking the|Redrawing|stock footage/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(/],
+const STORY_STEPS = [["Script", /writing the story|storyboarding|Your story/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover|Recording voiceover|faster/],
+  ["Pictures", /Drawing the pictures|Checking the|Redrawing|stock footage|background photos/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(|Composing the music/],
   ["Editing", /Editing part/], ["Checks", /Verifying part/]];
 const stepsOf = (j) => j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
@@ -1623,7 +1630,7 @@ function jobCard(j) {
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
     + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
-      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📚 Story Shorts (${j.count} part${j.count > 1 ? "s" : ""})` : "");
+      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📱 Shorts+ (${j.count} part${j.count > 1 ? "s" : ""})` : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -1703,7 +1710,7 @@ async function loadUnfinished() {
       <h2>Unfinished videos</h2>
       <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
-          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : u.length === "anim" ? "🎬 Animated" : u.length === "storyshorts" ? "📚 Story Shorts" : "📱 Short"}</span></div>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : u.length === "anim" ? "🎬 Animated" : u.length === "storyshorts" ? "📱 Shorts+" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           ${u.length === "anim" && u.quality !== "fast" ? `<button data-resume-fast="${esc(u.id)}" title="The clips still to make come out 640×352, up to 3 s each">⚡ Resume with fast clips</button>` : ""}
@@ -2377,16 +2384,16 @@ $("#anBtn").onclick = async () => {
   finally { $("#anBtn").disabled = false; }
 };
 
-// Story Shorts (reelgen/storyshorts.py): one story as a series of 9:16 Shorts, any mix of source, voice and pictures.
+// Shorts Studio (reelgen/storyshorts.py): 9:16 Shorts, one or a series, any mix of source, kind, voice and look.
 let ssSource = "ai";
-const SS_KEYS = ["ssTopic", "ssKind", "ssParts", "ssTitle", "ssText", "ssLanguage", "ssScreen", "ssVisuals", "ssSeconds", "ssStyle",
+const SS_KEYS = ["ssTopic", "ssKind", "ssParts", "ssSplit", "ssTitle", "ssText", "ssLanguage", "ssScreen", "ssVisuals", "ssSeconds", "ssStyle",
                  "ssQuality", "ssVoice", "ssSpeed", "ssCaptions", "ssMark", "ssUpscale"];
 function ssSave() {
   try { localStorage.setItem("storyShorts", JSON.stringify({ source: ssSource, ...Object.fromEntries(SS_KEYS.map((k) => [k, $("#" + k).value])) })); } catch (e) {}
 }
 let ssEstimateTimer;
 function ssUpdate() {
-  const v = $("#ssVisuals").value, ai = v !== "footage", motion = v === "anim" || v === "key";
+  const v = $("#ssVisuals").value, ai = ["anim", "key", "pictures"].includes(v), motion = v === "anim" || v === "key";
   $("#ssAi").hidden = ssSource !== "ai";
   $("#ssScript").hidden = ssSource !== "script";
   $("#ssAiOpts").hidden = !ai;
@@ -2394,18 +2401,22 @@ function ssUpdate() {
   $("#ssUpscale").hidden = $("#ssUpscaleLabel").hidden = !ai;
   const lang = $("#ssLanguage").selectedOptions[0].textContent;
   const screen = $("#ssScreen").value === "english" || $("#ssLanguage").value === "english" ? "English" : lang;
-  const pics = { anim: "AI animation in every shot", key: "AI animation for the key shots", pictures: "AI pictures with camera moves", footage: "stock footage" }[v];
-  const parts = ssSource === "ai" ? `${$("#ssParts").value === "1" ? "One Short" : $("#ssParts").value + " parts"}` : "Your story, cut into Shorts";
+  const pics = { anim: "AI animation in every shot", key: "AI animation for the key shots", pictures: "AI pictures with camera moves", footage: "stock footage",
+                  graphics: "motion graphics (the long-video look, laid out for 9:16)" }[v];
+  const parts = ssSource === "ai" ? `${$("#ssParts").value === "1" ? "One Short" : $("#ssParts").value + " parts"}` : "Your script, cut into Shorts";
   $("#ssCombo").textContent = `${parts} of up to ${$("#ssSeconds").value} s · voice in ${lang} · words on screen in ${screen} · ${pics}.`
-    + (ai ? " Needs the AI engine (Anim tab). Every part's pictures, motion and music are made in one go, then each part is edited." : " Needs a Pexels key (Settings).");
+    + (ai ? " Needs the AI engine (Anim tab). Every part's pictures, motion and music are made in one go, then each part is edited."
+      : v === "footage" ? " Needs a Pexels key (Settings)." : " No AI engine needed; with a Pexels key each part also gets a photo backdrop.");
   if (ssSource === "script") {
     clearTimeout(ssEstimateTimer);
     ssEstimateTimer = setTimeout(async () => {
       const text = $("#ssText").value.trim();
       if (!text) { $("#ssEstimate").textContent = ""; return; }
       try {
-        const e = await api(`/api/story/estimate?language=${$("#ssLanguage").value}&seconds=${$("#ssSeconds").value}&text=${encodeURIComponent(text.slice(0, 6000))}`);
-        $("#ssEstimate").textContent = e.parts.length ? `About ${e.parts.length} Short${e.parts.length > 1 ? "s" : ""}: ` + e.parts.map((s) => s + " s").join(", ")
+        const e = await api(`/api/story/estimate?language=${$("#ssLanguage").value}&seconds=${$("#ssSeconds").value}&split=${$("#ssSplit").value}&text=${encodeURIComponent(text.slice(0, 6000))}`);
+        const max = Number($("#ssSeconds").value);
+        $("#ssEstimate").textContent = e.parts.length ? (e.parts.length === 1 ? `One Short, about ${e.parts[0]} s` + (e.parts[0] > max ? ` (over ${max} s: the voice speaks a little faster to fit)` : "")
+          : `${e.parts.length} Shorts: ` + e.parts.map((s) => s + " s").join(", ") + ` (over ${max} s in one: pick a longer limit above or "Always one Short" to keep it whole)`)
           + (text.length > 6000 ? " (estimate from the first part of the text)" : "") : "";
       } catch (err) { $("#ssEstimate").textContent = ""; }
     }, 500);
@@ -2439,12 +2450,12 @@ function setSsSource(src) {
 document.querySelectorAll("#ssSource button").forEach((b) => b.onclick = () => { setSsSource(b.dataset.src); ssUpdate(); });
 SS_KEYS.forEach((k) => $("#" + k).addEventListener(["ssTopic", "ssTitle", "ssText", "ssMark"].includes(k) ? "input" : "change", ssUpdate));
 $("#ssBtn").onclick = async () => {
-  const body = { source: ssSource, topic: $("#ssTopic").value, kind: $("#ssKind").value, parts: Number($("#ssParts").value),
+  const body = { source: ssSource, topic: $("#ssTopic").value, kind: $("#ssKind").value, parts: Number($("#ssParts").value), split: $("#ssSplit").value,
                  title: $("#ssTitle").value, script: $("#ssText").value, language: $("#ssLanguage").value, screen_text: $("#ssScreen").value,
                  visuals: $("#ssVisuals").value, seconds: Number($("#ssSeconds").value), style: $("#ssStyle").value, quality: $("#ssQuality").value,
                  upscale: $("#ssUpscale").value === "true", voice: $("#ssVoice").value, speed: Number($("#ssSpeed").value),
                  captions: $("#ssCaptions").value === "true", watermark: $("#ssMark").value };
-  if (ssSource === "script" && !body.script.trim()) { $("#ssMsg").textContent = "Paste your story first."; return; }
+  if (ssSource === "script" && !body.script.trim()) { $("#ssMsg").textContent = "Paste your script first."; return; }
   $("#ssBtn").disabled = true;
   try {
     const job = await api("/api/story", { method: "POST", body: JSON.stringify(body) });

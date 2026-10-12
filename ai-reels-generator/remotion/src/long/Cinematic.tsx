@@ -3,6 +3,7 @@ import {Easing, Freeze, Img, Sequence, interpolate, random, spring, staticFile, 
 import {COLORS, FONT, clamp} from '../theme';
 import {Layer} from '../Layer';
 import type {Camera, Hook, HookShot, Look, Visual} from './types';
+import {BOX} from './box';
 
 // The camera, this video's look (backdrop and transitions), impacts and the cinematic hook.
 // Every video gets its own palette, backdrop style and transition style (reelgen/variety.py),
@@ -229,11 +230,11 @@ export const Backdrop: React.FC<{look: Look; chapter: number; seed: number; plat
       break;
     case 'waves':
       layer = (
-        <svg width={1920} height={1080} style={{position: 'absolute', inset: 0}}>
+        <svg width={BOX.W} height={BOX.H} style={{position: 'absolute', inset: 0}}>
           {[0, 1, 2].map((k) => {
-            const pts = Array.from({length: 49}, (_, i) => {
+            const pts = Array.from({length: Math.ceil(BOX.W / 40) + 1}, (_, i) => {
               const x = i * 40;
-              const y = 700 + k * 90 + Math.sin(i / 5 + frame / (60 + k * 15) + k) * (40 + k * 12);
+              const y = BOX.FLOOR + k * 90 + Math.sin(i / 5 + frame / (60 + k * 15) + k) * (40 + k * 12);
               return `${x},${y}`;
             });
             return <polyline key={k} points={pts.join(' ')} fill="none" stroke={p.accent} strokeOpacity={0.12 + k * 0.05} strokeWidth={3} />;

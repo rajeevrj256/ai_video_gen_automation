@@ -104,4 +104,8 @@ export type LongProps = {
   ambience?: {src: string; from: number; to: number}[];
   musicParts?: {src: string; from: number; to: number; name: string}[]; // the user's tracks on the chapters they fit
   currency?: string; // rupee | euro | pound: money icons show this symbol
+  // Shorts Studio motion-graphics Shorts (reelgen/storyshorts.py): 1080x1920 and the series tags.
+  vertical?: boolean;
+  partLabel?: string | null;
+  nextLabel?: string | null;
 };
