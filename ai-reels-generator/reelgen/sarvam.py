@@ -58,6 +58,13 @@ def key() -> str:
     return os.environ.get("SARVAM_API_KEY", "").strip()
 
 
+def pace() -> float:
+    """Settings > Long videos 'Sarvam pace' (its own: the general voice speed is +10% for Shorts)."""
+    from .config import Config, load_settings
+
+    return min(2.0, max(0.5, float(load_settings(Config()).sarvam_pace or 1.0)))
+
+
 def speaker_of(voice: str) -> str:
     name = voice.split(":", 1)[1].strip().lower() if ":" in voice else voice.lower()
     if name not in SPEAKERS and not re.fullmatch(r"[a-z]+_[a-z]{2,4}_[a-z_]+", name):

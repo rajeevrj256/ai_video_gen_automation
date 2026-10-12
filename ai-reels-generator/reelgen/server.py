@@ -950,13 +950,13 @@ def create_app(cfg: Config) -> FastAPI:
         mix = bool(body.get("mix", True))
         spoken = hinglish.to_speech([text])[0] if mix and hinglish.needs_mixing(voice, [text], least=0) else text
         pct = int(re.sub(r"[^\d-]", "", cfg.voice_rate) or 0)
-        key = hashlib.sha1(f"{voice}|{pct}|{spoken}".encode()).hexdigest()[:16]
+        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|{spoken}".encode()).hexdigest()[:16]
         path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if sarvam.is_sarvam(voice):
-                    path.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), 1 + pct / 100, codec="mp3"))
+                    path.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), sarvam.pace(), codec="mp3"))
                 else:
                     asyncio.run(_edge_synthesize(spoken, voice, f"{pct:+d}%", "+0Hz", path))
             except Exception as exc:  # noqa: BLE001
