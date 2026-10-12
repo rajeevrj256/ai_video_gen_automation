@@ -39,6 +39,13 @@ HINDI_WORDS = {"hai", "hain", "aur", "ke", "ki", "ka", "ko", "mein", "ye", "yeh"
                "liye", "wala", "wali", "unka", "unki", "iska", "iski", "hamare", "humein", "hume", "apne", "agar"}
 
 
+def enabled() -> bool:
+    """Settings: mixed script on (default), or every voice reads the Roman text as written."""
+    from .config import Config, load_settings
+
+    return bool(load_settings(Config()).hinglish_mix)
+
+
 def looks_hinglish(texts: list[str]) -> bool:
     ws = [w.lower() for t in texts for w in words(t)]
     hits = sum(w in HINDI_WORDS for w in ws)

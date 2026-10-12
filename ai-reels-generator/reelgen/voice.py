@@ -94,13 +94,13 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     pct = int(re.sub(r"[^\d-]", "", rate) or 0)
     if voice.startswith("sarvam:"):  # Sarvam's Indian voices: no fallback to another voice mid-video
         from . import hinglish, sarvam
-        speak = hinglish.to_speech(narrations) if hinglish.needs_mixing(voice, narrations) else narrations
+        speak = hinglish.to_speech(narrations) if hinglish.needs_mixing(voice, narrations) and hinglish.enabled() else narrations
         return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, sarvam.pace()), narrations, speak)
     edge_error = None
     if engine in ("auto", "edge"):
         speak = narrations
         from . import hinglish
-        if hinglish.needs_mixing(voice, narrations):  # Roman Hinglish for a Hindi voice: Hindi words in Devanagari
+        if hinglish.needs_mixing(voice, narrations) and hinglish.enabled():  # Roman Hinglish: Hindi words in Devanagari
             speak = hinglish.to_speech(narrations)
         for attempt in range(3):  # a long narration is a lot of text; one network hiccup shouldn't end it
             try:

@@ -418,8 +418,8 @@
       <details class="used" id="vtBox">
         <summary>🔊 Try the voice on a line <span class="hint">(hear it before making the video)</span></summary>
         <textarea class="edit" id="vt-text" rows="3" placeholder="A line from your script, e.g. Aur ye hume next question tak lekar aata hai."></textarea>
-        <label class="hint"><input type="checkbox" id="vt-mix" checked> Hinglish: Hindi words in Devanagari, English words in English letters
-          (what the video does for the Hindi and multilingual voices)</label>
+        <label class="hint"><input type="checkbox" id="vt-mix" checked> Hinglish: Hindi words in Devanagari, English words in English letters.
+          Ticked or not, your videos use the same choice (Hindi, multilingual and Sarvam voices).</label>
         <button id="vtGo" style="width:100%">▶ Play with the voice chosen above</button>
         <p class="hint" id="vt-spoken"></p>
         <audio id="vt-audio" controls hidden style="width:100%"></audio>
@@ -2319,6 +2319,13 @@ function svUpdate() {
   try { localStorage.setItem("scriptVideoDraft", JSON.stringify(Object.fromEntries(Object.entries(SV_KEYS).map(([k, sel]) => [k, $(sel).value])))); } catch (e) {}
 }
 async function loadScriptView() {
+  api("/api/settings").then((s) => { $("#vt-mix").checked = s.hinglish_mix !== false; }).catch(() => {});
+  $("#vt-mix").onchange = async () => {
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify({ hinglish_mix: $("#vt-mix").checked }) });
+      toast($("#vt-mix").checked ? "Videos: Hindi words in Devanagari (mixed script)" : "Videos: your text read exactly as written");
+    } catch (e) { toast(e.message); }
+  };
   $("#vtBox").ontoggle = () => {
     if ($("#vtBox").open && !$("#vt-text").value.trim()) {
       const first = ($("#sv-script").value || $("#sv-hook").value).split(/(?<=[.!?।])\s+|\n+/).find((x) => x.trim() && !x.startsWith("#"));

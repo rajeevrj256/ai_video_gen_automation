@@ -87,6 +87,9 @@ class Config:
     voice_rate: str = field(default_factory=lambda: _env("REEL_VOICE_RATE", "+10%"))
     # Sarvam voices' own pace (0.5-2.0): 1.0 is what the user liked in Sarvam's playground (Bulbul v4 Flash, Shubh)
     sarvam_pace: float = field(default_factory=lambda: float(_env("REEL_SARVAM_PACE", "1.0")))
+    # Roman Hinglish rewritten in mixed script for the Hindi, multilingual and Sarvam voices (hinglish.py); the Script
+    # tab's voice test checkbox sets it, so the video sounds like the sample the user chose
+    hinglish_mix: bool = field(default_factory=lambda: _env("REEL_HINGLISH_MIX", "1").lower() not in ("0", "false", "no", "off"))
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
     target_seconds: int = field(default_factory=lambda: int(_env("REEL_SECONDS", str(MAX_SECONDS))))
 
@@ -130,7 +133,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix"]
 
 
 def settings_path(cfg: Config) -> Path:
