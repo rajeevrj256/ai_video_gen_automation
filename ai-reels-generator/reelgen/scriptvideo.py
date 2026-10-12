@@ -41,6 +41,7 @@ class ScriptInput:
     description: str
     hook: str
     script: str
+    screen_text: str = "english"  # words on screen: 'english' whatever the narration's language, or 'script' (its own)
 
 
 # ---------- cutting the text into lines (code, so the words never change) ----------
@@ -120,7 +121,7 @@ def parse_hook(text: str) -> list[str]:
 class BoardShot(BaseModel):
     line: int = Field(description="The hook line spoken over this shot (H3 = 3), or 0 for a silent shot carried by picture and sound alone.")
     beat: TrailerBeat = Field(description="Which part of the trailer this shot is: curiosity, unexpected, tension, problem or gap, in that order across the shots.")
-    text: str = Field(default="", description="On-screen text slammed in: 1-3 words taken from the line (or, for a silent shot, from the hook), or empty. Most shots have none.")
+    text: str = Field(default="", description="On-screen text slammed in: 1-3 words from the line (or, for a silent shot, from the hook), in the on-screen language, or empty. Most shots have none.")
     visual: LVisual = Field(description="What we see: exactly what the line says, dramatic camera. Prefer motion: scene, model3d, footage, icons, stat.")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects: on a word of the line, or word '*' to land on the slammed text.")
 
@@ -134,6 +135,7 @@ class BoardChapter(BaseModel):
     ambience: Ambience = LChapter.model_fields["ambience"]
     backdrop: str = LChapter.model_fields["backdrop"]
     break_sound: str = LChapter.model_fields["break_sound"]
+    card_title: str = Field(default="", description="Only when the words on screen must be English: the chapter's title as its card shows it, in English (the title exactly when it already is English, else a faithful short translation). Otherwise empty.")
 
 
 class BoardBeat(BaseModel):
@@ -156,9 +158,20 @@ class Storyboard(BaseModel):
     beats: list[BoardBeat] = Field(description="One entry per script line, in order, every line.")
 
 
-def _board_system(cfg: Config) -> str:
+SCREEN_ENGLISH = """On-screen language: every word the viewer reads is English, whatever language the narration \
+is in (it may be Hinglish or Hindi, and it is spoken exactly as written): headlines, subs, item labels and texts, actor \
+labels, footage labels, the hook's slammed words, the chapter titles you write yourself and every card_title. Say \
+what the line means in short, natural English; never put a Hindi or Hinglish word on screen, and never Devanagari. \
+Names, brands, places and units stay as they are (Starlink, Elon Musk, ISRO, GB, crore), numbers in digits \
+(do sau crore -> ₹200 crore). "Taken from the line" above means its meaning, written in English. A quote visual \
+shows the quote in English, a faithful translation when the line quotes it in Hindi. Searches for footage, 3D models \
+and backdrops are English as always."""
+
+
+def _board_system(cfg: Config, english: bool = True) -> str:
     """The long writer's own rules for visuals, sound and music (the same pipeline, the same look),
-    with the writing, research and accuracy parts left out: the words are final."""
+    with the writing, research and accuracy parts left out: the words are final. `english`: the words on
+    screen are English even when the narration is Hinglish or Hindi."""
     full = _system(cfg.video_style, cfg.long_language)
     rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     return f"""You storyboard a finished YouTube video script for an animated motion-graphics video. The \
@@ -183,7 +196,7 @@ Chapters: when the user marked chapters, keep them exactly (same first lines and
 music. Otherwise group the lines into chapters at the story's natural turns: a cold open titled 'Intro', \
 then chapters of roughly 6-14 lines, each with a clear 2-5 word searchable title.
 
-{rules}"""
+{rules}""" + ("\n\n" + SCREEN_ENGLISH if english else "")
 
 
 def _numbered(hook: list[str], lines: list[str], marked: list[tuple[int, str]]) -> str:
@@ -198,14 +211,17 @@ def _numbered(hook: list[str], lines: list[str], marked: list[tuple[int, str]]) 
 
 def storyboard(cfg: Config, given: ScriptInput, hook: list[str], lines: list[str],
                marked: list[tuple[int, str]]) -> Storyboard:
+    english = given.screen_text != "script"
     prompt = (f"Title: {given.title}\nDescription (context only): {given.description}\n\n"
               + _numbered(hook, lines, marked)
               + ("\n\nThe user marked the chapters (## lines): keep them." if marked else
                  "\n\nNo chapters are marked: group the lines into chapters.")
               + variety.recent_block(cfg) + "\n\n" + media.prompt_block(cfg, long=True) + media.models_block(cfg)
               + f"\n\nReturn {len(hook)} hook line shot(s) (plus up to {MAX_SILENT} silent ones) and exactly "
-                f"{len(lines)} beats, one per script line.")
-    return ask(cfg.ai_backend, cfg.claude_model, _board_system(cfg), prompt, Storyboard, allow_web=False,
+                f"{len(lines)} beats, one per script line."
+              + (" Every word on screen in English, every chapter with its English card_title; the narration stays "
+                 "as written." if english else ""))
+    return ask(cfg.ai_backend, cfg.claude_model, _board_system(cfg, english), prompt, Storyboard, allow_web=False,
                effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
 
 
@@ -263,6 +279,8 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
         extra = ({"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience, "backdrop": c.backdrop,
                   "break_sound": c.break_sound}
                  if c else {})
+        if c and given.screen_text != "script" and c.card_title.strip():
+            extra["card_text"] = c.card_title.strip()  # the card in English; your heading stays in the YouTube chapters
         chapters.append(LChapter(title=title, beats=beats, **extra))
     script = LongScript(topic=given.title, why_chosen="Your own script.", facts_checked="Checked and approved by you.",
                         category=board.category, subject=board.subject, hook_question=board.hook_question, answer="",
@@ -297,7 +315,8 @@ def run_script_video(cfg: Config, given: ScriptInput, progress: Progress = log.i
     board = storyboard(cfg, given, hook, lines, marked)
     script = assemble(given, board, hook, lines, marked)
     assert spoken_text(script) == " ".join(lines)  # not one spoken word changed
-    manual = {"title": given.title, "description": given.description, "hook": given.hook, "script": given.script}
+    manual = {"title": given.title, "description": given.description, "hook": given.hook, "script": given.script,
+              "screen_text": given.screen_text}
     state = {"length": "long", "minutes": minutes, "topic": given.title, "stamp": stamp, "style": cfg.video_style,
              "candidates": [{"title": given.title, "source": "your script"}], "attempt": 1, "stage": "scripted",
              "script": script.model_dump(), "manual": manual}  # usage: the loop's own saves record it

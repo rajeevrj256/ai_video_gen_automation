@@ -415,6 +415,9 @@
         <div><label>Subtitles</label>
           <div class="segmented" id="sv-cc"><button data-cc="true">💬 On</button><button data-cc="false" class="on">🚫 Off</button></div></div>
       </div>
+      <label for="sv-screen">Words on screen</label>
+      <select id="sv-screen"><option value="english">English (the voice still reads your script as written, e.g. Hinglish)</option>
+        <option value="script">Same language as the script</option></select>
       <details class="used" id="vtBox">
         <summary>🔊 Try the voice on a line <span class="hint">(hear it before making the video)</span></summary>
         <textarea class="edit" id="vt-text" rows="3" maxlength="2000" placeholder="A line from your script, e.g. Aur ye hume next question tak lekar aata hai."></textarea>
@@ -2364,6 +2367,8 @@ try {
   Object.entries(SV_KEYS).forEach(([k, sel]) => { if (draft[k]) $(sel).value = draft[k]; });
 } catch (e) {}
 Object.values(SV_KEYS).forEach((sel) => $(sel).addEventListener("input", svUpdate));
+try { if (localStorage.getItem("svScreen")) $("#sv-screen").value = localStorage.getItem("svScreen"); } catch (e) {}
+$("#sv-screen").onchange = () => { try { localStorage.setItem("svScreen", $("#sv-screen").value); } catch (e) {} };
 document.querySelectorAll("#svTabs button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#svTabs button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll(".sv-pane").forEach((p) => p.hidden = p.dataset.pane !== b.dataset.sv);
@@ -2374,7 +2379,8 @@ document.querySelectorAll("#sv-cc button").forEach((b) => b.onclick = () => {
 });
 $("#svBtn").onclick = async () => {
   const body = { title: $("#sv-title").value, description: $("#sv-desc").value, hook: $("#sv-hook").value,
-                 script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc };
+                 script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc,
+                 screen_text: $("#sv-screen").value };
   if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
   $("#svBtn").disabled = true;
   try {

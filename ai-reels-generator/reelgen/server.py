@@ -478,6 +478,7 @@ class ScriptVideoRequest(BaseModel):
     script: str
     voice: str | None = None  # empty = the long-video voice in Settings
     captions: bool | None = None
+    screen_text: str = "english"  # words on screen: English (a Hinglish script still speaks Hinglish) or 'script'
 
 
 class PostEdit(BaseModel):
@@ -1123,7 +1124,8 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "The title and the script are needed.")
         if not parse_script(script)[0]:
             raise HTTPException(400, "The script has no lines to read.")
-        given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script}
+        given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script,
+                 "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
                            captions=body.captions)
 
