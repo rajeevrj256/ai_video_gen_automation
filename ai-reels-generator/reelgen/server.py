@@ -950,14 +950,17 @@ def create_app(cfg: Config) -> FastAPI:
         mix = bool(body.get("mix", True))
         spoken = hinglish.to_speech([text])[0] if mix and hinglish.needs_mixing(voice, [text], least=0) else text
         pct = int(re.sub(r"[^\d-]", "", cfg.voice_rate) or 0)
-        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|lv1|{spoken}".encode()).hexdigest()[:16]
+        level = str(body.get("delivery") or "normal")
+        temperature, factor = sarvam.delivery(level if level in sarvam.DELIVERY else "normal")
+        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|{level}|lv1|{spoken}".encode()).hexdigest()[:16]
         path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if sarvam.is_sarvam(voice):  # levelled like the video's takes, so the sample sounds like the video
                     raw = path.with_suffix(".wav")
-                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), sarvam.pace()))
+                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), min(2.0, sarvam.pace() * factor),
+                                               temperature=temperature))
                     sarvam.level_file(raw, path)
                     raw.unlink(missing_ok=True)
                 else:

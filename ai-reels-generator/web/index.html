@@ -420,6 +420,9 @@
         <textarea class="edit" id="vt-text" rows="3" maxlength="2000" placeholder="A line from your script, e.g. Aur ye hume next question tak lekar aata hai."></textarea>
         <label class="hint"><input type="checkbox" id="vt-mix" checked> Hinglish: Hindi words in Devanagari, English words in English letters.
           Ticked or not, your videos use the same choice (Hindi, multilingual and Sarvam voices).</label>
+        <label for="vt-delivery">Hook delivery <span class="hint">(Sarvam voices: the test plays at this level, and your videos use it for the hook only; chapters stay Normal)</span></label>
+        <select id="vt-delivery"><option value="normal">Normal (same as the chapters)</option>
+          <option value="lively">Lively (more expressive, 5% faster)</option><option value="very">Very lively</option></select>
         <button id="vtGo" style="width:100%">▶ Play with the voice chosen above</button>
         <p class="hint" id="vt-spoken"></p>
         <audio id="vt-audio" controls hidden style="width:100%"></audio>
@@ -2319,7 +2322,13 @@ function svUpdate() {
   try { localStorage.setItem("scriptVideoDraft", JSON.stringify(Object.fromEntries(Object.entries(SV_KEYS).map(([k, sel]) => [k, $(sel).value])))); } catch (e) {}
 }
 async function loadScriptView() {
-  api("/api/settings").then((s) => { $("#vt-mix").checked = s.hinglish_mix !== false; }).catch(() => {});
+  api("/api/settings").then((s) => { $("#vt-mix").checked = s.hinglish_mix !== false; $("#vt-delivery").value = s.hook_delivery || "normal"; }).catch(() => {});
+  $("#vt-delivery").onchange = async () => {
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify({ hook_delivery: $("#vt-delivery").value }) });
+      toast("Hook delivery: " + $("#vt-delivery").selectedOptions[0].textContent.split(" (")[0]);
+    } catch (e) { toast(e.message); }
+  };
   $("#vt-mix").onchange = async () => {
     try {
       await api("/api/settings", { method: "POST", body: JSON.stringify({ hinglish_mix: $("#vt-mix").checked }) });
@@ -2335,7 +2344,7 @@ async function loadScriptView() {
   $("#vtGo").onclick = async () => {
     $("#vtGo").disabled = true; $("#vt-spoken").textContent = "Making the sample…";
     try {
-      const r = await api("/api/voice-test", { method: "POST", body: JSON.stringify({ voice: $("#sv-voice").value, text: $("#vt-text").value, mix: $("#vt-mix").checked }) });
+      const r = await api("/api/voice-test", { method: "POST", body: JSON.stringify({ voice: $("#sv-voice").value, text: $("#vt-text").value, mix: $("#vt-mix").checked, delivery: $("#vt-delivery").value }) });
       $("#vt-spoken").textContent = r.mixed ? "Spoken as: " + r.spoken : "Spoken as written.";
       $("#vt-audio").src = r.audio; $("#vt-audio").hidden = false; $("#vt-audio").play();
     } catch (e) { $("#vt-spoken").textContent = e.message; }

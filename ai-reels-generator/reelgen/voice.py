@@ -80,7 +80,7 @@ class SceneAudio:
 
 def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: str = "auto",
                       kokoro_voice: str = "", rate: str = "+10%", pitch: str = "+0Hz",
-                      volume: str = "+0%") -> list[SceneAudio]:
+                      volume: str = "+0%", delivery: str = "") -> list[SceneAudio]:
     """One audio file per scene, so each scene's duration follows its voiceover.
 
     The whole narration is spoken in one take and then cut between scenes. Speaking
@@ -95,7 +95,9 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     if voice.startswith("sarvam:"):  # Sarvam's Indian voices: no fallback to another voice mid-video
         from . import hinglish, sarvam
         speak = hinglish.to_speech(narrations) if hinglish.needs_mixing(voice, narrations) and hinglish.enabled() else narrations
-        return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, sarvam.pace()), narrations, speak)
+        temperature, factor = sarvam.delivery(delivery)  # "hook": the hook's own, livelier delivery if chosen
+        return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace() * factor),
+                                               temperature), narrations, speak)
     edge_error = None
     if engine in ("auto", "edge"):
         speak = narrations

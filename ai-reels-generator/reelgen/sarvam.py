@@ -61,6 +61,22 @@ def key() -> str:
     return os.environ.get("SARVAM_API_KEY", "").strip()
 
 
+# Delivery levels: Sarvam's `temperature` ("controls expressiveness", 0.01-1.0, default 0.6, v3 and v4-flash) and a
+# pace factor. Only the hook uses a level above normal (Settings `hook_delivery`), so the chapters keep one steady voice.
+DELIVERY = {"normal": (None, 1.0), "lively": (0.75, 1.05), "very": (0.9, 1.05)}
+
+
+def delivery(kind: str = "") -> tuple[float | None, float]:
+    """(temperature, pace factor) for a take: `kind` is "hook" for the hook's take, or a level name for the voice test."""
+    if kind in DELIVERY:
+        return DELIVERY[kind]
+    if kind == "hook":
+        from .config import Config, load_settings
+
+        return DELIVERY.get(load_settings(Config()).hook_delivery, DELIVERY["normal"])
+    return DELIVERY["normal"]
+
+
 def pace() -> float:
     """Settings > Long videos 'Sarvam pace' (its own: the general voice speed is +10% for Shorts)."""
     from .config import Config, load_settings
@@ -83,12 +99,14 @@ def language_for(speaker: str) -> str:
     return "en-IN" if "_en_" in speaker else "hi-IN"  # hi and enhi voices read Hindi and Hinglish
 
 
-def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav") -> bytes:
+def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperature: float | None = None) -> bytes:
     """One take. Rate limits and server hiccups are tried again; a wrong key or used-up credits are said plainly."""
     if not key():
         raise RuntimeError("Add your Sarvam API key in Settings > Long videos to use the Sarvam voices")
     body = {"text": text, "language_code": language_for(speaker), "speaker": speaker, "model": model_for(speaker),
             "pace": round(min(2.0, max(0.5, pace)), 2), "speech_sample_rate": RATE, "output_audio_codec": codec}
+    if temperature is not None:
+        body["temperature"] = round(min(1.0, max(0.01, temperature)), 2)
     swapped = False
     for attempt in range(4):
         try:
@@ -181,7 +199,7 @@ def _pause_near(samples: np.ndarray, rate: int, t: float, reach: float = 1.2) ->
     return lo / rate + int(np.argmin(env)) * step
 
 
-def scenes(narrations: list[str], speaker: str, out_dir: Path, pace: float = 1.0):
+def scenes(narrations: list[str], speaker: str, out_dir: Path, pace: float = 1.0, temperature: float | None = None):
     """One audio file per line, spoken in takes of whole lines, like voice.synthesize_scenes."""
     from .voice import SceneAudio, _decode, _estimate_words, _write_wav
 
@@ -190,7 +208,7 @@ def scenes(narrations: list[str], speaker: str, out_dir: Path, pace: float = 1.0
     for n, group in enumerate(_takes(narrations)):
         text = " ".join(narrations[j].strip() for j in group)
         take = out_dir / f"take_{n:02d}.wav"
-        take.write_bytes(say(text, speaker, pace))
+        take.write_bytes(say(text, speaker, pace, temperature=temperature))
         level_file(take, take)
         samples, _ = _decode(take, RATE)
         if pieces:  # between two takes: the middle of the silence put there

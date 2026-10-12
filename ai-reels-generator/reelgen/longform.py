@@ -652,7 +652,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         progress("Recording the hook")
         said = [h.line.strip() for h in script.hook]
         takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook",
-                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate) if any(said) else [])
+                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate, delivery="hook") if any(said) else [])
         audios = [next(takes) if x else None for x in said]
         lengths = _hook_timing([media_seconds(a.path) if a else None for a in audios], hook_seconds)
         t = 0.0
