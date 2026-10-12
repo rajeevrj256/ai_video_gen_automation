@@ -942,7 +942,7 @@ def create_app(cfg: Config) -> FastAPI:
         from . import hinglish
         from .voice import _edge_synthesize
 
-        voice, text = str(body.get("voice") or ""), str(body.get("text") or "").strip()[:400]
+        voice, text = str(body.get("voice") or ""), str(body.get("text") or "").strip()[:2000]  # Sarvam takes 2500
         if not (re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or re.fullmatch(r"sarvam:[a-z_]{2,40}", voice)) or not text:
             raise HTTPException(400, "Pick a voice and type a line")
         from . import sarvam
@@ -950,13 +950,16 @@ def create_app(cfg: Config) -> FastAPI:
         mix = bool(body.get("mix", True))
         spoken = hinglish.to_speech([text])[0] if mix and hinglish.needs_mixing(voice, [text], least=0) else text
         pct = int(re.sub(r"[^\d-]", "", cfg.voice_rate) or 0)
-        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|{spoken}".encode()).hexdigest()[:16]
+        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|lv1|{spoken}".encode()).hexdigest()[:16]
         path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if sarvam.is_sarvam(voice):
-                    path.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), sarvam.pace(), codec="mp3"))
+                if sarvam.is_sarvam(voice):  # levelled like the video's takes, so the sample sounds like the video
+                    raw = path.with_suffix(".wav")
+                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), sarvam.pace()))
+                    sarvam.level_file(raw, path)
+                    raw.unlink(missing_ok=True)
                 else:
                     asyncio.run(_edge_synthesize(spoken, voice, f"{pct:+d}%", "+0Hz", path))
             except Exception as exc:  # noqa: BLE001

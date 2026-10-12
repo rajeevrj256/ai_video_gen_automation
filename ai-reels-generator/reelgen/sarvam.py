@@ -29,6 +29,9 @@ URL = "https://api.sarvam.ai/text-to-speech"
 LIMIT = 2000  # characters per take (the API takes 2500; Devanagari can come out a little longer than the Roman text)
 RATE = 24000
 GAP = 0.3  # seconds of silence between two takes
+# The REST answer came out ~4 dB louder than the same voice from Sarvam's playground (user's two files, same text:
+# -13.4 vs -17.4 LUFS, peak -0.3 dBFS), which sounded harsher; every take is levelled to the playground's loudness.
+TARGET_LUFS, PEAK_CEILING = -17.0, -1.5
 
 # bulbul:v4-flash voices for Hinglish and Hindi narration (docs' Voices page; 222 in all, gender not stated).
 V4_VOICES = {
@@ -121,6 +124,32 @@ def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav") -> bytes
     raise RuntimeError("Sarvam voice failed")
 
 
+def level_file(src: Path, dst: Path) -> float:
+    """Copy src to dst (wav or mp3 by its extension) at TARGET_LUFS, peaks kept under PEAK_CEILING. Returns the gain."""
+    import subprocess
+
+    import imageio_ffmpeg
+
+    ff = imageio_ffmpeg.get_ffmpeg_exe()
+    probe = subprocess.run([ff, "-hide_banner", "-nostats", "-i", str(src), "-af", "ebur128=peak=sample", "-f", "null", "-"],
+                           capture_output=True, text=True).stderr
+    lufs = re.findall(r"I:\s*(-?[\d.]+) LUFS", probe)
+    peak = re.findall(r"Peak:\s*(-?[\d.]+|-inf) dBFS", probe)
+    gain = 0.0
+    if lufs and float(lufs[-1]) > -70:
+        gain = TARGET_LUFS - float(lufs[-1])
+        if peak and peak[-1] != "-inf":
+            gain = min(gain, PEAK_CEILING - float(peak[-1]))
+    tmp = dst.with_name(dst.stem + ".lv" + dst.suffix)
+    codec = ["-c:a", "libmp3lame", "-b:a", "128k"] if dst.suffix == ".mp3" else ["-c:a", "pcm_s16le"]
+    proc = subprocess.run([ff, "-y", "-loglevel", "error", "-i", str(src), "-af", f"volume={gain:.2f}dB", *codec, str(tmp)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0 or not tmp.exists():
+        raise RuntimeError(f"Couldn't level the Sarvam voice: {proc.stderr[-200:]}")
+    tmp.replace(dst)
+    return gain
+
+
 def _takes(narrations: list[str]) -> list[list[int]]:
     """Whole lines grouped into takes of at most LIMIT characters."""
     groups: list[list[int]] = []
@@ -162,6 +191,7 @@ def scenes(narrations: list[str], speaker: str, out_dir: Path, pace: float = 1.0
         text = " ".join(narrations[j].strip() for j in group)
         take = out_dir / f"take_{n:02d}.wav"
         take.write_bytes(say(text, speaker, pace))
+        level_file(take, take)
         samples, _ = _decode(take, RATE)
         if pieces:  # between two takes: the middle of the silence put there
             pieces.append(np.zeros(int(GAP * RATE), dtype=np.float32))
