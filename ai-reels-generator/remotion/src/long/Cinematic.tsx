@@ -312,13 +312,13 @@ export const Backdrop: React.FC<{look: Look; chapter: number; seed: number; plat
 
 type HookRender = (shot: HookShot, frames: number) => React.ReactNode;
 
-export const HookView: React.FC<{hook: Hook; look: Look; render: HookRender}> = (p) => (p.hook.cine ? <CineHook {...p} /> : <TrailerHook {...p} />);
+export const HookView: React.FC<{hook: Hook; look: Look; render: HookRender; subtitles?: boolean}> = (p) => (p.hook.cine ? <CineHook {...p} /> : <TrailerHook {...p} />);
 
 // The cinematic cold open (cine/, reelgen/longform.py `build_long`): every beat in its own colour grade under
 // film grain, dust and flicker, typed labels instead of slammed words, whips, VHS glitches, a photo flown in,
 // paper torn across the frame, a split-second montage at the climax, then silence (a subscribe button clicked
 // in the dark) before the story starts.
-const CineHook: React.FC<{hook: Hook; look: Look; render: HookRender}> = ({hook, render}) => {
+const CineHook: React.FC<{hook: Hook; look: Look; render: HookRender; subtitles?: boolean}> = ({hook, render, subtitles}) => {
   const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const drop = hook.drop ?? 0;
@@ -341,7 +341,7 @@ const CineHook: React.FC<{hook: Hook; look: Look; render: HookRender}> = ({hook,
               </div>
               <GradeWash grade={s.grade} />
             </CineIn>
-            {s.text ? <TypedLabel text={s.text} vertical={BOX.V} /> : null}
+            {s.text ? <TypedLabel text={s.text} vertical={BOX.V} subtitles={subtitles} /> : null}
           </Sequence>
         );
       })}

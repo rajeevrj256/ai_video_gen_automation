@@ -220,7 +220,7 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
   return (
     <Layer name={`${shot.type} ${index + 1}`} style={{opacity, backgroundColor: CINE.has(tr) && OVERLAPS.has(tr as CineTransition) ? 'transparent' : '#000'}}>
       {CINE.has(tr) ? <CineIn kind={tr as CineTransition} seed={index + 1}>{picture}</CineIn> : picture}
-      {shot.onScreen && opening ? <TypedLabel text={shot.onScreen} vertical={props.vertical} /> : null}
+      {shot.onScreen && opening ? <TypedLabel text={shot.onScreen} vertical={props.vertical} subtitles={props.captions} /> : null}
       {shot.onScreen && !opening ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} /> : null}
       {em && em.text && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} vertical={props.vertical} /> : null}
       {tr === 'dip' && early ? <div style={{position: 'absolute', inset: 0, background: '#000', opacity: interpolate(raw, [0, early, early + 10], [0, 1, 0], clamp)}} /> : null}

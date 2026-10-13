@@ -89,7 +89,8 @@ const letters = (text: string): string[] => {
 
 // "DAMASCUS, 1965" typed onto the picture in glowing yellow, one letter every TYPE_EVERY s, with a red cursor
 // that keeps blinking after the last letter. The typewriter sound (reelgen/sfx.py hook-type-N) is cut to match.
-export const TypedLabel: React.FC<{text: string; vertical?: boolean; at?: number; color?: string}> = ({text, vertical, at = LABEL_AT, color = '#FFD23F'}) => {
+// `subtitles`: the video shows subtitles, so the label sits above them instead of over them.
+export const TypedLabel: React.FC<{text: string; vertical?: boolean; at?: number; color?: string; subtitles?: boolean}> = ({text, vertical, at = LABEL_AT, color = '#FFD23F', subtitles}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const t = frame / fps - at;
@@ -100,7 +101,7 @@ export const TypedLabel: React.FC<{text: string; vertical?: boolean; at?: number
   const cursor = typing || Math.floor(t * 2.4) % 2 === 0;
   const hindi = DEVANAGARI.test(text);
   return (
-    <div style={{position: 'absolute', left: vertical ? 60 : 110, right: vertical ? 60 : undefined, bottom: vertical ? 560 : 140, display: 'flex',
+    <div style={{position: 'absolute', left: vertical ? 60 : 110, right: vertical ? 60 : undefined, bottom: vertical ? (subtitles ? 730 : 560) : subtitles ? 250 : 140, display: 'flex',
       justifyContent: vertical ? 'center' : 'flex-start'}}>
       <div style={{padding: '10px 26px 12px 22px', background: 'linear-gradient(90deg, rgba(0,0,0,0.62), rgba(0,0,0,0.35) 75%, rgba(0,0,0,0))',
         fontFamily: hindi ? '"Noto Sans Devanagari", sans-serif' : '"Courier Prime", "Courier New", monospace', fontWeight: 700,

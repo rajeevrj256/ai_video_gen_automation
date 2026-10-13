@@ -64,6 +64,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
           <HookView
             hook={hook}
             look={look}
+            subtitles={!roomy}
             render={(s, frames) => (
               <Body v={s.visual} frames={frames} accent={look.accents[0]} roomy={roomy} look={{...look, backdrop: 'rays'}} chapter={0} seed={7} plate={look.platesBaked?.hook ?? look.hookPlate} />
             )}
