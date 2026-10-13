@@ -169,7 +169,10 @@ def credits(cfg: Config, used_files: list[tuple[str, str]]) -> list[str]:
 
 
 def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
-    """The user's files of this kind; only those with a known licence and not banned, unless `everything`."""
+    """The user's files of this kind; only those with a known licence and not banned, unless `everything`. Uploaded
+    sound effects only when the user turned them on (Settings > Media library, `use_my_sounds`, off by default)."""
+    if kind == "sfx" and not everything and not getattr(cfg, "use_my_sounds", False):
+        return []
     root = folder(cfg, kind)
     types = MODEL_TYPES if kind == "models3d" else AUDIO_TYPES
     lic = licences(cfg, kind)

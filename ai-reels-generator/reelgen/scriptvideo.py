@@ -128,7 +128,7 @@ class BoardShot(BaseModel):
     transition: cinehook.Transition = HookShot.model_fields["transition"]
     boom: bool = HookShot.model_fields["boom"]
     flash: bool = HookShot.model_fields["flash"]
-    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects of the story itself, on a word of the line or word '*' on its label (booms, whips, glitches, risers and typing are added for the hook automatically).")
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects of the story itself, on a word of the line or word '*' on its label (booms, whips, glitches and typing are added for the hook automatically).")
 
 
 class BoardChapter(BaseModel):

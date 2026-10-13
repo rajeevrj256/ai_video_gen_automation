@@ -928,6 +928,9 @@
         Built-in sounds work without adding anything.<br><b>Set each file's licence:</b> a file whose licence is
         unknown is never used in a video (an unlicensed track can bring copyright claims). For CC BY files, write
         the credit the licence asks for; it is added to the description of every video that uses the file.</p>
+      <label for="s-use_my_sounds">Your uploaded sound effects in videos</label>
+      <select id="s-use_my_sounds"><option value="false">🚫 Don't use them: only the app's own built-in sounds</option>
+        <option value="true">✅ Use them where they fit (Claude picks them by file name)</option></select>
       <div class="row">
         <div><label for="lib-kind">Add to</label>
           <select id="lib-kind"><option value="sfx">🔊 Sound effects</option><option value="music">🎵 Music</option><option value="models3d">🧊 3D models (.glb)</option></select></div>
@@ -2713,6 +2716,12 @@ $("#genBtn").onclick = async () => {
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;
+};
+$("#s-use_my_sounds").onchange = async () => {
+  try {
+    await api("/api/settings", { method: "POST", body: JSON.stringify({ use_my_sounds: $("#s-use_my_sounds").value === "true" }) });
+    toast($("#s-use_my_sounds").value === "true" ? "Videos may use your uploaded sound effects" : "Videos use only the built-in sounds");
+  } catch (e) { toast(e.message); }
 };
 $("#saveBtn").onclick = async () => {
   const body = {};

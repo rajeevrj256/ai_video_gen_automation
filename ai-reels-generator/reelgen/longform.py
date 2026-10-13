@@ -186,7 +186,7 @@ class HookShot(BaseModel):
     transition: cinehook.Transition = Field(default="cut", description=cinehook.TRANSITION_HELP)
     boom: bool = Field(default=False, description=cinehook.BOOM_HELP)
     flash: bool = Field(default=False, description=cinehook.FLASH_HELP)
-    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list, on a word of its line, or word '*' to land on its label. Booms, whips, glitches, risers and typing are added for the hook automatically: use these for a sound of the story itself. Prefer the user's own files when they fit.")
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list, on a word of its line, or word '*' to land on its label. Booms, whips, glitches and typing are added for the hook automatically: use these for a sound of the story itself. Prefer the user's own files when they fit.")
 
 
 class LChapter(BaseModel):

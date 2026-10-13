@@ -96,6 +96,9 @@ class Config:
     # Every pipeline's music made by the local AI music model (ACE-Step, reelgen/aimusic.py) when the AI engine is
     # installed; composed music otherwise, or when this is off.
     ai_music: bool = field(default_factory=lambda: _env("REEL_AI_MUSIC", "1").lower() not in ("0", "false", "no", "off"))
+    # Your uploaded sound effects (Settings > Media library) in videos: off by default, the user found their uploads in
+    # a video ("if uploaded one used its bug"); videos then use only the built-in synthesised sounds.
+    use_my_sounds: bool = field(default_factory=lambda: _env("REEL_USE_MY_SOUNDS", "0").lower() in ("1", "true", "yes", "on"))
     # The cinematic hook's shots as AI-drawn film stills (reelgen/cinehook.py) when the AI engine is installed.
     hook_pictures: bool = field(default_factory=lambda: _env("REEL_HOOK_PICTURES", "1").lower() not in ("0", "false", "no", "off"))
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
@@ -141,7 +144,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds"]
 
 
 def settings_path(cfg: Config) -> Path:
