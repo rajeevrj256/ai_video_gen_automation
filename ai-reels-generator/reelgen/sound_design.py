@@ -9,7 +9,8 @@ an editor would: each thing that moves on screen gets its sound, timed to the an
   scene actors         -> whoosh (enter/flee), impact (drop/fall), rumble (shake),
                           heartbeat (pulse), pops (multiply), swish (spin/orbit)
   3D objects           -> a flyby when something flies, a whoosh otherwise
-  the hook             -> a whoosh/glitch on every cut, a glitch into the video
+  the hook             -> a whoosh/glitch on every cut, a glitch into the video (the cinematic hook: its own
+                          sounds from cinehook.py, and nothing in its silence)
 
 Timings mirror the animations in remotion/src/long (Visuals.tsx, Scene.tsx); scene actor
 times are computed here and passed to the editor, so they can't drift apart.
@@ -77,12 +78,14 @@ def design(props: dict, transition: str) -> list[tuple[str, float, float]]:
     events: list[tuple[str, float, float]] = []
     t_sound, t_vol = TRANSITION_SOUND.get(transition, TRANSITION_SOUND["whip"])
     hook = props.get("hook") or {}
+    cine = bool(hook.get("cine"))  # the cinematic hook brings its own cut sounds and ends in silence (cinehook.py)
     for i, shot in enumerate(hook.get("shots", [])):
-        if i:
+        if i and not cine:
             events.append(("whoosh" if i % 2 else "glitch", shot["start"] - 0.05, 0.3))
         events += _visual_events(shot["visual"], shot["start"], shot["duration"])
-    if hook.get("shots"):
+    if hook.get("shots") and not cine:
         events.append(("glitch", hook["duration"] - 0.45, 0.3))
+    quiet = (hook["duration"] - hook.get("drop", 0), hook["duration"]) if cine else (0.0, 0.0)
     prev_chapter = None
     for b in props["beats"]:
         if b["chapter"] == prev_chapter and t_sound:  # chapter cards bring their own whoosh
@@ -94,6 +97,8 @@ def design(props: dict, transition: str) -> list[tuple[str, float, float]]:
     out, last = [], {}
     for name, at, vol in sorted(events, key=lambda e: e[1]):
         if at < 0 or at - last.get(name, -9) < MIN_GAP or any(abs(at - c) < 0.25 for c in taken):
+            continue
+        if quiet[0] <= at < quiet[1]:  # nothing breaks the hook's silence
             continue
         last[name] = at
         out.append((name, round(at, 3), vol))

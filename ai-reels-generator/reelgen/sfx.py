@@ -7,6 +7,8 @@ files to ship or license.
 - glitch: a digital stutter of clicks and noise bursts (glitch transition).
 - shimmer: a soft rising chime (fade transition).
 - pop: a quick, rounded blip for when a graphic lands.
+- the cinematic hook's own set (HOOK_SOUNDS, write_hook_sounds): sub boom, riser, whip, shutter, paper tear,
+  typewriter labels and a dark drone; used in hooks only.
 
 Neither has leading silence: sound starts on the first sample, so each hit lands
 exactly on the frame it's placed at.
@@ -249,6 +251,136 @@ CUE_SOUNDS = {
     "rumble": (_rumble, 0.5, 0.0, "a low rumble: shaking, a threat, fear"),
     "flyby": (_flyby, 0.4, 0.5, "something rushing past the camera: a plane, a car, a crowd"),
 }
+
+
+# ---- The cinematic hook's own sounds (long videos, Script Videos, the Anim cold open, the first word of a Short) ----
+# Modelled on a documentary-trailer cold open the user wanted (a dark drone from the first frame, a sub boom on each
+# big cut, a riser into a reveal, typed labels ticking, whips, then silence). Boom and riser are used in hooks only:
+# the old boom/hit/rise cues sounded bad on every video and stay out of CUE_SOUNDS and the sound design.
+
+def _sub_boom(duration: float = 2.6) -> np.ndarray:
+    """A deep trailer boom: a sine dropping from ~95 to ~34 Hz with a long decay, its first harmonic for small
+    speakers, a soft noise thump on the attack and a dark tail. Felt more than heard: it never covers the voice."""
+    t = np.arange(int(RATE * duration)) / RATE
+    freq = 34 + 61 * np.exp(-t * 9)
+    phase = 2 * np.pi * np.cumsum(freq) / RATE
+    body = np.sin(phase) * np.exp(-t * 1.6)
+    body += 0.35 * np.sin(2 * phase) * np.exp(-t * 3.2)  # the octave: phones and laptops can't play 40 Hz
+    body = np.tanh(body * 1.6) / np.tanh(1.6)  # a little warmth
+    thump = _lowpass(np.random.default_rng(31).standard_normal(len(t)), 900) * np.exp(-t * 28) * 0.9
+    tail = _lowpass(np.random.default_rng(32).standard_normal(len(t)), 160) * np.exp(-t * 1.9) * 0.25
+    return (body + thump + tail) * np.minimum(t / 0.0015, 1)
+
+
+def _hook_riser(duration: float = 1.5) -> np.ndarray:
+    """Tension pulled up into a cut: noise opening up, a tone bending upward and a reversed swell, ending at full
+    level on the last sample (the boom or the reveal takes over there)."""
+    t = np.arange(int(RATE * duration)) / RATE
+    x = t / duration
+    noise = _lowpass(np.random.default_rng(33).standard_normal(len(t)), 200 + 7000 * x ** 2.5)
+    tone = sum(np.sin(2 * np.pi * np.cumsum(f0 * (1 + 1.6 * x ** 2)) / RATE) / k
+               for k, f0 in enumerate((98.0, 146.8, 196.0), start=1))
+    tremolo = 1 + 0.35 * np.sin(2 * np.pi * np.cumsum(3 + 14 * x ** 2) / RATE)  # speeds up as it climbs
+    return (noise * 0.9 + tone * 0.45) * tremolo * x ** 2.4
+
+
+def _hook_whip(duration: float = 0.38) -> np.ndarray:
+    """A heavy camera whip: a bright swipe with a low rush under it."""
+    n = int(RATE * duration)
+    x = np.arange(n) / n
+    noise = np.random.default_rng(34).standard_normal(n)
+    sweep = 600 + 8000 * np.sin(np.pi * x) ** 3  # opens fast and shuts: the swipe
+    bright = _lowpass(noise, sweep) - _lowpass(noise, sweep * 0.25)
+    low = _lowpass(noise, 180) * 1.1 * np.exp(-((x - 0.45) / 0.25) ** 2)
+    return (bright * 1.6 + low) * np.sin(np.pi * np.minimum(1, x * 1.15)) ** 0.8
+
+
+def _hook_type(chars: int, every: float) -> np.ndarray:
+    """An old typewriter typing a label: one strike per letter `every` seconds (spaces are softer), a little
+    mechanical rattle on each, and the carriage bell's ding left out (too cute)."""
+    t = np.arange(int(RATE * (chars * every + 0.15))) / RATE
+    rng = np.random.default_rng(35 + chars)
+    out = np.zeros_like(t)
+    for k in range(chars):
+        at = k * every + rng.uniform(-0.006, 0.006)
+        u = np.clip(t - max(0.0, at), 0, None)
+        on = t >= max(0.0, at)
+        strike = (np.sin(2 * np.pi * rng.uniform(1700, 2300) * u) * np.exp(-u * 340)
+                  + rng.standard_normal(len(t)) * np.exp(-u * 600) * 0.8
+                  + np.sin(2 * np.pi * 180 * u) * np.exp(-u * 90) * 0.6)  # the body of the machine
+        out += strike * on * rng.uniform(0.7, 1.0)
+    return out
+
+
+def _hook_shutter(duration: float = 0.22) -> np.ndarray:
+    """A film camera's shutter: two quick mechanical clicks."""
+    t = np.arange(int(RATE * duration)) / RATE
+    out = np.zeros_like(t)
+    for at, f0 in ((0.0, 3100), (0.075, 2400)):
+        u = np.clip(t - at, 0, None)
+        out += ((np.sin(2 * np.pi * f0 * u) + np.random.default_rng(int(f0)).standard_normal(len(t)) * 0.7)
+                * np.exp(-u * 220) * (t >= at))
+    return out
+
+
+def _hook_tear(duration: float = 0.42) -> np.ndarray:
+    """Paper torn across the frame: crackling bursts of mid-high noise."""
+    rng = np.random.default_rng(36)
+    t = np.arange(int(RATE * duration)) / RATE
+    noise = rng.standard_normal(len(t))
+    band = noise - _lowpass(noise, 900)
+    band = _lowpass(band, 5200)
+    crackle = (rng.random(len(t)) < 0.012).astype(float)
+    crackle = np.convolve(crackle, np.exp(-np.arange(200) / 25), mode="same")
+    env = np.sin(np.pi * np.minimum(1, t / duration * 1.05)) ** 0.6
+    return band * (0.45 + crackle) * env
+
+
+def _hook_drone(duration: float) -> np.ndarray:
+    """The dark bed under the whole hook: a low minor cluster beating slowly, a sub pulse every two seconds and a
+    cold wind on top. Fades in over a second; its end is cut by the editor where the hook drops to silence."""
+    t = np.arange(int(RATE * max(1.0, duration))) / RATE
+    pad = np.zeros_like(t)
+    for f0, a in ((55.0, 1.0), (65.4, 0.55), (82.4, 0.5), (110.0 * 1.006, 0.3), (77.8, 0.25)):  # A, C, E, a sour Eb
+        pad += a * np.sin(2 * np.pi * f0 * t + 0.6 * np.sin(2 * np.pi * 0.07 * t * (1 + f0 / 200)))
+    pad *= 0.75 + 0.25 * np.sin(2 * np.pi * 0.11 * t)
+    pulse = np.zeros_like(t)
+    for k in range(int(t[-1] // 2.0) + 1):
+        u = np.clip(t - k * 2.0, 0, None)
+        pulse += np.sin(2 * np.pi * 41 * u) * np.exp(-u * 4.5) * (t >= k * 2.0)
+    wind = _lowpass(np.random.default_rng(37).standard_normal(len(t)), 500 + 300 * np.sin(2 * np.pi * 0.05 * t) ** 2)
+    # Dark strings an octave and two up, so phones and laptops (no sub) still hear the bed.
+    strings = np.zeros_like(t)
+    for f0, a in ((220.0, 1.0), (261.6, 0.7), (311.1, 0.45)):
+        ph = 2 * np.pi * f0 * t + 0.002 * f0 * np.sin(2 * np.pi * 5.1 * t)  # a slow vibrato
+        strings += a * sum(np.sin(k * ph) / k for k in range(1, 5))
+    strings = _lowpass(strings, 1200) * (0.5 + 0.5 * np.sin(2 * np.pi * 0.06 * t - 1.2) ** 2)
+    out = pad * 0.6 + pulse * 0.5 + wind * 0.5 + strings * 0.16
+    return out * np.minimum(t / 1.0, 1)
+
+
+# name -> (make, peak); written by write_hook_sounds. Peaks are below the cue sounds' because they run long or sit low.
+HOOK_SOUNDS = {
+    "hook-boom": (_sub_boom, 0.8),
+    "hook-riser": (_hook_riser, 0.4),
+    "hook-whip": (_hook_whip, 0.45),
+    "hook-shutter": (_hook_shutter, 0.35),
+    "hook-tear": (_hook_tear, 0.35),
+}
+RISER_LEAD = 1.5  # the riser starts this long before the cut it builds into
+TYPE_EVERY = 0.045  # seconds per typed letter: keep in step with TypedLabel (remotion/src/cine/TypedLabel.tsx)
+
+
+def write_hook_sounds(out_dir: Path, drone_seconds: float = 0.0, labels: tuple[str, ...] = ()) -> dict[str, Path]:
+    """The hook's sounds in `out_dir`: hook-boom, hook-riser, hook-whip, hook-shutter, hook-tear, a drone of
+    `drone_seconds` (hook-drone) and one typing take per label length (hook-type-<letters>)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = {n: _write(out_dir / f"{n}.wav", make(), peak=peak) for n, (make, peak) in HOOK_SOUNDS.items()}
+    if drone_seconds > 0:
+        out["hook-drone"] = _write(out_dir / "hook-drone.wav", _hook_drone(drone_seconds), peak=0.3)
+    for n in sorted({len(x) for x in labels if x}):
+        out[f"hook-type-{n}"] = _write(out_dir / f"hook-type-{n}.wav", _hook_type(n, TYPE_EVERY), peak=0.3)
+    return out
 
 
 def write_cue_sounds(out_dir: Path, names: set[str]) -> dict[str, Path]:

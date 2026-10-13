@@ -461,6 +461,7 @@ BEDS = {
 
 # ---------- sound-effect levels, measured against the voice ----------
 
+DEEP_UNDER_VOICE = 1.0  # the hook's sub booms: up to the narrator's own level (their energy is below speech)
 SFX_UNDER_VOICE = 0.5  # every effect's loudness is at most half the narrator's (about -6 dB) ...
 # ... and Cues in the editor lower it again while someone speaks (SPEECH_DUCK in Sound.tsx).
 
@@ -560,12 +561,16 @@ def level_sounds(props: dict, root: Path, voice_files: list[str]) -> dict:
         return {}
     target = float(np.median(voices)) * SFX_UNDER_VOICE
     srcs = {c["src"] for c in props.get("cues") or []} | set((props.get("sfx") or {}).values())
+    # The hook's sub booms (cues marked `full`) may reach the voice's own level: their energy sits below speech, and
+    # at half the voice they were felt by nobody.
+    deep = {c["src"] for c in props.get("cues") or [] if c.get("full")}
     gains, moved = {}, {}
     for src in sorted(srcs):
         level = _loudness(root / src)
-        if not level or level <= target:
+        limit = target / SFX_UNDER_VOICE * DEEP_UNDER_VOICE if src in deep else target
+        if not level or level <= limit:
             continue
-        gain = target / level
+        gain = limit / level
         import subprocess
 
         from .video import FFMPEG

@@ -752,6 +752,9 @@ def _layout(series: StorySeries, k: int, req: StoryRequest, cfg: Config, work: P
         if span and sh.importance in ("high", "critical"):
             cue("impact" if sh.importance == "critical" else "pop", t + lead + span[0], loud)
         cues += media.resolve_cues(sh.sounds, sa.words, t + lead, cfg, work / "sfx", rel, 2, used)
+        if i == 0 and sa.words:  # a deep boom under the Short's first word (cinehook.py)
+            from .cinehook import opening_boom
+            cues.append(opening_boom(work / "sfx", rel, t + lead + sa.words[0].start))
         spoken += [(t + lead + w.start, t + lead + w.end) for w in sa.words]
         t += duration
     if k + 1 < n_parts:

@@ -1,10 +1,11 @@
 import type {Cue, Span} from '../types';
+import type {Grade} from '../cine/types';
 
 // Animated videos (reelgen/animated.py): every shot is an AI picture (anim_worker keyframes) and, when it was
 // animated, an AI clip (LTX-Video) that starts from that picture. Shots without a clip are moved by the camera.
 
 export type AnimCamera = 'push-in' | 'pull-out' | 'pan-left' | 'pan-right' | 'tilt-up' | 'tilt-down' | 'orbit' | 'handheld' | 'static';
-export type AnimTransition = 'cut' | 'crossfade' | 'whip' | 'flash' | 'zoom' | 'dip';
+export type AnimTransition = 'cut' | 'crossfade' | 'whip' | 'flash' | 'zoom' | 'dip' | 'glitch' | 'photo' | 'split' | 'punch';
 export type Word = {text: string; start: number; end: number};
 
 export type AnimShot = {
@@ -30,6 +31,8 @@ export type AnimShot = {
   cardText?: string; // title and chapter cards
   chapterNo?: number;
   chapters?: number;
+  grade?: Grade; // the cinematic cold open's colour per shot
+  boom?: boolean;
 };
 
 export type AnimProps = {
@@ -43,6 +46,10 @@ export type AnimProps = {
   watermark?: string | null;
   hookMusic?: string | null;
   hookEnd: number;
+  // The cinematic cold open (reelgen/cinehook.py): silence after it (a subscribe button clicked in it), its drone.
+  drop?: number;
+  hookDrone?: string | null;
+  subscribe?: boolean;
   musicParts: {src: string; from: number; to: number}[];
   speech: Span[];
   cues: Cue[];

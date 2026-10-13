@@ -72,10 +72,13 @@ def energy_words(energy: float) -> str:
             if energy < 0.7 else "driving, full" if energy < 0.85 else "intense, powerful, big drums")
 
 
-def caption(genre: str, mood: str, energy: float, brief: str = "", hook: bool = False) -> str:
+def caption(genre: str, mood: str, energy: float, brief: str = "", hook: bool = False, cine: bool = False) -> str:
     """What the music model hears: the genre, the mood and energy, the video's own sound colours, instrumental."""
     parts = [GENRES.get(genre, GENRES["cinematic-orchestral"])[0], MOOD_WORDS.get(mood, mood), energy_words(energy)]
-    if hook:
+    if cine:  # the cinematic cold open (cinehook.py): a documentary trailer's bed, cut dead into silence at its end
+        parts.append("a dark cinematic documentary cold open: a low drone and sub pulses from the first second, "
+                     "ticking tension building in waves to a dense peak, hits on the cuts, ends abruptly")
+    elif hook:
         parts.append("an attention-grabbing opening that hits from the first second, trailer energy, punchy")
     if brief.strip():
         parts.append(brief.strip().rstrip("."))
@@ -88,9 +91,9 @@ def bpm_for(mood: str, energy: float, seed: int) -> int:
 
 
 def track(tid: str, out: Path, seconds: float, genre: str, mood: str, energy: float, brief: str, seed: int,
-          hook: bool = False) -> dict:
+          hook: bool = False, cine: bool = False) -> dict:
     return {"id": tid, "out": str(out), "seed": seed, "bpm": bpm_for(mood, energy, seed),
-            "caption": caption(genre, mood, energy, brief, hook), "duration": round(min(LONGEST, max(10.0, seconds)), 1)}
+            "caption": caption(genre, mood, energy, brief, hook, cine), "duration": round(min(LONGEST, max(10.0, seconds)), 1)}
 
 
 def make(cfg, tracks: list[dict], work: Path, progress: Progress, label: str = "Music (AI)") -> dict[str, Path]:

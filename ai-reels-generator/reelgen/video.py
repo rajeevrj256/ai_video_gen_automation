@@ -216,6 +216,9 @@ def build_props(title: str, scenes: list[SceneAudio], backgrounds: list[list[Pat
                                  {"facts": "curious", "news": "curious", "story": "mystery", "comedy": "playful"}.get(cfg.video_style, ""))
     sfx = write_sfx(public_dir / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), public_dir / "sfx"))  # the user's whoosh/pop/... where one matches
+    if scenes and scenes[0].words:  # a deep boom under the first word (reelgen/cinehook.py)
+        from .cinehook import opening_boom
+        cues.append(opening_boom(public_dir / "sfx", rel, timeline.starts[0] + scenes[0].words[0].start))
     props = {
         "title": title,
         "fps": cfg.fps,

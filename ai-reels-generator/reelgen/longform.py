@@ -32,7 +32,7 @@ from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
-from . import aimusic, music, sound_design, variety
+from . import aimusic, cinehook, music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
 from . import repeats
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
@@ -85,8 +85,14 @@ VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote
                 "model3d", "scene")
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
 ICON_TYPES = ("scene", "icons")  # generic icon visuals
-SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx)
-HOOK_SECONDS = (25.0, 30.0)
+SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx; older hooks)
+HOOK_SECONDS = cinehook.seconds_for(9)  # the cinematic cold open, its silence included (medium videos: shorter)
+LABEL_WORDS = 5  # a hook shot's typed label
+
+
+def hook_words_max(minutes: float) -> int:
+    """Spoken words the hook's lines may have: its length less the silence and the montage, at the voice's pace."""
+    return int((cinehook.seconds_for(minutes)[1] - cinehook.DROP - 3) * WORDS_PER_SECOND * 0.92)
 SCRIPT_HOOK_SECONDS = (0.0, 600.0)  # a Script Video's own hook keeps its natural length (no stretching)
 
 
@@ -171,11 +177,16 @@ class LBeat(BaseModel):
 
 class HookShot(BaseModel):
     beat: Literal["curiosity", "unexpected", "tension", "problem", "gap"] = Field(
-        description="This shot's role in the trailer: curiosity (a strong visual and an instant question), unexpected (the surprising situation), tension (raise the stakes), problem (part of the problem), gap (what's left open). Use the roles this story needs, in the order it needs them.")
-    line: str = Field(description="What the narrator says, trailer style: a short, punchy line of 3-12 words, or empty for a shot carried by sound and picture alone. Never reveals the answer.")
-    text: str = Field(default="", description="On-screen text slammed in for this shot: 1-3 words (a date, a number, a place, 'WAIT...'), or empty. Most shots have none.")
-    visual: LVisual = Field(description="What we see. Prefer motion: scene, model3d, footage, icons, stat. The camera move should be dramatic (push, dutch, orbit, pan).")
-    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list: on a word of the line, or word '*' to land on the slammed text. Prefer the user's own files when they fit.")
+        description="This shot's role on the escalation ladder: curiosity (a strong image and an instant question), unexpected (the surprising situation), tension (raise the stakes), problem (part of the problem), gap (what's left open). Use the roles this story needs, in the order it needs them.")
+    line: str = Field(description="What the narrator says, trailer style: a short, punchy line of 3-12 words, or empty for a shot carried by sound and picture alone (flash shots are always empty). Never reveals the answer.")
+    text: str = Field(default="", description=cinehook.LABEL_HELP)
+    visual: LVisual = Field(description="What we see when there is no picture, and the evidence for a number or a date. Prefer motion: footage, model3d, scene, stat, timeline. The camera move should be dramatic (push, dutch, orbit, pan).")
+    picture: str = Field(default="", description=cinehook.PICTURE_HELP)
+    grade: cinehook.Grade = Field(default="natural", description=cinehook.GRADE_HELP)
+    transition: cinehook.Transition = Field(default="cut", description=cinehook.TRANSITION_HELP)
+    boom: bool = Field(default=False, description=cinehook.BOOM_HELP)
+    flash: bool = Field(default=False, description=cinehook.FLASH_HELP)
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list, on a word of its line, or word '*' to land on its label. Booms, whips, glitches, risers and typing are added for the hook automatically: use these for a sound of the story itself. Prefer the user's own files when they fit.")
 
 
 class LChapter(BaseModel):
@@ -204,11 +215,11 @@ class LongScript(BaseModel):
     hook_question: str = Field(description="The one big question the cold open plants; the video answers it only in the last chapter.")
     answer: str = Field(description="The answer or twist the last chapter delivers, in one sentence.")
     youtube_title: str = Field(description="YouTube title, max 70 characters: curiosity plus the main search keyword, no clickbait the video doesn't deliver.")
-    hook: list[HookShot] = Field(default_factory=list, description="The 25-30 second energetic cinematic hook before the video starts: 6-9 shots that set up this video's story form. A teaser, not the story starting; it never gives away the payoff.")
+    hook: list[HookShot] = Field(default_factory=list, description="The cinematic cold open before the video starts (30-45 seconds): 8-14 shots that escalate, plus a montage of 3-6 flash shots before its last line. A teaser, not the story starting; it never gives away the payoff.")
     mood: Literal["mystery", "suspense", "emotional", "uplifting", "curious", "dark", "energetic", "calm"] = Field(
         default="curious", description="The music's mood for the main video, chosen from the story.")
     hook_music: Literal["spy-pulse", "ticking-clock", "dark-pulse", "glitch-drive"] = Field(
-        default="spy-pulse", description="The hook's own trailer track: spy-pulse (ticking spy/action energy), ticking-clock (a race against time), dark-pulse (dread, mystery), glitch-drive (tech, chaos).")
+        default="dark-pulse", description="The hook's own trailer track (under its dark drone): spy-pulse (ticking spy/action energy), ticking-clock (a race against time), dark-pulse (dread, mystery), glitch-drive (tech, chaos).")
     hook_track: str = Field(default="", description="The hook's music: the name of one of the user's own music files that fits an energetic trailer for this video, or empty to compose one (hook_music then sets its style).")
     hook_backdrop: str = Field(default="", description="The background photo behind the hook: a 2-4 word English stock-photo search for the most striking real setting of this story (no named people, brands or logos).")
     chapters: list[LChapter] = Field(description="The chapters in order (as many as the instructions say). The first is the cold open ('Intro').")
@@ -238,8 +249,8 @@ turning points, an explainer needs layers, not a hidden answer. Don't force a tw
 story that has none.
 
 Retention (every form):
-- Chapter 1, the cold open ({sh['open_secs']} seconds): the first sentence (12 words or fewer) puts the \
-viewer straight into this form's tension (the anomaly, the dated moment, the everyday thing nobody \
+- Chapter 1, the cold open ({sh['open_secs']} seconds), starts right after the hook's silence: its first \
+sentence (12 words or fewer) re-asks the hook's question in new words, then puts the viewer straight into this form's tension (the anomaly, the dated moment, the everyday thing nobody \
 understands, the two sides, the belief, the decision). Then raise the stakes. No greeting, no "in this \
 video", no "by the end you'll know". Don't give away the payoff the form keeps for later.
 - Never repeat the payoff: deliver it once, where the form puts it.
@@ -262,15 +273,7 @@ forward, or it goes.
 - The call to action is a single plain line (subscribe, or comment an answer); it never names or teases another video.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
-The hook (25-30 seconds, before chapter 1): an energetic cinematic trailer for this video, NOT the \
-story starting. It has its own look and its own driving music. 6-9 fast shots that set up this video's \
-form: the anomaly for an investigation, the moment for a chronicle, the everyday thing for an explainer, \
-the two sides for a comparison, the belief for a myth, the dilemma for a decision. Tag each shot with its \
-role (curiosity, unexpected, tension, problem, gap) and use the roles in the order this story needs; \
-then it cuts to the video. Keep the energy high: quick shots, punchy lines, a word slammed in \
-on the big moments. Lines are short and punchy (3-12 words; some shots have no line \
-at all and let picture and sound carry them). It must make the viewer want the rest, and must never give \
-away the payoff. The cold open (chapter 1) then starts the story.
+{cinehook.rules(minutes)}
 
 Show, don't write (very important): the story is told by evidence in motion, camera and sound; text only \
 supports it. The weak version is "big text, then another big text", or generic icons with an arrow \
@@ -383,7 +386,7 @@ class BeatFix(BaseModel):
     beat: int = Field(description="Beat number within the chapter, 1-based (3.4 = beat 4); for a hook line its number (H2 = 2).")
     narration: str = Field(description="The corrected line, same length and flow as before.")
     visual: LVisual = Field(description="The corrected visual; unchanged if only the words were wrong.")
-    text: str | None = Field(default=None, description="Hook lines only: the corrected on-screen word slam (1-3 words), or '' to remove it. Leave null to keep it.")
+    text: str | None = Field(default=None, description="Hook lines only: the corrected typed label (1-5 words), or '' to remove it. Leave null to keep it.")
 
 
 class ScriptFixes(BaseModel):
@@ -434,8 +437,8 @@ def fix_long_script(script: LongScript, cfg: Config, issues: list[str], instruct
     for f in result.fixes:
         if f.chapter == 0 and 1 <= f.beat <= len(fixed.hook):
             h = fixed.hook[f.beat - 1]
-            fixed.hook[f.beat - 1] = HookShot(beat=h.beat, line=f.narration, visual=f.visual,
-                                              text=h.text if f.text is None else f.text, sounds=h.sounds)
+            fixed.hook[f.beat - 1] = h.model_copy(update={"line": f.narration, "visual": f.visual,
+                                                          "text": h.text if f.text is None else f.text})
             changed.add((0, f.beat))
         elif 1 <= f.chapter <= len(fixed.chapters) and 1 <= f.beat <= len(fixed.chapters[f.chapter - 1].beats):
             old = fixed.chapters[f.chapter - 1].beats[f.beat - 1]
@@ -457,8 +460,8 @@ GLOBAL_ISSUES = ("Narration is", "chapters; use", "The hook has")  # need a real
 
 def repair_long_script(script: LongScript) -> LongScript:
     """Fix line-level rule breaks in code, without a Claude call: a 4-word keyword becomes a title
-    (titles allow 6 words), surplus items/actors are trimmed, a hook word slam over 3 words is
-    dropped. A whole rewrite for one word cost ~500k tokens."""
+    (titles allow 6 words), surplus items/actors are trimmed, a hook label over 5 words is
+    dropped, a flash shot with a line becomes an ordinary shot. A whole rewrite for one word cost ~500k tokens."""
     s = script.model_copy(deep=True)
     limits = {"timeline": 5, "compare": 2, "steps": 4, "chart": 6}
 
@@ -476,8 +479,13 @@ def repair_long_script(script: LongScript) -> LongScript:
 
     for h in s.hook:
         fix(h.visual)
-        if len(h.text.split()) > 3:
+        if len(h.text.split()) > LABEL_WORDS:
             h.text = ""
+        if h.flash and h.line.strip():  # a flash shot has no line: one with a line is an ordinary shot
+            h.flash = False
+    flashes = [i for i, h in enumerate(s.hook) if h.flash]
+    for i in flashes[cinehook.MAX_FLASH:]:
+        s.hook[i].flash = False
     for c in s.chapters:
         for b in c.beats:
             fix(b.visual)
@@ -503,9 +511,10 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
     result.checks["hook"] = hook
     if len(hook.split()) > 14:
         result.fail(f"The opening sentence is {len(hook.split())} words ('{hook}'); make the hook 12 words or fewer.")
-    # The hook: a 25-30 s trailer of 6-9 shots with short lines.
-    if not 6 <= len(script.hook) <= 9:
-        result.fail(f"The hook has {len(script.hook)} shots; write 6-9 (curiosity, unexpected, tension, problem, gap).")
+    # The hook: a cinematic cold open of 8-14 shots plus a 3-6 shot flash montage, short lines.
+    shots = [h for h in script.hook if not h.flash]
+    if not 7 <= len(shots) <= 16:
+        result.fail(f"The hook has {len(shots)} shots besides its flash montage; write 8-14 that escalate.")
     hook_words = sum(len(h.line.split()) for h in script.hook)
     result.checks["hook_words"] = hook_words
     from .hooks import weak
@@ -515,13 +524,15 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
     if first and weak(first[1]):
         result.fail(f"{first[0]}: the video opens with a generic phrase ('{weak(first[1])}'). Open on the most surprising "
                     "concrete thing itself (a number, a moment, a contradiction) in the first words, with energy.")
-    if hook_words > 62:
-        result.fail(f"The hook's lines have {hook_words} words; keep them under 62 so the hook stays within 30 seconds.")
+    most = hook_words_max(minutes)
+    if hook_words > most:
+        result.fail(f"The hook's lines have {hook_words} words; keep them under {most} so the hook stays within "
+                    f"{int(cinehook.seconds_for(minutes)[1])} seconds.")
     for hi, h in enumerate(script.hook, 1):
         if len(h.line.split()) > 13:
             result.fail(f"Hook shot {hi}: the line is {len(h.line.split())} words; trailer lines are 3-12 words.")
-        if len(h.text.split()) > 3:
-            result.fail(f"Hook shot {hi}: on-screen text '{h.text}' is more than 3 words.")
+        if len(h.text.split()) > LABEL_WORDS:
+            result.fail(f"Hook shot {hi}: the label '{h.text}' is more than {LABEL_WORDS} words.")
     # Show, don't write: few text-only beats, never two in a row.
     all_beats = [b for c in script.chapters for b in c.beats]
     texty = [b.visual.type in TEXT_TYPES for b in all_beats]
@@ -658,37 +669,50 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     used: dict[str, str] = {}
     clip_ids: set[int] = set()  # never the same stock clip twice
 
-    # The hook: a trailer before the video, with its own lines, look and music.
+    # The hook: a cinematic cold open before the video (cinehook.py, remotion/src/cine/), with its own lines,
+    # grades, cuts, labels, AI film stills where the engine can draw them, music and drone, then a breath of silence.
     hook = {"duration": 0.0, "shots": [], "music": None, "style": ""}
+    rel = lambda p: p.relative_to(work).as_posix()  # noqa: E731
     if script.hook:
         progress("Recording the hook")
         said = [h.line.strip() for h in script.hook]
         takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook",
                                        cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate, delivery="hook") if any(said) else [])
         audios = [next(takes) if x else None for x in said]
-        lengths = _hook_timing([media_seconds(a.path) if a else None for a in audios], hook_seconds)
+        lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
+                                  hook_seconds)
+        pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)}, work, seed,
+                                 script.youtube_title, progress)
         t = 0.0
         for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
+            if i in pics:  # the AI film still, under the shot's camera move
+                visual = {"type": "picture", "src": rel(pics[i]), "headline": "", "sub": "", "items": [], "icons": [],
+                          "camera": h.visual.camera if h.visual.camera != "still" else "push"}
+            else:
+                visual = _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)
             shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": h.text.strip(),
-                    "audio": sa.path.relative_to(work).as_posix() if sa else None,
-                    "visual": _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)}
+                    "audio": rel(sa.path) if sa else None, "visual": visual, "grade": h.grade,
+                    "transition": h.transition, "boom": h.boom, "flash": h.flash}
             if sa:
                 lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
                                        for w in sa.words])
                 spoken += [(t + w.start, t + w.end) for w in sa.words]
-            # The hook's own sound effects: on a word of its line, or '*' on the slammed text.
+            # Claude's own sound effects for the shot: on a word of its line, or '*' on its label.
             spoken_cues = [c for c in h.sounds if c.word.strip() != "*"]
             if sa and spoken_cues:
-                cues += media.resolve_cues(spoken_cues, sa.words, t, cfg, work / "sfx",
-                                           lambda p: p.relative_to(work).as_posix(), 2, used)
+                cues += media.resolve_cues(spoken_cues, sa.words, t, cfg, work / "sfx", rel, 2, used)
             for c in [c for c in h.sounds if c.word.strip() == "*"][:1]:
-                slam = media.resolve_cues([c.model_copy(update={"word": "slam"})],
-                                          [_Word("slam", SLAM_AT, SLAM_AT + 0.3)], t, cfg, work / "sfx",
-                                          lambda p: p.relative_to(work).as_posix(), 1, used)
-                cues += slam if h.text.strip() else []
+                label = media.resolve_cues([c.model_copy(update={"word": "label"})],
+                                           [_Word("label", cinehook.LABEL_AT, cinehook.LABEL_AT + 0.3)], t, cfg,
+                                           work / "sfx", rel, 1, used)
+                cues += label if h.text.strip() else []
             hook["shots"].append(shot)
             t += d
-        hook["duration"] = round(t + HOOK_TAIL, 3)
+        cinehook.fill_defaults(hook["shots"])
+        if hook["shots"][0]["transition"] == "cut":
+            hook["shots"][0]["transition"] = "dip"  # out of black, on the first boom
+        hook.update(duration=round(t + cinehook.DROP, 3), cine=True, drop=cinehook.DROP, subscribe=True,
+                    pictures=len(pics))
         hook["style"] = variety.fresh_trailer(cfg, script.hook_music, seed)
         # The user's track for the hook, unless a recent video already opened with it.
         mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()
@@ -697,11 +721,11 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             (work / "music").mkdir(parents=True, exist_ok=True)
             dest = work / "music" / f"hook-own{mine.path.suffix.lower()}"
             shutil.copy(mine.path, dest)
-            hook["music"], hook["own"] = dest.relative_to(work).as_posix(), mine.name
-        else:
-            cuts = [s["start"] for s in hook["shots"][1:]] + [hook["duration"] - 0.05]
-            hook["music"] = music.trailer(hook["style"], hook["duration"] - 0.05, cuts, seed,
-                                          work / "music" / "hook.wav").relative_to(work).as_posix()
+            hook["music"], hook["own"] = rel(dest), mine.name
+        else:  # composed to the cuts; it stops dead where the silence starts
+            cuts = [s["start"] for s in hook["shots"][1:]] + [t - 0.05]
+            hook["music"] = rel(music.trailer(hook["style"], t - 0.05, cuts, seed, work / "music" / "hook.wav"))
+    rehook = None  # where the story's first word lands (after the hook's silence): a boom there
 
     t = hook["duration"]
     for ci, chapter in enumerate(script.chapters):
@@ -725,6 +749,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
                                    for w in sa.words])
             spoken += [(t + w.start, t + w.end) for w in sa.words]
+            if rehook is None and sa.words:
+                rehook = round(t + sa.words[0].start, 3)
             cues += media.resolve_cues(beat.sounds, sa.words, t, cfg, work / "sfx",
                                        lambda p: p.relative_to(work).as_posix(),
                                        media.HOOK_CUES if ci == 0 else 1, used)
@@ -771,8 +797,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                               genre, script.mood, (c["intensity"] - 1) / 4, script.music_prompt, seed + 20 + c["index"])
                 for c in chapters if not covered(c)]
         if hook["shots"] and not hook.get("own"):
-            want.append(aimusic.track("hook", work / "music" / "ai-hook.wav", hook["duration"] + 1.8, genre, script.mood, 0.9,
-                                      script.music_prompt, seed + 11, hook=True))
+            want.append(aimusic.track("hook", work / "music" / "ai-hook.wav", hook["duration"] - hook.get("drop", 0) + 0.5,
+                                      genre, script.mood, 0.9, script.music_prompt, seed + 11, hook=True,
+                                      cine=bool(hook.get("cine"))))
         made = aimusic.make(cfg, want, work, progress, "Music (AI)")
         if made:
             aimusic.remember(cfg, genre)
@@ -804,6 +831,12 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                      f"mood:{script.mood}" if composed else "")
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))  # the user's whoosh/pop/... where one matches
+    if hook.get("cine"):  # the cold open's booms, risers, whips, typing and drone
+        hook_cues, hook["drone"] = cinehook.sound_design(hook["shots"], hook["duration"] - hook["drop"], work, rel,
+                                                         {k: rel(p) for k, p in sfx.items()}, rehook)
+        cues += hook_cues
+    elif rehook is not None:  # no hook: a deep boom under the first word
+        cues.append(cinehook.opening_boom(work / "sfx", rel, rehook))
     props = {
         "title": script.youtube_title,
         "fps": cfg.fps,
@@ -1502,7 +1535,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                 for old in ("audio", "sfx"):
                     shutil.rmtree(work / old, ignore_errors=True)
                 props = build_long(script, cfg, work, progress,
-                                   hook_seconds=SCRIPT_HOOK_SECONDS if manual else HOOK_SECONDS)
+                                   hook_seconds=SCRIPT_HOOK_SECONDS if manual else cinehook.seconds_for(minutes))
                 save(stage="voiced", props=props)
             preview = resume.get("preview") if attempt == start else None
             if stage != "rendered" and resume.get("previewed") != attempt and not manual:
@@ -1618,6 +1651,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "duration_seconds": round(props["duration"], 1),
             "editor": "remotion (Long)",
             "music": props.get("musicChoice", ""),
+            "hook_style": "cinematic" if (props.get("hook") or {}).get("cine") else "trailer",
+            "hook_pictures": (props.get("hook") or {}).get("pictures", 0),
         }
         if manual:  # your title and description, as written; the chapter stamps are offered separately
             report.update({"source": "script", "topic_source": "your script", "caption": manual["description"],

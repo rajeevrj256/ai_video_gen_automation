@@ -1,5 +1,5 @@
 import React from 'react';
-import {Easing, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Audio} from '../Audio';
 import {COLORS, FONT, clamp, exitProgress, useFonts} from '../theme';
 import {Layer} from '../Layer';
@@ -15,6 +15,7 @@ import type {Chapter, Look, LongProps, Visual} from './types';
 import {BOX, setBox} from './box';
 import {NextTag, PartTag} from '../anim/Tags';
 import type {Face} from '../anim/type';
+import {useCineFonts} from '../cine/Cine';
 
 const LONG_FACE: Face = {family: FONT, weight: 900, upper: false, tracking: '0', italic: 'italic', size: 1};
 
@@ -30,6 +31,9 @@ export const paletteFor = (chapter: number, look?: Look) => worldFor(lookOf(look
 const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean; look: Look; chapter: number; seed: number; plate?: string | null}> = ({v, frames, accent, roomy, look, chapter, seed, plate}) => {
   if (v.type === 'footage' && v.src) return <Footage v={v} frames={frames} accent={accent} />;
   if (v.type === 'model3d' && (v.src || v.parts?.length)) return <Model3D v={v} frames={frames} accent={accent} />;
+  if (v.type === 'picture' && v.src) {
+    return <Img src={staticFile(v.src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'}} />;
+  }
   return (
     <>
       <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />
@@ -44,6 +48,7 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
 
 export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false, vertical, partLabel, nextLabel, title, duration}) => {
   useFonts();
+  useCineFonts();
   setCurrency(currency);
   setBox(vertical); // 9:16 for the Shorts Studio's motion-graphics Shorts: every visual lays itself out for it
   const {fps} = useVideoConfig();
@@ -125,9 +130,15 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         ) : null,
       )}
       {/* music: the hook's trailer track, then the main track from where the hook ends */}
+      {/* The cinematic hook's music and drone stop where its silence starts; the old trailer's ran on under the cut. */}
       {hook?.music ? (
-        <Sequence name="hook music" durationInFrames={f(hook.duration + 1.8)}>
-          <Music src={hook.music} speech={speech.filter(([a]) => a < hook.duration)} full={0.62} duck={0.3} loop={false} />
+        <Sequence name="hook music" durationInFrames={hook.cine ? f(hook.duration - (hook.drop ?? 0)) : f(hook.duration + 1.8)}>
+          <Music src={hook.music} speech={speech.filter(([a]) => a < hook.duration)} full={0.62} duck={0.3} loop={false} fadeOut={hook.cine ? HOOK_CUT : 45} />
+        </Sequence>
+      ) : null}
+      {hook?.drone ? (
+        <Sequence name="hook drone" durationInFrames={f(hook.duration - (hook.drop ?? 0))}>
+          <Drone src={hook.drone} />
         </Sequence>
       ) : null}
       {music ? (
@@ -159,6 +170,16 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         : null}
     </Layer>
   );
+};
+
+// The cinematic hook: its music and drone are cut this fast (frames) into the silence before the story.
+const HOOK_CUT = 5;
+const DRONE_VOLUME = 0.6; // keep in step with reelgen/soundtrack.py
+
+// The dark bed under the cinematic hook (it fades itself in), cut into the silence.
+const Drone: React.FC<{src: string}> = ({src}) => {
+  const {durationInFrames} = useVideoConfig();
+  return <Audio src={staticFile(src)} volume={(fr) => interpolate(fr, [durationInFrames - HOOK_CUT, durationInFrames], [DRONE_VOLUME, 0], clamp)} />;
 };
 
 // A quiet bed under a chapter, faded in and out.

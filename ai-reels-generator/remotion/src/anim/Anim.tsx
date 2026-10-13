@@ -7,6 +7,14 @@ import {FONT, clamp, useFonts} from '../theme';
 import {type Face, LABEL, SOFT_SHADOW, faceFor, splitTitle, useAnimFonts} from './type';
 import {NextTag, PartTag} from './Tags';
 import type {AnimCamera, AnimProps, AnimShot} from './types';
+import {CineIn, FilmTexture, GradeWash, SubscribeCard, TypedLabel, gradeFilter, useCineFonts} from '../cine/Cine';
+import {type CineTransition, OVERLAPS, TRANSITION_FRAMES} from '../cine/types';
+
+// The cold open's own cuts (cine/), and how far the shot before keeps running under a photo or a tear.
+const CINE = new Set<string>(['glitch', 'photo', 'split', 'punch']);
+const under = (next?: AnimShot) => (next && OVERLAPS.has(next.transition as CineTransition) ? TRANSITION_FRAMES[next.transition as CineTransition] : 0);
+const HOOK_CUT = 5; // frames: the cold open's music and drone stop dead into its silence (keep in step with reelgen/soundtrack.py)
+const DRONE_VOLUME = 0.6;
 
 // Animated videos (reelgen/animated.py). The pictures and clips are AI-made; this times them to the voice and
 // adds what an image model can't: the emphasised words landing on their syllables, numbers and names on
@@ -197,15 +205,23 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
   const opacity = early && (tr === 'crossfade' || tr === 'zoom') ? into : 1;
   const zoomIn = tr === 'zoom' ? interpolate(raw, [0, early + 8], [1.25, 1], {...clamp, easing: Easing.out(Easing.cubic)}) : 1;
   const whip = tr === 'whip' ? interpolate(frame, [0, 7], [1, 0], {...clamp, easing: Easing.out(Easing.cubic)}) : 0;
-  return (
-    <Layer name={`${shot.type} ${index + 1}`} style={{opacity, backgroundColor: '#000'}}>
-      <div style={{position: 'absolute', inset: 0, transform: `scale(${zoomIn * (1 + punch)}) translate(${whip * 900 + shake}px, ${shake * 0.4}px) skewX(${whip * -12}deg)`}}>
+  const opening = shot.type === 'shot' && shot.chapter < 0 && Boolean(props.drop); // the cinematic cold open
+  const picture = (
+    <div style={{position: 'absolute', inset: 0, transform: `scale(${zoomIn * (1 + punch)}) translate(${whip * 900 + shake}px, ${shake * 0.4}px) skewX(${whip * -12}deg)`}}>
+      <div style={{position: 'absolute', inset: 0, filter: opening ? gradeFilter(shot.grade) : undefined}}>
         {shot.type === 'shot' ? <Visual shot={shot} frame={Math.max(0, frame)} frames={frames} />
           : <Card shot={shot} frame={Math.max(0, frame)} frames={frames} fps={fps} accent={props.accent} face={faceFor(props.style)} />}
-        {/* a soft vignette ties the AI frames together */}
-        <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.38) 100%)'}} />
       </div>
-      {shot.onScreen ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} /> : null}
+      {opening ? <GradeWash grade={shot.grade} /> : null}
+      {/* a soft vignette ties the AI frames together */}
+      <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.38) 100%)'}} />
+    </div>
+  );
+  return (
+    <Layer name={`${shot.type} ${index + 1}`} style={{opacity, backgroundColor: CINE.has(tr) && OVERLAPS.has(tr as CineTransition) ? 'transparent' : '#000'}}>
+      {CINE.has(tr) ? <CineIn kind={tr as CineTransition} seed={index + 1}>{picture}</CineIn> : picture}
+      {shot.onScreen && opening ? <TypedLabel text={shot.onScreen} vertical={props.vertical} /> : null}
+      {shot.onScreen && !opening ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} /> : null}
       {em && em.text && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} vertical={props.vertical} /> : null}
       {tr === 'dip' && early ? <div style={{position: 'absolute', inset: 0, background: '#000', opacity: interpolate(raw, [0, early, early + 10], [0, 1, 0], clamp)}} /> : null}
       {tr === 'flash' ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(frame, [0, 9], [0.9, 0], clamp)}} /> : null}
@@ -218,6 +234,7 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
 export const Anim: React.FC<AnimProps> = (props) => {
   useFonts();
   useAnimFonts();
+  useCineFonts();
   const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const {shots} = props;
@@ -230,11 +247,22 @@ export const Anim: React.FC<AnimProps> = (props) => {
         const early = i > 0 && ['crossfade', 'dip', 'zoom'].includes(s.transition) ? OVERLAP : 0;
         const from = f(s.start) - early;
         return (
-          <Sequence key={s.id} name={`${s.type} ${i + 1}`} from={from} durationInFrames={Math.max(1, end - from + (next && ['crossfade', 'dip', 'zoom'].includes(next.transition) ? OVERLAP : 0))}>
+          <Sequence key={s.id} name={`${s.type} ${i + 1}`} from={from} durationInFrames={Math.max(1, end - from + (next && ['crossfade', 'dip', 'zoom'].includes(next.transition) ? OVERLAP : 0) + under(next))}>
             <ShotView shot={s} props={props} index={i} early={early} />
           </Sequence>
         );
       })}
+      {/* the cinematic cold open: film texture over it, then silence (a subscribe button clicked in the dark) */}
+      {!props.soundOnly && props.drop ? (
+        <Sequence name="cold open texture" durationInFrames={Math.max(1, f(props.hookEnd))}>
+          <FilmTexture />
+        </Sequence>
+      ) : null}
+      {!props.soundOnly && props.drop ? (
+        <Sequence name="silence" from={f(props.hookEnd)} durationInFrames={Math.max(1, f(props.drop))}>
+          {props.subscribe ? <SubscribeCard frames={f(props.drop)} vertical={props.vertical} /> : <div style={{position: 'absolute', inset: 0, background: '#000'}} />}
+        </Sequence>
+      ) : null}
       {!props.soundOnly && props.partLabel ? (
         <Sequence name="part label" durationInFrames={f(2.7)}>
           <PartTag label={props.partLabel} title={props.title} accent={props.accent} face={faceFor(props.style)} />
@@ -255,8 +283,14 @@ export const Anim: React.FC<AnimProps> = (props) => {
       ) : null))}
       {/* The cold open's track, then a track per chapter (each fades in and out over its own span). */}
       {props.hookMusic ? (
-        <Sequence name="hook music" durationInFrames={f(props.hookEnd + 4.2)}>
-          <Music src={props.hookMusic} speech={props.speech.filter(([a]) => a < props.hookEnd)} full={0.55} duck={0.2} loop={false} />
+        <Sequence name="hook music" durationInFrames={props.drop ? Math.max(1, f(props.hookEnd)) : f(props.hookEnd + 4.2)}>
+          <Music src={props.hookMusic} speech={props.speech.filter(([a]) => a < props.hookEnd)} full={0.55} duck={0.2} loop={false}
+            fadeOut={props.drop ? HOOK_CUT : 45} />
+        </Sequence>
+      ) : null}
+      {props.hookDrone && props.hookEnd > 0 ? (
+        <Sequence name="hook drone" durationInFrames={Math.max(1, f(props.hookEnd))}>
+          <Drone src={props.hookDrone} frames={Math.max(1, f(props.hookEnd))} />
         </Sequence>
       ) : null}
       {props.musicParts.map((m, i) => (
@@ -268,3 +302,7 @@ export const Anim: React.FC<AnimProps> = (props) => {
     </Layer>
   );
 };
+
+const Drone: React.FC<{src: string; frames: number}> = ({src, frames}) => (
+  <Audio src={staticFile(src)} volume={(fr) => interpolate(fr, [frames - HOOK_CUT, frames], [DRONE_VOLUME, 0], clamp)} />
+);

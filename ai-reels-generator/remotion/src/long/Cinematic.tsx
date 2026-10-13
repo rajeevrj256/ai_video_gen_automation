@@ -4,6 +4,8 @@ import {COLORS, FONT, clamp} from '../theme';
 import {Layer} from '../Layer';
 import type {Camera, Hook, HookShot, Look, Visual} from './types';
 import {BOX} from './box';
+import {CineIn, FilmTexture, GradeWash, SubscribeCard, TypedLabel, gradeFilter} from '../cine/Cine';
+import {OVERLAPS, TRANSITION_FRAMES} from '../cine/types';
 
 // The camera, this video's look (backdrop and transitions), impacts and the cinematic hook.
 // Every video gets its own palette, backdrop style and transition style (reelgen/variety.py),
@@ -54,7 +56,7 @@ const cameraAt = (camera: Camera, p: number, frame: number) => {
 export const Shot: React.FC<{
   v: Visual;
   frames: number;
-  transition: Look['transition'];
+  transition: Look['transition'] | 'cut'; // cut: the cinematic hook brings its own (cine/CineIn)
   intense?: boolean; // the hook: faster, more dramatic
   children: React.ReactNode;
 }> = ({v, frames, transition, intense, children}) => {
@@ -91,6 +93,8 @@ export const Shot: React.FC<{
     case 'slide':
       ty = (1 - tin) * 160;
       opacity = tin;
+      break;
+    case 'cut':
       break;
     default:
       opacity = interpolate(frame, [0, 7], [0, 1], clamp);
@@ -306,9 +310,54 @@ export const Backdrop: React.FC<{look: Look; chapter: number; seed: number; plat
 
 // ---------- the hook ----------
 
-// A cinematic trailer before the video: its own dark, graded world with light rays, drifting
-// dust and letterbox bars, fast dramatic camera, words slammed in, and a glitch cut into the video.
-export const HookView: React.FC<{hook: Hook; look: Look; render: (shot: HookShot, frames: number) => React.ReactNode}> = ({hook, look, render}) => {
+type HookRender = (shot: HookShot, frames: number) => React.ReactNode;
+
+export const HookView: React.FC<{hook: Hook; look: Look; render: HookRender}> = (p) => (p.hook.cine ? <CineHook {...p} /> : <TrailerHook {...p} />);
+
+// The cinematic cold open (cine/, reelgen/longform.py `build_long`): every beat in its own colour grade under
+// film grain, dust and flicker, typed labels instead of slammed words, whips, VHS glitches, a photo flown in,
+// paper torn across the frame, a split-second montage at the climax, then silence (a subscribe button clicked
+// in the dark) before the story starts.
+const CineHook: React.FC<{hook: Hook; look: Look; render: HookRender}> = ({hook, render}) => {
+  const {fps} = useVideoConfig();
+  const f = (s: number) => Math.round(s * fps);
+  const drop = hook.drop ?? 0;
+  const silentFrom = f(hook.duration - drop);
+  return (
+    <Layer name="hook (cinematic)" style={{background: '#000'}}>
+      {hook.shots.map((s, i) => {
+        const next = hook.shots[i + 1];
+        const kind = s.transition ?? (i === 0 ? 'dip' : 'cut');
+        // The shot under a photo or a tear keeps running while the next one comes in over it.
+        const over = next && next.transition && OVERLAPS.has(next.transition) ? TRANSITION_FRAMES[next.transition] : 0;
+        const frames = Math.max(1, f(s.duration));
+        return (
+          <Sequence key={i} name={`hook ${i + 1} (${s.grade ?? 'natural'}, ${kind})`} from={f(s.start)} durationInFrames={frames + over}>
+            <CineIn kind={kind} seed={i + 1}>
+              <div style={{position: 'absolute', inset: 0, filter: gradeFilter(s.grade)}}>
+                <Shot v={{...s.visual, camera: s.visual.camera === 'still' ? 'push' : s.visual.camera}} frames={frames} transition="cut" intense>
+                  {render(s, frames)}
+                </Shot>
+              </div>
+              <GradeWash grade={s.grade} />
+            </CineIn>
+            {s.text ? <TypedLabel text={s.text} vertical={BOX.V} /> : null}
+          </Sequence>
+        );
+      })}
+      <FilmTexture />
+      {drop > 0 ? (
+        <Sequence name="silence" from={silentFrom}>
+          {hook.subscribe ? <SubscribeCard frames={f(drop)} vertical={BOX.V} /> : <div style={{position: 'absolute', inset: 0, background: '#000'}} />}
+        </Sequence>
+      ) : null}
+    </Layer>
+  );
+};
+
+// The first trailer look (videos made before the cinematic hook): its own dark, graded world with light rays,
+// drifting dust and letterbox bars, fast dramatic camera, words slammed in, and a glitch cut into the video.
+const TrailerHook: React.FC<{hook: Hook; look: Look; render: HookRender}> = ({hook, look, render}) => {
   const {fps} = useVideoConfig();
   const frame = useCurrentFrame();
   const f = (s: number) => Math.round(s * fps);

@@ -662,6 +662,9 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
             if shot["slam"]:
                 cue("pop", t + max(0.0, at - 0.1), 0.6)
             cues += media.resolve_cues(sh.sounds, sa.words, t + lead, cfg, work / "sfx", rel, 2, used)
+            if not shots and sa.words:  # a deep boom under the video's first word (cinehook.py)
+                from .cinehook import opening_boom
+                cues.append(opening_boom(work / "sfx", rel, t + lead + sa.words[0].start))
             if kind == "hook":
                 hook_cuts.append(t)
         shots.append({"start": round(t, 3), "duration": duration, "lead": lead, "audio": rel(sa.path), "text": text,

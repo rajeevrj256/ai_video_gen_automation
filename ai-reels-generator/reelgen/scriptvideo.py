@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
-from . import media, variety
+from . import cinehook, media, variety
 from .config import Config
 from .llm import ask
 from .longform import (LLM_TIMEOUT, WORDS_PER_SECOND, HookShot, LBeat, LChapter, LongScript, LVisual, Progress,
@@ -32,7 +32,7 @@ Mood = LongScript.model_fields["mood"].annotation
 HookMusic = LongScript.model_fields["hook_music"].annotation
 Ambience = LChapter.model_fields["ambience"].annotation
 TrailerBeat = HookShot.model_fields["beat"].annotation
-MAX_SILENT = 3  # picture-and-sound-only shots Claude may add to the hook
+MAX_SILENT = 3  # picture-and-sound-only shots Claude may add to the hook (besides the flash montage)
 
 
 @dataclass
@@ -119,11 +119,16 @@ def parse_hook(text: str) -> list[str]:
 # ---------- the storyboard (one Claude call, no web search) ----------
 
 class BoardShot(BaseModel):
-    line: int = Field(description="The hook line spoken over this shot (H3 = 3), or 0 for a silent shot carried by picture and sound alone.")
-    beat: TrailerBeat = Field(description="Which part of the trailer this shot is: curiosity, unexpected, tension, problem or gap, in that order across the shots.")
-    text: str = Field(default="", description="On-screen text slammed in: 1-3 words from the line (or, for a silent shot, from the hook), in the on-screen language, or empty. Most shots have none.")
-    visual: LVisual = Field(description="What we see: exactly what the line says, dramatic camera. Prefer motion: scene, model3d, footage, icons, stat.")
-    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects: on a word of the line, or word '*' to land on the slammed text.")
+    line: int = Field(description="The hook line spoken over this shot (H3 = 3), or 0 for a silent shot carried by picture and sound alone (every flash shot).")
+    beat: TrailerBeat = Field(description="Which part of the escalation this shot is: curiosity, unexpected, tension, problem or gap, in that order across the shots.")
+    text: str = Field(default="", description="A typed label for this shot, 1-5 words, in the on-screen language: a place and year, a name, a number or a status, taken only from the hook or the script (never a fact they don't state), or empty. About half the shots have one.")
+    visual: LVisual = Field(description="What we see when there is no picture, and the evidence for a number or a date: exactly what the line says, dramatic camera. Prefer motion: footage, model3d, scene, stat, timeline.")
+    picture: str = HookShot.model_fields["picture"]
+    grade: cinehook.Grade = HookShot.model_fields["grade"]
+    transition: cinehook.Transition = HookShot.model_fields["transition"]
+    boom: bool = HookShot.model_fields["boom"]
+    flash: bool = HookShot.model_fields["flash"]
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects of the story itself, on a word of the line or word '*' on its label (booms, whips, glitches, risers and typing are added for the hook automatically).")
 
 
 class BoardChapter(BaseModel):
@@ -161,7 +166,7 @@ class Storyboard(BaseModel):
 
 SCREEN_ENGLISH = """On-screen language: every word the viewer reads is English, whatever language the narration \
 is in (it may be Hinglish or Hindi, and it is spoken exactly as written): headlines, subs, item labels and texts, actor \
-labels, footage labels, the hook's slammed words, the chapter titles you write yourself and every card_title. Say \
+labels, footage labels, the hook's typed labels, the chapter titles you write yourself and every card_title. Say \
 what the line means in short, natural English; never put a Hindi or Hinglish word on screen, and never Devanagari. \
 Names, brands, places and units stay as they are (Starlink, Elon Musk, ISRO, GB, crore), numbers in digits \
 (do sau crore -> ₹200 crore). "Taken from the line" above means its meaning, written in English. A quote visual \
@@ -184,14 +189,20 @@ effects. Numbers, dates, names and quotes on screen come only from the script's 
 line says them; never add a figure, date or quote the line doesn't state, never round one. A 'quote' visual \
 only for words the script itself quotes; a 'chart' or 'compare' only with figures the script gives.
 
-The hook is a cinematic trailer before the video, built from the user's hook lines H1, H2... Give every \
-hook line exactly one shot, in order. Where a picture or a sound lands harder without words, add a silent \
-shot (line 0) between or after them, at most 3. Spread the trailer beats across the shots in order: \
-curiosity (a strong visual and an instant question), unexpected (the surprising situation), tension \
-(build the stakes), problem (part of the problem), gap (the question left hanging). Slam 1-3 words on \
-screen on the biggest moments only (most shots have none), taken from the hook. Use dramatic camera moves \
-(push, dutch, orbit, pan), quick visual changes and the hook's own trailer music. The visuals must match \
-the hook's words exactly, and never show the answer the script keeps for the end.
+The hook is a cinematic cold open before the video, cut like a documentary trailer, built from the \
+user's hook lines H1, H2... Give every hook line exactly one shot, in order. Where a picture or a sound lands \
+harder without words, add a silent shot (line 0) between or after them, at most 3, and before the last hook \
+line a montage of 3-6 flash shots (line 0, flash: true): split-second striking images that build to the peak. \
+Spread the escalation across the shots in order: curiosity (a strong image and an instant question), unexpected \
+(the surprising situation), tension (build the stakes), problem (part of the problem), gap (the question left \
+hanging). Give every shot a grade and a transition that follow the emotion (the colour changes as the stakes \
+rise), mark boom on the 2-4 biggest moments, give about half the shots a typed label taken from the hook or the \
+script, and most shots a picture (a film-still prompt for an image model: no text, no real person's face), \
+keeping a visual for every shot. Use dramatic camera moves (push, dutch, orbit, pan). The pictures and visuals \
+must match the hook's words exactly, and never show the answer the script keeps for the end. After the hook the \
+music stops for a breath of silence and the script starts.
+
+Shot grades: {cinehook.GRADE_HELP} Transitions: {cinehook.TRANSITION_HELP}
 
 Chapters: when the user marked chapters, keep them exactly (same first lines and titles) and set their \
 music. Otherwise group the lines into chapters at the story's natural turns: a cold open titled 'Intro', \
@@ -240,15 +251,23 @@ def _hook_shots(board: Storyboard, hook: list[str]) -> list[HookShot]:
         return HookShot(beat=order[min(4, (n - 1) * 5 // max(1, len(hook)))], line=hook[n - 1],
                         visual=_fallback_visual(hook[n - 1]))
 
+    def shot(s: BoardShot, line: str) -> HookShot:
+        return HookShot(beat=s.beat, line=line, text=s.text, visual=s.visual, sounds=s.sounds, picture=s.picture,
+                        grade=s.grade, transition=s.transition, boom=s.boom, flash=s.flash and not line)
+
+    flashes = 0
     for s in board.hook:
-        if s.line == 0 and silent < MAX_SILENT and shots:
-            shots.append(HookShot(beat=s.beat, line="", text=s.text, visual=s.visual, sounds=s.sounds))
+        if s.line == 0 and s.flash and flashes < cinehook.MAX_FLASH and shots:
+            shots.append(shot(s, ""))
+            flashes += 1
+        elif s.line == 0 and silent < MAX_SILENT and shots:
+            shots.append(shot(s, ""))
             silent += 1
         elif nxt <= s.line <= len(hook):
             while nxt < s.line:
                 shots.append(missing(nxt))
                 nxt += 1
-            shots.append(HookShot(beat=s.beat, line=hook[s.line - 1], text=s.text, visual=s.visual, sounds=s.sounds))
+            shots.append(shot(s, hook[s.line - 1]))
             nxt += 1
     while nxt <= len(hook):
         shots.append(missing(nxt))

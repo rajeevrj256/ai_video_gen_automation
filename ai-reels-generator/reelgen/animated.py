@@ -32,7 +32,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
 
-from . import anim_engine, media, repeats
+from . import anim_engine, cinehook, media, repeats
 from .categories import CATEGORIES
 from .config import Config
 from .llm import ask
@@ -73,7 +73,7 @@ CAMERAS = {"push-in": "the camera slowly pushes in", "pull-out": "the camera slo
            "tilt-down": "the camera tilts down", "orbit": "the camera orbits slightly around the subject",
            "handheld": "a gentle handheld camera", "static": "static camera"}
 Camera = Literal["push-in", "pull-out", "pan-left", "pan-right", "tilt-up", "tilt-down", "orbit", "handheld", "static"]
-Transition = Literal["cut", "crossfade", "whip", "flash", "zoom", "dip"]
+Transition = Literal["cut", "crossfade", "whip", "flash", "zoom", "dip", "glitch", "photo", "split", "punch"]
 Fx = Literal["text", "zoom", "shake", "flash", "pause"]
 NEGATIVE = ("text, letters, words, caption, watermark, logo, signature, frame, border, blurry, lowres, jpeg artifacts, "
             "deformed, disfigured, extra fingers, extra limbs, bad anatomy, duplicate, cropped head")
@@ -125,7 +125,12 @@ class AShot(BaseModel):
                         "points, the tower cracks and leans, rain starts), plus small life (hair, smoke, crowds).")
     camera: Camera
     transition: Transition = Field(description="How this shot comes in: cut (most), crossfade (time passes, calm), whip "
-                                   "(energy, the hook), flash (a reveal), zoom (into detail), dip (black, a new beat).")
+                                   "(energy, the hook), flash (a reveal), zoom (into detail), dip (black, a new beat); in "
+                                   "the cold open also glitch (something hidden, a lie exposed), photo (an archive "
+                                   "picture flown in over the last shot), split (paper torn across: the other side) and "
+                                   "punch (a hard cut closer).")
+    grade: cinehook.Grade = Field(default="natural", description="Cold open only (natural elsewhere). " + cinehook.GRADE_HELP)
+    boom: bool = Field(default=False, description="Cold open only. " + cinehook.BOOM_HELP)
     on_screen: str = Field(default="", description="0-4 words the editor writes on screen when a figure, date or name "
                            "matters (\"1859\", \"40% LESS\"); mostly empty.")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 effects from the sound list on exact words; "
@@ -155,7 +160,7 @@ class AnimScript(BaseModel):
     title_scene: str = Field(description="The picture behind the title card, 20-50 words, no text.")
     hook_music: str = Field(description="The cold open's music for the music model, 12-40 words, energetic and tense.")
     hook_bpm: int = Field(ge=70, le=170)
-    cold_open: list[AShot] = Field(description="The hook, 25-40 seconds (70-100 spoken words, 6-9 shots) before the title.")
+    cold_open: list[AShot] = Field(description="The cinematic cold open, 30-45 seconds (75-110 spoken words, 7-10 shots) before the title.")
     chapters: list[AChapter]
     music_track: str = Field(default="generate", description="One of the user's own tracks from the list when it truly "
                              "fits the whole video, else 'generate'.")
@@ -172,7 +177,7 @@ def _system(minutes: float, styles: str, recent: str, sounds: str) -> str:
 image model from your `scene` and brought to life by a video model from your `motion`, so you are the director, \
 storyboard artist and writer at once.
 
-Length: about {words} spoken words in total: a 25-40 second cold open, a title card, then 5-7 chapters of 7-14 shots.
+Length: about {words} spoken words in total: a 30-45 second cold open, a title card, then 5-7 chapters of 7-14 shots.
 One line = one shot (4-7 seconds). Something visibly happens in every shot.
 
 Art style (pick the one that fits the subject best; every picture is drawn in it):
@@ -181,8 +186,13 @@ Art style (pick the one that fits the subject best; every picture is drawn in it
 The narration:
 - American English, a warm, confident storyteller talking to one viewer; short and long sentences mixed; every line
 pushes forward (but, so, which means). Each chapter raises the stakes or answers the question the last one left.
-- Cold open: a startling first line in 12 words or fewer, then the most surprising moments of the video, a turn, and a
-cliffhanger into the title. No greeting, no "in this video".
+- Cold open (cinematic, cut like a documentary trailer): a startling first line in 12 words or fewer, then a ladder of
+WHAT, never HOW: each shot raises the stakes over the last (a strange fact, who or what is involved, what was at risk,
+the most visceral moment last), ending on the big question the video answers. No greeting, no "in this video". Give
+every cold-open shot a grade and a transition that follow its emotion (the colour changes as the stakes rise), boom on
+the 2-4 biggest moments, and `on_screen` on about half of them: it is typed onto the picture as a label (a place and
+year, a name, a number), true like everything else. Then the music stops dead for a breath of silence and the title
+card lands with a boom.
 - Never use: {", ".join(AI_CLICHES)}.
 - Accuracy first: every real name, number, date and event is true and confirmed with web search (put the pages in
 `sources`); speculation is said as a possibility. No real people as characters, no politics, no rumours.
@@ -206,9 +216,10 @@ moments get big motion; calm lines get gentle motion.
 - Importance sets the intensity: low = gentle motion, no text; medium = a clear action; high = a strong action and the
 emphasised words on screen; critical (reveals, turns, the hook's key lines) = everything on the same word: words,
 punch-in, flash, a sound. Most lines are low or medium.
-- `on_screen` only for a number, date or name worth seeing (the picture model can't write).
-- Transitions: mostly cuts; whips in the hook, crossfades for time passing, a flash for a reveal, dip to black for a
-big turn. Never the same non-cut transition twice in a row.
+- `on_screen` only for a number, date or name worth seeing (the picture model can't write); in the cold open, a
+typed label on about half the shots.
+- Transitions: mostly cuts; whips, glitches, photos, splits and punches in the cold open, crossfades for time passing,
+a flash for a reveal, dip to black for a big turn. Never the same non-cut transition twice in a row.
 - Music: describe the hook's and each chapter's music for a music model (genre, instruments, mood, energy), different
 in every chapter and following the story (calm curiosity, rising tension, wonder, resolution...).
 
@@ -437,18 +448,22 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     cues, spoken, used, shots = [], [], {}, []
     cue = lambda name, at, vol: cues.append({"src": rel(sfx[name]), "at": round(max(0.0, at), 3), "volume": vol, "name": name}) if name in sfx else None  # noqa: E731
-    t, hook_end, titled = 0.0, 0.0, False
+    t, hook_end, titled, title_at = 0.0, 0.0, False, 0.0
     chapter_at: dict[int, float] = {}
     last_tr = ""
     for n, ((ci, sh), sa) in enumerate(zip(plan, audio)):
         if ci >= 0 and ci not in chapter_at:
             if not titled:  # the title card, once, after the cold open
                 titled, hook_end = True, t
+                if t > 0:  # the cinematic cold open ends in silence; the title lands on a boom after it
+                    t += cinehook.DROP
                 shots.append({"id": "title", "type": "title", "start": round(t, 3), "duration": TITLE_SECONDS,
                               "image": "keyframes/title.jpg", "cardText": sc.title, "chapter": -1, "transition": "flash"})
-                cue("whoosh", t - 0.15, 0.6)
+                if t == 0:
+                    cue("whoosh", t - 0.15, 0.6)
                 cue("impact", t + 0.2, 0.7)
                 cue("shimmer", t + 0.5, 0.45)
+                title_at = t
                 t += TITLE_SECONDS
             chapter_at[ci] = t
             ch = sc.chapters[ci]
@@ -468,13 +483,13 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
         tr = sh.transition if not (sh.transition == last_tr and sh.transition != "cut") else "cut"
         last_tr = tr
         shot = {"id": f"s{n:03d}", "type": "shot", "start": round(t, 3), "duration": duration, "lead": lead,
-                "audio": rel(sa.path), "text": sh.line,
+                "audio": rel(sa.path), "text": sh.line, **({"grade": sh.grade, "boom": sh.boom} if ci < 0 else {}),
                 "words": [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words],
                 "chapter": ci, "image": f"keyframes/s{n:03d}.jpg", "clip": None, "camera": sh.camera, "transition": tr,
                 "importance": imp, "emphasis": emph, "emphasisFx": list(dict.fromkeys(sh.emphasis_fx))[:4] if emph else [],
                 "onScreen": sh.on_screen.strip()[:28] or None}
         loud = {"low": 0.5, "medium": 0.6, "high": 0.75, "critical": 0.85}[imp]
-        if tr in TRANSITION_SOUND and shots:
+        if tr in TRANSITION_SOUND and shots and ci >= 0:  # the cold open's cuts get the hook's own sounds below
             name, vol = TRANSITION_SOUND[tr]
             cue(name, t - 0.05, vol)
         if emph and imp in ("high", "critical"):
@@ -485,8 +500,19 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
         spoken += [(t + lead + w.start, t + lead + w.end) for w in sa.words]
         shots.append(shot)
         t += duration
+    # The cold open's sound (cinehook.py): booms, risers, whips, glitches, typed labels, a drone that stops dead.
+    opening = [{**x, "text": x.get("onScreen") or "", "flash": False} for x in shots if x["type"] == "shot" and x["chapter"] < 0]
+    drone = None
+    if opening:
+        cinehook.fill_defaults(opening, grades=True)
+        for x, o in zip([x for x in shots if x["type"] == "shot" and x["chapter"] < 0], opening):
+            x.update(grade=o["grade"], transition=o["transition"], boom=o.get("boom", False))
+        more, drone = cinehook.sound_design(opening, hook_end, work, rel, {k: rel(p) for k, p in sfx.items()},
+                                            title_at if titled else None)
+        cues += more
     return {"shots": shots, "duration": round(t + 1.0, 3), "hookEnd": round(hook_end, 3), "chapterAt": chapter_at,
-            "speech": media.speech_spans(spoken), "cues": cues}
+            "speech": media.speech_spans(spoken), "cues": cues, "drop": cinehook.DROP if opening else 0.0,
+            "drone": drone}
 
 
 # ---------- the AI stages ----------
@@ -657,9 +683,12 @@ def clip_jobs(sc: AnimScript, tl: dict, style: str, req: AnimRequest, work: Path
 def music_job(sc: AnimScript, tl: dict, work: Path, seed: int) -> dict:
     tracks = []
     if tl["hookEnd"] > 0:
+        cine = bool(tl.get("drop"))  # the cinematic cold open: the track is cut dead into its silence
         tracks.append({"id": "hook", "out": str(work / "music" / "hook.wav"), "seed": seed + 11, "bpm": sc.hook_bpm,
-                       "caption": f"{sc.hook_music}, instrumental, cinematic trailer energy",
-                       "duration": round(min(120, tl["hookEnd"] + TITLE_SECONDS + 2), 1)})
+                       "caption": f"{sc.hook_music}, " + ("a dark cinematic documentary cold open, building in waves to "
+                                                          "a dense peak, ends abruptly, instrumental" if cine else
+                                                          "instrumental, cinematic trailer energy"),
+                       "duration": round(min(120, tl["hookEnd"] + (0.5 if cine else TITLE_SECONDS + 2)), 1)})
     starts = sorted(tl["chapterAt"].items())
     for k, (ci, a) in enumerate(starts):
         b = starts[k + 1][1] if k + 1 < len(starts) else tl["duration"]
@@ -684,7 +713,8 @@ def _composed_hook(tl: dict, work: Path, seed: int) -> Path:
 
     (work / "music").mkdir(parents=True, exist_ok=True)
     style = random.Random(seed).choice(composer.TRAILERS)
-    return composer.trailer(style, tl["hookEnd"] + TITLE_SECONDS, [], seed, work / "music" / "hook-composed.wav")
+    return composer.trailer(style, tl["hookEnd"] + (0.0 if tl.get("drop") else TITLE_SECONDS), [], seed,
+                            work / "music" / "hook-composed.wav")
 
 
 def _composed_chapter(sc: AnimScript, ci: int, seconds: float, work: Path, seed: int) -> Path:
@@ -771,7 +801,9 @@ def props_for(sc: AnimScript, tl: dict, style: str, req: AnimRequest, cfg: Confi
     props = {"fps": ANIM_FPS, "duration": tl["duration"], "title": sc.title, "style": style, "accent": accent,
              "shots": shots, "captions": req.captions, "watermark": req.watermark.strip()[:40] or None,
              "hookMusic": hook, "hookEnd": tl["hookEnd"], "musicParts": parts, "musicChoice": music_choice,
-             "speech": tl["speech"], "cues": tl["cues"]}
+             "speech": tl["speech"], "cues": tl["cues"],
+             # the cinematic cold open (cinehook.py): its silence, its drone, a subscribe button in the silence
+             "drop": tl.get("drop", 0.0), "hookDrone": tl.get("drone"), "subscribe": bool(tl.get("drop"))}
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
     props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "Anim")  # the music under the voice
     return props

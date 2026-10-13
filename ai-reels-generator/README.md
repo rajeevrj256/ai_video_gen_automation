@@ -89,6 +89,13 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
 - **Sound**: every narration is levelled to the same loudness, the music sits under the voice (quieter while it
   speaks, fuller in the pauses), and every finished video is mastered to -14 LUFS, the level YouTube and Instagram
   play at.
+- **Cinematic hook** (long videos, Script Videos, animated videos): the opening is cut like a documentary trailer:
+  each shot in its own colour grade (amber, red, black-and-white, fire, cold) under film grain and flicker, yellow
+  labels typed onto the picture ("LONDON, 1928"), whips, VHS glitches, a photo flown in, paper torn across the frame,
+  a split-second montage at the climax, a dark drone with deep booms on the big cuts, then the music stops for a breath
+  of silence (a subscribe button clicked in the dark) and the story starts with a question. With the AI engine
+  installed, the hook's shots are cinematic AI stills (Settings > Hook pictures), checked by Claude before use; without
+  it, they are motion graphics. Shorts open on a deep boom under the first word.
 
 ## Shorts Studio (tab "Shorts+")
 
@@ -138,7 +145,8 @@ reelgen/
   visuals.py        Pexels footage (multiple cuts per scene)
   captions.py       caption timing (and caption images for the simpler edit)
   video.py          timeline, then the Remotion render (moviepy if Node is missing)
-  sfx.py            whoosh and pop sound effects, made on the fly
+  sfx.py            whoosh and pop sound effects, made on the fly (and the hook's boom, riser, drone)
+  cinehook.py       the cinematic hook: rules, timing, AI stills, sound design, silence
   notifier.py       Telegram + GitHub run summary
   pipeline.py       runs all steps with verify-and-retry
 remotion/           the video edit (React + Remotion), rendered by video.py
@@ -147,6 +155,7 @@ remotion/           the video edit (React + Remotion), rendered by video.py
   src/Captions.tsx  word-by-word pop captions
   src/HookTitle.tsx the opening hook card
   src/Background.tsx footage cuts, punch-in zoom, scene-change flash
+  src/cine/         the cinematic hook's grades, film texture, typed labels, transitions, subscribe card
 ```
 
 To preview or tweak the edit: `cd remotion && npm run studio` opens Remotion Studio with sample props (`src/demo.ts`). The Python pipeline renders with `remotion render src/index.ts Reel out.mp4 --props=props.json --public-dir=<video folder>`.

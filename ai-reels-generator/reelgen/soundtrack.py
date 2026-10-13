@@ -32,6 +32,7 @@ RATE = 48000
 DUCK_RAMP = 0.35
 MUTE_RAMP = 1.2
 SPEECH_DUCK = 0.5
+HOOK_CUT, DRONE_VOLUME = 5, 0.6  # long/Long.tsx: the cinematic hook's cut into silence, its drone's level
 
 
 def _interp(x, xs, ys):
@@ -97,7 +98,7 @@ class Mixer:
                 w.writeframes((np.clip(self.out[i:i + RATE * 10], -1.0, 1.0) * 32767).astype("<i2").tobytes())
 
 
-def _music_level(fps: int, seq_frames: int, speech, full: float, duck: float, mute=()):
+def _music_level(fps: int, seq_frames: int, speech, full: float, duck: float, mute=(), fade_out: int = 45):
     """`Music`'s level(frame) from Sound.tsx, for an array of frames."""
     spans = sorted((float(a), float(b)) for a, b in speech)
 
@@ -111,7 +112,7 @@ def _music_level(fps: int, seq_frames: int, speech, full: float, duck: float, mu
             k = _interp(dist, [0.05, DUCK_RAMP], [0, 1])
         else:
             k = np.ones_like(t)
-        fade = _interp(frame, [0, 15, seq_frames - 45, seq_frames], [0, 1, 1, 0])
+        fade = _interp(frame, [0, 15, seq_frames - fade_out, seq_frames], [0, 1, 1, 0])
         away = np.ones_like(t)
         for a, b in mute:
             away = np.minimum(away, _interp(t, [a - MUTE_RAMP, a, b, b + MUTE_RAMP], [1, 0, 0, 1]))
@@ -126,7 +127,7 @@ def _in_speech(at: float, speech) -> bool:
 
 def _cues(m: Mixer, cues, speech) -> None:
     for c in cues or []:
-        vol = float(c.get("volume", 1)) * (SPEECH_DUCK if _in_speech(float(c["at"]), speech) else 1)
+        vol = float(c.get("volume", 1)) * (SPEECH_DUCK if not c.get("full") and _in_speech(float(c["at"]), speech) else 1)
         m.add(c["src"], round(float(c["at"]) * m.fps), volume=vol, trim_frames=round(float(c.get("trim") or 0) * m.fps))
 
 
@@ -140,10 +141,17 @@ def _long(m: Mixer, p: dict) -> None:
     for b in p.get("beats") or []:
         if b.get("audio"):
             m.add(b["audio"], f(b["start"]))
+    # The cinematic hook's music and drone stop where its silence starts (HOOK_CUT frames); the old trailer's ran on.
+    cine = bool(hook.get("cine"))
+    hook_end = float(hook.get("duration") or 0) - float(hook.get("drop") or 0)
     if hook.get("music"):
-        n = f(hook["duration"] + 1.8)
+        n = f(hook_end) if cine else f(hook["duration"] + 1.8)
         m.add(hook["music"], 0, length_frames=n, volume=_music_level(
-            m.fps, min(n, m.frames), [s for s in speech if s[0] < hook["duration"]], 0.62, 0.3))
+            m.fps, min(n, m.frames), [s for s in speech if s[0] < hook["duration"]], 0.62, 0.3,
+            fade_out=HOOK_CUT if cine else 45))
+    if hook.get("drone"):
+        n = f(hook_end)
+        m.add(hook["drone"], 0, length_frames=n, volume=lambda fr, n=n: _interp(fr, [n - HOOK_CUT, n], [DRONE_VOLUME, 0]))
     music_from = float(p.get("musicFrom") or 0)
     parts = p.get("musicParts") or []
     if p.get("music"):
@@ -207,10 +215,14 @@ def _anim(m: Mixer, p: dict) -> None:
         if s.get("audio"):
             m.add(s["audio"], f(float(s["start"]) + float(s.get("lead") or 0)))
     hook_end = float(p.get("hookEnd") or 0)
+    cine = bool(p.get("drop"))  # the cinematic cold open: its music and drone stop dead into its silence
     if p.get("hookMusic"):
-        n = f(hook_end + 4.2)
+        n = max(1, f(hook_end)) if cine else f(hook_end + 4.2)
         m.add(p["hookMusic"], 0, length_frames=n, volume=_music_level(
-            m.fps, min(n, m.frames), [s_ for s_ in speech if s_[0] < hook_end], 0.55, 0.2))
+            m.fps, min(n, m.frames), [s_ for s_ in speech if s_[0] < hook_end], 0.55, 0.2, fade_out=HOOK_CUT if cine else 45))
+    if p.get("hookDrone") and hook_end > 0:
+        n = max(1, f(hook_end))
+        m.add(p["hookDrone"], 0, length_frames=n, volume=lambda fr, n=n: _interp(fr, [n - HOOK_CUT, n], [DRONE_VOLUME, 0]))
     for x in p.get("musicParts") or []:
         start, n = f(x["from"]), max(1, f(float(x["to"]) - float(x["from"])))
         m.add(x["src"], start, length_frames=n, loop=True, volume=_music_level(

@@ -1,0 +1,305 @@
+"""The cinematic hook: how long videos and Script Videos open (and what the Anim cold open and every Short borrow).
+
+Modelled on a documentary cold open the user sent ("i need this type of audio and graphics animation on hooks";
+a ~75 s open of ~48 picture changes that keeps people watching): each beat in its own colour grade under film
+grain and flicker, typed yellow labels, whips, VHS glitches, a photo flown in, paper torn across the frame, a
+split-second montage at the climax, then the music stops dead for a breath of silence and the story starts with
+a question that re-asks the hook. Sound: a dark drone from the first frame, a deep sub boom on the big cuts, a
+riser into them, whips, typewriter ticks, and silence.
+
+This module holds the parts shared by the pipelines: the writer's rules, shot timing, the hook's sound design
+and its AI film stills (the AI engine's keyframes stage, when installed). The editor side is remotion/src/cine/.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Callable, Literal
+
+from . import sfx as synth
+
+log = logging.getLogger(__name__)
+Progress = Callable[[str], None]
+
+GRADES = ("amber", "red", "noir", "fire", "cold", "natural")
+TRANSITIONS = ("whip", "glitch", "photo", "split", "dip", "punch", "cut")
+Grade = Literal["amber", "red", "noir", "fire", "cold", "natural"]
+Transition = Literal["whip", "glitch", "photo", "split", "dip", "punch", "cut"]
+
+DROP = 1.6  # seconds of silence between the hook and the story (music and drone cut, a subscribe button clicked)
+LABEL_AT = 0.3  # seconds into a shot when its label starts typing: keep in step with remotion/src/cine/types.ts
+FLASH = (0.72, 0.6, 0.52, 0.46, 0.42, 0.4)  # the climax montage's shots, each shorter than the last
+MAX_FLASH = 6
+STRETCH_MAX = 1.2  # seconds a shot may be held past its line to reach the hook's length
+PHOTO_LAND = 0.4  # seconds into a photo transition when the print lands (CineIn 'photo')
+
+GRADE_HELP = ("The shot's colour, following the emotion: amber (the past, an archive, warmth), noir (black and white: "
+              "memory, secrecy, the record), red (danger, violence, alarm), fire (destruction, fury, heat), cold "
+              "(technology, night, isolation), natural. Change it as the story escalates; never 4 shots in a row alike.")
+TRANSITION_HELP = ("How the shot comes in: whip (energy, a jump in place or time), glitch (something hidden, a lie "
+                   "exposed, tech), photo (an archive picture or a document flown in over the last shot), split "
+                   "(paper torn across: the other side, before/after), punch (a hard cut closer, for emphasis), dip "
+                   "(out of black: a new beat), cut. Vary them; whips and cuts most often.")
+BOOM_HELP = "A deep boom as this shot cuts in: only the 2-4 biggest moments of the hook (the first shot always gets one)."
+FLASH_HELP = ("A split-second shot (about half a second, no line) in the rapid montage just before the hook's last "
+              "line: 3-6 of them in a row at the climax, each a different striking image.")
+PICTURE_HELP = ("This shot as a cinematic film still for an image model, 15-45 words: the subject, the setting and "
+                "era, the light, the lens. Never text, signs, logos or a real person's face (people from behind, in "
+                "silhouette, far away, or only hands). Empty where a number, a chart or a timeline is the evidence "
+                "(the visual is shown then); the visual is also shown when no picture can be drawn.")
+LABEL_HELP = ("A typed label for this shot, 1-5 words, typed onto the picture: a place and year ('DAMASCUS, 1965'), a "
+              "name, a number, a status ('CLASSIFIED'), or empty. About half the shots have one. A label states a "
+              "fact, so it must be true.")
+
+RULES = """The hook ({lo}-{hi} seconds, before chapter 1) is a cinematic cold open, cut like a documentary \
+trailer, NOT the story starting. 8-14 shots, plus a montage of 3-6 flash shots, that escalate:
+- Shot 1 lands the single most arresting image or fact of the story with a boom; it never explains.
+- Then a ladder of WHAT, never HOW: each shot raises the stakes over the one before (a strange fact, who or what is \
+involved, what was at risk, the most visceral, highest-stakes moment last). Short punchy lines (3-12 words), \
+statements or questions, present tense where it works; some shots have no line and let picture and sound carry \
+them. Never give the answer away.
+- Near the end, the montage: 3-6 flash shots (flash: true, no line), each a different striking image, building to \
+the peak; then the last line lands the big question this video answers.
+- The hook then drops to silence for a breath, and chapter 1's first line re-asks it in new words (a short \
+question), before the story starts.
+- Every shot gets a grade and a transition that follow the story's emotion; mark boom on the 2-4 biggest moments; \
+give about half the shots a typed label (text, 1-5 words: a place and year, a name, a number, a status), true like \
+everything else; give most shots a picture (a film-still prompt, no text, no real person's face), keeping a visual \
+for every shot (it is shown when no picture can be drawn, and is the evidence for numbers and dates)."""
+
+# A plain storyboard or an older script (no grades or transitions): a grade per beat role and varied cuts, so a
+# re-made video gets the cinematic hook too.
+BY_BEAT = {"curiosity": "amber", "unexpected": "cold", "tension": "red", "problem": "noir", "gap": "fire"}
+CYCLE = ("whip", "glitch", "punch", "whip", "split", "cut", "photo", "glitch")
+GRADE_CYCLE = ("amber", "cold", "noir", "red", "amber", "fire", "noir", "red")
+
+CINE_LOOK = ("cinematic film still, 35mm documentary photograph, dramatic natural light, deep shadows, shallow depth "
+             "of field, realistic, highly detailed, no text")
+PIC_NEGATIVE = ", portrait, close-up of a face, cartoon, illustration, anime, 3d render, painting"
+
+
+def seconds_for(minutes: float) -> tuple[float, float]:
+    """How long the hook runs (the silence included): a medium video's is shorter."""
+    return (28.0, 38.0) if minutes < 7 else (32.0, 45.0)
+
+
+def rules(minutes: float) -> str:
+    lo, hi = seconds_for(minutes)
+    return RULES.format(lo=int(lo), hi=int(hi))
+
+
+def timing(lengths: list[float | None], flashes: list[bool], seconds: tuple[float, float], drop: float = DROP) -> list[float]:
+    """Shot lengths: each line plus a breath, a silent shot a short hold, flash shots faster and faster (never
+    stretched), and the rest stretched (at most STRETCH_MAX each) or tightened so the whole hook, its silence
+    included, fits `seconds`."""
+    n_flash = 0
+    base, floor, fixed = [], [], []
+    for ln, fl in zip(lengths, flashes):
+        if fl and not ln:
+            d = FLASH[min(n_flash, len(FLASH) - 1)]
+            n_flash += 1
+            base.append(d), floor.append(d), fixed.append(True)
+        else:
+            n_flash = 0
+            base.append((ln + 0.4) if ln else 1.8)
+            floor.append((ln + 0.12) if ln else 1.2)
+            fixed.append(False)
+    lo, hi = seconds[0] - drop, seconds[1] - drop
+    total = sum(base)
+    free = sum(b for b, f in zip(base, fixed) if not f)
+    if total < lo and free:  # hold the shots longer, but never into a dead pause: a short hook stays short
+        k = (lo - (total - free)) / free
+        base = [b if f else min(b * k, b + STRETCH_MAX) for b, f in zip(base, fixed)]
+    elif total > hi:  # tighten the holds, never cutting into a line
+        spare = sum(b - fl for b, fl, f in zip(base, floor, fixed) if not f)
+        cut = min(spare, total - hi)
+        base = [b if f else b - (b - fl) * (cut / spare if spare else 0) for b, fl, f in zip(base, floor, fixed)]
+    return [round(b, 3) for b in base]
+
+
+def fill_defaults(shots: list[dict], grades: bool = False) -> None:
+    """Shots whose grades or transitions were all left plain (a plain storyboard, an older script, a writer that
+    skipped them) get them from their role, so the hook never runs in one colour with plain cuts. `grades`: no roles
+    to go by (the Anim cold open): the colours rotate."""
+    if shots and all(s.get("grade") in (None, "", "natural") for s in shots):
+        for i, s in enumerate(shots):
+            s["grade"] = (GRADE_CYCLE[i % len(GRADE_CYCLE)] if grades else
+                          "noir" if s.get("flash") and i % 2 else BY_BEAT.get(s.get("beat", ""), "natural"))
+    if shots and all(s.get("transition") in (None, "", "cut") for s in shots):
+        for i, s in enumerate(shots):
+            s["transition"] = ("punch" if i % 2 else "glitch") if s.get("flash") else CYCLE[i % len(CYCLE)]
+    if shots:
+        shots[0]["boom"] = True
+
+
+# ---------- AI film stills ----------
+
+def pictures(cfg, prompts: dict[int, str], work: Path, seed: int, title: str, progress: Progress) -> dict[int, Path]:
+    """The hook's shots as AI film stills (the AI engine's keyframes stage, 1344x768), checked by Claude like the
+    animated videos' pictures: a broken one is drawn once more from an easier prompt, and one still broken is left
+    out (that shot shows its visual). {} when the engine isn't installed, is busy, or the setting is off."""
+    from . import aimusic, anim_engine
+    from .stopper import Paused
+
+    prompts = {i: p.strip() for i, p in prompts.items() if p and p.strip()}
+    if not prompts or not getattr(cfg, "hook_pictures", True) or not anim_engine.installed():
+        return {}
+    out_dir = work / "hook-pictures"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    record_path = out_dir / "check.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = {}
+    fixes: dict[str, str] = record.get("fixes", {})
+    dropped: set[str] = set(record.get("dropped", []))
+
+    def job(ids: list[int]) -> dict:
+        items = []
+        for i in ids:
+            key = f"h{i:02d}"
+            again = key in fixes
+            items.append({"id": key, "out": str(out_dir / f"{key}.jpg"), "seed": seed + 300 + i + (1000 if again else 0),
+                          "prompt": f"{fixes.get(key, prompts[i])}, {CINE_LOOK}"})
+        from .animated import NEGATIVE
+        return {"characters": [], "shots": items, "negative": NEGATIVE + PIC_NEGATIVE, "width": 1344, "height": 768, "steps": 4}
+
+    def draw(ids: list[int], label: str) -> bool:
+        try:
+            anim_engine.run_stage("keyframes", job(ids), work, progress, label, wait=aimusic.BUSY_WAIT)
+            return True
+        except Paused:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the hook falls back to its motion graphics
+            log.warning("Hook pictures not drawn: %s", exc)
+            progress(f"Hook pictures skipped ({str(exc)[:140]}); the hook uses motion graphics")
+            return False
+
+    ids = sorted(prompts)
+    if not draw(ids, f"Drawing the hook's {len(ids)} film stills"):
+        return {}
+    if not record.get("checked"):
+        broken = _check(cfg, {i: prompts[i] for i in ids}, out_dir, title, progress)
+        if broken:
+            for key, new in broken.items():
+                fixes[key] = new
+                for f in (out_dir / f"{key}.jpg", out_dir / f"{key}.jpg.ok"):
+                    f.unlink(missing_ok=True)
+            redo = [i for i in ids if f"h{i:02d}" in broken]
+            progress(f"Redrawing {len(redo)} hook still(s) Claude found broken")
+            if draw(redo, "Redrawing the hook's stills"):
+                dropped |= set(_check(cfg, {i: fixes[f"h{i:02d}"] for i in redo}, out_dir, title, progress))
+            else:
+                dropped |= set(broken)
+        record = {"checked": True, "fixes": fixes, "dropped": sorted(dropped)}
+        record_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    made = {i: out_dir / f"h{i:02d}.jpg" for i in ids
+            if f"h{i:02d}" not in dropped and (out_dir / f"h{i:02d}.jpg").exists()}
+    if dropped:
+        progress(f"{len(dropped)} hook still(s) still broken after a redraw: those shots use their motion graphics")
+    return made
+
+
+def _check(cfg, prompts: dict[int, str], out_dir: Path, title: str, progress: Progress) -> dict[str, str]:
+    """{label: easier prompt} for the stills Claude finds broken; {} when all pass or the check can't run."""
+    from .animated import PIC_SYSTEM, PicReview, _pic_sheets
+    from .llm import ask
+    from .stopper import Paused
+
+    pics = [(f"h{i:02d}", out_dir / f"h{i:02d}.jpg") for i in sorted(prompts) if (out_dir / f"h{i:02d}.jpg").exists()]
+    if not pics:
+        return {}
+    progress(f"Checking the hook's {len(pics)} stills for broken people and objects")
+    try:
+        sheets = _pic_sheets(pics, out_dir)
+        prompt = (f"A documentary's cinematic cold open: {title}. Each still should look like a real film frame.\n"
+                  + "\n".join(f"h{i:02d}: {prompts[i]}" for i in sorted(prompts))
+                  + f"\n\n{len(sheets)} contact sheet(s) attached. Also flag any still with readable or fake writing, "
+                    "or a recognisable face of a real person. List only the broken stills.")
+        review = ask(cfg.ai_backend, cfg.claude_model, PIC_SYSTEM, prompt, PicReview, images=sheets, effort="low", timeout=900)
+    except Paused:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a check that can't run never stops the video
+        log.warning("Hook still check failed: %s", exc)
+        return {}
+    known = {label for label, _ in pics}
+    return {b.id: b.prompt.strip() for b in review.broken if b.id in known and b.prompt.strip()}
+
+
+# ---------- sound ----------
+
+def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str, str], rehook: float | None = None) -> tuple[list[dict], str | None]:
+    """The hook's sounds as cues, and its drone: a sub boom on the first shot, on the boom shots and on the story's
+    first word after the silence (`rehook`); a riser into each boom after the first; the transition's own sound
+    (whip, glitch, photo: whip + shutter, split: paper tear, punch: impact); a typewriter take per label; a riser
+    across the climax montage into the shot after it. `end`: where the silence starts (the drone stops there).
+    `files`: the video's other effect files by name (glitch, impact), relative."""
+    sfx_dir = work / "sfx"
+    made = synth.write_hook_sounds(sfx_dir, end + 0.5, tuple(s.get("text", "") for s in shots))
+    f = {k: rel(p) for k, p in made.items()}
+    cues: list[dict] = []
+
+    def cue(name: str, at: float, volume: float, full: bool = False) -> None:
+        src = f.get(name) or files.get(name)
+        if src and at < end + (5 if name == "hook-boom" else 0):
+            c = {"src": src, "at": round(max(0.0, at), 3), "name": name, "volume": volume}
+            if at < 0:  # a riser that would start before the video: cut its front off
+                c["trim"] = round(-at, 3)
+            if full:
+                c["full"] = True
+            cues.append(c)
+
+    flash_runs: list[tuple[int, int]] = []
+    i = 0
+    while i < len(shots):
+        if shots[i].get("flash"):
+            j = i
+            while j + 1 < len(shots) and shots[j + 1].get("flash"):
+                j += 1
+            flash_runs.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    for k, s in enumerate(shots):
+        start = float(s["start"])
+        boom = k == 0 or bool(s.get("boom"))
+        if boom:
+            cue("hook-boom", start, 0.95, full=True)
+            prev = shots[k - 1] if k else None
+            if prev is not None and float(prev["duration"]) >= 1.2 and not prev.get("flash"):
+                cue("hook-riser", start - synth.RISER_LEAD, 0.6)
+        kind = s.get("transition") or "cut"
+        hit = 1.45 if s.get("flash") else 1.0  # the montage is the climax: its cuts hit harder
+        if kind == "whip":
+            cue("hook-whip", start - 0.1, 0.6 * hit)
+        elif kind == "glitch":
+            cue("glitch", start, 0.45 * hit)
+        elif kind == "photo":
+            cue("hook-whip", start, 0.35)
+            cue("hook-shutter", start + PHOTO_LAND, 0.6)
+        elif kind == "split":
+            cue("hook-tear", start, 0.6)
+        elif kind == "punch" and not boom:
+            cue("impact", start, 0.5 * hit)
+        if s.get("text"):
+            cue(f"hook-type-{len(s['text'])}", start + LABEL_AT, 0.5)
+    for a, b in flash_runs:  # the montage climbs into the shot after it
+        after = float(shots[b]["start"]) + float(shots[b]["duration"])
+        cue("hook-riser", after - synth.RISER_LEAD, 0.85)
+        if b + 1 < len(shots) and not shots[b + 1].get("boom"):
+            cue("hook-boom", after, 0.9, full=True)
+    if rehook is not None:
+        cue("hook-boom", rehook, 0.85, full=True)
+    return cues, f.get("hook-drone")
+
+
+def opening_boom(sfx_dir: Path, rel, at: float, volume: float = 0.85) -> dict:
+    """The deep boom under a video's first word (Shorts, Toon, the Shorts Studio, a long video without a hook): the
+    reference's first second. A cue dict (rel: path -> the props' relative path), never halved under the voice."""
+    path = sfx_dir / "hook-boom.wav"
+    if not path.exists():
+        sfx_dir.mkdir(parents=True, exist_ok=True)
+        synth._write(path, synth._sub_boom(), peak=synth.HOOK_SOUNDS["hook-boom"][1])
+    return {"src": rel(path), "at": round(max(0.0, at), 3), "name": "hook-boom", "volume": volume, "full": True}

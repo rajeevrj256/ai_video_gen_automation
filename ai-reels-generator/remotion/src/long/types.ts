@@ -4,6 +4,7 @@
 // the start of the video; file paths are relative to the render's public dir.
 
 import type {CaptionGroup, Cue, Span} from '../types';
+import type {CineTransition, Grade} from '../cine/types';
 
 export type Item = {label: string; text: string; value: number; display: string};
 
@@ -19,6 +20,7 @@ export type VisualType =
   | 'chart' // 3-6 points over time
   | 'footage' // a real stock clip of a place or scene, full screen (src = clip)
   | 'model3d' // a 3D model animated in its own world (src = .glb)
+  | 'picture' // a cinematic AI picture, full frame under the camera move (src = image): the hook's shots
   | 'scene'; // 1-4 icon actors acting the line out
 
 export type Visual = {
@@ -61,13 +63,26 @@ export type Look = {
 export type HookShot = {
   start: number;
   duration: number;
-  beat: 'curiosity' | 'unexpected' | 'tension' | 'problem' | 'gap';
-  text: string;
+  beat: string;
+  text: string; // the cinematic hook: a typed label; the old trailer: a word slammed in
   audio: string | null;
   visual: Visual;
+  // The cinematic hook (cine/): the shot's colour grade and how it comes in.
+  grade?: Grade;
+  transition?: CineTransition;
 };
 
-export type Hook = {duration: number; shots: HookShot[]; music: string | null; style: string};
+export type Hook = {
+  duration: number;
+  shots: HookShot[];
+  music: string | null;
+  style: string;
+  // The cinematic hook (cine/); older videos keep the trailer look (letterbox, rays, slammed words).
+  cine?: boolean;
+  drop?: number; // seconds of silence at the end of the hook, before the story starts
+  drone?: string | null; // the dark bed under the hook, cut where the silence starts
+  subscribe?: boolean; // a subscribe button clicked, silently, in that silence
+};
 
 // One simple shape of a 3D object Claude designed (reelgen/models3d.py Part). Metres, +Y up, front +Z.
 export type Part = {
