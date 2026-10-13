@@ -21,6 +21,7 @@ export type VisualType =
   | 'footage' // a real stock clip of a place or scene, full screen (src = clip)
   | 'model3d' // a 3D model animated in its own world (src = .glb)
   | 'picture' // a cinematic AI picture, full frame under the camera move (src = image): the hook's shots
+  | 'camera' // you on camera: your own take (src = takes/shotNN.mp4) from `from` seconds (reelgen/shoot.py)
   | 'scene'; // 1-4 icon actors acting the line out
 
 export type Visual = {
@@ -37,6 +38,9 @@ export type Visual = {
   camera?: Camera; // how the camera moves during the beat
   impact?: boolean; // the chapter's biggest moment: punch-in, freeze + flash, shake
   impactAt?: number; // seconds into the beat
+  from?: number; // camera: seconds into the take where this line starts
+  until?: number; // camera: seconds of the take that belong to this line (its last frame holds after that)
+  zoom?: number; // camera: 1, or a punch-in on every other take
 };
 
 export type Camera = 'push' | 'pull' | 'pan-left' | 'pan-right' | 'rise' | 'dutch' | 'orbit' | 'still';

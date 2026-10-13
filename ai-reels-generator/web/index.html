@@ -295,6 +295,43 @@
   .histvid { cursor: pointer; padding: 6px 4px; border-radius: 8px; }
   .histvid:hover { background: rgba(255,255,255,0.06); }
   .pill { display: inline-block; padding: 0 7px; border-radius: 9px; background: rgba(255,255,255,0.1); font-size: 12px; }
+  /* Shoot tab (reelgen/shoot.py) and its teleprompter */
+  .sh-shot { border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 10px; background: var(--panel-2); }
+  .sh-shot.ready { border-color: rgba(61,220,132,.55); }
+  .sh-shot .hd { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-weight: 700; flex-wrap: wrap; }
+  .sh-line { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; font-size: 14px; }
+  .sh-tag { flex: none; font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px; cursor: pointer; border: 1px solid var(--line);
+            background: var(--panel); white-space: nowrap; user-select: none; }
+  .sh-tag.cam { background: #3a1416; border-color: #e5484d; }
+  .sh-take { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .sh-bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .sh-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+  label.sh-up { display: inline-block; margin: 0; color: var(--text); }
+  label.sh-up span { display: inline-block; padding: 6px 12px; font-size: 13px; border-radius: 8px; background: var(--accent); color: #111; font-weight: 600; cursor: pointer; }
+  #prompter { position: fixed; inset: 0; z-index: 95; background: #000; color: #fff; display: flex; flex-direction: column; }
+  #prompter[hidden] { display: none; }
+  #prTop { display: flex; gap: 8px; align-items: center; padding: 10px 14px; background: #111; font-size: 14px; flex-wrap: wrap; }
+  #prTop .sp { flex: 1; }
+  #prTop select { width: auto; padding: 6px 8px; font-size: 13px; }
+  #prLive { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: #222; }
+  #prLive.on { background: #0f3d22; color: #3ddc84; }
+  #prMsg { padding: 8px 14px; background: #3a2a00; color: #ffd60a; font-size: 14px; }
+  #prText { flex: 1; overflow-y: auto; padding: 3vh 5vw 70vh; position: relative; }
+  #prInner { max-width: 1150px; margin: 0 auto; font-size: var(--pr-size, 56px); line-height: 1.38; font-weight: 600; }
+  #prInner.mirror { transform: scaleX(-1); }
+  .pr-line { margin: 0 0 .55em; }
+  .pr-line .tag { display: inline-block; font-size: .3em; vertical-align: middle; padding: .25em .7em; border-radius: 999px; margin-right: .6em;
+                  font-weight: 800; letter-spacing: .06em; position: relative; top: -.15em; }
+  .pr-line .tag.cam { background: #e5484d; } .pr-line .tag.broll { background: #2b2b33; color: #aaa; }
+  .pr-w { transition: color .15s, background .15s; }
+  .pr-w.said { color: #5c5c66; }
+  .pr-w.now { color: #111; background: var(--accent); border-radius: .12em; box-shadow: 0 0 0 .07em var(--accent); }
+  #prNext { color: #4d4d57; font-size: .45em; margin-top: 1.4em; }
+  #prDone { position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%); background: #0f3d22; color: #3ddc84; padding: 12px 20px;
+            border-radius: 12px; font-size: 16px; font-weight: 700; z-index: 96; }
+  #prFoot { padding: 8px 14px; color: #77777f; font-size: 12px; background: #111; display: flex; gap: 14px; flex-wrap: wrap; }
+  #prHeard { color: #9a9aa6; }
+  @media (max-width: 400px) { nav button { font-size: 9px; } nav button svg { width: 19px; height: 19px; } }
 </style>
 </head>
 <body>
@@ -322,7 +359,7 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
-        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button>
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button><button class="chip" data-type="shoot">🎥 Filmed by you</button>
       </div></details>
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
@@ -653,6 +690,63 @@
     </div>
   </section>
 
+  <section class="view" id="view-shoot">
+    <div class="panel" id="shHome">
+      <h2>🎬 Shoot: you on camera</h2>
+      <p class="hint">Film yourself with your phone's own camera app while this computer is your teleprompter: it shows each
+        shot and highlights the words as you say them. Claude decides which lines show you and which show B-roll (footage,
+        graphics, AI stills) while your voice goes on. Upload the best take of each shot and the app edits the video: your
+        takes, B-roll, captions, music and the cinematic hook.</p>
+      <div id="shProjects"></div>
+      <button class="primary" id="shNewBtn">＋ New shoot</button>
+    </div>
+    <div class="panel" id="shNew" hidden>
+      <h2>New shoot</h2>
+      <label for="sh-title">Title</label>
+      <input class="edit" id="sh-title" maxlength="100" placeholder="The YouTube title">
+      <label for="sh-desc">Description <span class="hint">(optional, posted as written)</span></label>
+      <textarea class="edit" id="sh-desc" rows="4" placeholder="The YouTube description"></textarea>
+      <label for="sh-hook">Hook <span class="hint">(optional: a few short, punchy lines for the cinematic opening)</span></label>
+      <textarea class="edit" id="sh-hook" rows="4" placeholder="One line per sentence. You film these too; Claude mixes them with B-roll stills, typed labels and booms."></textarea>
+      <label for="sh-script">Script</label>
+      <textarea class="edit" id="sh-script" rows="14" placeholder="What you'll say, paragraph by paragraph.&#10;&#10;Optional chapter headings on their own line:&#10;## How It Started"></textarea>
+      <p class="hint" id="sh-stats"></p>
+      <div class="grid2">
+        <div><label for="sh-format">Video</label><select id="sh-format"><option value="long">🖥 16:9 YouTube (phone sideways)</option>
+          <option value="short">📱 9:16 Short (phone upright)</option></select></div>
+        <div><label for="sh-lang">You speak</label><select id="sh-lang"><option value="english">English</option>
+          <option value="hinglish">Hinglish</option><option value="hindi">Hindi</option></select></div>
+      </div>
+      <label for="sh-screen">Words on screen</label>
+      <select id="sh-screen"><option value="english">English</option><option value="script">Same language as the script</option></select>
+      <div class="row"><button class="primary" id="shCreate">Create and plan the shots</button><button id="shCancel" style="margin-top:16px">Cancel</button></div>
+    </div>
+    <div class="panel" id="shProject" hidden>
+      <div class="row" style="justify-content:space-between;align-items:center"><button class="mini" id="shBack" style="flex:0 0 auto">← All shoots</button>
+        <span class="pill" id="shFmt" style="flex:0 0 auto"></span></div>
+      <h2 id="shTitle" style="margin-top:12px"></h2>
+      <p class="hint" id="shPlan"></p>
+      <button class="primary" id="shPrompt">🎤 Open the teleprompter</button>
+      <details class="used"><summary>📱 How to film and upload</summary>
+        <p class="hint">1. Open the teleprompter <b>on this computer at http://localhost:8000</b> (the microphone only works there or over https)
+          and put the phone right above the text, so you look into the lens while you read.<br>
+          2. Film each shot in the phone's camera app, as many takes as you like. <b>ON CAMERA</b> lines are where the viewer
+          sees you; <b>B-ROLL</b> lines are only heard, so read those freely.<br>
+          3. Upload the best take of each shot: on the phone, open this app over Wi-Fi (Settings shows the address), tap
+          <b>Upload take</b> and pick the video; or AirDrop the videos here and upload them from this computer.<br>
+          Tip: the iPhone's HDR video is converted automatically, but colours are truest with Settings > Camera > Record
+          Video > HDR Video off.</p></details>
+      <div id="shShots"></div>
+      <div class="grid2">
+        <div><label for="sh-cc">Subtitles</label><select id="sh-cc"><option value="false">🚫 Off</option><option value="true">💬 On (your words)</option></select></div>
+        <div></div>
+      </div>
+      <button class="primary" id="shMake">🎞 Make the video</button>
+      <p class="hint" id="shMakeMsg"></p>
+      <button class="mini danger" id="shDelete" style="margin-top:14px">🗑 Delete this shoot</button>
+    </div>
+  </section>
+
   <section class="view" id="view-history">
     <div class="panel">
       <h2>Generation history</h2>
@@ -872,9 +966,29 @@
   <button data-view="toon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a8 7 0 0 1 16 0c0 4-3.6 7-8 7-1.2 0-2.3-.2-3.3-.6L4 19l1-3.5A6.6 6.6 0 0 1 4 11z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/><path d="M9.5 13.5c1.4 1 3.6 1 5 0"/></svg>Toon</button>
   <button data-view="anim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5l2 4M12 5l2 4M17 5l2 4"/><path d="M10 12.5v4l3.5-2z"/></svg>Anim</button>
   <button data-view="story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 9.5v5l4-2.5z"/><path d="M10 18h4"/></svg>Shorts+</button>
+  <button data-view="shoot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="14" height="11" rx="2"/><path d="M16 11l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.5"/></svg>Shoot</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
+
+<div id="prompter" hidden>
+  <div id="prTop">
+    <b id="prShotNo"></b><span id="prLive">⏸ Not listening</span><span class="sp"></span>
+    <button class="mini" id="prPrev" title="Previous shot (←)">◀</button><button class="mini" id="prNextBtn" title="Next shot (→)">▶</button>
+    <button class="mini" id="prAgain" title="Start this shot again (R)">↺ Again</button>
+    <button class="mini" id="prMic" title="Follow my voice on/off (Space)">🎙</button>
+    <select id="prLang" title="The language the speech follower listens for"><option value="en-IN">English (India)</option>
+      <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="hi-IN">Hindi</option></select>
+    <button class="mini" id="prSmaller" title="Smaller text (-)">A−</button><button class="mini" id="prBigger" title="Bigger text (+)">A+</button>
+    <button class="mini" id="prMirror" title="Mirror for a teleprompter glass (M)">⇋</button>
+    <button class="mini" id="prClose" title="Close (Esc)">✕</button>
+  </div>
+  <div id="prMsg" hidden></div>
+  <div id="prText"><div id="prInner"></div></div>
+  <div id="prDone" hidden>✓ Shot done · → next shot · R to read it again</div>
+  <div id="prFoot"><span>Space: follow my voice on/off · → / ← next or previous shot · R again · ↓ ↑ move a line · A auto-scroll · M mirror · Esc close</span>
+    <span id="prHeard"></span></div>
+</div>
 
 <div class="restartbar" id="powerBar" hidden style="position:fixed;top:0;left:0;right:0;z-index:60;background:#e5484d;color:#fff"></div>
 <div class="restartbar" id="restartBar" hidden>🔄 The app's code changed on disk: restart it to use it (until then new buttons answer "Not Found"). <button class="mini" onclick="updateNow()">⬆ Update &amp; restart</button></div>
@@ -956,7 +1070,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => { loadAnimSetup(); loadMusicTests(); }, story: loadStoryView }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => { loadAnimSetup(); loadMusicTests(); }, story: loadStoryView, shoot: loadShootView }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -1007,7 +1121,7 @@ function renderLibrary() {
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : String(+!!v.verified) === libOk))
-    && (!libType || (libType === "ai" ? !["stick", "script", "toon", "anim", "storyshorts"].includes(v.source) : v.source === libType));
+    && (!libType || (libType === "ai" ? !["stick", "script", "toon", "anim", "storyshorts", "shoot"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
@@ -1196,7 +1310,7 @@ async function openVideo(id) {
     ${verdict}
     ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
-    <div ${["stick", "anim", "storyshorts"].includes(v.source) ? "hidden" : ""}>
+    <div ${["stick", "anim", "storyshorts", "shoot"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice &amp; subtitles</h4>
     <p class="hint">Re-make this video with another voice or with subtitles on/off. Same script and footage, no Claude tokens.</p>
     <div class="row">
@@ -1556,6 +1670,8 @@ const STEPS = [
 // A Script Video skips writing, fact-checking and review: its own steps.
 const SCRIPT_STEPS = [["Storyboard", /storyboarding/], ["Voice", /voiceover|Recording the hook/], ["Editing", /Editing/],
   ["Checks", /Verifying/]];
+const SHOOT_STEPS = [["Plan", /planning|Your shoot/], ["Takes", /Cutting your|voice levelled|Recording the hook/], ["Editing", /Editing/],
+  ["Checks", /Verifying/]];
 const STICK_STEPS = [["Writing", /writing the (episode|Short)/], ["Voices", /Recording the voices/], ["Editing", /Editing/],
   ["Checks", /Verifying/]];
 const TOON_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover/],
@@ -1565,7 +1681,7 @@ const ANIM_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-ch
 const STORY_STEPS = [["Script", /writing the story|storyboarding|Your story/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover|Recording voiceover|faster/],
   ["Pictures", /Drawing the pictures|Checking the|Redrawing|stock footage|background photos/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(|Composing the music/],
   ["Editing", /Editing part/], ["Checks", /Verifying part/]];
-const stepsOf = (j) => j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
+const stepsOf = (j) => j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : j.length === "shoot" ? SHOOT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
@@ -1716,7 +1832,7 @@ async function loadUnfinished() {
       <h2>Unfinished videos</h2>
       <p class="hint">These stopped part-way. Resume carries on from the last finished step instead of starting again.</p>
       ${items.map((u) => `<div class="auto"><div class="top"><b>${esc(u.title || u.topic)}</b>
-          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "toon" ? "🎨 Toon" : u.length === "anim" ? "🎬 Animated" : u.length === "storyshorts" ? "📱 Shorts+" : "📱 Short"}</span></div>
+          <span class="pill">${u.length === "long" ? "🎬 Long" : u.length === "medium" ? "🎞️ Medium" : u.length === "script" ? "📜 Your script" : u.length === "shoot" ? "🎥 Filmed" : u.length === "toon" ? "🎨 Toon" : u.length === "anim" ? "🎬 Animated" : u.length === "storyshorts" ? "📱 Shorts+" : "📱 Short"}</span></div>
         <div class="what">Done: ${esc(u.done)} · try ${u.attempt} · ${new Date(u.updated * 1000).toLocaleString()}</div>
         <div class="btns"><button class="primary" data-resume="${esc(u.id)}">↻ Resume</button>
           ${u.length === "anim" && u.quality !== "fast" ? `<button data-resume-fast="${esc(u.id)}" title="The clips still to make come out 640×352, up to 3 s each">⚡ Resume with fast clips</button>` : ""}
@@ -2588,6 +2704,364 @@ $("#pin").onkeydown = (e) => { if (e.key === "Enter") $("#loginBtn").click(); };
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 show("videos");
 poll();
+
+// ---------- Shoot: you on camera, this computer as the teleprompter (reelgen/shoot.py) ----------
+let SH = null, shTimer = null, shUploading = 0;
+const shUrl = (p = "") => "/api/shoot/" + encodeURIComponent(SH.id) + p;
+
+async function loadShootView() {
+  if (SH) return openShoot(SH.id);
+  const list = await api("/api/shoot");
+  const status = (p) => p.video && p.video.status === "done" ? " · ✅ video made" : p.video && p.video.status ? " · " + esc(p.video.status) : "";
+  $("#shProjects").innerHTML = list.length ? list.map((p) => `<div class="auto" data-sh="${esc(p.id)}" style="cursor:pointer">
+      <div class="top"><b>${esc(p.title)}</b><span class="pill">${p.format === "short" ? "📱 9:16" : "🖥 16:9"}</span></div>
+      <div class="what">${p.ready} of ${p.shots} takes uploaded · ${p.plan === "done" ? "planned" : p.plan === "running" ? "Claude is planning…"
+        : p.plan === "failed" ? "planning failed" : "not planned"}${status(p)}</div></div>`).join("")
+    : `<p class="hint">No shoots yet. Start one with your script.</p>`;
+  document.querySelectorAll("[data-sh]").forEach((el) => { el.onclick = () => openShoot(el.dataset.sh); });
+  $("#shHome").hidden = false; $("#shNew").hidden = true; $("#shProject").hidden = true;
+}
+
+$("#shNewBtn").onclick = () => { $("#shHome").hidden = true; $("#shNew").hidden = false; };
+$("#shCancel").onclick = () => { $("#shNew").hidden = true; $("#shHome").hidden = false; };
+$("#sh-script").oninput = () => {
+  const w = $("#sh-script").value.split(/\s+/).filter(Boolean).length;
+  $("#sh-stats").textContent = w ? `${w} words · about ${Math.max(0.1, Math.round(w / 2.5 / 6) / 10)} min of you talking` : "";
+};
+$("#shCreate").onclick = async () => {
+  const body = { title: $("#sh-title").value.trim(), description: $("#sh-desc").value, hook: $("#sh-hook").value,
+    script: $("#sh-script").value, language: $("#sh-lang").value, format: $("#sh-format").value, screen_text: $("#sh-screen").value };
+  if (!body.title || !body.script.trim()) return toast("The title and the script are needed");
+  $("#shCreate").disabled = true;
+  try {
+    const p = await api("/api/shoot", { method: "POST", body: JSON.stringify(body) });
+    ["#sh-title", "#sh-desc", "#sh-hook", "#sh-script"].forEach((s) => { $(s).value = ""; });
+    $("#sh-stats").textContent = "";
+    await openShoot(p.id);
+  } catch (e) { toast(e.message); } finally { $("#shCreate").disabled = false; }
+};
+$("#shBack").onclick = () => { SH = null; clearTimeout(shTimer); loadShootView().catch(() => {}); };
+
+async function openShoot(id) {
+  SH = await api("/api/shoot/" + encodeURIComponent(id));
+  $("#shHome").hidden = true; $("#shNew").hidden = true; $("#shProject").hidden = false;
+  renderShoot();
+}
+
+function shotCard(s) {
+  const t = s.take;
+  const rows = s.lines.map((k, j) => {
+    const l = SH.lines[k], r = t && t.lines ? t.lines[j] : null;
+    const tag = l.camera === true ? "🎥 You" : l.camera === false ? "🎞 B-roll" : "…";
+    return `<div class="sh-line"><span class="sh-tag ${l.camera ? "cam" : ""}" data-line="${k}" title="Tap to switch: you on camera, or B-roll">${tag}</span>
+      <span>${esc(l.text)}${r && r.missing && r.missing.length ? `<br><span class="hint">Not heard: ${esc(r.missing.join(", "))}</span>` : ""}</span></div>`;
+  }).join("");
+  let take;
+  if (!t) take = "No take yet.";
+  else if (t.status === "processing") take = "⏳ Preparing your take (a copy for the edit, the sound, the words)…";
+  else if (t.status === "failed") take = `⚠️ ${esc(t.error || "Couldn't use this file")}`;
+  else take = (t.verdict === "good" ? "✅ Good take" : t.verdict === "check words" ? "⚠️ Some words weren't heard (see the lines)" : "✓ Ready")
+    + ` · ${t.duration}s` + (t.matched != null ? ` · ${Math.round(t.matched * 100)}% of the words heard` : "")
+    + (t.notes || []).map((n) => `<br>ℹ️ ${esc(n)}`).join("");
+  return `<div class="sh-shot ${t && t.status === "ready" ? "ready" : ""}">
+    <div class="hd"><span>Shot ${s.n}${s.hook ? " · ⚡ Hook" : ""}</span><span style="display:flex;gap:6px;align-items:center">
+      <button class="mini" data-prompt="${s.n}">🎤 Prompt</button>
+      <label class="sh-up"><input type="file" accept="video/*,.mov,.mp4,.m4v" data-up="${s.n}" hidden><span>${t ? "⬆ Replace" : "⬆ Upload take"}</span></label>
+    </span></div>
+    ${rows}
+    <div class="sh-take">${take}</div>
+    <div class="sh-bar" data-prog="${s.n}" hidden><i></i></div>
+    ${t && t.status === "ready" ? `<details class="used"><summary>▶ Watch the take</summary>
+      <video controls playsinline preload="none" src="${shUrl(`/shots/${s.n}/take.mp4`)}?v=${encodeURIComponent(t.uploaded || t.file || "")}" style="width:100%;max-height:60vh;background:#000;margin-top:8px"></video>
+      <button class="mini danger" data-del="${s.n}">Remove this take</button></details>` : ""}
+  </div>`;
+}
+
+function renderShoot() {
+  const p = SH, plan = p.plan || {};
+  $("#shTitle").textContent = p.title;
+  $("#shFmt").textContent = p.format === "short" ? "📱 9:16 Short · film upright" : "🖥 16:9 video · film sideways";
+  const cams = p.lines.filter((l) => l.camera).length;
+  $("#shPlan").innerHTML = plan.status === "done"
+    ? `✅ Claude planned it: <b>${cams}</b> of ${p.lines.length} lines show you; the others show B-roll while your voice goes on. Tap a tag to switch a line.`
+    : plan.status === "running" ? "⏳ Claude is planning which lines show you and which show B-roll (a minute or two). You can start filming already: you read every line either way."
+    : plan.status === "failed" ? `⚠️ Planning failed: ${esc(plan.error)} <button class="mini" id="shReplan">Try again</button>`
+    : `<button class="mini" id="shReplan">Plan the shots</button>`;
+  if ($("#shReplan")) $("#shReplan").onclick = async () => { try { SH = await api(shUrl("/plan"), { method: "POST" }); renderShoot(); } catch (e) { toast(e.message); } };
+  $("#shShots").innerHTML = p.shots.map(shotCard).join("");
+  document.querySelectorAll("#shShots [data-line]").forEach((el) => {
+    el.onclick = async () => {
+      const k = +el.dataset.line;
+      try { SH = await api(shUrl(`/lines/${k}/camera?on=${!SH.lines[k].camera}`), { method: "POST" }); renderShoot(); } catch (e) { toast(e.message); }
+    };
+  });
+  document.querySelectorAll("#shShots [data-prompt]").forEach((el) => { el.onclick = () => openPrompter(+el.dataset.prompt); });
+  document.querySelectorAll("#shShots [data-up]").forEach((el) => { el.onchange = () => { if (el.files[0]) uploadTake(+el.dataset.up, el.files[0]); }; });
+  document.querySelectorAll("#shShots [data-del]").forEach((el) => {
+    el.onclick = async () => {
+      if (!confirm(`Remove the take of shot ${el.dataset.del}?`)) return;
+      try { SH = await api(shUrl(`/shots/${el.dataset.del}/take`), { method: "DELETE" }); renderShoot(); } catch (e) { toast(e.message); }
+    };
+  });
+  const ready = p.shots.filter((s) => s.take && s.take.status === "ready").length;
+  const v = p.video || {};
+  $("#shMake").disabled = ready < p.shots.length || plan.status === "running";
+  $("#shMakeMsg").textContent = v.status === "done" ? "✅ The video is in your library (Videos tab)."
+    : ["queued", "making"].includes(v.status) ? "⏳ Being made: follow it on the Create tab."
+    : ready < p.shots.length ? `${ready} of ${p.shots.length} shots have a take; upload the rest to make the video.`
+    : plan.status === "running" ? "Waiting for Claude's plan…" : "Every shot has a take: ready to edit.";
+  clearTimeout(shTimer);
+  const busy = plan.status === "running" || p.shots.some((s) => s.take && s.take.status === "processing");
+  if (busy) shTimer = setTimeout(() => { if (current === "shoot" && SH && SH.id === p.id && !shUploading) openShoot(p.id).catch(() => {}); }, 2500);
+}
+
+function uploadTake(n, file) {
+  const bar = document.querySelector(`#shShots [data-prog="${n}"]`);
+  bar.hidden = false;
+  shUploading++;
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", shUrl(`/shots/${n}/take?name=` + encodeURIComponent(file.name || "take.mov")));
+  xhr.withCredentials = true;
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) bar.querySelector("i").style.width = (100 * e.loaded / e.total).toFixed(1) + "%"; };
+  const done = () => { shUploading = Math.max(0, shUploading - 1); };
+  xhr.onload = () => {
+    done();
+    if (xhr.status >= 200 && xhr.status < 300) { toast(`Shot ${n} uploaded: preparing it`); openShoot(SH.id).catch(() => {}); return; }
+    let m = xhr.statusText; try { m = JSON.parse(xhr.responseText).detail || m; } catch (e) {}
+    toast(m || "Upload failed"); bar.hidden = true;
+  };
+  xhr.onerror = () => { done(); toast("The upload was cut off: try again"); bar.hidden = true; };
+  xhr.send(file);
+}
+
+$("#shMake").onclick = async () => {
+  try {
+    await api(shUrl("/make"), { method: "POST", body: JSON.stringify({ captions: $("#sh-cc").value === "true" }) });
+    toast("Making the video: follow it on the Create tab");
+    show("create");
+  } catch (e) { toast(e.message); }
+};
+$("#shDelete").onclick = async () => {
+  if (!confirm(`Delete the shoot "${SH.title}" and its uploaded takes? Videos already made stay in your library.`)) return;
+  try { await api(shUrl(), { method: "DELETE" }); SH = null; loadShootView(); } catch (e) { toast(e.message); }
+};
+$("#shPrompt").onclick = () => {
+  const first = SH.shots.find((s) => !s.take) || SH.shots[0];
+  openPrompter(first.n);
+};
+
+// ---- the teleprompter: follows your voice through the shot (the browser's speech recognition on this computer) ----
+// Matching is loose on purpose: each word is cut to its skeleton (first letter + consonants, Devanagari read as Roman
+// letters), so 'jaante', 'jante' and 'जानते' are the same word, and an ad-lib or a misheard word never loses the place.
+// Keep `skel` in step with reelgen/shoot.py `skeleton` (which matches your uploaded takes the same way).
+const DEVA = {};
+[..."कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह"].forEach((c, i) => { DEVA[c] = ["k", "kh", "g", "gh", "n", "ch", "chh", "j", "jh", "n", "t", "th", "d", "dh", "n", "t", "th", "d", "dh", "n", "p", "ph", "b", "bh", "m", "y", "r", "l", "v", "sh", "sh", "s", "h"][i]; });
+[..."अआइईउऊएऐओऔऋ"].forEach((c, i) => { DEVA[c] = ["a", "aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ri"][i]; });
+[..."ािीुूेैोौृ"].forEach((c, i) => { DEVA[c] = ["aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ri"][i]; });
+Object.assign(DEVA, { "ं": "n", "ँ": "n", "ः": "h", "्": "", "़": "", "ॉ": "o", "ॅ": "e" });
+[..."०१२३४५६७८९"].forEach((c, i) => { DEVA[c] = String(i); });
+function skel(word) {
+  let w = [...String(word).toLowerCase()].map((c) => DEVA[c] ?? c).join("");
+  w = w.replace(/['’]s\b/g, "").replace(/[^a-z0-9]/g, "");
+  if (!w) return "";
+  w = w[0] + w.slice(1).replace(/[aeiouhy]/g, "");
+  w = w.replace(/w/g, "v").replace(/z/g, "j").replace(/q/g, "k");
+  return w.replace(/(.)\1+/g, "$1");
+}
+const oneEdit = (a, b) => { // at most one letter changed, added or dropped
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, diff = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diff > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return diff + (a.length - i) + (b.length - j) <= 1;
+};
+const near = (a, b) => !!a && !!b && (a === b || (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a) || oneEdit(a, b))));
+const hears = (h, word) => word.sk.some((s) => near(h, s));
+
+const PR = { si: 0, words: [], lines: [], pos: -1, listening: false, gen: 0, rec: null, auto: null, wpm: 150 };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+try { Object.assign(PR, JSON.parse(localStorage.getItem("prompter") || "{}")); } catch (e) {}
+const prSave = () => { try { localStorage.setItem("prompter", JSON.stringify({ size: PR.size, mirror: PR.mirror, lang: PR.lang, wpm: PR.wpm })); } catch (e) {} };
+
+function openPrompter(n) {
+  PR.si = Math.max(0, SH.shots.findIndex((s) => s.n === n));
+  $("#prompter").hidden = false;
+  document.body.style.overflow = "hidden";
+  $("#prInner").style.setProperty("--pr-size", (PR.size || 56) + "px");
+  $("#prInner").classList.toggle("mirror", !!PR.mirror);
+  $("#prLang").value = PR.lang || (SH.language === "hindi" ? "hi-IN" : "en-IN");
+  prShot();
+  const msg = !SR ? "This browser can't follow your voice: open the app in Chrome or Edge. Meanwhile ↓ moves on a line and A scrolls by itself."
+    : !window.isSecureContext ? "To follow your voice, open this page on this computer as http://localhost:8000 (browsers allow the microphone only there or over https). Meanwhile ↓ moves on a line and A scrolls by itself."
+    : "";
+  $("#prMsg").hidden = !msg; $("#prMsg").textContent = msg;
+  if (!msg) prListen(true);
+  if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+}
+
+function closePrompter() {
+  prListen(false); prAuto(false);
+  $("#prompter").hidden = true;
+  document.body.style.overflow = "";
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (SH) openShoot(SH.id).catch(() => {});
+}
+
+function prShot() {
+  const s = SH.shots[PR.si];
+  PR.words = []; PR.lines = [];
+  let html = "";
+  s.lines.forEach((k) => {
+    const l = SH.lines[k], first = PR.words.length;
+    html += `<div class="pr-line">` + (l.camera == null ? "" : `<span class="tag ${l.camera ? "cam" : "broll"}">${l.camera ? "ON CAMERA" : "B-ROLL"}</span>`);
+    l.text.split(/\s+/).filter(Boolean).forEach((w) => {
+      html += `<span class="pr-w" data-i="${PR.words.length}">${esc(w)}</span> `;
+      PR.words.push({ w, sk: [skel(w), ...w.split(/[-–—/]/).map(skel)].filter(Boolean) }); // 'blue-green' is heard as two words
+    });
+    html += `</div>`;
+    PR.lines.push([first, PR.words.length - 1]);
+  });
+  const next = SH.shots[PR.si + 1];
+  html += next ? `<div id="prNext">Next · shot ${next.n}: ${esc(SH.lines[next.lines[0]].text.split(/\s+/).slice(0, 12).join(" "))}…</div>` : `<div id="prNext">Last shot.</div>`;
+  $("#prInner").innerHTML = html;
+  $("#prShotNo").textContent = `Shot ${s.n} of ${SH.shots.length}${s.hook ? " · ⚡ Hook" : ""}${s.take ? " · ✓ take uploaded" : ""}`;
+  PR.pos = -1;
+  $("#prHeard").textContent = "";
+  $("#prText").scrollTop = 0;
+  prPaint();
+  if (PR.listening) prRestart();
+}
+
+function prPaint() {
+  document.querySelectorAll("#prInner .pr-w").forEach((el) => {
+    const i = +el.dataset.i;
+    el.className = "pr-w" + (i <= PR.pos ? " said" : i === PR.pos + 1 ? " now" : "");
+  });
+  const now = document.querySelector(`#prInner .pr-w[data-i="${Math.min(PR.pos + 1, PR.words.length - 1)}"]`);
+  if (now) { // keep the line being read about a quarter of the way down, near the camera
+    const box = $("#prText");
+    const y = box.scrollTop + now.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight * 0.22;
+    if (Math.abs(y - box.scrollTop) > 24) box.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+  }
+  $("#prDone").hidden = PR.pos < PR.words.length - 1;
+}
+
+// The script word the newest heard words end on: searched a little ahead of where you are, the newest heard word must
+// match it, and enough of the words before it must too (in order, skipping ad-libs).
+function prBestEnd(heard, far = false) {
+  let best = -1, bestScore = 0;
+  const last = heard[heard.length - 1];
+  for (let j = PR.pos + 1; j <= Math.min(PR.words.length - 1, far ? PR.words.length - 1 : PR.pos + 18); j++) {
+    if (!hears(last, PR.words[j])) continue;
+    let score = 2, s = j - 1;
+    for (let h = heard.length - 2; h >= Math.max(0, heard.length - 6) && s >= 0; h--) {
+      for (let d = 0; d <= 2 && s - d >= 0; d++) {
+        if (hears(heard[h], PR.words[s - d])) { score++; s = s - d - 1; break; }
+      }
+    }
+    const need = far ? 4 : j - PR.pos <= 3 ? 2 : PR.words[j].sk[0].length >= 4 ? 3 : 4; // a far jump needs more agreement
+    if (score >= need && score > bestScore) { best = j; bestScore = score; }
+  }
+  return best;
+}
+
+function prHeard(text) {
+  const heard = text.split(/\s+/).map(skel).filter(Boolean).slice(-8);
+  $("#prHeard").textContent = "Heard: " + text.split(/\s+/).slice(-8).join(" ");
+  if (!heard.length) return;
+  let j = prBestEnd(heard);
+  if (j < 0 && heard.length > 1) j = prBestEnd(heard.slice(0, -1)); // the newest word may still be half-heard
+  if (j < 0 && heard.length >= 5) j = prBestEnd(heard, true); // you read on while it lagged: catch up on 4 words in order
+  if (j > PR.pos) { PR.pos = j; prPaint(); }
+}
+
+function prStartRec() {
+  if (!SR || !PR.listening) return;
+  const r = new SR(), gen = ++PR.gen;
+  r.lang = $("#prLang").value; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+  r.onresult = (e) => {
+    if (gen !== PR.gen) return;
+    let text = "";
+    for (let i = 0; i < e.results.length; i++) text += " " + e.results[i][0].transcript;
+    prHeard(text);
+  };
+  r.onerror = (e) => {
+    if (gen !== PR.gen) return;
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      PR.listening = false; prLive();
+      $("#prMsg").hidden = false;
+      $("#prMsg").textContent = "The microphone was blocked: allow it for this page (the icon in the address bar), then press Space.";
+    }
+  };
+  r.onend = () => { if (gen === PR.gen && PR.listening) setTimeout(prStartRec, 120); }; // Chrome stops after a pause: carry on
+  PR.rec = r;
+  try { r.start(); } catch (e) { setTimeout(prStartRec, 400); }
+}
+function prRestart() { // a fresh session, so what was heard before doesn't count for this shot
+  PR.gen++;
+  if (PR.rec) { try { PR.rec.abort(); } catch (e) {} }
+  setTimeout(prStartRec, 150);
+}
+function prLive() {
+  $("#prLive").textContent = PR.listening ? "🎙 Following your voice" : PR.auto ? `⏬ Auto-scroll ${PR.wpm} words/min` : "⏸ Not listening";
+  $("#prLive").classList.toggle("on", PR.listening || !!PR.auto);
+}
+function prListen(on) {
+  if (on && (!SR || !window.isSecureContext)) { prAuto(!PR.auto); return; }
+  PR.listening = on;
+  if (on) { prAuto(false); prRestart(); } else { PR.gen++; if (PR.rec) { try { PR.rec.abort(); } catch (e) {} } }
+  prLive();
+}
+function prAuto(on) { // no microphone: move on a word at a time at your reading speed
+  clearInterval(PR.auto); PR.auto = null;
+  if (on) {
+    if (PR.listening) prListen(false);
+    PR.auto = setInterval(() => { if (PR.pos < PR.words.length - 1) { PR.pos++; prPaint(); } }, 60000 / PR.wpm);
+  }
+  prLive();
+}
+function prLine(step) {
+  const k = PR.lines.findIndex(([a, b]) => PR.pos + 1 >= a && PR.pos + 1 <= b);
+  const to = Math.max(0, Math.min(PR.lines.length - 1, (k < 0 ? PR.lines.length - 1 : k) + step));
+  PR.pos = step > 0 && k === PR.lines.length - 1 ? PR.words.length - 1 : PR.lines[to][0] - 1;
+  prPaint();
+}
+function prGo(step) {
+  const to = PR.si + step;
+  if (to < 0 || to >= SH.shots.length) return toast(to < 0 ? "This is the first shot" : "That was the last shot");
+  PR.si = to; prShot();
+}
+
+$("#prClose").onclick = closePrompter;
+$("#prPrev").onclick = () => prGo(-1);
+$("#prNextBtn").onclick = () => prGo(1);
+$("#prAgain").onclick = () => prShot();
+$("#prMic").onclick = () => prListen(!PR.listening);
+$("#prLang").onchange = () => { PR.lang = $("#prLang").value; prSave(); if (PR.listening) prRestart(); };
+const prSize = (d) => { PR.size = Math.max(28, Math.min(110, (PR.size || 56) + d)); $("#prInner").style.setProperty("--pr-size", PR.size + "px"); prSave(); prPaint(); };
+$("#prSmaller").onclick = () => prSize(-6);
+$("#prBigger").onclick = () => prSize(6);
+$("#prMirror").onclick = () => { PR.mirror = !PR.mirror; $("#prInner").classList.toggle("mirror", PR.mirror); prSave(); };
+document.addEventListener("keydown", (e) => {
+  if ($("#prompter").hidden || e.target.closest("select")) return;
+  const k = e.key;
+  if (k === " ") { e.preventDefault(); prListen(!PR.listening); }
+  else if (k === "ArrowRight" || k === "PageDown") { e.preventDefault(); prGo(1); }
+  else if (k === "ArrowLeft" || k === "PageUp") { e.preventDefault(); prGo(-1); }
+  else if (k === "ArrowDown") { e.preventDefault(); prLine(1); }
+  else if (k === "ArrowUp") { e.preventDefault(); prLine(-1); }
+  else if (k === "r" || k === "R") prShot();
+  else if (k === "m" || k === "M") $("#prMirror").click();
+  else if (k === "a" || k === "A") prAuto(!PR.auto);
+  else if (k === "+" || k === "=") prSize(6);
+  else if (k === "-") prSize(-6);
+  else if (k === "[") { PR.wpm = Math.max(60, PR.wpm - 10); prSave(); if (PR.auto) prAuto(true); }
+  else if (k === "]") { PR.wpm = Math.min(260, PR.wpm + 10); prSave(); if (PR.auto) prAuto(true); }
+  else if (k === "Escape") closePrompter();
+});
 </script>
 </body>
 </html>

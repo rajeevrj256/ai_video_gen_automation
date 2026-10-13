@@ -97,6 +97,22 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
   installed, the hook's shots are cinematic AI stills (Settings > Hook pictures), checked by Claude before use; without
   it, they are motion graphics. Shorts open on a deep boom under the first word.
 
+## Shoot: you on camera (tab "Shoot")
+
+Film yourself with your phone's own camera app while this computer is your teleprompter.
+
+1. **New shoot**: paste your script (and a hook if you want a cinematic opening), pick 16:9 or 9:16 and your
+   language. The script is cut into short shots of one or two lines; Claude decides which lines show you and which
+   show B-roll (footage, graphics, AI stills) while your voice goes on. Tap a line's tag to change it.
+2. **Teleprompter**: open it on this computer at `http://localhost:8000` (browsers only allow the microphone there or
+   over https) and put the phone right above the text. It highlights each word as you say it, keeps your line near
+   the camera, and survives ad-libs and misheard words. Space turns listening on/off, → / ← move between shots,
+   R starts a shot again, M mirrors for a teleprompter glass.
+3. **Upload the best take of each shot**, from the phone over Wi-Fi or from this computer. Each take is checked:
+   how much of the script was heard, which words were missed, HDR and orientation.
+4. **Make the video**: your takes are the voice and the on-camera picture, with a punch-in on every other take; the
+   other lines get their B-roll, plus captions from your words, music, sound design and the cinematic hook.
+
 ## Shorts Studio (tab "Shorts+")
 
 Full-screen 9:16 Shorts, one or a series of parts, each at most 30 s (45 or 60 if you pick): part 1 hooks and ends on a
@@ -147,6 +163,7 @@ reelgen/
   video.py          timeline, then the Remotion render (moviepy if Node is missing)
   sfx.py            whoosh and pop sound effects, made on the fly (and the hook's boom, riser, drone)
   cinehook.py       the cinematic hook: rules, timing, AI stills, sound design, silence
+  shoot.py          the Shoot tab: shots, Claude's on-camera plan, your takes, the edit
   notifier.py       Telegram + GitHub run summary
   pipeline.py       runs all steps with verify-and-retry
 remotion/           the video edit (React + Remotion), rendered by video.py

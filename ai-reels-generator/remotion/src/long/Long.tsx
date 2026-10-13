@@ -1,5 +1,5 @@
 import React from 'react';
-import {Easing, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Freeze, Img, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Audio} from '../Audio';
 import {COLORS, FONT, clamp, exitProgress, useFonts} from '../theme';
 import {Layer} from '../Layer';
@@ -31,6 +31,7 @@ export const paletteFor = (chapter: number, look?: Look) => worldFor(lookOf(look
 const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean; look: Look; chapter: number; seed: number; plate?: string | null}> = ({v, frames, accent, roomy, look, chapter, seed, plate}) => {
   if (v.type === 'footage' && v.src) return <Footage v={v} frames={frames} accent={accent} />;
   if (v.type === 'model3d' && (v.src || v.parts?.length)) return <Model3D v={v} frames={frames} accent={accent} />;
+  if (v.type === 'camera' && v.src) return <CameraTake v={v} />;
   if (v.type === 'picture' && v.src) {
     return <Img src={staticFile(v.src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'}} />;
   }
@@ -75,9 +76,11 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         const next = beats[i + 1];
         const frames = Math.max(1, (next && next.chapter === b.chapter ? f(next.start) : f(b.start + b.duration)) - from);
         const accent = paletteFor(b.chapter, look).accent;
+        // You on camera: always a hard cut (and none at all between two lines of the same take, which plays on).
+        const onCamera = b.visual.type === 'camera';
         return (
           <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${b.visual.camera ?? 'push'})`} from={from} durationInFrames={frames}>
-            <Shot v={b.visual} frames={frames} transition={look.transition}>
+            <Shot v={b.visual} frames={frames} transition={onCamera ? 'cut' : look.transition}>
               <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
             </Shot>
           </Sequence>
@@ -169,6 +172,22 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
             ))
         : null}
     </Layer>
+  );
+};
+
+// You on camera (a Shoot video, reelgen/shoot.py): your take from where this line starts; past the line's own part
+// of the take (a hook shot holds a breath longer) its last frame holds. Takes are 30 fps copies made for the edit.
+const CameraTake: React.FC<{v: Visual}> = ({v}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const until = v.until ? Math.max(0, Math.round(v.until * fps) - 1) : Infinity;
+  return (
+    <div style={{position: 'absolute', inset: 0, background: '#000', overflow: 'hidden'}}>
+      <Freeze frame={Number.isFinite(until) ? until : 0} active={frame > until}>
+        <OffthreadVideo src={staticFile(v.src!)} muted trimBefore={Math.round((v.from ?? 0) * fps)}
+          style={{width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${v.zoom ?? 1})`}} />
+      </Freeze>
+    </div>
   );
 };
 

@@ -60,10 +60,10 @@ class UpdateBody(BaseModel):
 
 def job_label(job: dict) -> str:
     inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input")
-           or job.get("story_input") or {})
+           or job.get("story_input") or job.get("shoot_input") or {})
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
-            else "Shorts Studio" if job.get("story_input")
+            else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
@@ -192,6 +192,9 @@ class JobManager:
                     elif job.get("script_input"):  # stopped before its storyboard was saved: start it again
                         from .scriptvideo import ScriptInput, run_script_job
                         reports += run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
+                    elif job.get("shoot_input"):  # stopped before its folder was made: start it again
+                        from .shoot import run_shoot_job
+                        reports += run_shoot_job(cfg, job["shoot_input"]["id"], progress)
                     elif job.get("length") in ("long", "medium"):
                         from .longform import run_long_batch
                         reports += run_long_batch(_long_cfg(cfg, job), fresh, job["topic"], progress)
@@ -203,6 +206,9 @@ class JobManager:
             elif job.get("script_input"):  # Script Video: the user's own script through the long pipeline
                 from .scriptvideo import ScriptInput, run_script_job
                 reports = run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
+            elif job.get("shoot_input"):  # Shoot: the user's own filmed takes through the long pipeline
+                from .shoot import run_shoot_job
+                reports = run_shoot_job(cfg, job["shoot_input"]["id"], progress)
             elif job.get("length") in ("long", "medium"):
                 from .longform import run_long_batch
                 reports = run_long_batch(_long_cfg(cfg, job), job["count"], job["topic"], progress)
@@ -495,6 +501,21 @@ class AnimRequestBody(BaseModel):
     captions: bool = False
     watermark: str = ""
     count: int = 1
+
+
+class ShootBody(BaseModel):
+    """A Shoot project (reelgen/shoot.py): your script, filmed by you shot by shot."""
+    title: str
+    description: str = ""
+    hook: str = ""
+    script: str
+    language: str = "english"  # english | hinglish | hindi (speech following and transcription)
+    format: str = "long"  # long (16:9) | short (9:16)
+    screen_text: str = "english"
+
+
+class ShootMakeBody(BaseModel):
+    captions: bool | None = None
 
 
 class ScriptVideoRequest(BaseModel):
@@ -1203,6 +1224,120 @@ def create_app(cfg: Config) -> FastAPI:
                  "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
                            captions=body.captions)
+
+    # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------
+
+    def _shoot(pid: str) -> dict:
+        from . import shoot
+
+        try:
+            return shoot.load(cfg, pid)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(404, "Shoot not found")
+
+    @app.get("/api/shoot")
+    def shoot_list():
+        from . import shoot
+
+        return shoot.projects(cfg)
+
+    @app.post("/api/shoot")
+    def shoot_new(body: ShootBody):
+        from . import shoot
+
+        try:
+            proj = shoot.new_project(cfg, body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        shoot.plan_in_background(load_settings(Config()), proj["id"])
+        return shoot.load(cfg, proj["id"])
+
+    @app.get("/api/shoot/{pid}")
+    def shoot_get(pid: str):
+        return _shoot(pid)
+
+    @app.post("/api/shoot/{pid}/plan")
+    def shoot_plan(pid: str):
+        from . import shoot
+
+        if _shoot(pid)["plan"]["status"] == "running":
+            raise HTTPException(409, "Claude is planning it already")
+        shoot.update(cfg, pid, lambda p: p["plan"].update(status="running", error=""))
+        shoot.plan_in_background(load_settings(Config()), pid)
+        return shoot.load(cfg, pid)
+
+    @app.post("/api/shoot/{pid}/lines/{k}/camera")
+    def shoot_camera(pid: str, k: int, on: bool = True):
+        """You decide a line yourself: on camera or B-roll."""
+        from . import shoot
+
+        proj = _shoot(pid)
+        if not 0 <= k < len(proj["lines"]):
+            raise HTTPException(404, "No such line")
+        return shoot.update(cfg, pid, lambda p: p["lines"][k].update(camera=bool(on)))
+
+    @app.delete("/api/shoot/{pid}")
+    def shoot_delete(pid: str):
+        from . import shoot
+
+        _shoot(pid)
+        shoot.delete(cfg, pid)
+        return {"ok": True}
+
+    @app.post("/api/shoot/{pid}/shots/{n}/take")
+    async def shoot_take(pid: str, n: int, request: Request, name: str = "take.mov"):
+        """The best take of a shot, as the raw request body (streamed to disk: phone videos are big)."""
+        from . import shoot
+
+        _shoot(pid)
+        try:
+            target = shoot.take_target(cfg, pid, n, name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        size = 0
+        with open(target, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                size += len(chunk)
+        if size < 10_000:
+            target.unlink(missing_ok=True)
+            raise HTTPException(400, "The file is empty or didn't finish uploading")
+        shoot.update(cfg, pid, lambda p: next(s for s in p["shots"] if s["n"] == n).update(
+            take={"status": "processing", "file": target.name}))
+        shoot.process_in_background(load_settings(Config()), pid, n, target)
+        return {"ok": True, "size": size}
+
+    @app.delete("/api/shoot/{pid}/shots/{n}/take")
+    def shoot_take_delete(pid: str, n: int):
+        from . import shoot
+
+        _shoot(pid)
+        shoot.remove_take(cfg, pid, n)
+        return shoot.load(cfg, pid)
+
+    @app.get("/api/shoot/{pid}/shots/{n}/take.mp4")
+    def shoot_take_file(pid: str, n: int):
+        from . import shoot
+
+        _shoot(pid)
+        path = shoot.take_paths(cfg, pid, n)["proxy"]
+        if not path.is_file():
+            raise HTTPException(404, "Not ready yet")
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.post("/api/shoot/{pid}/make")
+    def shoot_make(pid: str, body: ShootMakeBody):
+        from . import shoot
+
+        proj = _shoot(pid)
+        missing = shoot.missing_takes(proj)
+        if missing:
+            raise HTTPException(400, f"Upload a take of shot{'s' if len(missing) > 1 else ''} {', '.join(map(str, missing))} first.")
+        if proj["plan"]["status"] == "running":
+            raise HTTPException(409, "Claude is still planning which lines show you: a minute more")
+        job = jobs.submit(proj["title"], 1, "shoot", None, "shoot", shoot_input={"id": pid}, captions=body.captions)
+        shoot.update(cfg, pid, lambda p: p.update(video={"status": "queued", "job": job["id"]}))
+        return job
 
     @app.get("/api/jobs")
     def list_jobs():

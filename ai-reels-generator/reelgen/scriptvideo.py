@@ -46,7 +46,7 @@ class ScriptInput:
 
 # ---------- cutting the text into lines (code, so the words never change) ----------
 
-_SENTENCE = re.compile(r"(?<=[.!?…])[\"'”’)\]]*\s+")
+_SENTENCE = re.compile(r"(?<=[.!?…।])[\"'”’)\]]*\s+")
 _HEADING = re.compile(r"^\s*(#+\s*|(chapter|part)\s+\w+\s*[:.\-–—]?\s*)", re.I)
 
 
@@ -88,7 +88,7 @@ def _is_heading(line: str) -> bool:
     line = line.strip()
     if _HEADING.match(line):
         return True
-    return 0 < _words(line) <= 8 and not re.search(r"[.!?,;\"”…]$", line)
+    return 0 < _words(line) <= 8 and not re.search(r"[.!?,;\"”…।]$", line)
 
 
 def parse_script(text: str) -> tuple[list[str], list[tuple[int, str]]]:
@@ -222,7 +222,8 @@ def _numbered(hook: list[str], lines: list[str], marked: list[tuple[int, str]]) 
 
 
 def storyboard(cfg: Config, given: ScriptInput, hook: list[str], lines: list[str],
-               marked: list[tuple[int, str]]) -> Storyboard:
+               marked: list[tuple[int, str]], schema: type[Storyboard] = Storyboard, extra: str = "") -> Storyboard:
+    """`schema`, `extra`: a storyboard with more to decide (the Shoot tab's on-camera lines) and its own rules."""
     english = given.screen_text != "script"
     prompt = (f"Title: {given.title}\nDescription (context only): {given.description}\n\n"
               + _numbered(hook, lines, marked)
@@ -233,7 +234,7 @@ def storyboard(cfg: Config, given: ScriptInput, hook: list[str], lines: list[str
                 f"{len(lines)} beats, one per script line."
               + (" Every word on screen in English, every chapter with its English card_title; the narration stays "
                  "as written." if english else ""))
-    return ask(cfg.ai_backend, cfg.claude_model, _board_system(cfg, english), prompt, Storyboard, allow_web=False,
+    return ask(cfg.ai_backend, cfg.claude_model, _board_system(cfg, english) + extra, prompt, schema, allow_web=False,
                effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
 
 

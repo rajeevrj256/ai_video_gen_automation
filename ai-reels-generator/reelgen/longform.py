@@ -652,12 +652,16 @@ def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int
 
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                voices: list[list[SceneAudio]] | None = None, look: dict | None = None,
-               hook_seconds: tuple[float, float] = HOOK_SECONDS, voice_opts: dict | None = None) -> dict:
+               hook_seconds: tuple[float, float] = HOOK_SECONDS, voice_opts: dict | None = None,
+               hook_voices: list | None = None, overrides: dict | None = None) -> dict:
     """Record the voice (one take per chapter) and lay out the hook and every beat on the timeline,
     with this video's look, music, ambience and sound design.
     `voices`: recordings to use instead (the user's own voiceover), one list per chapter.
     `look`: the look to keep (a re-make); a new video gets a fresh one.
-    `voice_opts`: extra `synthesize_scenes` options for the chapters (the Shorts Studio's delivery and Sarvam speed)."""
+    `voice_opts`: extra `synthesize_scenes` options for the chapters (the Shorts Studio's delivery and Sarvam speed).
+    `hook_voices`: recordings for the hook's shots instead (None for a silent shot); `overrides`: visuals that replace
+    the script's, by (chapter, beat) or ('hook', shot) (a Shoot video's on-camera lines: shoot.voices_for)."""
+    overrides = overrides or {}
     seed = _seed(script)
     new_look = look is None
     look = look or variety.pick_look(cfg, seed)
@@ -676,16 +680,21 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     if script.hook:
         progress("Recording the hook")
         said = [h.line.strip() for h in script.hook]
-        takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook",
-                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate, delivery="hook") if any(said) else [])
-        audios = [next(takes) if x else None for x in said]
+        if hook_voices is not None:
+            audios = list(hook_voices)
+        else:
+            takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook", cfg.tts_engine,
+                                           cfg.kokoro_voice, cfg.voice_rate, delivery="hook") if any(said) else [])
+            audios = [next(takes) if x else None for x in said]
         lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
                                   hook_seconds)
-        pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)}, work, seed,
-                                 script.youtube_title, progress)
+        pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook) if ("hook", i) not in overrides},
+                                 work, seed, script.youtube_title, progress)
         t = 0.0
         for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
-            if i in pics:  # the AI film still, under the shot's camera move
+            if ("hook", i) in overrides:  # you, on camera (a Shoot video)
+                visual = dict(overrides[("hook", i)])
+            elif i in pics:  # the AI film still, under the shot's camera move
                 visual = {"type": "picture", "src": rel(pics[i]), "headline": "", "sub": "", "items": [], "icons": [],
                           "camera": h.visual.camera if h.visual.camera != "still" else "push"}
             else:
@@ -741,9 +750,10 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             progress(f"Recording voiceover: chapter {ci + 1} of {len(script.chapters)}")
             audio = synthesize_scenes([b.narration for b in chapter.beats], cfg.long_voice, work / "audio" / f"ch{ci:02d}",
                                       cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate, **(voice_opts or {}))
-        for beat, sa in zip(chapter.beats, audio):
+        for bi, (beat, sa) in enumerate(zip(chapter.beats, audio)):
             duration = media_seconds(sa.path)
-            v = _prep_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids, duration)
+            v = (dict(overrides[(ci, bi)]) if (ci, bi) in overrides
+                 else _prep_visual(beat.visual.model_dump(), cfg, work, len(beats), clip_ids, duration))
             beats.append({"start": round(t, 3), "duration": round(duration, 3), "chapter": ci,
                           "audio": sa.path.relative_to(work).as_posix(), "visual": v})
             lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
@@ -1042,15 +1052,16 @@ def youtube_chapters(props: dict) -> str:
 
 # ---------- checks and review ----------
 
-def check_long_video(video: Path, target: float = 8) -> VerifyResult:
+def check_long_video(video: Path, target: float = 8, vertical: bool = False) -> VerifyResult:
     result = VerifyResult()
     if not video.exists() or video.stat().st_size < 500_000:
         result.fail("Video file missing or empty.")
         return result
     info = probe(video)
     result.checks["probe"] = info
-    if (info.get("width"), info.get("height")) != (WIDTH, HEIGHT):
-        result.fail(f"Resolution is {info.get('width')}x{info.get('height')}, expected {WIDTH}x{HEIGHT}.")
+    want = (HEIGHT, WIDTH) if vertical else (WIDTH, HEIGHT)
+    if (info.get("width"), info.get("height")) != want:
+        result.fail(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
     minutes = info.get("duration", 0) / 60
     sh = shape(target)
     if not sh["min"] <= minutes <= sh["max"]:
@@ -1534,8 +1545,15 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             else:
                 for old in ("audio", "sfx"):
                     shutil.rmtree(work / old, ignore_errors=True)
+                takes = {}
+                if manual and manual.get("shoot"):  # your own takes: the voice, and the picture of on-camera lines
+                    from .shoot import voices_for
+                    takes = dict(zip(("voices", "hook_voices", "overrides"),
+                                     voices_for(manual["shoot"], script, work, progress)))
                 props = build_long(script, cfg, work, progress,
-                                   hook_seconds=SCRIPT_HOOK_SECONDS if manual else cinehook.seconds_for(minutes))
+                                   hook_seconds=SCRIPT_HOOK_SECONDS if manual else cinehook.seconds_for(minutes), **takes)
+                if manual and manual.get("vertical"):
+                    props["vertical"] = True
                 save(stage="voiced", props=props)
             preview = resume.get("preview") if attempt == start else None
             if stage != "rendered" and resume.get("previewed") != attempt and not manual:
@@ -1561,7 +1579,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                             "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
 
             progress(f"{tag} Verifying video quality")
-            verdict = check_long_video(out, minutes)
+            verdict = check_long_video(out, minutes, vertical=bool(manual and manual.get("vertical")))
             if manual:  # your script sets the length; only a broken file, resolution or audio counts
                 verdict.issues = [i for i in verdict.issues if not i.startswith("Video is ")]
                 verdict.passed = not verdict.issues
@@ -1618,7 +1636,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         for scratch in [*work.glob("attempt*.mp4"), *work.glob("attempt*.jpg")]:
             scratch.unlink(missing_ok=True)
         (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-        final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-{'script' if manual else 'long'}"
+        kind = "shoot" if manual and manual.get("shoot") else "script" if manual else "long"
+        final_dir = cfg.output_dir / f"{stamp}-{slugify(script.topic)}-{kind}"
         move(work, final_dir)
         (final_dir / CHECKPOINT).unlink(missing_ok=True)
         (final_dir / "script.json").write_text(script.model_dump_json(indent=2), encoding="utf-8")
@@ -1654,8 +1673,11 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "hook_style": "cinematic" if (props.get("hook") or {}).get("cine") else "trailer",
             "hook_pictures": (props.get("hook") or {}).get("pictures", 0),
         }
+        if manual and manual.get("shoot"):  # filmed by you: your voice, your takes
+            report.update({"voice": "your own (filmed)", "shoot": manual["shoot"]["id"],
+                           **({"format": "short", "length": "short"} if manual.get("vertical") else {})})
         if manual:  # your title and description, as written; the chapter stamps are offered separately
-            report.update({"source": "script", "topic_source": "your script", "caption": manual["description"],
+            report.update({"source": kind, "topic_source": f"your {kind}", "caption": manual["description"],
                            "hashtags": [], "youtube_title": manual["title"], "youtube_description": manual["description"],
                            "youtube_chapters": youtube_chapters(props), "youtube_hashtags": [], "youtube_tags": [],
                            "facts_checked": "Checked and approved by you before production."})
