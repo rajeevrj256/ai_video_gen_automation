@@ -79,7 +79,7 @@ def media_used(cfg: Config, video: Path) -> dict:
         if name not in by_name:
             user = Path(c["src"]).name.startswith("u-")
             original = (_library_file(cfg, "sfx", name) or _library_file(cfg, "sfx", Path(c["src"]).stem[2:])) if user else None
-            by_name[name] = {"name": name, "file": c["src"],
+            by_name[name] = {"name": name, "file": c["src"], "library": original if user else None,
                              "source": f"Your library: {original or Path(c['src']).name}" if user else
                              f"Built-in (synthesised): {CUE_SOUNDS[name][3]}" if name in CUE_SOUNDS else "Built-in (synthesised)",
                              "play": c["src"]}
@@ -90,7 +90,10 @@ def media_used(cfg: Config, video: Path) -> dict:
     transition = look.get("transition") or ""
     for name, src in (props.get("sfx") or {}).items():
         if name not in by_name:
-            sounds.append({"name": name, "file": src, "source": "Built-in transition sound", "play": src,
+            user = Path(src).name.startswith("u-")
+            sounds.append({"name": name, "file": src, "play": src,
+                           "library": _library_file(cfg, "sfx", Path(src).stem[2:].removesuffix("-lv")) if user else None,
+                           "source": f"Your library ({Path(src).name})" if user else "Built-in transition sound",
                            "times": [], "count": 0, "note": f"on scene cuts ({transition or 'per scene'})"})
     sounds.sort(key=lambda s: -s["count"])
 
@@ -153,7 +156,8 @@ def media_used(cfg: Config, video: Path) -> dict:
     effects += [{"name": k, "detail": "", "times": _times(ts), "count": len(ts)}
                 for k, ts in sorted(group.items(), key=lambda kv: -len(kv[1]))]
 
-    return {"available": True, "music": music, "sounds": sounds, "models": list(models.values()),
+    from .remix import why_not
+    return {"available": True, "fixed": why_not(video), "music": music, "sounds": sounds, "models": list(models.values()),
             "footage": footage, "effects": effects}
 
 

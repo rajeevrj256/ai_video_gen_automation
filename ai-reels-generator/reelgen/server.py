@@ -165,6 +165,10 @@ class JobManager:
             elif job.get("anim_hd"):  # a finished animated video, its clips upscaled and re-edited
                 from .animated import sharpen_video
                 reports = [sharpen_video(cfg, video_dir(cfg, job["anim_hd"]["id"]), progress)]
+            elif job.get("sound_remove"):  # a sound taken out of a finished video (reelgen/remix.py)
+                from .remix import remove_sound
+                r = job["sound_remove"]
+                reports = [remove_sound(cfg, video_dir(cfg, r["id"]), r["name"], progress)]
             elif job.get("anim_music"):  # a finished animated video, its music made by ACE-Step again
                 from .animated import redo_music
                 reports = [redo_music(cfg, video_dir(cfg, job["anim_music"]["id"]), progress)]
@@ -503,6 +507,10 @@ class AnimRequestBody(BaseModel):
     count: int = 1
 
 
+class SoundRemoveBody(BaseModel):
+    name: str  # the sound as the Effects & media used panel names it
+
+
 class ShootBody(BaseModel):
     """A Shoot project (reelgen/shoot.py): your script, filmed by you shot by shot."""
     title: str
@@ -590,6 +598,8 @@ def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Reel Studio", docs_url=None, redoc_url=None)
     jobs = JobManager(cfg)
     import_samples(cfg)
+    from .media import forget_removed
+    forget_removed(cfg)  # sounds you asked to have deleted from your library
     # Which code this server is running (shown in Settings), so a git pull without a
     # restart is easy to spot: the running app keeps the code it started with.
     try:
@@ -812,6 +822,20 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "This video is already being worked on")
         return jobs.submit(f"New music: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
                            anim_music={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/sounds/remove")
+    def remove_sound_route(video_id: str, body: SoundRemoveBody):
+        """Take one sound effect out of a finished video: its cues dropped, the sound mixed again under the same
+        picture (a Short is edited again). reelgen/remix.py."""
+        folder = video_dir(cfg, video_id)
+        if not (folder / "props.json").exists():
+            raise HTTPException(400, "This video was made before its sounds were saved, so they can't be changed")
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("sound_remove", "anim_music", "anim_hd")
+               if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being worked on: try again when that's done")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"Without '{body.name}': {report.get('title', video_id)}", 1, "rerender", "facts",
+                           report.get("length") or report.get("format") or "short", sound_remove={"id": video_id, "name": body.name})
 
     # ---- your own voiceover ----
     @app.get("/api/videos/{video_id}/myvoice")

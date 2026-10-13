@@ -18,6 +18,7 @@ the video; `resolve_cues` turns its picks into times on the timeline.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ import numpy as np
 from .config import PROJECT_ROOT, Config
 from .sfx import CUE_SOUNDS, RATE, _write
 
+log = logging.getLogger(__name__)
 SFX_DIR = PROJECT_ROOT / "assets" / "sfx"
 MODELS_DIR = PROJECT_ROOT / "assets" / "models3d"
 AUDIO_TYPES = {".mp3", ".wav", ".ogg", ".m4a"}
@@ -76,7 +78,24 @@ LICENCE_FILE = "licences.json"
 # licences.json, kept when its licence changes); and an uploaded effect whose name says it is a boom, a braam or
 # a hit is banned without asking: those are never used outside the hook (the user's standing rule), and an
 # 'impact braam tonal dark' upload once played as the impact sound on every cut of a video.
-BOOM_WORDS = {"boom", "booms", "braam", "braams", "braaam", "brahm", "bwaa", "bwah", "bwaam", "hit", "hits", "subdrop"}
+BOOM_WORDS = {"boom", "booms", "braam", "braams", "braaam", "brahm", "bwaa", "bwah", "bwaam", "hit", "hits", "subdrop",
+              "rise", "riser", "risers", "uplifter", "uplifters"}  # risers too: the user banned the built-in and the hook's
+
+# Files the user asked to have deleted from their library: removed when the app starts (`forget_removed`).
+REMOVED = ("biodynamic-impact-braam",)
+
+
+def forget_removed(cfg: Config) -> list[str]:
+    """Delete the sound files the user asked to have removed (REMOVED: part of the file's name) from the library."""
+    gone = []
+    root = folder(cfg, "sfx")
+    for path in sorted(root.glob("*")) if root.exists() else []:
+        if path.is_file() and path.name != LICENCE_FILE and any(r in slug(path.name) for r in REMOVED):
+            remove(cfg, "sfx", path.name)
+            gone.append(path.name)
+    if gone:
+        log.info("Removed from the sound library at your request: %s", ", ".join(gone))
+    return gone
 
 
 def boom_named(name: str) -> bool:

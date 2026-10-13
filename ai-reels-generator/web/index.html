@@ -1206,12 +1206,27 @@ async function loadUsed(id) {
         ${withFile && x.file ? `<div>📄 ${esc(x.file)}</div>` : ""}
         ${x.source ? `<div>${esc(x.source)}</div>` : ""}${x.detail ? `<div>${esc(x.detail)}</div>` : ""}${x.note ? `<div>${esc(x.note)}</div>` : ""}
         ${x.times && x.times.length ? `<div class="times">${times(x.times)}</div>` : ""}
+        ${x.sound && x.file !== "sfx/silence.wav" ? `<div class="row" style="gap:6px;margin-top:6px">${u.fixed ? "" : `<button class="mini danger" data-rm="${esc(x.name)}" style="flex:0 0 auto">🗑 Remove from this video</button>`}
+          ${x.library ? `<button class="mini danger" data-ban="${esc(x.library)}" style="flex:0 0 auto">🚫 Never use this file again</button>` : ""}</div>` : ""}
       </div>`).join("");
     const group = (title, items, withFile = true) => items.length
       ? `<details open><summary>${title} <span class="pill">${items.length}</span></summary>${rows(items, withFile)}</details>`
       : `<details><summary>${title} <span class="pill">0</span></summary><div class="usedrow">None in this video.</div></details>`;
-    box.innerHTML = group("🎵 Music", u.music) + group("🔊 Sound effects", u.sounds) + group("🧊 3D models", u.models)
+    box.innerHTML = (u.fixed ? `<p class="hint">${esc(u.fixed)}</p>` : "")
+      + group("🎵 Music", u.music) + group("🔊 Sound effects", u.sounds.map((x) => ({ ...x, sound: true }))) + group("🧊 3D models", u.models)
       + group("🎞️ Footage", u.footage) + group("✨ Visual effects", u.effects, false);
+    box.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => {
+      if (!confirm(`Take “${b.dataset.rm}” out of this video? The sound is mixed again under the same picture (a Short is edited again); the old version is kept as reel-original.mp4.`)) return;
+      b.disabled = true;
+      try { await api(`/api/videos/${encodeURIComponent(id)}/sounds/remove`, { method: "POST", body: JSON.stringify({ name: b.dataset.rm }) });
+        toast("Taking it out: follow it on the Create page"); }
+      catch (e) { toast(e.message); b.disabled = false; }
+    });
+    box.querySelectorAll("[data-ban]").forEach((b) => b.onclick = async () => {
+      try { await api(`/api/library/sfx/${encodeURIComponent(b.dataset.ban)}/ban?on=true`, { method: "PUT" });
+        toast("Banned: no new video will use it"); b.disabled = true; b.textContent = "🚫 Banned"; }
+      catch (e) { toast(e.message); }
+    });
     box.querySelectorAll("[data-seek]").forEach((b) => b.onclick = () => {
       const v = $("#video"); v.currentTime = Number(b.dataset.seek); v.play().catch(() => {}); v.scrollIntoView({ behavior: "smooth" });
     });

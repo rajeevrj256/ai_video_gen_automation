@@ -7,7 +7,7 @@ files to ship or license.
 - glitch: a digital stutter of clicks and noise bursts (glitch transition).
 - shimmer: a soft rising chime (fade transition).
 - pop: a quick, rounded blip for when a graphic lands.
-- the cinematic hook's own set (HOOK_SOUNDS, write_hook_sounds): sub boom, riser, whip, shutter, paper tear,
+- the cinematic hook's own set (HOOK_SOUNDS, write_hook_sounds): sub boom, whip, shutter, paper tear,
   typewriter labels and a dark drone; used in hooks only.
 
 Neither has leading silence: sound starts on the first sample, so each hit lands
@@ -145,16 +145,6 @@ def _sword(duration: float = 0.9) -> np.ndarray:
     return slash * 1.4 + ring * 0.5
 
 
-def _riser(duration: float = 1.8) -> np.ndarray:
-    """Tension building into a line: filtered noise and a tone both climbing, ending loud."""
-    t = np.arange(int(RATE * duration)) / RATE
-    x = t / duration
-    noise = _lowpass(np.random.default_rng(5).standard_normal(len(t)), 300 + 6000 * x ** 2)
-    tone = np.sin(2 * np.pi * np.cumsum(110 + 440 * x ** 2) / RATE)
-    return (noise + tone * 0.5) * x ** 2.2
-
-
-
 def _heartbeat(duration: float = 1.1) -> np.ndarray:
     """Lub-dub, once."""
     t = np.arange(int(RATE * duration)) / RATE
@@ -237,10 +227,10 @@ def _flyby(duration: float = 1.6) -> np.ndarray:
 
 
 # name -> (make, peak, seconds the sound should lead its word by, what it's for)
-# boom, hit and rise were deleted at the user's request (they sounded bad on every video).
+# boom, hit and rise were deleted at the user's request (they sounded bad on every video), and later every riser
+# (the built-in one and the hook's): the user banned them.
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
-    "riser": (_riser, 0.35, 1.7, "tension rising INTO the word it's placed on: builds up to a reveal"),
     "heartbeat": (_heartbeat, 0.55, 0.0, "a heartbeat: suspense, fear, a life-or-death moment"),
     "tick": (_tick, 0.3, 0.0, "a clock ticking: deadlines, time running out, countdowns"),
     "cash": (_cash, 0.35, 0.0, "coins and a till bell: money, prices, profit"),
@@ -255,8 +245,9 @@ CUE_SOUNDS = {
 
 # ---- The cinematic hook's own sounds (long videos, Script Videos, the Anim cold open, the first word of a Short) ----
 # Modelled on a documentary-trailer cold open the user wanted (a dark drone from the first frame, a sub boom on each
-# big cut, a riser into a reveal, typed labels ticking, whips, then silence). Boom and riser are used in hooks only:
-# the old boom/hit/rise cues sounded bad on every video and stay out of CUE_SOUNDS and the sound design.
+# big cut, typed labels ticking, whips, then silence). The boom is used in hooks only (and under a Short's first
+# word): the old boom/hit/rise cues sounded bad on every video and stay out of CUE_SOUNDS and the sound design. The
+# hook's riser was removed too: the user banned it.
 
 def _sub_boom(duration: float = 2.6) -> np.ndarray:
     """A deep trailer boom: a sine dropping from ~95 to ~34 Hz with a long decay, its first harmonic for small
@@ -270,18 +261,6 @@ def _sub_boom(duration: float = 2.6) -> np.ndarray:
     thump = _lowpass(np.random.default_rng(31).standard_normal(len(t)), 900) * np.exp(-t * 28) * 0.9
     tail = _lowpass(np.random.default_rng(32).standard_normal(len(t)), 160) * np.exp(-t * 1.9) * 0.25
     return (body + thump + tail) * np.minimum(t / 0.0015, 1)
-
-
-def _hook_riser(duration: float = 1.5) -> np.ndarray:
-    """Tension pulled up into a cut: noise opening up, a tone bending upward and a reversed swell, ending at full
-    level on the last sample (the boom or the reveal takes over there)."""
-    t = np.arange(int(RATE * duration)) / RATE
-    x = t / duration
-    noise = _lowpass(np.random.default_rng(33).standard_normal(len(t)), 200 + 7000 * x ** 2.5)
-    tone = sum(np.sin(2 * np.pi * np.cumsum(f0 * (1 + 1.6 * x ** 2)) / RATE) / k
-               for k, f0 in enumerate((98.0, 146.8, 196.0), start=1))
-    tremolo = 1 + 0.35 * np.sin(2 * np.pi * np.cumsum(3 + 14 * x ** 2) / RATE)  # speeds up as it climbs
-    return (noise * 0.9 + tone * 0.45) * tremolo * x ** 2.4
 
 
 def _hook_whip(duration: float = 0.38) -> np.ndarray:
@@ -362,17 +341,15 @@ def _hook_drone(duration: float) -> np.ndarray:
 # name -> (make, peak); written by write_hook_sounds. Peaks are below the cue sounds' because they run long or sit low.
 HOOK_SOUNDS = {
     "hook-boom": (_sub_boom, 0.8),
-    "hook-riser": (_hook_riser, 0.4),
     "hook-whip": (_hook_whip, 0.45),
     "hook-shutter": (_hook_shutter, 0.35),
     "hook-tear": (_hook_tear, 0.35),
 }
-RISER_LEAD = 1.5  # the riser starts this long before the cut it builds into
 TYPE_EVERY = 0.045  # seconds per typed letter: keep in step with TypedLabel (remotion/src/cine/TypedLabel.tsx)
 
 
 def write_hook_sounds(out_dir: Path, drone_seconds: float = 0.0, labels: tuple[str, ...] = ()) -> dict[str, Path]:
-    """The hook's sounds in `out_dir`: hook-boom, hook-riser, hook-whip, hook-shutter, hook-tear, a drone of
+    """The hook's sounds in `out_dir`: hook-boom, hook-whip, hook-shutter, hook-tear, a drone of
     `drone_seconds` (hook-drone) and one typing take per label length (hook-type-<letters>)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     out = {n: _write(out_dir / f"{n}.wav", make(), peak=peak) for n, (make, peak) in HOOK_SOUNDS.items()}

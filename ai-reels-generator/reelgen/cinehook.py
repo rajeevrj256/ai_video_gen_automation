@@ -5,7 +5,7 @@ a ~75 s open of ~48 picture changes that keeps people watching): each beat in it
 grain and flicker, typed yellow labels, whips, VHS glitches, a photo flown in, paper torn across the frame, a
 split-second montage at the climax, then the music stops dead for a breath of silence and the story starts with
 a question that re-asks the hook. Sound: a dark drone from the first frame, a deep sub boom on the big cuts, a
-riser into them, whips, typewriter ticks, and silence.
+whips, typewriter ticks, and silence. (The riser into the big cuts was taken out: the user banned it.)
 
 This module holds the parts shared by the pipelines: the writer's rules, shot timing, the hook's sound design
 and its AI film stills (the AI engine's keyframes stage, when installed). The editor side is remotion/src/cine/.
@@ -232,9 +232,9 @@ def _check(cfg, prompts: dict[int, str], out_dir: Path, title: str, progress: Pr
 
 def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str, str], rehook: float | None = None) -> tuple[list[dict], str | None]:
     """The hook's sounds as cues, and its drone: a sub boom on the first shot, on the boom shots and on the story's
-    first word after the silence (`rehook`); a riser into each boom after the first; the transition's own sound
-    (whip, glitch, photo: whip + shutter, split: paper tear, punch: impact); a typewriter take per label; a riser
-    across the climax montage into the shot after it. `end`: where the silence starts (the drone stops there).
+    first word after the silence (`rehook`); the transition's own sound (whip, glitch, photo: whip + shutter, split:
+    paper tear, punch: impact); a typewriter take per label; a boom on the shot after the climax montage. No riser
+    anywhere: the user banned it. `end`: where the silence starts (the drone stops there).
     `files`: the video's other effect files by name (glitch, impact), relative."""
     sfx_dir = work / "sfx"
     made = synth.write_hook_sounds(sfx_dir, end + 0.5, tuple(s.get("text", "") for s in shots))
@@ -245,8 +245,6 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
         src = f.get(name) or files.get(name)
         if src and at < end + (5 if name == "hook-boom" else 0):
             c = {"src": src, "at": round(max(0.0, at), 3), "name": name, "volume": volume}
-            if at < 0:  # a riser that would start before the video: cut its front off
-                c["trim"] = round(-at, 3)
             if full:
                 c["full"] = True
             cues.append(c)
@@ -267,9 +265,6 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
         boom = k == 0 or bool(s.get("boom"))
         if boom:
             cue("hook-boom", start, 0.95, full=True)
-            prev = shots[k - 1] if k else None
-            if prev is not None and float(prev["duration"]) >= 1.2 and not prev.get("flash"):
-                cue("hook-riser", start - synth.RISER_LEAD, 0.6)
         kind = s.get("transition") or "cut"
         hit = 1.45 if s.get("flash") else 1.0  # the montage is the climax: its cuts hit harder
         if kind == "whip":
@@ -285,9 +280,8 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
             cue("impact", start, 0.5 * hit)
         if s.get("text"):
             cue(f"hook-type-{len(s['text'])}", start + LABEL_AT, 0.5)
-    for a, b in flash_runs:  # the montage climbs into the shot after it
+    for a, b in flash_runs:  # the montage lands on the shot after it
         after = float(shots[b]["start"]) + float(shots[b]["duration"])
-        cue("hook-riser", after - synth.RISER_LEAD, 0.85)
         if b + 1 < len(shots) and not shots[b + 1].get("boom"):
             cue("hook-boom", after, 0.9, full=True)
     if rehook is not None:
