@@ -2064,6 +2064,9 @@ async function loadLibrary() {
       <div class="libitem"><b>${esc(i.name)}</b> <span class="hint">${(i.size / 1048576).toFixed(1)} MB</span>
         ${k === "models3d" ? "" : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
         <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button>
+        ${i.banned === "boom" ? `<div class="lic warn">🚫 Never used: its name says boom, braam or hit (banned outside the hook)</div>`
+          : `<button class="mini ${i.banned ? "" : "danger"}" data-lib-ban="${k}/${esc(i.file)}" data-on="${i.banned ? "false" : "true"}">${i.banned ? "✓ Allow again" : "🚫 Ban: never use"}</button>`}
+        ${i.banned === "you" ? `<div class="lic warn">🚫 Banned by you: never used in any video</div>` : ""}
         <div class="lic ${i.licence === "unknown" ? "warn" : ""}">${i.licence === "unknown" ? "⚠️ Not used until its licence is set · " : ""}
           <select class="mini" data-lic="${k}/${esc(i.file)}">${licenceSelect(i.licence || "unknown")}</select>
           <input class="mini" data-credit="${k}/${esc(i.file)}" placeholder="Credit (CC BY)" value="${esc(i.credit || "")}" ${i.licence === "cc-by" ? "" : "hidden"}></div></div>`).join("")
@@ -2108,6 +2111,15 @@ $("#libList").addEventListener("change", (e) => {
   if (key) saveLicence(key);
 });
 $("#libList").addEventListener("click", async (e) => {
+  const ban = e.target.closest("[data-lib-ban]");
+  if (ban) {
+    const [kind, ...rest] = ban.dataset.libBan.split("/");
+    try {
+      await api(`/api/library/${kind}/${encodeURIComponent(rest.join("/"))}/ban?on=${ban.dataset.on}`, { method: "PUT" });
+      toast(ban.dataset.on === "true" ? "Banned: never used in a video again" : "Allowed again");
+    } catch (err) { toast(err.message); }
+    return loadLibrary();
+  }
   const b = e.target.closest("[data-lib-del]"); if (!b || !confirm("Delete this file from the library?")) return;
   await api("/api/library/" + b.dataset.libDel.split("/").map(encodeURIComponent).join("/"), { method: "DELETE" });
   loadLibrary();

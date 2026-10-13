@@ -72,6 +72,36 @@ LICENCES = {
 USABLE = ("own", "royalty-free", "cc0", "cc-by")
 LICENCE_FILE = "licences.json"
 
+# Sounds never used, whatever their licence. The user bans a file in Settings > Media library ('banned' in
+# licences.json, kept when its licence changes); and an uploaded effect whose name says it is a boom, a braam or
+# a hit is banned without asking: those are never used outside the hook (the user's standing rule), and an
+# 'impact braam tonal dark' upload once played as the impact sound on every cut of a video.
+BOOM_WORDS = {"boom", "booms", "braam", "braams", "braaam", "brahm", "bwaa", "bwah", "bwaam", "hit", "hits", "subdrop"}
+
+
+def boom_named(name: str) -> bool:
+    return bool(BOOM_WORDS & set(re.findall(r"[a-z]+", name.lower())))
+
+
+def banned(cfg: Config, kind: str, filename: str) -> str:
+    """Why this file is never used ('you' or 'boom'), or ''."""
+    if licences(cfg, kind).get(Path(filename).name, {}).get("banned"):
+        return "you"
+    return "boom" if kind == "sfx" and boom_named(filename) else ""
+
+
+def set_banned(cfg: Config, kind: str, filename: str, on: bool) -> None:
+    root = folder(cfg, kind)
+    if kind not in KINDS or not (root / Path(filename).name).is_file():
+        raise ValueError("No such file")
+    data = licences(cfg, kind)
+    entry = data.setdefault(Path(filename).name, {"licence": "unknown", "credit": ""})
+    if on:
+        entry["banned"] = True
+    else:
+        entry.pop("banned", None)
+    (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+
 
 def licences(cfg: Config, kind: str) -> dict[str, dict]:
     path = folder(cfg, kind) / LICENCE_FILE
@@ -88,7 +118,8 @@ def set_licence(cfg: Config, kind: str, filename: str, licence: str, credit: str
     if not (root / Path(filename).name).is_file():
         raise ValueError("No such file")
     data = licences(cfg, kind)
-    data[Path(filename).name] = {"licence": licence, "credit": credit.strip()[:300]}
+    keep = {"banned": True} if data.get(Path(filename).name, {}).get("banned") else {}  # a new licence never lifts a ban
+    data[Path(filename).name] = {"licence": licence, "credit": credit.strip()[:300], **keep}
     (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
@@ -119,7 +150,7 @@ def credits(cfg: Config, used_files: list[tuple[str, str]]) -> list[str]:
 
 
 def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
-    """The user's files of this kind; only those with a known licence unless `everything`."""
+    """The user's files of this kind; only those with a known licence and not banned, unless `everything`."""
     root = folder(cfg, kind)
     types = MODEL_TYPES if kind == "models3d" else AUDIO_TYPES
     lic = licences(cfg, kind)
@@ -127,7 +158,8 @@ def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
     for path in sorted(root.glob("*")) if root.exists() else []:
         if path.suffix.lower() not in types:
             continue
-        if not everything and lic.get(path.name, {}).get("licence") not in USABLE:
+        if not everything and (lic.get(path.name, {}).get("licence") not in USABLE or lic.get(path.name, {}).get("banned")
+                               or (kind == "sfx" and boom_named(path.name))):
             continue
         name = slug(path.name)
         while name in seen:
@@ -155,7 +187,7 @@ def music(cfg: Config) -> list[Item]:
 ROLE_WORDS = {
     "whoosh": ("whoosh", "swoosh", "woosh", "whip", "swipe", "transition"),
     "swish": ("swish", "swoosh", "whoosh", "woosh", "whip", "swipe"),
-    "impact": ("impact", "punch", "slam", "thud", "hit"),
+    "impact": ("impact", "punch", "slam", "thud"),  # never 'hit': hits are banned outside the hook
     "glitch": ("glitch", "digital", "static", "distort"),
     "shimmer": ("shimmer", "sparkle", "magic", "chime", "twinkle", "glitter"),
     "pop": ("pop", "bubble", "blip"),
@@ -209,7 +241,8 @@ def listing(cfg: Config) -> list[dict]:
                         "file": item.path.name if item.path else "",
                         "size": item.path.stat().st_size if item.path else 0,
                         "licence": "builtin" if item.path is None else own.get("licence", "unknown"),
-                        "credit": own.get("credit", "")})
+                        "credit": own.get("credit", ""),
+                        "banned": banned(cfg, kind, item.path.name) if item.path else ""})
     return out
 
 

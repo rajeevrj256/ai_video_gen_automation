@@ -1618,6 +1618,17 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, str(exc))
         return {"ok": True}
 
+    @app.put("/api/library/{kind}/{name}/ban")
+    def ban_library_file(kind: str, name: str, on: bool = True):
+        """Never use this file again (or allow it back)."""
+        from . import media
+
+        try:
+            media.set_banned(cfg, kind, name, on)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True, "banned": media.banned(cfg, kind, name)}
+
     @app.delete("/api/library/{kind}/{name}")
     def delete_from_library(kind: str, name: str):
         from . import media
