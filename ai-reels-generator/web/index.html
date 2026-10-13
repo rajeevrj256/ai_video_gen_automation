@@ -2844,7 +2844,9 @@ function renderShoot() {
   const v = p.video || {};
   const rechecking = p.shots.some((s) => s.take && s.take.rechecking);
   $("#shMake").disabled = ready < p.shots.length || plan.status === "running" || rechecking;
-  $("#shMakeMsg").textContent = v.status === "done" ? "✅ The video is in your library (Videos tab)."
+  $("#shMake").textContent = v.status === "done" ? "🎞 Make the video again" : "🎞 Make the video";
+  $("#shMakeMsg").textContent = rechecking ? "Checking the words of your takes again…"
+    : v.status === "done" ? "✅ The video is in your library (Videos tab). Making it again edits your same takes as they're checked now: nothing to film again, no new plan; the first version stays in the library."
     : ["queued", "making"].includes(v.status) ? "⏳ Being made: follow it on the Create tab."
     : ready < p.shots.length ? `${ready} of ${p.shots.length} shots have a take; upload the rest to make the video.`
     : plan.status === "running" ? "Waiting for Claude's plan…" : rechecking ? "Checking the words of your takes again…" : "Every shot has a take: ready to edit.";
