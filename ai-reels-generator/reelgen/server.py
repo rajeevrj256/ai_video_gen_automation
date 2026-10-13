@@ -1278,7 +1278,9 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/shoot/{pid}")
     def shoot_get(pid: str):
-        return _shoot(pid)
+        from . import shoot
+
+        return shoot.recheck_old(cfg, _shoot(pid))  # takes checked an older way get checked again
 
     @app.post("/api/shoot/{pid}/plan")
     def shoot_plan(pid: str):
@@ -1326,8 +1328,6 @@ def create_app(cfg: Config) -> FastAPI:
         if size < 10_000:
             target.unlink(missing_ok=True)
             raise HTTPException(400, "The file is empty or didn't finish uploading")
-        shoot.update(cfg, pid, lambda p: next(s for s in p["shots"] if s["n"] == n).update(
-            take={"status": "processing", "file": target.name}))
         shoot.process_in_background(load_settings(Config()), pid, n, target)
         return {"ok": True, "size": size}
 

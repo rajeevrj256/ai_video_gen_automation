@@ -109,7 +109,10 @@ Film yourself with your phone's own camera app while this computer is your telep
    the camera, and survives ad-libs and misheard words. Space turns listening on/off, → / ← move between shots,
    R starts a shot again, M mirrors for a teleprompter glass.
 3. **Upload the best take of each shot**, from the phone over Wi-Fi or from this computer. Each take is checked:
-   how much of the script was heard, which words were missed, HDR and orientation.
+   how much of the script was heard, which words were missed, HDR and orientation. Hindi and Hinglish takes are heard
+   by a bigger offline speech model (about 0.5 GB, downloaded with the first such take) and matched by sound, so
+   'commands' said in a Hinglish sentence counts even when it's written 'कमान्ट्स'. Takes uploaded before an
+   improvement to this check are checked again when you open the shoot.
 4. **Make the video**: your takes are the voice and the on-camera picture, with a punch-in on every other take; the
    other lines get their B-roll, plus captions from your words, music, sound design and the cinematic hook.
 

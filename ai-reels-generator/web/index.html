@@ -2796,6 +2796,7 @@ function shotCard(s) {
   if (!t) take = "No take yet.";
   else if (t.status === "processing") take = "⏳ Preparing your take (a copy for the edit, the sound, the words)…";
   else if (t.status === "failed") take = `⚠️ ${esc(t.error || "Couldn't use this file")}`;
+  else if (t.rechecking) take = "⏳ Checking the words again with the improved check…";
   else take = (t.verdict === "good" ? "✅ Good take" : t.verdict === "check words" ? "⚠️ Some words weren't heard (see the lines)" : "✓ Ready")
     + ` · ${t.duration}s` + (t.matched != null ? ` · ${Math.round(t.matched * 100)}% of the words heard` : "")
     + (t.notes || []).map((n) => `<br>ℹ️ ${esc(n)}`).join("");
@@ -2841,13 +2842,14 @@ function renderShoot() {
   });
   const ready = p.shots.filter((s) => s.take && s.take.status === "ready").length;
   const v = p.video || {};
-  $("#shMake").disabled = ready < p.shots.length || plan.status === "running";
+  const rechecking = p.shots.some((s) => s.take && s.take.rechecking);
+  $("#shMake").disabled = ready < p.shots.length || plan.status === "running" || rechecking;
   $("#shMakeMsg").textContent = v.status === "done" ? "✅ The video is in your library (Videos tab)."
     : ["queued", "making"].includes(v.status) ? "⏳ Being made: follow it on the Create tab."
     : ready < p.shots.length ? `${ready} of ${p.shots.length} shots have a take; upload the rest to make the video.`
-    : plan.status === "running" ? "Waiting for Claude's plan…" : "Every shot has a take: ready to edit.";
+    : plan.status === "running" ? "Waiting for Claude's plan…" : rechecking ? "Checking the words of your takes again…" : "Every shot has a take: ready to edit.";
   clearTimeout(shTimer);
-  const busy = plan.status === "running" || p.shots.some((s) => s.take && s.take.status === "processing");
+  const busy = plan.status === "running" || rechecking || p.shots.some((s) => s.take && s.take.status === "processing");
   if (busy) shTimer = setTimeout(() => { if (current === "shoot" && SH && SH.id === p.id && !shUploading) openShoot(p.id).catch(() => {}); }, 2500);
 }
 
@@ -2887,34 +2889,43 @@ $("#shPrompt").onclick = () => {
 };
 
 // ---- the teleprompter: follows your voice through the shot (the browser's speech recognition on this computer) ----
-// Matching is loose on purpose: each word is cut to its skeleton (first letter + consonants, Devanagari read as Roman
-// letters), so 'jaante', 'jante' and 'जानते' are the same word, and an ad-lib or a misheard word never loses the place.
-// Keep `skel` in step with reelgen/shoot.py `skeleton` (which matches your uploaded takes the same way).
+// Matching is loose on purpose: each word is cut to how it sounds (first sound + consonants, Devanagari read as Roman
+// letters, English spellings read as sounds, easily swapped sounds merged), so 'jaante', 'jante' and 'जानते' are the
+// same word, and so are 'commands' and 'कमान्ट्स'; an ad-lib or a misheard word never loses the place.
+// Keep `skel` and `alike` in step with reelgen/shoot.py `skeleton` and `alike` (which check your uploaded takes).
 const DEVA = {};
-[..."कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह"].forEach((c, i) => { DEVA[c] = ["k", "kh", "g", "gh", "n", "ch", "chh", "j", "jh", "n", "t", "th", "d", "dh", "n", "t", "th", "d", "dh", "n", "p", "ph", "b", "bh", "m", "y", "r", "l", "v", "sh", "sh", "s", "h"][i]; });
+[..."कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह"].forEach((c, i) => { DEVA[c] = ["k", "kh", "g", "gh", "n", "C", "Ch", "j", "jh", "n", "t", "th", "d", "dh", "n", "t", "th", "d", "dh", "n", "p", "f", "b", "bh", "m", "y", "r", "l", "v", "sh", "sh", "s", "h"][i]; });
 [..."अआइईउऊएऐओऔऋ"].forEach((c, i) => { DEVA[c] = ["a", "aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ri"][i]; });
 [..."ािीुूेैोौृ"].forEach((c, i) => { DEVA[c] = ["aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ri"][i]; });
 Object.assign(DEVA, { "ं": "n", "ँ": "n", "ः": "h", "्": "", "़": "", "ॉ": "o", "ॅ": "e" });
 [..."०१२३४५६७८९"].forEach((c, i) => { DEVA[c] = String(i); });
+const SPELL = [[/^kn/, "n"], [/^wr/, "r"], [/^ps/, "s"], [/gh(?=t|$)/g, ""], [/ph/g, "f"], [/ck/g, "k"],
+  [/ti(?=on)|si(?=on)/g, "sh"], [/t(?=ure)/g, "C"], [/dg(?=e)/g, "j"], [/ch/g, "C"], [/sc(?=[eiy])/g, "s"],
+  [/c(?=[eiy])/g, "s"], [/c/g, "k"], [/x/g, "ks"], [/q/g, "k"], [/z/g, "j"], [/(?<=[aeiou])w(?![aeiou])/g, ""], [/w/g, "v"]];
+const SOUND = { g: "k", d: "t", b: "p", f: "p", C: "j", m: "n" };
 function skel(word) {
+  const deva = /[ऀ-ॿ]/.test(String(word));
   let w = [...String(word).toLowerCase()].map((c) => DEVA[c] ?? c).join("");
-  w = w.replace(/['’]s\b/g, "").replace(/[^a-z0-9]/g, "");
-  if (!w) return "";
-  w = w[0] + w.slice(1).replace(/[aeiouhy]/g, "");
-  w = w.replace(/w/g, "v").replace(/z/g, "j").replace(/q/g, "k");
-  return w.replace(/(.)\1+/g, "$1");
+  w = w.replace(/['’]s\b/g, "").replace(/[^a-z0-9C]/g, "");
+  if (!deva) for (const [a, b] of SPELL) w = w.replace(a, b); // Devanagari is written as it sounds already
+  if (!w || /^\d+$/.test(w)) return w;
+  const first = /[aeiouy]/.test(w[0]) ? "a" : w[0] === "C" ? "c" : w[0]; // the first sound keeps its voicing
+  const rest = [...w.slice(1).replace(/[aeiouhy]/g, "")].map((c) => SOUND[c] ?? c).join("");
+  return (first + rest).replace(/(.)\1+/g, "$1");
 }
-const oneEdit = (a, b) => { // at most one letter changed, added or dropped
-  if (Math.abs(a.length - b.length) > 1) return false;
-  let i = 0, j = 0, diff = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) { i++; j++; continue; }
-    if (++diff > 1) return false;
-    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+function alike(a, b) { // 1 the same word, 0.5-0.9 close, 0 not the same
+  if (a === b) return a ? 1 : 0;
+  if (!a || !b || a[0] !== b[0] || /^\d+$/.test(a) || /^\d+$/.test(b)) return 0;
+  if (Math.min(a.length, b.length) === 1) return a + "n" === b || b + "n" === a ? 0.7 : 0;
+  const lcs = new Array(b.length + 1).fill(0);
+  for (const x of a) {
+    let prev = 0;
+    for (let j = 0; j < b.length; j++) { const keep = lcs[j + 1]; lcs[j + 1] = x === b[j] ? prev + 1 : Math.max(keep, lcs[j]); prev = keep; }
   }
-  return diff + (a.length - i) + (b.length - j) <= 1;
-};
-const near = (a, b) => !!a && !!b && (a === b || (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a) || oneEdit(a, b))));
+  const ratio = 2 * lcs[b.length] / (a.length + b.length);
+  return ratio >= 0.6 || (ratio >= 0.5 && Math.min(a.length, b.length) >= 3 && a.slice(0, 2) === b.slice(0, 2)) ? ratio : 0;
+}
+const near = (a, b) => alike(a, b) > 0;
 const hears = (h, word) => word.sk.some((s) => near(h, s));
 
 const PR = { si: 0, words: [], lines: [], pos: -1, listening: false, gen: 0, rec: null, auto: null, wpm: 150 };

@@ -28,7 +28,7 @@ import subprocess
 import threading
 import uuid
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -50,7 +50,8 @@ HOOK_SHOT_WORDS = 30
 LEAD, TAIL = 0.18, 0.35  # seconds kept before a take's first word and after its last
 PUNCH = 1.12  # every other cut between takes punches in, so jump cuts feel deliberate
 FILLER = {"a", "an", "the", "and", "of", "to", "in", "on", "at", "is", "it", "so", "but", "that", "this", "was",
-          "hai", "ki", "ka", "ke", "ko", "se", "aur", "to", "bhi", "ye", "wo", "na"}
+          "hai", "hain", "hu", "hun", "hoon", "tha", "thi", "ki", "ka", "ke", "ko", "se", "aur", "bhi", "ye", "wo", "na",
+          "ne"}  # small words speech-to-text drops or joins to the word before ('rahe hain' -> 'रहें'): not flagged
 
 _lock = threading.Lock()  # project.json writes
 _work = threading.Lock()  # one take processed at a time (transcoding and transcription use every core)
@@ -232,8 +233,8 @@ def plan_in_background(cfg: Config, pid: str) -> None:
 
 _DEVA = {  # Devanagari to Roman letters, only as far as the matching needs (vowels are dropped anyway)
     **dict(zip("कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह",
-               ["k", "kh", "g", "gh", "n", "ch", "chh", "j", "jh", "n", "t", "th", "d", "dh", "n", "t", "th", "d", "dh",
-                "n", "p", "ph", "b", "bh", "m", "y", "r", "l", "v", "sh", "sh", "s", "h"])),
+               ["k", "kh", "g", "gh", "n", "C", "Ch", "j", "jh", "n", "t", "th", "d", "dh", "n", "t", "th", "d", "dh",
+                "n", "p", "f", "b", "bh", "m", "y", "r", "l", "v", "sh", "sh", "s", "h"])),
     **dict(zip("अआइईउऊएऐओऔऋ", ["a", "aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ri"])),
     **dict(zip("ािीुूेैोौृ", ["aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ri"])),
     "ं": "n", "ँ": "n", "ः": "h", "्": "", "़": "", "ॉ": "o", "ॅ": "e",
@@ -241,17 +242,82 @@ _DEVA = {  # Devanagari to Roman letters, only as far as the matching needs (vow
 }
 
 
+# Roman spellings that don't sound like their letters, so a word typed in Roman letters gives the letters Devanagari
+# gives for the same sound (Hindi speech-to-text writes English words as they sound: 'कमान्ट्स', 'साईंटिस'). C = 'ch'.
+_SPELL = [(r"^kn", "n"), (r"^wr", "r"), (r"^ps", "s"), (r"gh(?=t|$)", ""), (r"ph", "f"), (r"ck", "k"),
+          (r"ti(?=on)|si(?=on)", "sh"), (r"t(?=ure)", "C"), (r"dg(?=e)", "j"), (r"ch", "C"), (r"sc(?=[eiy])", "s"),
+          (r"c(?=[eiy])", "s"), (r"c", "k"), (r"x", "ks"), (r"q", "k"), (r"z", "j"), (r"(?<=[aeiou])w(?![aeiou])", ""),
+          (r"w", "v")]
+# Sounds a Hindi speaker (and speech-to-text) swaps inside a word: voiced and voiceless pairs, m/n, ch/j.
+_CLASS = str.maketrans({"g": "k", "d": "t", "b": "p", "f": "p", "C": "j", "m": "n"})
+
+
 def skeleton(word: str) -> str:
-    """A word reduced to what speech-to-text keeps in any spelling: Roman letters, its first letter, then only the
-    consonants ('jaante', 'jante', 'जानते' -> 'jnt'). Keep in step with `skel` in web/index.html (the prompter)."""
+    """A word reduced to how it sounds, in any spelling or script: Roman letters, English spellings read as sounds,
+    its first sound, then only the consonants, with sounds that are easily swapped merged ('jaante', 'jante', 'जानते'
+    -> 'jnt'; 'commands', 'कमान्ट्स' -> 'knts'; 'AI', 'याई' -> 'a'). Keep in step with `skel` in web/index.html."""
+    deva = any("\u0900" <= c <= "\u097f" for c in word)
     w = "".join(_DEVA.get(c, c) for c in word.lower())
     w = re.sub(r"['’]s\b", "", w)
-    w = re.sub(r"[^a-z0-9]", "", w)
-    if not w:
-        return ""
-    w = w[0] + re.sub(r"[aeiouhy]", "", w[1:])
-    w = w.replace("w", "v").replace("z", "j").replace("q", "k")
-    return re.sub(r"(.)\1+", r"\1", w)
+    w = re.sub(r"[^a-z0-9C]", "", w)
+    for a, b in [] if deva else _SPELL:  # Devanagari is written as it sounds already
+        w = re.sub(a, b, w)
+    if not w or w.isdigit():
+        return w
+    first = "a" if w[0] in "aeiouy" else "c" if w[0] == "C" else w[0]  # the first sound keeps its voicing
+    rest = re.sub(r"[aeiouhy]", "", w[1:]).translate(_CLASS)
+    return re.sub(r"(.)\1+", r"\1", first + rest)
+
+
+@lru_cache(maxsize=65536)
+def alike(a: str, b: str) -> float:
+    """How surely two skeletons are the same word: 1 the same, 0.6-0.9 close (a consonant heard differently, one
+    added or dropped), 0 not the same. Short ones must be equal, except a nasal ending ('rahe', 'रहें')."""
+    if a == b:
+        return 1.0 if a else 0.0
+    if not a or not b or a[0] != b[0] or a.isdigit() or b.isdigit():
+        return 0.0
+    if min(len(a), len(b)) == 1:
+        return 0.7 if a + "n" == b or b + "n" == a else 0.0
+    lcs = [0] * (len(b) + 1)
+    for x in a:
+        prev = 0
+        for j, y in enumerate(b):
+            prev, lcs[j + 1] = lcs[j + 1], prev + 1 if x == y else max(lcs[j + 1], lcs[j])
+    ratio = 2 * lcs[-1] / (len(a) + len(b))
+    near = ratio >= 0.6 or (ratio >= 0.5 and min(len(a), len(b)) >= 3 and a[:2] == b[:2])  # 'commands', 'कमाण्च'
+    return round(ratio, 3) if near else 0.0
+
+
+RUN = 0.5  # a word heard right after the one before it counts this much more: a restarted line keeps its full attempt
+
+
+def pairs(script: list[str], heard: list[str]) -> dict[int, int]:
+    """Script word -> heard word, in order, the most and surest matches (each word's `alike`, plus `RUN` for every
+    word that follows its neighbour): what you skipped stays unmatched, ad-libs and false starts are passed over, and
+    of a line said twice the last full attempt is kept."""
+    n, m = len(script), len(heard)
+    none = float("-inf")
+    best = [[0.0] * (m + 1) for _ in range(n + 1)]
+    run = [[none] * (m + 1) for _ in range(n + 1)]  # best alignment in which script[i-1] is heard as heard[j-1]
+    for i in range(1, n + 1):
+        a, bi, ri, bp, rp = script[i - 1], best[i], run[i], best[i - 1], run[i - 1]
+        for j in range(1, m + 1):
+            if s := alike(a, heard[j - 1]):
+                ri[j] = s + max(bp[j - 1], rp[j - 1] + RUN)
+            bi[j] = max(ri[j], bp[j], bi[j - 1])
+    out: dict[int, int] = {}
+    i, j, linked = n, m, False
+    while i > 0 and j > 0:
+        if linked or best[i][j] == run[i][j]:
+            out[i - 1] = j - 1
+            linked = run[i - 1][j - 1] + RUN > best[i - 1][j - 1]
+            i, j = i - 1, j - 1
+        elif best[i][j] == best[i - 1][j]:
+            i -= 1
+        else:
+            j -= 1
+    return out
 
 
 def _script_tokens(lines: list[str]) -> list[tuple[int, int, str]]:
@@ -279,11 +345,7 @@ def align(lines: list[str], heard: list[Word], length: float) -> list[dict]:
     """Where each line of a take starts and ends (cut in the pause between lines), which heard words are its own, and
     which script words weren't heard."""
     tokens = _script_tokens(lines)
-    said = [skeleton(w.text) for w in heard]
-    match: dict[int, int] = {}  # script token -> heard word
-    for block in SequenceMatcher(None, [t[2] for t in tokens], said, autojunk=False).get_matching_blocks():
-        for j in range(block.size):
-            match[block.a + j] = block.b + j
+    match = pairs([t[2] for t in tokens], [skeleton(w.text) for w in heard])  # script token -> heard word
     out = []
     for k, text in enumerate(lines):
         mine = [t for t, tok in enumerate(tokens) if tok[0] == k]
@@ -322,9 +384,8 @@ def caption_words(text: str, heard: list[Word], r: dict, offset: float) -> list[
     pool = heard[r["first"]:r["last"] + 1] if r.get("first") is not None else []
     times: list[tuple[float, float] | None] = [None] * len(words)
     if pool:
-        for block in SequenceMatcher(None, sk, [skeleton(w.text) for w in pool], autojunk=False).get_matching_blocks():
-            for j in range(block.size):
-                times[block.a + j] = (pool[block.b + j].start, pool[block.b + j].end)
+        for i, j in pairs(sk, [skeleton(w.text) for w in pool]).items():
+            times[i] = (pool[j].start, pool[j].end)
     a, b = r["speech"]
     anchors = [(-1, a)] + [(i, t[0]) for i, t in enumerate(times) if t] + [(len(words), b)]
     for (i0, t0), (i1, t1) in zip(anchors, anchors[1:]):
@@ -401,9 +462,33 @@ def take_target(cfg: Config, pid: str, n: int, filename: str) -> Path:
     return d / f"shot{n:02d}-original{ext}"
 
 
+CHECKER = 2  # how a take's words are checked; takes checked an older way are checked again (`recheck_old`)
+
+
+def _hear(language: str, audio: Path) -> list[Word] | None:
+    """What was said in a take. Hindi and Hinglish go to the 'small' model in Hindi mode (REEL_WHISPER_HINDI_MODEL):
+    in English mode speech-to-text translates Hindi ('Lekin sawaal hai' came back as 'But the question is', so a
+    Hinglish take showed 28% of its words heard), and the 'base' model translates even in Hindi mode. 'small' writes
+    what you said in Devanagari, English words as they sound ('कमान्ट्स'), which `skeleton` reads."""
+    from .myvoice import transcribe
+
+    if language == "english":
+        return transcribe(audio, "english")
+    return transcribe(audio, "hindi", os.environ.get("REEL_WHISPER_HINDI_MODEL", "small"))
+
+
+def _judge(lines: list[str], heard: list[Word], length: float) -> tuple[list[dict], str, float]:
+    """The take's lines (cut points, words not heard), its verdict and the share of words heard."""
+    rows = align(lines, heard, length)
+    worst = min(r["matched"] for r in rows)
+    missed = sum(len(r["missing"]) for r in rows)
+    verdict = "good" if worst >= 0.8 and missed <= 1 else "check words"
+    return rows, verdict, round(sum(r["matched"] for r in rows) / len(rows), 2)
+
+
 def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
     """Prepare an uploaded take: the editor's copy, the cleaned sound, what you said and where each line is."""
-    from .myvoice import _clean, transcribe
+    from .myvoice import _clean
 
     proj = load(cfg, pid)
     shot = next(s for s in proj["shots"] if s["n"] == n)
@@ -421,8 +506,7 @@ def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
             size = FORMATS[proj["format"]]
             converted = _proxy(original, paths["proxy"], size, info["hdr"])
             _clean(original, paths["audio"], trim=False)
-            lang = "hindi" if proj["language"] == "hindi" else "english"  # Hinglish comes out closest in Roman letters
-            heard = transcribe(paths["audio"], lang)
+            heard = _hear(proj["language"], paths["audio"])
         length = media_seconds(paths["audio"])
         notes = []
         portrait = info["height"] > info["width"]
@@ -446,14 +530,11 @@ def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
             verdict = "no transcript"
             notes.append("faster-whisper isn't installed, so the words weren't checked and lines are cut by length.")
         else:
-            rows = align(lines, heard, length)
-            worst = min(r["matched"] for r in rows)
-            missed = sum(len(r["missing"]) for r in rows)
-            verdict = "good" if worst >= 0.8 and missed <= 1 else "check words"
+            rows, verdict, matched = _judge(lines, heard, length)
         take.update(status="ready", duration=round(length, 2), width=info["width"], height=info["height"],
-                    hdr=info["hdr"], verdict=verdict, notes=notes, lines=[{k: v for k, v in r.items()} for r in rows],
+                    hdr=info["hdr"], verdict=verdict, notes=notes, lines=rows, checker=CHECKER,
                     heard=[[w.text, w.start, w.end] for w in heard] if heard else None,
-                    matched=None if heard is None else round(sum(r["matched"] for r in rows) / len(rows), 2))
+                    matched=None if heard is None else matched)
     except Exception as exc:  # noqa: BLE001 - shown on the shot's card
         log.exception("Take %s of %s failed", n, pid)
         take.update(status="failed", error=str(exc)[:300])
@@ -461,8 +542,85 @@ def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
     return take
 
 
+_active: set[tuple[str, int]] = set()  # takes being prepared or checked by this run of the app
+
+
 def process_in_background(cfg: Config, pid: str, n: int, original: Path) -> None:
-    threading.Thread(target=process_take, args=(cfg, pid, n, original), daemon=True).start()
+    def go() -> None:
+        try:
+            process_take(cfg, pid, n, original)
+        finally:
+            _active.discard((pid, n))
+
+    _active.add((pid, n))  # before the card says 'processing', so opening the project never starts it twice
+    update(cfg, pid, lambda p: next(s for s in p["shots"] if s["n"] == n).update(
+        take={"status": "processing", "file": original.name}))
+    threading.Thread(target=go, daemon=True).start()
+
+
+def recheck(cfg: Config, pid: str, n: int) -> None:
+    """Check a ready take's words again the current way (`CHECKER`), without preparing the video again: a new
+    transcript for Hindi and Hinglish, the saved one matched again for English. A failed check keeps the old one."""
+    proj = load(cfg, pid)
+    shot = next(s for s in proj["shots"] if s["n"] == n)
+    lines = [proj["lines"][k]["text"] for k in shot["lines"]]
+    old = shot.get("take") or {}
+    audio = take_paths(cfg, pid, n)["audio"]
+    try:
+        with _work:
+            if proj["language"] == "english" and old.get("heard"):
+                heard = [Word(t, a, b) for t, a, b in old["heard"]]
+            else:
+                heard = _hear(proj["language"], audio)
+        length = media_seconds(audio)
+        if not heard:
+            raise ValueError("nothing was heard")
+        rows, verdict, matched = _judge(lines, heard, length)
+        new = {"verdict": verdict, "lines": rows, "matched": matched, "checker": CHECKER,
+               "heard": [[w.text, w.start, w.end] for w in heard]}
+        log.info("Shot %s of %s checked again: %d%% of the words heard (was %d%%)", n, pid, round(matched * 100),
+                 round((old.get("matched") or 0) * 100))
+    except Exception as exc:  # noqa: BLE001 - the take keeps its earlier check
+        log.warning("Checking shot %s of %s again failed: %s", n, pid, exc)
+        new = {}
+
+    def put(p: dict) -> None:
+        take = next(s for s in p["shots"] if s["n"] == n).get("take")
+        if take and take.get("file") == old.get("file"):  # not replaced meanwhile
+            take.update(new)
+            take.pop("rechecking", None)
+
+    update(cfg, pid, put)
+
+
+def recheck_old(cfg: Config, proj: dict) -> dict:
+    """When a project is opened: takes checked an older way are checked again, and takes left half-prepared when the
+    app closed are prepared again, in the background (each once per run of the app). Returns the project as shown."""
+    pid = proj["id"]
+    stale = [s["n"] for s in proj["shots"] if (t := s.get("take") or {}).get("status") == "ready"
+             and t.get("heard") is not None and t.get("checker", 1) < CHECKER and (pid, s["n"]) not in _active]
+    stuck = [s for s in proj["shots"] if (s.get("take") or {}).get("status") == "processing" and (pid, s["n"]) not in _active]
+    for s in stuck:
+        original = folder(cfg, pid) / "takes" / str(s["take"].get("file") or "")
+        if s["take"].get("file") and original.exists():
+            process_in_background(cfg, pid, s["n"], original)
+    if not stale:
+        return load(cfg, pid) if stuck else proj
+    _active.update((pid, n) for n in stale)  # never removed: a check that fails isn't retried in a loop
+
+    def mark(p: dict) -> None:
+        for s in p["shots"]:
+            if s["n"] in stale and s.get("take"):
+                s["take"]["rechecking"] = True
+
+    proj = update(cfg, pid, mark)
+
+    def go() -> None:
+        for n in stale:
+            recheck(cfg, pid, n)
+
+    threading.Thread(target=go, daemon=True).start()
+    return proj
 
 
 def remove_take(cfg: Config, pid: str, n: int) -> None:

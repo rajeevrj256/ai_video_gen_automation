@@ -147,22 +147,23 @@ def _silences(path: Path) -> list[tuple[float, float]]:
     return list(zip(starts, ends))
 
 
-_whisper = None
+_whispers: dict[str, object] = {}  # loaded speech-to-text models by name
 
 
-def transcribe(path: Path, language: str = "") -> list[Word] | None:
-    """Word timings of what you actually said, or None when faster-whisper isn't installed."""
-    global _whisper
+def transcribe(path: Path, language: str = "", model: str = "") -> list[Word] | None:
+    """Word timings of what you actually said, or None when faster-whisper isn't installed. `model` is a
+    faster-whisper size (default REEL_WHISPER_MODEL, base)."""
     try:
         from faster_whisper import WhisperModel
     except ImportError:
         log.info("faster-whisper not installed: timing only, no word check")
         return None
     import os
-    if _whisper is None:
-        _whisper = WhisperModel(os.environ.get("REEL_WHISPER_MODEL", "base"), device="cpu", compute_type="int8")
+    name = model or os.environ.get("REEL_WHISPER_MODEL", "base")
+    if name not in _whispers:
+        _whispers[name] = WhisperModel(name, device="cpu", compute_type="int8")
     lang = {"hindi": "hi", "english": "en"}.get(language.split()[-1].lower(), None) if language else None
-    parts, _ = _whisper.transcribe(str(path), word_timestamps=True, language=lang, vad_filter=True)
+    parts, _ = _whispers[name].transcribe(str(path), word_timestamps=True, language=lang, vad_filter=True)
     return [Word(w.word.strip(), round(w.start, 3), round(w.end, 3)) for seg in parts for w in (seg.words or [])
             if w.word.strip()]
 
