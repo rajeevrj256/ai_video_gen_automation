@@ -737,6 +737,7 @@
           Tip: the iPhone's HDR video is converted automatically, but colours are truest with Settings > Camera > Record
           Video > HDR Video off.</p></details>
       <div id="shShots"></div>
+      <details class="used" id="shVoice" open><summary>🎙 Your voice</summary><div id="shVoiceBody" style="margin-top:8px"></div></details>
       <div class="grid2">
         <div><label for="sh-cc">Subtitles</label><select id="sh-cc"><option value="false">🚫 Off</option><option value="true">💬 On (your words)</option></select></div>
         <div></div>
@@ -2790,7 +2791,7 @@ function shotCard(s) {
     const l = SH.lines[k], r = t && t.lines ? t.lines[j] : null;
     const tag = l.camera === true ? "🎥 You" : l.camera === false ? "🎞 B-roll" : "…";
     return `<div class="sh-line"><span class="sh-tag ${l.camera ? "cam" : ""}" data-line="${k}" title="Tap to switch: you on camera, or B-roll">${tag}</span>
-      <span>${esc(l.text)}${r && r.missing && r.missing.length ? `<br><span class="hint">Not heard: ${esc(r.missing.join(", "))}</span>` : ""}</span></div>`;
+      <span>${esc(l.text)}${r && r.missing && r.missing.length ? `<br><span class="hint">Not heard: ${esc(r.missing.join(", "))}${shFixing() && (r.matched || 0) >= 0.5 ? " → rebuilt in your voice when the video is made" : ""}</span>` : ""}</span></div>`;
   }).join("");
   let take;
   if (!t) take = "No take yet.";
@@ -2814,8 +2815,42 @@ function shotCard(s) {
   </div>`;
 }
 
+// Your voice: cleaned (noise, hum, room) and missing words rebuilt in it, by the voice engine (reelgen/voice_engine.py).
+let VE = null, veTimer = null;
+const shVoiceOpts = () => ({ clean: true, fix: true, ...(SH && SH.voice || {}) });
+const shFixing = () => !!(VE && VE.installed && shVoiceOpts().fix);
+async function loadVoiceEngine() {
+  try { VE = await api("/api/voice-engine"); } catch (e) { VE = null; }
+  renderVoice();
+  clearTimeout(veTimer);
+  if (VE && VE.installing) veTimer = setTimeout(() => { if (current === "shoot" && SH) loadVoiceEngine(); }, 3000);
+}
+function renderVoice() {
+  const box = $("#shVoiceBody");
+  if (!box || !SH) return;
+  const o = shVoiceOpts();
+  if (!VE || !VE.installed) {
+    box.innerHTML = `<p class="hint">Make your takes sound like a studio recording, and put back words you skipped or said wrong
+      <b>in your own voice</b> (cloned from your takes, on this computer, free). Needs the voice engine: about 6 GB, installed once.</p>
+      ${VE && VE.installing ? `<p class="hint">⏳ Installing… ${esc((VE.log || []).slice(-1)[0] || "")}</p>`
+        : `<button class="mini" id="veInstall">⬇ Install the voice engine</button>${VE && VE.error ? `<p class="hint">⚠️ ${esc(VE.error)}</p>` : ""}`}`;
+    if ($("#veInstall")) $("#veInstall").onclick = async () => { try { await api("/api/voice-engine", { method: "POST" }); loadVoiceEngine(); } catch (e) { toast(e.message); } };
+    return;
+  }
+  box.innerHTML = `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="vClean" style="width:auto;margin-top:3px" ${o.clean ? "checked" : ""}> Clean my voice: noise, hum and room echo
+      taken out, a clearer studio tone (timing kept, so your lips stay in sync)</label>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="vFix" style="width:auto;margin-top:3px" ${o.fix ? "checked" : ""}> Rebuild words I skipped or said wrong, in my own voice
+      (a fixed line that was on camera shows its B-roll, since your lips wouldn't match)</label>
+    <p class="hint">Both happen when the video is made. A line with most of its words missing can't be patched: film it again.</p>`;
+  const save = async () => {
+    try { SH = await api(shUrl("/voice"), { method: "POST", body: JSON.stringify({ clean: $("#vClean").checked, fix: $("#vFix").checked }) }); renderShoot(); } catch (e) { toast(e.message); }
+  };
+  $("#vClean").onchange = save; $("#vFix").onchange = save;
+}
+
 function renderShoot() {
   const p = SH, plan = p.plan || {};
+  if (!VE) loadVoiceEngine(); else renderVoice();
   $("#shTitle").textContent = p.title;
   $("#shFmt").textContent = p.format === "short" ? "📱 9:16 Short · film upright" : "🖥 16:9 video · film sideways";
   const cams = p.lines.filter((l) => l.camera).length;

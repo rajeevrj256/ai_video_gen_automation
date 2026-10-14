@@ -150,9 +150,9 @@ def _silences(path: Path) -> list[tuple[float, float]]:
 _whispers: dict[str, object] = {}  # loaded speech-to-text models by name
 
 
-def transcribe(path: Path, language: str = "", model: str = "") -> list[Word] | None:
+def transcribe(path: Path, language: str = "", model: str = "", **options) -> list[Word] | None:
     """Word timings of what you actually said, or None when faster-whisper isn't installed. `model` is a
-    faster-whisper size (default REEL_WHISPER_MODEL, base)."""
+    faster-whisper size (default REEL_WHISPER_MODEL, base); `options` go to faster-whisper's transcribe."""
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -163,7 +163,7 @@ def transcribe(path: Path, language: str = "", model: str = "") -> list[Word] | 
     if name not in _whispers:
         _whispers[name] = WhisperModel(name, device="cpu", compute_type="int8")
     lang = {"hindi": "hi", "english": "en"}.get(language.split()[-1].lower(), None) if language else None
-    parts, _ = _whispers[name].transcribe(str(path), word_timestamps=True, language=lang, vad_filter=True)
+    parts, _ = _whispers[name].transcribe(str(path), word_timestamps=True, language=lang, **{"vad_filter": True, **options})
     return [Word(w.word.strip(), round(w.start, 3), round(w.end, 3)) for seg in parts for w in (seg.words or [])
             if w.word.strip()]
 

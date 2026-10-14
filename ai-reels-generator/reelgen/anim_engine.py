@@ -215,6 +215,12 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str,
     AI step holds the card (EngineBusy): a Short's music never waits hours behind an animated video's clips."""
     if not installed():
         raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
+    run_on_card(stage, job, work, progress, label, wait, python(), WORKER)
+
+
+def run_on_card(stage: str, job: dict, work: Path, progress: Progress, label: str, wait: float | None,
+                py: Path, worker: Path) -> None:
+    """`run_stage` for any engine's worker (the voice engine's too): one AI step on the graphics card at a time."""
     if not _gpu.acquire(blocking=False):
         progress(f"{label}: waiting for the graphics card (another AI step is using it)")
         waited = 0.0
@@ -226,15 +232,16 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str,
                 raise EngineBusy("the graphics card is busy with another video's AI step")
     try:
         try:
-            _run_stage(stage, job, work, progress, label)
+            _run_stage(stage, job, work, progress, label, py, worker)
         except WorkerCrashed as exc:
             progress(f"{label}: the AI worker stopped unexpectedly ({exc.why}); starting it again for what's left")
-            _run_stage(stage, job, work, progress, label)
+            _run_stage(stage, job, work, progress, label, py, worker)
     finally:
         _gpu.release()
 
 
-def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str) -> None:
+def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str, py: Path | None = None,
+               worker: Path | None = None) -> None:
     job = {**job, "hf_home": str(MODELS / "hf"), "calibration": str(CALIBRATION)}
     for items in (job.get("characters", []), job.get("shots", []), job.get("tracks", [])):  # every output's folder
         for it in items:
@@ -244,7 +251,7 @@ def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str
     jobfile = work / f"ai-{stage}.json"
     jobfile.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     kw: dict = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}  # type: ignore[attr-defined]
-    proc = subprocess.Popen([str(python()), "-I", str(WORKER), stage, str(jobfile)], env=env(), cwd=work,
+    proc = subprocess.Popen([str(py or python()), "-I", str(worker or WORKER), stage, str(jobfile)], env=env(), cwd=work,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                             errors="replace", **kw)
     lines: queue.Queue = queue.Queue()

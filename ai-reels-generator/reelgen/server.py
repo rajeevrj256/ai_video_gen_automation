@@ -526,6 +526,11 @@ class ShootMakeBody(BaseModel):
     captions: bool | None = None
 
 
+class ShootVoiceBody(BaseModel):
+    clean: bool | None = None  # noise, hum and room taken out of your takes
+    fix: bool | None = None  # words you skipped or said wrong rebuilt in your voice
+
+
 class ScriptVideoRequest(BaseModel):
     """Script Video: the user's own finished, fact-checked title, description, hook and script."""
     title: str
@@ -1301,6 +1306,27 @@ def create_app(cfg: Config) -> FastAPI:
         if not 0 <= k < len(proj["lines"]):
             raise HTTPException(404, "No such line")
         return shoot.update(cfg, pid, lambda p: p["lines"][k].update(camera=bool(on)))
+
+    @app.post("/api/shoot/{pid}/voice")
+    def shoot_voice(pid: str, body: ShootVoiceBody):
+        """Your voice in this shoot: cleaned, and missing words rebuilt in it (voice engine)."""
+        from . import shoot
+
+        proj = _shoot(pid)
+        voice = {**shoot.voice_options(proj), **body.model_dump(exclude_none=True)}
+        return shoot.update(cfg, pid, lambda p: p.update(voice=voice))
+
+    @app.get("/api/voice-engine")
+    def voice_engine_status():
+        from . import voice_engine
+        return voice_engine.status()
+
+    @app.post("/api/voice-engine")
+    def voice_engine_install():
+        from . import voice_engine
+        if not voice_engine.install():
+            raise HTTPException(409, "Already installing")
+        return {"ok": True}
 
     @app.delete("/api/shoot/{pid}")
     def shoot_delete(pid: str):

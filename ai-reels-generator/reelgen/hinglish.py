@@ -88,6 +88,39 @@ Keep every word, in the same order: one output word for each input word. Never t
 split a word, and never correct the grammar. Return the lines in the same order and the same number."""
 
 
+DEVANAGARI = """You prepare Hinglish lines for a Hindi voice model that reads only Devanagari: English words in \
+English letters come out mangled ('Scientists already human' became 'निसायन्तुस्ट आदरी विमन'). Write each line, \
+typed in Roman letters, again entirely in Devanagari, the way an Indian speaker says it:
+- Hindi or Urdu words in their usual spelling: aur -> और, hai -> है, mein -> में, kaam -> काम, sawaal -> सवाल
+- English words spelled as they sound in Indian English: scientists -> साइंटिस्ट्स, already -> ऑलरेडी, computer -> \
+कंप्यूटर, commands -> कमांड्स, future -> फ़्यूचर, AI -> एआई, thoughts -> थॉट्स, read -> रीड
+- names, brands and units the same way (Neuralink -> न्यूरालिंक, GB -> जीबी); numbers as digits
+- punctuation as it is
+Keep every word, in the same order: one output word for each input word. Never translate, add, drop, merge or split \
+a word. Return the lines in the same order and the same number."""
+
+
+def to_devanagari(texts: list[str], ask_fn=None) -> list[str]:
+    """Each line entirely in Devanagari, English words as they sound (for the voice engine's Hindi model, which can't
+    read English letters); a line that can't be converted safely stays as it is. Cached with the mixed-script lines."""
+    with _lock:
+        cache = _load_cache()
+        key = lambda t: "deva:" + t  # noqa: E731
+        todo = [t for t in dict.fromkeys(texts) if t.strip() and key(t) not in cache]
+        if todo:
+            try:
+                got = _convert(todo, ask_fn, DEVANAGARI)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Devanagari conversion failed (%s); the line is read as written", exc)
+                got = []
+            for original, new in zip(todo, got):
+                new = new.strip()
+                if new and len(words(new)) == len(words(original)):
+                    cache[key(original)] = new
+            _save_cache(cache)
+    return [cache.get("deva:" + t, t) for t in texts]
+
+
 def _cache_path():
     from .config import Config, load_settings
 
@@ -131,7 +164,7 @@ def to_speech(texts: list[str], ask_fn=None) -> list[str]:
     return [cache.get(t, t) for t in texts]
 
 
-def _convert(lines: list[str], ask_fn=None) -> list[str]:
+def _convert(lines: list[str], ask_fn=None, system: str = "") -> list[str]:
     from .config import Config, load_settings
     from .llm import ask
 
@@ -142,7 +175,7 @@ def _convert(lines: list[str], ask_fn=None) -> list[str]:
     for i in range(0, len(lines), 60):  # long chapters in a few calls
         part = lines[i:i + 60]
         prompt = "Lines:\n" + "\n".join(f"{n + 1}. {t}" for n, t in enumerate(part))
-        res = call(SYSTEM, prompt)
+        res = call(system or SYSTEM, prompt)
         got = [re.sub(r"^\s*\d+\.\s*", "", x) for x in res.lines]
         out += got if len(got) == len(part) else [""] * len(part)
     return out

@@ -1676,6 +1676,8 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
         if manual and manual.get("shoot"):  # filmed by you: your voice, your takes
             report.update({"voice": "your own (filmed)", "shoot": manual["shoot"]["id"],
                            **({"format": "short", "length": "short"} if manual.get("vertical") else {})})
+            if (work / "your-voice.json").exists():  # cleaned takes and words rebuilt in your voice (shoot.voices_for)
+                report["your_voice"] = json.loads((work / "your-voice.json").read_text(encoding="utf-8"))
         if manual:  # your title and description, as written; the chapter stamps are offered separately
             report.update({"source": kind, "topic_source": f"your {kind}", "caption": manual["description"],
                            "hashtags": [], "youtube_title": manual["title"], "youtube_description": manual["description"],

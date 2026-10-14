@@ -115,6 +115,12 @@ Film yourself with your phone's own camera app while this computer is your telep
    improvement to this check are checked again when you open the shoot.
 4. **Make the video**: your takes are the voice and the on-camera picture, with a punch-in on every other take; the
    other lines get their B-roll, plus captions from your words, music, sound design and the cinematic hook.
+5. **Your voice** (optional, free, on this computer; install the voice engine once from the Shoot tab, about 6 GB):
+   - **Clean my voice**: noise, hum and room echo taken out and a clearer studio tone, with the timing kept to the
+     sample so your lips stay in sync.
+   - **Rebuild words I skipped or said wrong, in my own voice**: your voice is cloned from your takes; the line is
+     spoken in it, the missing words are cut out and put into your take, and the line is checked again. A fixed line
+     that was on camera shows its B-roll. A line with most of its words missing needs a new take.
 
 ## Shorts Studio (tab "Shorts+")
 

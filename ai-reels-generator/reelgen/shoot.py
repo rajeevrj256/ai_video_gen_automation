@@ -341,17 +341,28 @@ def _cluster(idx: list[int], gap: int = 6) -> list[int]:
     return max(runs, key=len)
 
 
+def matches(lines: list[str], heard: list[Word]) -> tuple[list[tuple[int, int, str]], dict[int, int]]:
+    """The script's tokens (`_script_tokens`) and, for each one heard, the heard word it is: in order, and only the
+    best cluster of each line (`_cluster`), so a false start's words don't count."""
+    tokens = _script_tokens(lines)
+    match = pairs([t[2] for t in tokens], [skeleton(w.text) for w in heard])  # script token -> heard word
+    out: dict[int, int] = {}
+    for k in range(len(lines)):
+        mine = [t for t, tok in enumerate(tokens) if tok[0] == k]
+        kept = set(_cluster([match[t] for t in mine if t in match]))
+        out.update({t: match[t] for t in mine if match.get(t) in kept})
+    return tokens, out
+
+
 def align(lines: list[str], heard: list[Word], length: float) -> list[dict]:
     """Where each line of a take starts and ends (cut in the pause between lines), which heard words are its own, and
     which script words weren't heard."""
-    tokens = _script_tokens(lines)
-    match = pairs([t[2] for t in tokens], [skeleton(w.text) for w in heard])  # script token -> heard word
+    tokens, match = matches(lines, heard)
     out = []
     for k, text in enumerate(lines):
         mine = [t for t, tok in enumerate(tokens) if tok[0] == k]
-        hits = _cluster([match[t] for t in mine if t in match])
-        kept = set(hits)
-        missing = list(dict.fromkeys(text.split()[tokens[t][1]] for t in mine if match.get(t) not in kept))
+        hits = sorted(match[t] for t in mine if t in match)
+        missing = list(dict.fromkeys(text.split()[tokens[t][1]] for t in mine if t not in match))
         out.append({"first": hits[0] if hits else None, "last": hits[-1] if hits else None,
                     "matched": round(1 - len(missing) / max(1, len(mine)), 2),
                     "missing": [m for m in missing if skeleton(m) and m.lower().strip(".,!?;:") not in FILLER][:12]})
@@ -465,16 +476,27 @@ def take_target(cfg: Config, pid: str, n: int, filename: str) -> Path:
 CHECKER = 2  # how a take's words are checked; takes checked an older way are checked again (`recheck_old`)
 
 
-def _hear(language: str, audio: Path) -> list[Word] | None:
+def _hear(language: str, audio: Path, **options) -> list[Word] | None:
     """What was said in a take. Hindi and Hinglish go to the 'small' model in Hindi mode (REEL_WHISPER_HINDI_MODEL):
     in English mode speech-to-text translates Hindi ('Lekin sawaal hai' came back as 'But the question is', so a
     Hinglish take showed 28% of its words heard), and the 'base' model translates even in Hindi mode. 'small' writes
     what you said in Devanagari, English words as they sound ('कमान्ट्स'), which `skeleton` reads."""
     from .myvoice import transcribe
 
-    if language == "english":
-        return transcribe(audio, "english")
-    return transcribe(audio, "hindi", os.environ.get("REEL_WHISPER_HINDI_MODEL", "small"))
+    model = "" if language == "english" else os.environ.get("REEL_WHISPER_HINDI_MODEL", "small")
+    lang = "english" if language == "english" else "hindi"
+    heard = transcribe(audio, lang, model, **options)
+    if heard and _looped(heard):  # stuck in a loop ('हूँँँँँँँँ...' at a hard joint): once more, without carrying text over
+        log.info("Speech-to-text looped on %s; trying again", Path(audio).name)
+        again = transcribe(audio, lang, model, condition_on_previous_text=False, temperature=(0.2, 0.4, 0.6, 0.8))
+        if again and (not _looped(again) or len(again) > len(heard)):
+            heard = again
+    return [w for w in heard if not _looped([w])] if heard else heard
+
+
+def _looped(heard: list[Word]) -> bool:
+    """A transcript stuck in a loop: a letter repeated six times, or a 'word' longer than any real one."""
+    return any(re.search(r"(.)\1{5,}", w.text) or len(w.text) > 30 for w in heard)
 
 
 def _judge(lines: list[str], heard: list[Word], length: float) -> tuple[list[dict], str, float]:
@@ -662,12 +684,15 @@ def voices_for(shoot: dict, script, work: Path, progress: Progress) -> tuple[lis
     audios: dict[int, SceneAudio] = {}
     camera: dict[int, dict] = {}
     zoom_for: dict[int, float] = {}
+    opts = voice_options(proj)
+    engine = (opts["clean"] or opts["fix"]) and _engine_ready(progress)
+    clean = _clean_takes(proj, takes_dir, work, progress) if engine and opts["clean"] else {}
     for k, row in enumerate(proj["lines"]):
         if k not in by_line:
             raise RuntimeError(f"Shot with line {k + 1} has no take: upload it on the Shoot tab")
         s, take, j = by_line[k]
         r = take["lines"][j]
-        src = takes_dir / f"shot{s['n']:02d}.wav"
+        src = clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav"
         dst = work / "audio" / "takes" / f"line{k:03d}.wav"
         _cut(src, dst, r["start"], r["end"])
         heard = [Word(t, a, b) for t, a, b in (take.get("heard") or [])]
@@ -685,6 +710,13 @@ def voices_for(shoot: dict, script, work: Path, progress: Progress) -> tuple[lis
             camera[k] = {"type": "camera", "src": f"takes/{proxy.name}", "from": r["start"],
                          "until": round(r["end"] - r["start"], 3), "zoom": zoom_for[s["n"]], "headline": "", "sub": "",
                          "items": [], "icons": [], "camera": "still"}
+    fixed = _fix_words(proj, audios, clean, takes_dir, work, progress) if engine and opts["fix"] else {}
+    for k in fixed:
+        if camera.pop(k, None):  # your lips no longer match the line: its B-roll instead
+            progress(f"Line {k + 1} shows B-roll now (a word in it was rebuilt in your voice)")
+    (work / "your-voice.json").write_text(json.dumps({
+        "cleaned": sorted(clean), "fixed": [{"line": k + 1, **{x: r[x] for x in ("fixed", "failed")}} for k, r in fixed.items()],
+    }, ensure_ascii=False), encoding="utf-8")
     gain = level_voice([a.path for a in audios.values()])
     if gain:
         progress(f"Your voice levelled by {gain:+.1f} dB")
@@ -711,6 +743,122 @@ def voices_for(shoot: dict, script, work: Path, progress: Progress) -> tuple[lis
         else:
             hook_voices.append(None)
     return voices, hook_voices, overrides
+
+
+# ---------- your voice: cleaned, and missing words rebuilt (voice_engine.py, wordfix.py) ----------
+
+STUDIO = ("highpass=f=85,equalizer=f=200:t=q:w=1.0:g=-3,equalizer=f=4000:t=q:w=0.9:g=4,highshelf=f=8000:g=3,"
+          "acompressor=threshold=-22dB:ratio=2.5:attack=10:release=150:makeup=3")  # less boom, clearer, steadier
+VOICE_WAIT = 600  # seconds to wait for the graphics card before the video goes on with the takes as recorded
+FIX_MIN_MATCH = 0.5  # a line with fewer of its words heard is a bad transcript or a different line: never 'fixed'
+FIX_MAX_WORDS, FIX_MAX_SECONDS = 8, 3.0  # longer gaps are a missing sentence: that needs a new take, not a patch
+
+
+def voice_options(proj: dict) -> dict:
+    """The shoot's voice settings (both on unless switched off on the Shoot tab)."""
+    return {"clean": True, "fix": True, **(proj.get("voice") or {})}
+
+
+def _engine_ready(progress: Progress) -> bool:
+    from . import voice_engine
+
+    if voice_engine.installed():
+        return True
+    progress("Your voice: the voice engine isn't installed (Shoot tab), so the takes are used as recorded")
+    return False
+
+
+def _clean_takes(proj: dict, takes_dir: Path, work: Path, progress: Progress) -> dict[int, Path]:
+    """Each take's sound with noise, hum and room taken out (ClearerVoice, timing kept to the sample, so your lips stay
+    in sync) and a studio tone (`STUDIO`); kept next to the take (shotNN-voice.wav) for the next edit."""
+    from . import stopper, voice_engine
+
+    out, jobs = {}, []
+    for s in proj["shots"]:
+        take = s.get("take") or {}
+        if take.get("status") != "ready":
+            continue
+        n = s["n"]
+        voiced = takes_dir / f"shot{n:02d}-voice.wav"
+        if voiced.exists():
+            out[n] = voiced
+            continue
+        hq = takes_dir / f"shot{n:02d}-48k.wav"
+        if not hq.exists():
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(takes_dir / take["file"]), "-vn", "-ac", "1",
+                            "-ar", "48000", str(hq)], check=True)
+        jobs.append({"n": n, "src": str(hq), "out": str(takes_dir / f"shot{n:02d}-clean.wav")})
+    if jobs:
+        progress(f"Your voice: cleaning {len(jobs)} take(s) (noise, hum and room taken out; timing kept)")
+        try:
+            voice_engine.run("clean", {"items": jobs}, work, progress, "Your voice", wait=VOICE_WAIT)
+        except stopper.Paused:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the video goes on with the takes as recorded
+            progress(f"Your voice: cleaning skipped ({exc}); the takes are used as recorded")
+            return out
+        for j in jobs:
+            voiced = takes_dir / f"shot{j['n']:02d}-voice.wav"
+            if Path(j["out"]).exists():
+                subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", j["out"], "-af", STUDIO, "-ar", "48000",
+                                str(voiced)], check=True)
+                out[j["n"]] = voiced
+    return out
+
+
+def _fix_words(proj: dict, audios: dict, clean: dict, takes_dir: Path, work: Path, progress: Progress) -> dict[int, dict]:
+    """Words you skipped or said wrong, rebuilt in your voice in each line's audio (`wordfix.repair`); `audios` is
+    updated in place. Returns the repaired lines {line k: result}."""
+    from . import stopper, wordfix
+
+    wanted: dict[int, list[dict]] = {}
+    refs = []
+    for s in proj["shots"]:
+        take = s.get("take") or {}
+        if take.get("status") != "ready" or not take.get("heard"):
+            continue
+        heard = [Word(t, a, b) for t, a, b in take["heard"]]
+        refs.append((clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav", heard))
+        for g in wordfix.gaps([proj["lines"][k]["text"] for k in s["lines"]], heard):
+            row = take["lines"][g["line"]]
+            if ((row.get("matched") or 0) < FIX_MIN_MATCH or len(g["words"]) > FIX_MAX_WORDS
+                    or g["at"][1] - g["at"][0] > FIX_MAX_SECONDS):
+                progress(f"Your voice: '{g['text']}' can't be patched in (too much of the line is missing): film it again")
+                continue
+            wanted.setdefault(s["lines"][g["line"]], []).append(
+                dict(g, at=[round(max(0.0, g["at"][0] - row["start"]), 3), round(max(0.0, g["at"][1] - row["start"]), 3)]))
+    if not wanted:
+        return {}
+    keys = sorted(wanted)
+    items = [{"wav": str(audios[k].path), "text": proj["lines"][k]["text"], "gaps": wanted[k],
+              "out": str(work / "audio" / "takes" / f"line{k:03d}-fixed.wav")} for k in keys]
+    items = wordfix.confirm(items, proj["language"])  # heard again line by line: a misheard word is left alone
+    keys = [k for k, it in zip(keys, items) if it["gaps"]]
+    items = [it for it in items if it["gaps"]]
+    if not items:
+        return {}
+    wanted = {k: it["gaps"] for k, it in zip(keys, items)}
+    words = ", ".join(f"'{g['text']}'" for k in keys for g in wanted[k])
+    progress(f"Your voice: rebuilding {words} in your own voice")
+    try:
+        ref = wordfix.reference(refs, work / "audio" / "takes" / "your-voice-ref.wav")
+        results = wordfix.repair(items, ref, proj["language"], work / "voice-fix", progress)
+    except stopper.Paused:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the video goes on with the takes as recorded
+        log.exception("Rebuilding words failed")
+        progress(f"Your voice: couldn't rebuild the words ({exc}); the takes are used as recorded")
+        return {}
+    done = {}
+    for k, it, r in zip(keys, items, results):
+        if r["ok"]:
+            audios[k] = SceneAudio(Path(it["out"]), wordfix.shift_words(audios[k].words, r["changes"]))
+            done[k] = r
+        if r["failed"]:
+            progress(f"Your voice: couldn't rebuild {', '.join(repr(w) for w in r['failed'])} in line {k + 1}; it stays as recorded")
+    if done:
+        progress(f"Your voice: rebuilt {sum(len(r['fixed']) for r in done.values())} word(s) in {len(done)} line(s)")
+    return done
 
 
 def _even(text: str, seconds: float) -> list[Word]:
