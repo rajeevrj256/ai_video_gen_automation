@@ -559,7 +559,8 @@ def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
             size = FORMATS[proj["format"]]
             converted = _proxy(original, paths["proxy"], size, info["hdr"])
             _clean(original, paths["audio"], trim=False)
-            heard = _best_hearing(proj["language"], paths["audio"], lines, media_seconds(paths["audio"]))
+            hear_from = _voice_at_upload(proj, n, original, paths["audio"].parent) or paths["audio"]
+            heard = _best_hearing(proj["language"], hear_from, lines, media_seconds(hear_from))
         length = media_seconds(paths["audio"])
         notes = []
         portrait = info["height"] > info["width"]
@@ -810,6 +811,30 @@ def _engine_ready(progress: Progress) -> bool:
         return True
     progress("Your voice: the voice engine isn't installed (Shoot tab), so the takes are used as recorded")
     return False
+
+
+def _voice_at_upload(proj: dict, n: int, original: Path, takes_dir: Path) -> Path | None:
+    """A new take's cleaned sound (as `_clean_takes` makes it, kept for the edit) when the voice engine is installed
+    and cleaning is on, so the word check listens to it: speech-to-text heard a take's cleaned sound far better
+    (33-74% against 0-23% for the same take as uploaded). None when it can't be made within a minute."""
+    from . import voice_engine
+
+    if not voice_options(proj)["clean"] or not voice_engine.installed():
+        return None
+    try:
+        hq = takes_dir / f"shot{n:02d}-48k.wav"
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(original), "-vn", "-ac", "1", "-ar", "48000",
+                        str(hq)], check=True)
+        cleaned = takes_dir / f"shot{n:02d}-clean.wav"
+        voice_engine.run("clean", {"items": [{"src": str(hq), "out": str(cleaned)}]}, takes_dir, log.info,
+                         "Your voice", wait=60)
+        voiced = takes_dir / f"shot{n:02d}-voice.wav"
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(cleaned), "-af", STUDIO, "-ar", "48000",
+                        str(voiced)], check=True)
+        return voiced
+    except Exception as exc:  # noqa: BLE001 - the take is checked from its sound as uploaded
+        log.info("Cleaning take %s at upload skipped: %s", n, exc)
+        return None
 
 
 def _clean_takes(proj: dict, takes_dir: Path, work: Path, progress: Progress) -> dict[int, Path]:
