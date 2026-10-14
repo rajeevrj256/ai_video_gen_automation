@@ -1,0 +1,123 @@
+"""A few seconds' check of the code every video runs through, before each commit:
+
+    .venv/bin/python -m reelgen.selfcheck      (Windows: .venv\\Scripts\\python -m reelgen.selfcheck)
+
+1. every module imports;
+2. no module defines the same top-level name twice: a prompt named DEVANAGARI replaced the regex of the same name in
+   hinglish.py, and every Hinglish video then failed at its voice with "'str' object has no attribute 'findall'";
+3. the shared text functions answer as they should (Hinglish detection, word matching, script cutting, word repair).
+No network, no Claude, no models. Exits 1 and says what broke.
+"""
+
+from __future__ import annotations
+
+import ast
+import collections
+import importlib
+import pkgutil
+import sys
+import traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+FAILS: list[str] = []
+
+
+def fail(what: str) -> None:
+    FAILS.append(what)
+    print("FAIL", what)
+
+
+def imports() -> None:
+    import reelgen
+
+    for mod in pkgutil.iter_modules(reelgen.__path__):
+        if mod.name in ("__main__", "selfcheck", "updater"):
+            continue
+        try:
+            importlib.import_module(f"reelgen.{mod.name}")
+        except Exception as exc:  # noqa: BLE001
+            fail(f"import reelgen.{mod.name}: {type(exc).__name__}: {exc}")
+
+
+def duplicate_names() -> None:
+    files = [*sorted((ROOT / "reelgen").glob("*.py")), *sorted((ROOT / "voice_worker").glob("*.py")),
+             *sorted((ROOT / "anim_worker").glob("*.py"))]
+    for f in files:
+        seen: dict[str, list[int]] = collections.defaultdict(list)
+        for node in ast.parse(f.read_text(encoding="utf-8")).body:
+            names = []
+            if isinstance(node, ast.Assign):
+                names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names = [node.target.id]
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [node.name]
+            for n in names:
+                seen[n].append(node.lineno)
+        for name, lines in seen.items():
+            if len(lines) > 1 and name not in ("log", "__all__"):
+                fail(f"{f.relative_to(ROOT)}: '{name}' is defined twice (lines {lines}); the second replaces the first")
+
+
+SCRIPT = """## Shuruaat
+Microsoft ne is saal 1,400 se zyada flaws fix kiye. Kya aapka PC safe hai? Chaliye dekhte hain kaise.
+
+## Patch kya hai
+Pehle samjhiye patch kya hota hai."""
+SCRIPT_WORDS = [w for line in SCRIPT.splitlines() if line and not line.startswith("##") for w in line.split()]
+HOOK = "Microsoft ne 1,400 flaws fix kiye. Lekin sawaal hai... kya aapka PC ab bhi khatre mein hai?"
+
+
+def behaviour() -> None:
+    from . import hinglish, scriptvideo, shoot, wordfix
+    from .voice import Word
+
+    hinglish_line = ["Aaj hum baat karenge ki Microsoft ne 1,400 se zyada security flaws kaise fix kiye aur aapka PC kitna safe hai"]
+    english_line = ["Microsoft fixed more than fourteen hundred security flaws this year, and here is what that means for you"]
+    checks = [
+        ("hinglish.needs_mixing(Hinglish, Madhur)", lambda: hinglish.needs_mixing("hi-IN-MadhurNeural", hinglish_line), True),
+        ("hinglish.needs_mixing(English, Andrew)", lambda: hinglish.needs_mixing("en-US-AndrewMultilingualNeural", english_line), False),
+        ("hinglish.looks_hinglish", lambda: hinglish.looks_hinglish(hinglish_line), True),
+        ("shoot.skeleton('commands') == skeleton('कमान्ट्स')", lambda: shoot.skeleton("commands") == shoot.skeleton("कमान्ट्स"), True),
+        ("shoot.alike(future, फुछर) > 0", lambda: shoot.alike(shoot.skeleton("future"), shoot.skeleton("फुछर")) > 0, True),
+        ("wordfix.misheard(2024 / 2023)", lambda: wordfix.misheard(["2024"], [Word("2023", 0, 0)]), False),
+        ("wordfix.misheard(already / पल्रदी)", lambda: wordfix.misheard(["already"], [Word("पल्रदी", 0, 0)]), True),
+        ("scriptvideo.parse_script keeps every word and the chapters", lambda: (
+            " ".join(scriptvideo.parse_script(SCRIPT)[0]).split(), [t for _, t in scriptvideo.parse_script(SCRIPT)[1]]),
+         (SCRIPT_WORDS, ["Shuruaat", "Patch kya hai"])),
+        ("scriptvideo.parse_hook keeps every word", lambda: " ".join(scriptvideo.parse_hook(HOOK)).split() == HOOK.split(), True),
+    ]
+    for name, fn, want in checks:
+        try:
+            got = fn()
+        except Exception:  # noqa: BLE001
+            fail(f"{name} raised:\n{traceback.format_exc(limit=3)}")
+            continue
+        if got != want:
+            fail(f"{name}: got {got!r}, expected {want!r}")
+    lines = ["Scientists already human brain signals ko computer commands mein convert karne par kaam kar rahe hain."]
+    said = "Scientists already human brain signals ko commands mein convert karne par kaam kar rahe hain.".split()
+    heard = [Word(w, i * 0.4, i * 0.4 + 0.3) for i, w in enumerate(said)]
+    try:
+        gaps = wordfix.gaps(lines, heard)
+        if [(g["text"], g["kind"]) for g in gaps] != [("computer", "skipped")]:
+            fail(f"wordfix.gaps on a skipped word: {[(g['text'], g['kind']) for g in gaps]}")
+        rows = shoot.align(lines, heard, heard[-1].end + 0.5)
+        if not 0.9 <= rows[0]["matched"] < 1:
+            fail(f"shoot.align matched {rows[0]['matched']} with one word skipped")
+    except Exception:  # noqa: BLE001
+        fail(f"word repair checks raised:\n{traceback.format_exc(limit=3)}")
+
+
+def main() -> int:
+    sys.path.insert(0, str(ROOT))
+    imports()
+    duplicate_names()
+    behaviour()
+    print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
+    return 1 if FAILS else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

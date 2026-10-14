@@ -88,7 +88,7 @@ Keep every word, in the same order: one output word for each input word. Never t
 split a word, and never correct the grammar. Return the lines in the same order and the same number."""
 
 
-DEVANAGARI = """You prepare Hinglish lines for a Hindi voice model that reads only Devanagari: English words in \
+ALL_DEVANAGARI = """You prepare Hinglish lines for a Hindi voice model that reads only Devanagari: English words in \
 English letters come out mangled ('Scientists already human' became 'निसायन्तुस्ट आदरी विमन'). Write each line, \
 typed in Roman letters, again entirely in Devanagari, the way an Indian speaker says it:
 - Hindi or Urdu words in their usual spelling: aur -> और, hai -> है, mein -> में, kaam -> काम, sawaal -> सवाल
@@ -109,7 +109,7 @@ def to_devanagari(texts: list[str], ask_fn=None) -> list[str]:
         todo = [t for t in dict.fromkeys(texts) if t.strip() and key(t) not in cache]
         if todo:
             try:
-                got = _convert(todo, ask_fn, DEVANAGARI)
+                got = _convert(todo, ask_fn, ALL_DEVANAGARI)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Devanagari conversion failed (%s); the line is read as written", exc)
                 got = []

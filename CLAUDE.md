@@ -23,6 +23,7 @@ Working branch: `claude/ai-auto-generate-reels-shorts-muhsa4` (GitHub repo
 cd ai-reels-generator
 ./start.sh                          # Reel Studio only (first run creates .venv, npm installs remotion/)
 .venv/bin/python -m reelgen --count 1 [--topic "..."]     # Windows: .venv\Scripts\python
+.venv/bin/python -m reelgen.selfcheck   # BEFORE EVERY COMMIT: imports, names defined twice, shared text functions
 cd remotion && npx tsc --noEmit     # typecheck the reels editor
 npx remotion still src/index.ts Reel out.png --frame=60   # render one frame of the demo props
 cd ../../remotion-studio && npm run studio / npm run typecheck
@@ -145,6 +146,12 @@ review about 1 min. A failed review costs a whole extra try.
   `video.py` ignores them too. Before this, a `.env` copied from `.env.example` could make every Remotion
   render fail and silently fall back to the moviepy edit.
 - **A pull without a restart**: the page is read from disk on every load, the Python code only at start, so new buttons answered "Not Found" (FastAPI's own 404 for a route the running app doesn't have; the app's own 404 says "video not found"). `/api/status` `restart_needed` (`_code_stamp`: newest `reelgen/*.py` change vs the one at start) shows an orange "restart the app" bar.
+- **A module-level name defined twice** silently replaces the first: a prompt named `DEVANAGARI` (added for the voice
+  clone) replaced the regex `hinglish.DEVANAGARI`, and every Hinglish video failed at its voice with "'str' object has
+  no attribute 'findall'" (the user's Script Video, after the voice-clone commits). pyflakes doesn't flag reassigned
+  constants; `reelgen/selfcheck.py` does (AST), imports every module and runs the shared text functions (Hinglish
+  detection, word matching, script cutting, word repair). Run it before every commit; a change to a shared module
+  must be checked on the paths that use it, not only on the feature being built.
 - **`.env` holds keys** (Pexels, optional Anthropic/Telegram). Never print, commit or
   paste it. It's git-ignored.
 
