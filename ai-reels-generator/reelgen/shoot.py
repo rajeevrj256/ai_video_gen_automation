@@ -499,6 +499,22 @@ def _looped(heard: list[Word]) -> bool:
     return any(re.search(r"(.)\1{5,}", w.text) or len(w.text) > 30 for w in heard)
 
 
+def _best_hearing(language: str, audio: Path, lines: list[str], length: float) -> list[Word] | None:
+    """What was said in a take, heard once, and the other ways too when that matched less than GOOD_HEARING of the
+    script: the best match is kept. One hearing of a take with a rough edit in it came back 23% when it was ~95%."""
+    from .wordfix import DECODES
+
+    heard = _hear(language, audio)
+    if not heard or _judge(lines, heard, length)[2] >= GOOD_HEARING:
+        return heard
+    best, score = heard, _judge(lines, heard, length)[2]
+    for opt in DECODES[1:]:
+        other = _hear(language, audio, **opt)
+        if other and (m := _judge(lines, other, length)[2]) > score:
+            best, score = other, m
+    return best
+
+
 def _judge(lines: list[str], heard: list[Word], length: float) -> tuple[list[dict], str, float]:
     """The take's lines (cut points, words not heard), its verdict and the share of words heard."""
     rows = align(lines, heard, length)
@@ -528,7 +544,7 @@ def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
             size = FORMATS[proj["format"]]
             converted = _proxy(original, paths["proxy"], size, info["hdr"])
             _clean(original, paths["audio"], trim=False)
-            heard = _hear(proj["language"], paths["audio"])
+            heard = _best_hearing(proj["language"], paths["audio"], lines, media_seconds(paths["audio"]))
         length = media_seconds(paths["audio"])
         notes = []
         portrait = info["height"] > info["width"]
@@ -593,7 +609,7 @@ def recheck(cfg: Config, pid: str, n: int) -> None:
             if proj["language"] == "english" and old.get("heard"):
                 heard = [Word(t, a, b) for t, a, b in old["heard"]]
             else:
-                heard = _hear(proj["language"], audio)
+                heard = _best_hearing(proj["language"], audio, lines, media_seconds(audio))
         length = media_seconds(audio)
         if not heard:
             raise ValueError("nothing was heard")
@@ -755,6 +771,8 @@ STUDIO = ("highpass=f=85,equalizer=f=200:t=q:w=1.0:g=-3,equalizer=f=4000:t=q:w=0
 VOICE_WAIT = 600  # seconds to wait for the graphics card before the video goes on with the takes as recorded
 FIX_MIN_MATCH = 0.5  # a line with fewer of its words heard is a bad transcript or a different line: never 'fixed'
 FIX_MAX_WORDS, FIX_MAX_SECONDS = 8, 3.0  # longer gaps are a missing sentence: that needs a new take, not a patch
+PLAUSIBLE = 0.25  # a hearing matching this much less of the script than the best one is broken and doesn't vote
+GOOD_HEARING = 0.9  # a take's first hearing matching less than this is heard the other ways too, and the best kept
 
 
 def voice_options(proj: dict) -> dict:
@@ -833,8 +851,10 @@ def _hear_takes(proj: dict, clean: dict[int, Path], takes_dir: Path, progress: P
         if not tries:
             continue
         matched, heard, rows, _ = max(tries, key=lambda t: t[0])
+        # a hearing that got much less of the script than the best is broken (with silence-skipping off one heard only
+        # the take's last line): it gets no vote
         out[s["n"]] = {"heard": [[w.text, w.start, w.end] for w in heard], "rows": rows, "matched": matched,
-                       "votes": [set(t[3]) for t in tries]}
+                       "votes": [set(t[3]) for t in tries if t[0] >= matched - PLAUSIBLE]}
     return out
 
 

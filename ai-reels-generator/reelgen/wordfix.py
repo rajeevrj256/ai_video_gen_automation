@@ -26,6 +26,25 @@ FADE = 0.012  # seconds of crossfade at each joint
 BREATH = 0.08  # pause kept on each side of a put-back word
 FILLER_ONLY_OK = True  # a run of only small words ('hain', 'ko') is left alone: speech-to-text drops and joins them
 NEAR = 0.6  # seconds: a word heard this close to a line's start or end, where its missing words go, is said instead
+MISHEARD = 0.6  # sound overlap at which a 'wrong' word counts as the right one misheard (`misheard`)
+
+
+def misheard(script_words: list[str], said: list[Word]) -> bool:
+    """What was heard in place of the script's words sounds like them (the same consonants, the first sound aside):
+    you said them and speech-to-text misheard ('already' came back as 'पल्रदी'), so they stay as said. Only a clearly
+    different word is 'said wrong'."""
+    from .shoot import skeleton
+
+    a = "".join(skeleton(w) for w in script_words)
+    b = "".join(skeleton(w.text) for w in said)
+    if not a or not b:
+        return False
+    lcs = [0] * (len(b) + 1)
+    for x in a:
+        prev = 0
+        for j, y in enumerate(b):
+            prev, lcs[j + 1] = lcs[j + 1], prev + 1 if x == y else max(lcs[j + 1], lcs[j])
+    return 2 * lcs[-1] / (len(a) + len(b)) >= MISHEARD
 
 
 def gaps(lines: list[str], heard: list[Word]) -> list[dict]:
@@ -61,6 +80,9 @@ def gaps(lines: list[str], heard: list[Word]) -> list[dict]:
                         wrong = [w for w in wrong if heard[after].start - w.end <= NEAR]
                     elif after is None and before is not None:  # it ends with them: only words right after
                         wrong = [w for w in wrong if w.start - heard[before].end <= NEAR]
+                    if wrong and misheard(said_words, wrong):
+                        run = []
+                        continue
                     if wrong:
                         a, b = wrong[0].start, wrong[-1].end
                     elif before is not None:
