@@ -731,8 +731,10 @@ def create_app(cfg: Config) -> FastAPI:
 
         def quit_soon() -> None:
             time.sleep(1.5)  # let this answer reach the page first
-            tunnel.stop()
-            updater.hard_exit(75)  # start.bat closes its window on 75 instead of waiting for a key
+            try:
+                tunnel.stop()
+            finally:
+                updater.hard_exit(75)  # start.bat closes its window on 75 instead of waiting for a key
 
         threading.Thread(target=quit_soon, daemon=True).start()
         return {"ok": True, "stopped": len(active)}

@@ -5,7 +5,8 @@
 1. every module imports;
 2. no module defines the same top-level name twice: a prompt named DEVANAGARI replaced the regex of the same name in
    hinglish.py, and every Hinglish video then failed at its voice with "'str' object has no attribute 'findall'";
-3. the shared text functions answer as they should (Hinglish detection, word matching, script cutting, word repair).
+3. the shared text functions answer as they should (Hinglish detection, word matching, script cutting, word repair),
+   and Update & restart's helper never ends itself and finds the old window.
 No network, no Claude, no models. Exits 1 and says what broke.
 """
 
@@ -110,11 +111,25 @@ def behaviour() -> None:
         fail(f"word repair checks raised:\n{traceback.format_exc(limit=3)}")
 
 
+def update_helper() -> None:
+    """Update & restart on Windows: window cmd.exe → .venv launcher → app → launcher → helper. The helper once ended
+    its own launcher (a child of the old app) and with it itself, so nothing restarted."""
+    from . import updater
+
+    table = {10: (1, "explorer.exe"), 20: (10, "cmd.exe"), 30: (20, "python.exe"), 40: (30, "python.exe"),
+             50: (40, "python.exe"), 60: (50, "python.exe"), 70: (40, "cloudflared.exe"), 80: (40, "node.exe")}
+    mine = {60, *updater._chain(60, table)}
+    got = (updater._window(40, table), sorted(updater._children(40, table, mine)))
+    if got != (([30], 20), [70, 80]):
+        fail(f"updater: window/children of the old app {got}, expected (([30], 20), [70, 80])")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
     duplicate_names()
     behaviour()
+    update_helper()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 
