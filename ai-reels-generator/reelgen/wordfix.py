@@ -113,9 +113,13 @@ def gaps(lines: list[str], heard: list[Word]) -> list[dict]:
                         a = b = heard[before].end
                     else:
                         a = b = max(0.0, heard[after].start - BREATH)
+                    # where a put-in word may go: after the middle of the word before it, before the next one starts
+                    # (snapping to the quietest moment once put 'computer' before 'ko', which ran into 'commands')
+                    lo = (heard[before].start + heard[before].end) / 2 if before is not None else 0.0
+                    hi = heard[after].start + 0.05 if after is not None else b + 1.0
                     out.append({"line": k, "words": said_words, "text": " ".join(said_words), "at": [round(a, 3), round(b, 3)],
                                 "kind": "wrong" if wrong else "skipped", "said": " ".join(w.text for w in wrong),
-                                "first_word": idx[0]})
+                                "first_word": idx[0], "room": [round(lo, 3), round(hi, 3)]})
                 run = []
     return out
 
@@ -188,16 +192,17 @@ def _snap(x: np.ndarray, sr: int, t: float, lo: float | None = None, hi: float |
     return round((i0 + int(np.argmin((frames ** 2).mean(1)))) * f / sr + 0.005, 3)
 
 
-def splice(take: Path, fixes: list[tuple[float, float, Path]], out: Path) -> list[tuple[float, float]]:
-    """`take` with each (a, b, clip): the stretch a..b replaced by the clip (a == b: put in at a), the clip trimmed,
-    levelled to the speech around it and joined with short crossfades. Returns (where, change in length) for each
+def splice(take: Path, fixes: list[tuple], out: Path) -> list[tuple[float, float]]:
+    """`take` with each (a, b, clip[, (lo, hi)]): the stretch a..b replaced by the clip (a == b: put in at a, never
+    outside lo..hi), the clip trimmed, levelled to the speech around it and joined with short crossfades. Returns (where, change in length) for each
     fix in the new file's time, so later times can be shifted (`shift_words`)."""
     x, sr = _read(take)
     pieces, pos, changes, shift = [], 0, [], 0.0
     fade = int(FADE * sr)
-    for a, b, clip in sorted(fixes):
-        if a == b:
-            a = b = _snap(x, sr, a)
+    for a, b, clip, *room in sorted(fixes, key=lambda f: f[0]):
+        if a == b:  # put in: at the quietest moment near it, inside the room it may go (gap 'room')
+            lo, hi = room[0] if room and room[0] else (None, None)
+            a = b = _snap(x, sr, a, lo=lo, hi=hi)
         else:
             a, b = _snap(x, sr, a, hi=(a + b) / 2), _snap(x, sr, b, lo=(a + b) / 2)
         y, _ = _read(_as_wav(clip, sr, clip.with_suffix(".sr.wav")))
@@ -345,7 +350,8 @@ def repair(items: list[dict], ref: Path, language: str, work: Path, progress) ->
                     break
             if got:
                 trial = work / f"line{i:03d}-try{seed}-spliced.wav"
-                changes = splice(Path(it["wav"]), [(it["gaps"][g]["at"][0], it["gaps"][g]["at"][1], c) for g, c in got.items()], trial)
+                changes = splice(Path(it["wav"]), [(it["gaps"][g]["at"][0], it["gaps"][g]["at"][1], c, it["gaps"][g].get("room"))
+                                                   for g, c in got.items()], trial)
                 hs = hearings(trial, it["text"], language)  # are the words there now? (most hearings must say so)
                 fixed = [it["gaps"][g]["text"] for g in got if heard_by(hs, _span(it["text"], it["gaps"][g])) > len(hs) // 2]
                 if len(fixed) > len(best[i]["fixed"]):

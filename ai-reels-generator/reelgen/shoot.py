@@ -523,7 +523,8 @@ def suspects(lines: list[str], heard: list[Word] | None) -> list[dict]:
     from .wordfix import gaps
 
     return [{"key": key(g), "line": g["line"], "text": g["text"], "kind": g["kind"], "said": g["said"], "at": g["at"],
-             "words": g["words"], "first_word": g["first_word"]} for g in gaps(lines, heard or [])] if heard else []
+             "words": g["words"], "first_word": g["first_word"], "room": g["room"]}
+            for g in gaps(lines, heard or [])] if heard else []
 
 
 def key(gap: dict) -> str:
@@ -943,7 +944,9 @@ def _fix_words(proj: dict, audios: dict, clean: dict, heard_again: dict, takes_d
             if a < -0.05 or b > row["end"] - row["start"] + 0.05:
                 progress(f"Your voice: '{g['text']}' falls outside its line's cut; it stays as recorded")
                 continue
-            wanted.setdefault(s["lines"][g["line"]], []).append(dict(g, at=[round(max(0.0, a), 3), round(max(0.0, b), 3)]))
+            room = [round(max(0.0, x - row["start"]), 3) for x in g["room"]] if g.get("room") else None
+            wanted.setdefault(s["lines"][g["line"]], []).append(
+                dict(g, at=[round(max(0.0, a), 3), round(max(0.0, b), 3)], room=room))
     if not wanted:
         progress("Your voice: no words to rebuild")
         return {}
