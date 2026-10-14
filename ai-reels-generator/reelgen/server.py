@@ -529,7 +529,7 @@ class ShootMakeBody(BaseModel):
 class ShootVoiceBody(BaseModel):
     clean: bool | None = None  # noise, hum and room taken out of your takes
     fix: bool | None = None  # words you skipped rebuilt in your voice
-    wrong: list[str] | None = None  # words heard as another word that you ticked to rebuild ("shot|line:word")
+    choices: dict[str, bool] | None = None  # 'Rebuild in my voice' ticks on take cards ("shot|line:word": on/off)
 
 
 class ScriptVideoRequest(BaseModel):
@@ -1314,7 +1314,10 @@ def create_app(cfg: Config) -> FastAPI:
         from . import shoot
 
         proj = _shoot(pid)
-        voice = {**shoot.voice_options(proj), **body.model_dump(exclude_none=True)}
+        given = body.model_dump(exclude_none=True)
+        voice = shoot.voice_options(proj)
+        voice.update({k: v for k, v in given.items() if k != "choices"})
+        voice["choices"] = {**voice["choices"], **given.get("choices", {})}
         return shoot.update(cfg, pid, lambda p: p.update(voice=voice))
 
     @app.get("/api/voice-engine")

@@ -522,8 +522,8 @@ def suspects(lines: list[str], heard: list[Word] | None) -> list[dict]:
     word position (`key`), which every hearing of the take shares."""
     from .wordfix import gaps
 
-    return [{"key": key(g), "line": g["line"], "text": g["text"], "kind": g["kind"], "said": g["said"], "at": g["at"]}
-            for g in gaps(lines, heard or [])] if heard else []
+    return [{"key": key(g), "line": g["line"], "text": g["text"], "kind": g["kind"], "said": g["said"], "at": g["at"],
+             "words": g["words"], "first_word": g["first_word"]} for g in gaps(lines, heard or [])] if heard else []
 
 
 def key(gap: dict) -> str:
@@ -791,9 +791,16 @@ GOOD_HEARING = 0.9  # a take's first hearing matching less than this is heard th
 
 
 def voice_options(proj: dict) -> dict:
-    """The shoot's voice settings: cleaning and rebuilding skipped words on unless switched off on the Shoot tab;
-    `wrong` = the words heard as another word that you ticked to rebuild ("shot n|line:word" keys)."""
-    return {"clean": True, "fix": True, "wrong": [], **(proj.get("voice") or {})}
+    """The shoot's voice settings: cleaning and rebuilding on unless switched off on the Shoot tab; `choices` = your
+    'Rebuild in my voice' ticks on the take cards, {"shot n|line:word": true/false} (unset: on for a word not heard,
+    off for one heard as another word)."""
+    return {"clean": True, "fix": True, "choices": {}, **(proj.get("voice") or {})}
+
+
+def rebuild_wanted(choices: dict, n: int, sus: dict) -> tuple[bool, bool]:
+    """(rebuild it, you chose it yourself) for a take's listed word."""
+    mine = choices.get(f"{n}|{sus['key']}")
+    return (bool(mine), True) if mine is not None else (sus["kind"] == "skipped", False)
 
 
 def _engine_ready(progress: Progress) -> bool:
@@ -876,38 +883,44 @@ def _hear_takes(proj: dict, clean: dict[int, Path], takes_dir: Path, progress: P
 
 def _fix_words(proj: dict, audios: dict, clean: dict, heard_again: dict, takes_dir: Path, work: Path,
                progress: Progress) -> dict[int, dict]:
-    """Words you skipped or said wrong, rebuilt in your voice in each line's audio (`wordfix.repair`); `audios` is
-    updated in place. A word is missing only when most of the take's three hearings miss it. Returns the repaired
-    lines {line k: result}."""
+    """The words listed on the take cards (`suspects`) that are to be rebuilt (`rebuild_wanted`), in your voice, in
+    each line's audio (`wordfix.repair`); `audios` is updated in place. A word not heard, rebuilt by default, is
+    left alone when most of the take's three new hearings hear it after all; one you ticked is always rebuilt. The
+    card's times are used (the cleaned take keeps the upload's timing): the edit's own hearing once merged a skipped
+    'computer' and the garbled words around it into one 'wrong' run and rebuilt nothing. Returns {line k: result}."""
     from . import stopper, wordfix
 
+    choices = voice_options(proj)["choices"]
     wanted: dict[int, list[dict]] = {}
     refs = []
     for s in proj["shots"]:
+        take = s.get("take") or {}
         view = heard_again.get(s["n"])
-        if not view:
+        if take.get("status") != "ready" or not view:
             continue
-        heard = [Word(t, a, b) for t, a, b in view["heard"]]
-        refs.append((clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav", heard))
-        lines = [proj["lines"][k]["text"] for k in s["lines"]]
-        tokens = _script_tokens(lines)
-        ticked = set(voice_options(proj)["wrong"])
-        for g in wordfix.gaps(lines, heard):
+        refs.append((clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav", [Word(*h) for h in view["heard"]]))
+        tokens = _script_tokens([proj["lines"][k]["text"] for k in s["lines"]])
+        for g in take.get("suspects") or []:
+            on, yours = rebuild_wanted(choices, s["n"], g)
+            if not on or "first_word" not in g:
+                continue
             span = [t for t, tok in enumerate(tokens) if tok[0] == g["line"]
                     and g["first_word"] <= tok[1] < g["first_word"] + len(g["words"])]
-            if g["kind"] == "wrong" and f"{s['n']}|{key(g)}" not in ticked:
-                continue  # heard as another word: only when you ticked it (speech-to-text mishears clear Hinglish)
-            if g["kind"] == "skipped" and wordfix.heard_by(view["votes"], span) > len(view["votes"]) // 2:
-                continue  # most hearings heard it: said, just misheard once
+            if not yours and wordfix.heard_by(view["votes"], span) > len(view["votes"]) // 2:
+                progress(f"Your voice: '{g['text']}' is in your take after all (heard on a second listen): kept as you said it")
+                continue
             row = view["rows"][g["line"]]
-            if ((row.get("matched") or 0) < FIX_MIN_MATCH or len(g["words"]) > FIX_MAX_WORDS
-                    or g["at"][1] - g["at"][0] > FIX_MAX_SECONDS):
+            if len(g["words"]) > FIX_MAX_WORDS or g["at"][1] - g["at"][0] > FIX_MAX_SECONDS or (
+                    not yours and (row.get("matched") or 0) < FIX_MIN_MATCH):
                 progress(f"Your voice: '{g['text']}' can't be patched in (too much of the line is missing): film it again")
                 continue
-            wanted.setdefault(s["lines"][g["line"]], []).append(
-                dict(g, at=[round(max(0.0, g["at"][0] - row["start"]), 3), round(max(0.0, g["at"][1] - row["start"]), 3)]))
+            a, b = g["at"][0] - row["start"], g["at"][1] - row["start"]
+            if a < -0.05 or b > row["end"] - row["start"] + 0.05:
+                progress(f"Your voice: '{g['text']}' falls outside its line's cut; it stays as recorded")
+                continue
+            wanted.setdefault(s["lines"][g["line"]], []).append(dict(g, at=[round(max(0.0, a), 3), round(max(0.0, b), 3)]))
     if not wanted:
-        progress("Your voice: every word of the script is in your takes")
+        progress("Your voice: no words to rebuild")
         return {}
     keys = sorted(wanted)
     items = [{"wav": str(audios[k].path), "text": proj["lines"][k]["text"], "gaps": wanted[k],

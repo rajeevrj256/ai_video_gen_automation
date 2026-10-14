@@ -121,8 +121,9 @@ Film yourself with your phone's own camera app while this computer is your telep
    - **Rebuild words I skipped, in my own voice**: your voice is cloned from your takes; the line is spoken in it, the
      missing words are cut out and put into your take, and the line is checked again. A fixed line that was on camera
      shows its B-roll. A line with most of its words missing needs a new take.
-   - **Words heard as another word** are listed on the take ("Heard 'रहेगा' for paayega", with ▶ to hear that moment).
-     Speech-to-text often mishears clearly spoken Hinglish, so these are only rebuilt when you tick "I said it wrong".
+   - Each take lists the words to look at, with ▶ to hear that moment and a **Rebuild in my voice** box: ticked for
+     words not heard, unticked for words heard as another word ("Heard 'रहेगा' for paayega": speech-to-text often
+     mishears clearly spoken Hinglish). Tick or untick any of them; the video rebuilds exactly the ticked ones.
 
 ## Shorts Studio (tab "Shorts+")
 

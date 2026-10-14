@@ -2817,7 +2817,7 @@ function shotCard(s) {
 
 // Your voice: cleaned (noise, hum, room) and missing words rebuilt in it, by the voice engine (reelgen/voice_engine.py).
 let VE = null, veTimer = null;
-const shVoiceOpts = () => ({ clean: true, fix: true, wrong: [], ...(SH && SH.voice || {}) });
+const shVoiceOpts = () => ({ clean: true, fix: true, choices: {}, ...(SH && SH.voice || {}) });
 const shFixing = () => !!(VE && VE.installed && shVoiceOpts().fix);
 async function loadVoiceEngine() {
   try { VE = await api("/api/voice-engine"); } catch (e) { VE = null; }
@@ -2839,8 +2839,8 @@ function renderVoice() {
   }
   box.innerHTML = `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="vClean" style="width:auto;margin-top:3px" ${o.clean ? "checked" : ""}> Clean my voice: noise, hum and room echo
       taken out, a clearer studio tone (timing kept, so your lips stay in sync)</label>
-    <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="vFix" style="width:auto;margin-top:3px" ${o.fix ? "checked" : ""}> Rebuild words I skipped, in my own voice; and words I said wrong
-      that I tick on a take (a fixed line that was on camera shows its B-roll, since your lips wouldn't match)</label>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="vFix" style="width:auto;margin-top:3px" ${o.fix ? "checked" : ""}> Rebuild words in my own voice: the ones ticked under each take
+      (words not heard are ticked for you; a fixed line that was on camera shows its B-roll, since your lips wouldn't match)</label>
     <p class="hint">Both happen when the video is made. A line with most of its words missing can't be patched: film it again.</p>`;
   const save = async () => {
     try { SH = await api(shUrl("/voice"), { method: "POST", body: JSON.stringify({ clean: $("#vClean").checked, fix: $("#vFix").checked }) }); renderShoot(); } catch (e) { toast(e.message); }
@@ -2848,17 +2848,19 @@ function renderVoice() {
   $("#vClean").onchange = save; $("#vFix").onchange = save;
 }
 
-// A take's words that may need your voice: skipped ones are rebuilt by themselves; one heard as another word only
-// when you tick it (speech-to-text mishears clear Hinglish: 'kar paayega' came back as 'kar rahega').
+// A take's words that may need your voice, each with a 'Rebuild in my voice' box: on by default for a word not heard
+// (left alone when the video is made if a second listen hears it after all), off for one heard as another word
+// (speech-to-text mishears clear Hinglish: 'kar paayega' came back as 'kar rahega'). Your tick always wins.
 function shSuspects(n, t, j) {
-  const ticked = new Set(shVoiceOpts().wrong || []);
+  const choices = shVoiceOpts().choices || {};
   return (t.suspects || []).filter((x) => x.line === j).map((x) => {
+    const k = `${n}|${x.key}`, mine = choices[k];
+    const on = mine !== undefined ? mine : x.kind === "skipped";
     const peek = `<button class="mini" data-peek="${n}" data-at="${x.at[0]},${x.at[1]}" title="Hear that moment of your take">▶</button>`;
-    if (x.kind === "skipped")
-      return `<br><span class="hint">⏭ Not heard: <b>${esc(x.text)}</b>${shFixing() ? " → checked again when the video is made, and rebuilt in your voice if it's really missing" : ""} ${peek}</span>`;
-    const k = `${n}|${x.key}`;
-    return `<br><span class="hint">❓ Heard “${esc(x.said)}” for <b>${esc(x.text)}</b> ${peek}
-      ${VE && VE.installed ? `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 0 6px"><input type="checkbox" data-wrong="${esc(k)}" style="width:auto" ${ticked.has(k) ? "checked" : ""}> I said it wrong: rebuild in my voice</label>` : ""}</span>`;
+    const what = x.kind === "skipped" ? `⏭ Not heard: <b>${esc(x.text)}</b>` : `❓ Heard “${esc(x.said)}” for <b>${esc(x.text)}</b>`;
+    const box = VE && VE.installed && shVoiceOpts().fix ? `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 0 6px">
+      <input type="checkbox" data-choice="${esc(k)}" style="width:auto" ${on ? "checked" : ""}> Rebuild in my voice</label>` : "";
+    return `<br><span class="hint">${what} ${peek}${box}</span>`;
   }).join("");
 }
 let shPeekAudio = null;
@@ -2891,11 +2893,9 @@ function renderShoot() {
   document.querySelectorAll("#shShots [data-peek]").forEach((el) => {
     el.onclick = () => { const [a, b] = el.dataset.at.split(",").map(Number); shPeek(+el.dataset.peek, a, b); };
   });
-  document.querySelectorAll("#shShots [data-wrong]").forEach((el) => {
+  document.querySelectorAll("#shShots [data-choice]").forEach((el) => {
     el.onchange = async () => {
-      const set = new Set(shVoiceOpts().wrong || []);
-      if (el.checked) set.add(el.dataset.wrong); else set.delete(el.dataset.wrong);
-      try { SH = await api(shUrl("/voice"), { method: "POST", body: JSON.stringify({ wrong: [...set] }) }); } catch (e) { toast(e.message); }
+      try { SH = await api(shUrl("/voice"), { method: "POST", body: JSON.stringify({ choices: { [el.dataset.choice]: el.checked } }) }); } catch (e) { toast(e.message); }
     };
   });
   document.querySelectorAll("#shShots [data-up]").forEach((el) => { el.onchange = () => { if (el.files[0]) uploadTake(+el.dataset.up, el.files[0]); }; });
