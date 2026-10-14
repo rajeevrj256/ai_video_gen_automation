@@ -673,20 +673,23 @@ def voices_for(shoot: dict, script, work: Path, progress: Progress) -> tuple[lis
     proj = json.loads(Path(shoot["project"]).read_text(encoding="utf-8"))
     takes_dir = Path(shoot["project"]).parent / "takes"
     (work / "takes").mkdir(parents=True, exist_ok=True)
+    opts = voice_options(proj)
+    engine = (opts["clean"] or opts["fix"]) and _engine_ready(progress)
+    clean = _clean_takes(proj, takes_dir, work, progress) if engine and opts["clean"] else {}
+    heard_again = _hear_takes(proj, clean, takes_dir, progress) if engine and opts["fix"] else {}
     by_line: dict[int, tuple[dict, dict, int]] = {}  # line k -> (shot, its take, row in the take)
     for s in proj["shots"]:
         take = s.get("take") or {}
         if take.get("status") != "ready":
             continue
+        if s["n"] in heard_again:  # the best of three hearings of the cleaned take: its cuts and words
+            take = {**take, "lines": heard_again[s["n"]]["rows"], "heard": heard_again[s["n"]]["heard"]}
         for j, k in enumerate(s["lines"]):
             by_line[k] = (s, take, j)
     progress(f"Cutting your {len(proj['shots'])} takes into {len(proj['lines'])} lines")
     audios: dict[int, SceneAudio] = {}
     camera: dict[int, dict] = {}
     zoom_for: dict[int, float] = {}
-    opts = voice_options(proj)
-    engine = (opts["clean"] or opts["fix"]) and _engine_ready(progress)
-    clean = _clean_takes(proj, takes_dir, work, progress) if engine and opts["clean"] else {}
     for k, row in enumerate(proj["lines"]):
         if k not in by_line:
             raise RuntimeError(f"Shot with line {k + 1} has no take: upload it on the Shoot tab")
@@ -710,7 +713,7 @@ def voices_for(shoot: dict, script, work: Path, progress: Progress) -> tuple[lis
             camera[k] = {"type": "camera", "src": f"takes/{proxy.name}", "from": r["start"],
                          "until": round(r["end"] - r["start"], 3), "zoom": zoom_for[s["n"]], "headline": "", "sub": "",
                          "items": [], "icons": [], "camera": "still"}
-    fixed = _fix_words(proj, audios, clean, takes_dir, work, progress) if engine and opts["fix"] else {}
+    fixed = _fix_words(proj, audios, clean, heard_again, takes_dir, work, progress) if heard_again else {}
     for k in fixed:
         if camera.pop(k, None):  # your lips no longer match the line: its B-roll instead
             progress(f"Line {k + 1} shows B-roll now (a word in it was rebuilt in your voice)")
@@ -806,21 +809,58 @@ def _clean_takes(proj: dict, takes_dir: Path, work: Path, progress: Progress) ->
     return out
 
 
-def _fix_words(proj: dict, audios: dict, clean: dict, takes_dir: Path, work: Path, progress: Progress) -> dict[int, dict]:
+def _hear_takes(proj: dict, clean: dict[int, Path], takes_dir: Path, progress: Progress) -> dict[int, dict]:
+    """Each take heard again, three ways (`wordfix.DECODES`), from its cleaned sound: the transcript that matches the
+    script best gives the line cuts, and all three vote on which words are missing (`_fix_words`). Deciding from
+    line-sized pieces went wrong: a line cut placed late made 'kya future mein', said clearly, look missing."""
+    from .wordfix import DECODES
+
+    progress("Your voice: listening to each take again to find words that are really missing")
+    out = {}
+    for s in proj["shots"]:
+        take = s.get("take") or {}
+        if take.get("status") != "ready" or not take.get("heard"):
+            continue
+        audio = clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav"
+        lines = [proj["lines"][k]["text"] for k in s["lines"]]
+        length = media_seconds(audio)
+        tries = []
+        for opt in DECODES:
+            heard = _hear(proj["language"], audio, **opt) or []
+            if heard:
+                rows, _, matched = _judge(lines, heard, length)
+                tries.append((matched, heard, rows, matches(lines, heard)[1]))
+        if not tries:
+            continue
+        matched, heard, rows, _ = max(tries, key=lambda t: t[0])
+        out[s["n"]] = {"heard": [[w.text, w.start, w.end] for w in heard], "rows": rows, "matched": matched,
+                       "votes": [set(t[3]) for t in tries]}
+    return out
+
+
+def _fix_words(proj: dict, audios: dict, clean: dict, heard_again: dict, takes_dir: Path, work: Path,
+               progress: Progress) -> dict[int, dict]:
     """Words you skipped or said wrong, rebuilt in your voice in each line's audio (`wordfix.repair`); `audios` is
-    updated in place. Returns the repaired lines {line k: result}."""
+    updated in place. A word is missing only when most of the take's three hearings miss it. Returns the repaired
+    lines {line k: result}."""
     from . import stopper, wordfix
 
     wanted: dict[int, list[dict]] = {}
     refs = []
     for s in proj["shots"]:
-        take = s.get("take") or {}
-        if take.get("status") != "ready" or not take.get("heard"):
+        view = heard_again.get(s["n"])
+        if not view:
             continue
-        heard = [Word(t, a, b) for t, a, b in take["heard"]]
+        heard = [Word(t, a, b) for t, a, b in view["heard"]]
         refs.append((clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav", heard))
-        for g in wordfix.gaps([proj["lines"][k]["text"] for k in s["lines"]], heard):
-            row = take["lines"][g["line"]]
+        lines = [proj["lines"][k]["text"] for k in s["lines"]]
+        tokens = _script_tokens(lines)
+        for g in wordfix.gaps(lines, heard):
+            span = [t for t, tok in enumerate(tokens) if tok[0] == g["line"]
+                    and g["first_word"] <= tok[1] < g["first_word"] + len(g["words"])]
+            if wordfix.heard_by(view["votes"], span) > len(view["votes"]) // 2:
+                continue  # most hearings heard it: said, just misheard once
+            row = view["rows"][g["line"]]
             if ((row.get("matched") or 0) < FIX_MIN_MATCH or len(g["words"]) > FIX_MAX_WORDS
                     or g["at"][1] - g["at"][0] > FIX_MAX_SECONDS):
                 progress(f"Your voice: '{g['text']}' can't be patched in (too much of the line is missing): film it again")
@@ -828,16 +868,11 @@ def _fix_words(proj: dict, audios: dict, clean: dict, takes_dir: Path, work: Pat
             wanted.setdefault(s["lines"][g["line"]], []).append(
                 dict(g, at=[round(max(0.0, g["at"][0] - row["start"]), 3), round(max(0.0, g["at"][1] - row["start"]), 3)]))
     if not wanted:
+        progress("Your voice: every word of the script is in your takes")
         return {}
     keys = sorted(wanted)
     items = [{"wav": str(audios[k].path), "text": proj["lines"][k]["text"], "gaps": wanted[k],
               "out": str(work / "audio" / "takes" / f"line{k:03d}-fixed.wav")} for k in keys]
-    items = wordfix.confirm(items, proj["language"])  # heard again line by line: a misheard word is left alone
-    keys = [k for k, it in zip(keys, items) if it["gaps"]]
-    items = [it for it in items if it["gaps"]]
-    if not items:
-        return {}
-    wanted = {k: it["gaps"] for k, it in zip(keys, items)}
     words = ", ".join(f"'{g['text']}'" for k in keys for g in wanted[k])
     progress(f"Your voice: rebuilding {words} in your own voice")
     try:

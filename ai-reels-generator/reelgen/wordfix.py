@@ -266,17 +266,6 @@ def heard_by(hs: list[set[int]], tokens: list[int]) -> int:
     return sum(1 for h in hs if tokens and all(t in h for t in tokens))
 
 
-def confirm(items: list[dict], language: str) -> list[dict]:
-    """Only the gaps a second hearing agrees with: each line's audio on its own is heard again three ways, and a word
-    most of them find after all (speech-to-text misheard it in the whole take: 'पायगा' once came back as 'रहेगा') is
-    left as you said it. Never replace a word you said right."""
-    out = []
-    for it in items:
-        hs = hearings(Path(it["wav"]), it["text"], language)  # missing only if most hearings miss it
-        out.append({**it, "gaps": [g for g in it["gaps"] if heard_by(hs, _span(it["text"], g)) <= len(hs) // 2]})
-    return out
-
-
 def repair(items: list[dict], ref: Path, language: str, work: Path, progress) -> list[dict]:
     """Each item {wav (one line of your take), text (the line), gaps (times relative to the wav), out}: the gaps
     spoken in your voice and spliced in. The voice engine speaks whole lines (a word on its own came out as 3.6 s of
