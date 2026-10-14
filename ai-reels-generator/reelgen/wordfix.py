@@ -11,6 +11,7 @@ that was on camera, since your lips no longer match it, and moves its caption wo
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import wave
 from pathlib import Path
@@ -29,22 +30,45 @@ NEAR = 0.6  # seconds: a word heard this close to a line's start or end, where i
 MISHEARD = 0.6  # sound overlap at which a 'wrong' word counts as the right one misheard (`misheard`)
 
 
-def misheard(script_words: list[str], said: list[Word]) -> bool:
-    """What was heard in place of the script's words sounds like them (the same consonants, the first sound aside):
-    you said them and speech-to-text misheard ('already' came back as 'पल्रदी'), so they stay as said. Only a clearly
-    different word is 'said wrong'."""
-    from .shoot import skeleton
-
-    a = "".join(skeleton(w) for w in script_words)
-    b = "".join(skeleton(w.text) for w in said)
+def _ratio(a: str, b: str) -> float:
+    """2 x the longest common subsequence / both lengths (0..1)."""
     if not a or not b:
-        return False
+        return 0.0
     lcs = [0] * (len(b) + 1)
     for x in a:
         prev = 0
         for j, y in enumerate(b):
             prev, lcs[j + 1] = lcs[j + 1], prev + 1 if x == y else max(lcs[j + 1], lcs[j])
-    return 2 * lcs[-1] / (len(a) + len(b)) >= MISHEARD
+    return 2 * lcs[-1] / (len(a) + len(b))
+
+
+def _sounds(word: str) -> str:
+    """A word as its sounds, vowels included (unlike `shoot.skeleton`): Devanagari read as Roman, English spellings
+    read as sounds, long and short vowels the same, easily swapped consonants merged."""
+    from .shoot import _CLASS, _DEVA, _SPELL
+
+    deva = any("\u0900" <= c <= "\u097f" for c in word)
+    w = re.sub(r"[^a-z0-9C]", "", "".join(_DEVA.get(c, c) for c in word.lower()))
+    for a, b in [] if deva else _SPELL:
+        w = re.sub(a, b, w)
+    for a, b in (("aa", "a"), ("ii", "i"), ("ee", "i"), ("uu", "u"), ("oo", "u"), ("ai", "e"), ("au", "o"), ("y", "i")):
+        w = w.replace(a, b)
+    return re.sub(r"(.)\1+", r"\1", w.replace("h", "").translate(_CLASS))
+
+
+def misheard(script_words: list[str], said: list[Word]) -> bool:
+    """What was heard in place of the script's words sounds like them: you said them and speech-to-text misheard
+    ('already' came back as 'पल्रदी', 'paayega' as 'रहेगा'), so they stay as said. Compared twice, consonants only
+    (`shoot.skeleton`, the first sound aside) and all sounds (`_sounds`); a clearly different word ('orders' said as
+    'कमान्ट्स') is 'said wrong', and so is any other number ('2023' for '2024')."""
+    from .shoot import skeleton
+
+    digits = lambda ws: "".join(re.findall(r"\d", " ".join(ws)))  # noqa: E731
+    if digits(script_words) or digits([w.text for w in said]):  # a number is right only when it's the same number
+        return digits(script_words) == digits([w.text for w in said])
+    cons = _ratio("".join(skeleton(w) for w in script_words), "".join(skeleton(w.text) for w in said))
+    full = _ratio("".join(_sounds(w) for w in script_words), "".join(_sounds(w.text) for w in said))
+    return max(cons, full) >= MISHEARD
 
 
 def gaps(lines: list[str], heard: list[Word]) -> list[dict]:

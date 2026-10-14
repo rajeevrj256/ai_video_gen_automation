@@ -528,7 +528,8 @@ class ShootMakeBody(BaseModel):
 
 class ShootVoiceBody(BaseModel):
     clean: bool | None = None  # noise, hum and room taken out of your takes
-    fix: bool | None = None  # words you skipped or said wrong rebuilt in your voice
+    fix: bool | None = None  # words you skipped rebuilt in your voice
+    wrong: list[str] | None = None  # words heard as another word that you ticked to rebuild ("shot|line:word")
 
 
 class ScriptVideoRequest(BaseModel):

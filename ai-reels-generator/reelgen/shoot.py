@@ -473,7 +473,7 @@ def take_target(cfg: Config, pid: str, n: int, filename: str) -> Path:
     return d / f"shot{n:02d}-original{ext}"
 
 
-CHECKER = 2  # how a take's words are checked; takes checked an older way are checked again (`recheck_old`)
+CHECKER = 3  # how a take's words are checked; takes checked an older way are checked again (`recheck_old`)
 
 
 def _hear(language: str, audio: Path, **options) -> list[Word] | None:
@@ -513,6 +513,21 @@ def _best_hearing(language: str, audio: Path, lines: list[str], length: float) -
         if other and (m := _judge(lines, other, length)[2]) > score:
             best, score = other, m
     return best
+
+
+def suspects(lines: list[str], heard: list[Word] | None) -> list[dict]:
+    """The words of a take that may need your voice rebuilt in them, for its card: skipped ones (rebuilt by themselves
+    when the video is made) and ones heard as another word, which you tick yourself, since speech-to-text mishears
+    clearly said Hinglish ('kar paayega' came back as 'kar rahega' or 'kar rahaanga' every time). Keyed by line and
+    word position (`key`), which every hearing of the take shares."""
+    from .wordfix import gaps
+
+    return [{"key": key(g), "line": g["line"], "text": g["text"], "kind": g["kind"], "said": g["said"], "at": g["at"]}
+            for g in gaps(lines, heard or [])] if heard else []
+
+
+def key(gap: dict) -> str:
+    return f"{gap['line']}:{gap['first_word']}"
 
 
 def _judge(lines: list[str], heard: list[Word], length: float) -> tuple[list[dict], str, float]:
@@ -572,7 +587,7 @@ def process_take(cfg: Config, pid: str, n: int, original: Path) -> dict:
         take.update(status="ready", duration=round(length, 2), width=info["width"], height=info["height"],
                     hdr=info["hdr"], verdict=verdict, notes=notes, lines=rows, checker=CHECKER,
                     heard=[[w.text, w.start, w.end] for w in heard] if heard else None,
-                    matched=None if heard is None else matched)
+                    matched=None if heard is None else matched, suspects=suspects(lines, heard))
     except Exception as exc:  # noqa: BLE001 - shown on the shot's card
         log.exception("Take %s of %s failed", n, pid)
         take.update(status="failed", error=str(exc)[:300])
@@ -615,7 +630,7 @@ def recheck(cfg: Config, pid: str, n: int) -> None:
             raise ValueError("nothing was heard")
         rows, verdict, matched = _judge(lines, heard, length)
         new = {"verdict": verdict, "lines": rows, "matched": matched, "checker": CHECKER,
-               "heard": [[w.text, w.start, w.end] for w in heard]}
+               "heard": [[w.text, w.start, w.end] for w in heard], "suspects": suspects(lines, heard)}
         log.info("Shot %s of %s checked again: %d%% of the words heard (was %d%%)", n, pid, round(matched * 100),
                  round((old.get("matched") or 0) * 100))
     except Exception as exc:  # noqa: BLE001 - the take keeps its earlier check
@@ -776,8 +791,9 @@ GOOD_HEARING = 0.9  # a take's first hearing matching less than this is heard th
 
 
 def voice_options(proj: dict) -> dict:
-    """The shoot's voice settings (both on unless switched off on the Shoot tab)."""
-    return {"clean": True, "fix": True, **(proj.get("voice") or {})}
+    """The shoot's voice settings: cleaning and rebuilding skipped words on unless switched off on the Shoot tab;
+    `wrong` = the words heard as another word that you ticked to rebuild ("shot n|line:word" keys)."""
+    return {"clean": True, "fix": True, "wrong": [], **(proj.get("voice") or {})}
 
 
 def _engine_ready(progress: Progress) -> bool:
@@ -875,10 +891,13 @@ def _fix_words(proj: dict, audios: dict, clean: dict, heard_again: dict, takes_d
         refs.append((clean.get(s["n"]) or takes_dir / f"shot{s['n']:02d}.wav", heard))
         lines = [proj["lines"][k]["text"] for k in s["lines"]]
         tokens = _script_tokens(lines)
+        ticked = set(voice_options(proj)["wrong"])
         for g in wordfix.gaps(lines, heard):
             span = [t for t, tok in enumerate(tokens) if tok[0] == g["line"]
                     and g["first_word"] <= tok[1] < g["first_word"] + len(g["words"])]
-            if wordfix.heard_by(view["votes"], span) > len(view["votes"]) // 2:
+            if g["kind"] == "wrong" and f"{s['n']}|{key(g)}" not in ticked:
+                continue  # heard as another word: only when you ticked it (speech-to-text mishears clear Hinglish)
+            if g["kind"] == "skipped" and wordfix.heard_by(view["votes"], span) > len(view["votes"]) // 2:
                 continue  # most hearings heard it: said, just misheard once
             row = view["rows"][g["line"]]
             if ((row.get("matched") or 0) < FIX_MIN_MATCH or len(g["words"]) > FIX_MAX_WORDS
