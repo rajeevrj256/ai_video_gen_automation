@@ -113,6 +113,9 @@ def media_used(cfg: Config, video: Path) -> dict:
                                "source": f"Poly Haven (CC0): {src.split('polyhaven/')[1].split('/')[0]}" if poly else
                                f"Your library: {Path(src).name}", "times": []}
             models[key]["times"].append(round(at, 2))
+        elif v.get("type") == "meme" and v.get("src"):  # the user's own meme file
+            footage.append({"name": "Meme: " + (v.get("fileName") or Path(v["src"]).name), "file": v["src"],
+                            "source": f"Your library: {v.get('fileName') or Path(v['src']).name}", "times": [round(at, 2)]})
         elif v.get("type") == "footage" and v.get("src"):
             footage.append({"name": v.get("query") or Path(v["src"]).stem, "file": v["src"], "source": "Pexels",
                             "times": [round(at, 2)]})
@@ -140,7 +143,8 @@ def media_used(cfg: Config, video: Path) -> dict:
                         "times": _times([s["start"] for s in hook["shots"]])})
     group = defaultdict(list)
     for at, v in visuals:
-        group[f"Visual: {v.get('type', '?')}"].append(at)
+        group[f"Meme: {'your file' if v.get('src') else v.get('meme') or '?'}" if v.get("type") == "meme"
+              else f"Visual: {v.get('type', '?')}"].append(at)
         if v.get("camera"):
             group[f"Camera: {v['camera']}"].append(at)
         if v.get("impact"):
@@ -168,7 +172,7 @@ def library_files(cfg: Config, video: Path) -> list[tuple[str, str]]:
     except (OSError, ValueError, KeyError):
         return []
     out = []
-    for kind, key in (("music", "music"), ("sfx", "sounds"), ("models3d", "models")):
+    for kind, key in (("music", "music"), ("sfx", "sounds"), ("models3d", "models"), ("memes", "footage")):
         for item in used.get(key) or []:
             source = item.get("source", "")
             if source.startswith("Your library: "):

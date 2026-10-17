@@ -196,6 +196,7 @@
   .libitem .lic { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
   .libitem .lic.warn { color: var(--warn); }
   .libitem .lic select, .libitem .lic input { width: auto; max-width: 100%; padding: 6px 8px; font-size: 13px; }
+  .libitem .memethumb { display: block; max-width: 220px; max-height: 160px; border-radius: 8px; margin: 6px 0; background: #000; }
   .lib-tools { display: grid; gap: 10px; margin-bottom: 14px; }
   .lib-tools input[type=search] { width: 100%; }
   .lib-tools .chips { margin-top: 0; }
@@ -398,6 +399,12 @@
           <option value="myth-vs-record">🧪 Myth vs the record: a belief tested against the evidence</option>
           <option value="decision">🎯 One decision: the choice and its consequences</option>
         </select>
+        <label for="memes">Memes &amp; humour</label>
+        <select id="memes"><option value="">⚙️ As in Settings</option>
+        <option value="off">🚫 Off: told like a documentary</option>
+        <option value="some">😄 Some: explained like a funny friend, a meme now and then</option>
+        <option value="lots">🤣 Lots: a meme every few lines</option></select>
+        <p class="hint">Memes are drawn fresh for each video (two buttons, nope/yep, expanding brain, this is fine...), with everyday examples that make the idea click. Facts stay checked.</p>
       </div>
       <label>Subtitles</label>
       <div class="segmented" id="cc">
@@ -457,6 +464,12 @@
       <label for="sv-screen">Words on screen</label>
       <select id="sv-screen"><option value="english">English (the voice still reads your script as written, e.g. Hinglish)</option>
         <option value="script">Same language as the script</option></select>
+      <label for="sv-memes">Memes</label>
+      <select id="sv-memes"><option value="">⚙️ As in Settings</option>
+        <option value="off">🚫 Off</option>
+        <option value="some">😄 Some: a meme where a line explains an idea or makes a joke</option>
+        <option value="lots">🤣 Lots</option></select>
+      <p class="hint">Your words never change: memes only go where your script already sets one up.</p>
       <details class="used" id="vtBox">
         <summary>🔊 Try the voice on a line <span class="hint">(hear it before making the video)</span></summary>
         <textarea class="edit" id="vt-text" rows="3" maxlength="2000" placeholder="A line from your script, e.g. Aur ye hume next question tak lekar aata hai."></textarea>
@@ -666,6 +679,9 @@
           <select id="ssSeconds"><option value="30" selected>30 s</option><option value="45">45 s</option><option value="60">60 s</option>
             <option value="90">90 s</option><option value="120">2 min</option><option value="180">3 min (YouTube's Shorts limit)</option></select></div>
       </div>
+      <div id="ssMemesBox"><label for="ssMemes">Memes (motion graphics look)</label>
+        <select id="ssMemes"><option value="">⚙️ As in Settings</option><option value="off">🚫 Off</option>
+          <option value="some">😄 Some: funnier explaining, a meme now and then</option><option value="lots">🤣 Lots</option></select></div>
       <div class="grid2" id="ssAiOpts">
         <div><label for="ssStyle">Art style</label><select id="ssStyle"><option value="auto">🎲 Claude picks (never the last 3)</option></select></div>
         <div><label for="ssQuality">Clip resolution</label>
@@ -869,6 +885,10 @@
       <label for="s-ai_music">Music</label>
       <select id="s-ai_music"><option value="true">🎵 New AI music for every video (when the AI engine is installed; a genre the last videos didn't use)</option>
         <option value="false">Composed music only (faster)</option></select>
+      <label for="s-memes">Memes &amp; humour (long and medium videos, Script Videos, Shoot, Shorts+ motion graphics)</label>
+      <select id="s-memes"><option value="off">🚫 Off: told like a documentary</option>
+        <option value="some">😄 Some: explained like a funny friend, a meme now and then</option>
+        <option value="lots">🤣 Lots: a meme every few lines</option></select>
       <label for="s-hook_pictures">Hook pictures (long videos)</label>
       <select id="s-hook_pictures"><option value="true">🎞 Cinematic AI stills in the hook (when the AI engine is installed)</option>
         <option value="false">Motion graphics only (faster)</option></select>
@@ -928,14 +948,17 @@
         The file name is how Claude knows what it is, so keep names like “sword-slash” or “mysterious-ambient”.
         Built-in sounds work without adding anything.<br><b>Set each file's licence:</b> a file whose licence is
         unknown is never used in a video (an unlicensed track can bring copyright claims). For CC BY files, write
-        the credit the licence asks for; it is added to the description of every video that uses the file.</p>
+        the credit the licence asks for; it is added to the description of every video that uses the file.<br>
+        <b>Memes:</b> videos with memes on can use your own meme pictures and clips (name them by what they mean, e.g.
+        “crying-cat-sad” or “side-eye-doubt”), with top and bottom text. Add only ones you may use: film stills, TV clips and
+        photos of real people can bring copyright claims. Without any, the app draws its own memes.</p>
       <label for="s-use_my_sounds">Your uploaded sound effects in videos</label>
       <select id="s-use_my_sounds"><option value="false">🚫 Don't use them: only the app's own built-in sounds</option>
         <option value="true">✅ Use them where they fit (Claude picks them by file name)</option></select>
       <div class="row">
         <div><label for="lib-kind">Add to</label>
-          <select id="lib-kind"><option value="sfx">🔊 Sound effects</option><option value="music">🎵 Music</option><option value="models3d">🧊 3D models (.glb)</option></select></div>
-        <div><label for="lib-file">Files</label><input id="lib-file" type="file" multiple accept=".mp3,.wav,.ogg,.m4a,.glb"></div>
+          <select id="lib-kind"><option value="sfx">🔊 Sound effects</option><option value="music">🎵 Music</option><option value="models3d">🧊 3D models (.glb)</option><option value="memes">😂 Memes (pictures, GIFs, short clips)</option></select></div>
+        <div><label for="lib-file">Files</label><input id="lib-file" type="file" multiple accept=".mp3,.wav,.ogg,.m4a,.glb,.jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov"></div>
       </div>
       <div class="row">
         <div><label for="lib-licence">Licence of the files you add</label><select id="lib-licence"></select></div>
@@ -2063,7 +2086,7 @@ async function loadHistory() {
 }
 
 // ---- Media library: sound effects, music and 3D models (assets/sfx, assets/music, assets/models3d) ----
-const LIB_TITLE = { sfx: "🔊 Sound effects", music: "🎵 Music", models3d: "🧊 3D models" };
+const LIB_TITLE = { sfx: "🔊 Sound effects", music: "🎵 Music", models3d: "🧊 3D models", memes: "😂 Memes" };
 let LICENCES = null;
 const licenceSelect = (value) => Object.entries(LICENCES || {}).map(([k, label]) =>
   `<option value="${k}" ${k === value ? "selected" : ""}>${esc(label)}</option>`).join("");
@@ -2081,7 +2104,10 @@ async function loadLibrary() {
     const mine = items.filter((i) => i.kind === k && !i.builtin), built = items.filter((i) => i.kind === k && i.builtin);
     return `<h3>${LIB_TITLE[k]}</h3>${mine.map((i) => `
       <div class="libitem"><b>${esc(i.name)}</b> <span class="hint">${(i.size / 1048576).toFixed(1)} MB</span>
-        ${k === "models3d" ? "" : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
+        ${k === "models3d" ? "" : k === "memes" ? (/\.(mp4|webm)$/i.test(i.file)
+          ? `<video class="memethumb" controls muted preload="metadata" src="/api/library/${k}/${encodeURIComponent(i.file)}"></video>`
+          : `<img class="memethumb" loading="lazy" alt="" src="/api/library/${k}/${encodeURIComponent(i.file)}">`)
+          : `<audio controls preload="none" src="/api/library/${k}/${encodeURIComponent(i.file)}"></audio>`}
         <button class="danger" data-lib-del="${k}/${esc(i.file)}">Delete</button>
         ${i.banned === "boom" ? `<div class="lic warn">🚫 Never used: its name says boom, braam or hit (banned outside the hook)</div>`
           : `<button class="mini ${i.banned ? "" : "danger"}" data-lib-ban="${k}/${esc(i.file)}" data-on="${i.banned ? "false" : "true"}">${i.banned ? "✓ Allow again" : "🚫 Ban: never use"}</button>`}
@@ -2540,7 +2566,7 @@ $("#anBtn").onclick = async () => {
 // Shorts Studio (reelgen/storyshorts.py): 9:16 Shorts, one or a series, any mix of source, kind, voice and look.
 let ssSource = "ai";
 const SS_KEYS = ["ssTopic", "ssKind", "ssParts", "ssSplit", "ssTitle", "ssText", "ssLanguage", "ssScreen", "ssVisuals", "ssSeconds", "ssStyle",
-                 "ssQuality", "ssVoice", "ssSpeed", "ssCaptions", "ssMark", "ssUpscale"];
+                 "ssQuality", "ssVoice", "ssSpeed", "ssCaptions", "ssMark", "ssUpscale", "ssMemes"];
 function ssSave() {
   try { localStorage.setItem("storyShorts", JSON.stringify({ source: ssSource, ...Object.fromEntries(SS_KEYS.map((k) => [k, $("#" + k).value])) })); } catch (e) {}
 }
@@ -2550,6 +2576,7 @@ function ssUpdate() {
   $("#ssAi").hidden = ssSource !== "ai";
   $("#ssScript").hidden = ssSource !== "script";
   $("#ssAiOpts").hidden = !ai;
+  $("#ssMemesBox").hidden = v !== "graphics";
   // your own script runs at its natural length unless you cut it by length
   $("#ssSeconds").parentElement.style.visibility = ssSource === "script" && $("#ssSplit").value !== "length" ? "hidden" : "";
   $("#ssQuality").parentElement.style.visibility = motion ? "" : "hidden";
@@ -2610,7 +2637,7 @@ $("#ssBtn").onclick = async () => {
                  title: $("#ssTitle").value, script: $("#ssText").value, language: $("#ssLanguage").value, screen_text: $("#ssScreen").value,
                  visuals: $("#ssVisuals").value, seconds: Number($("#ssSeconds").value), style: $("#ssStyle").value, quality: $("#ssQuality").value,
                  upscale: $("#ssUpscale").value === "true", voice: $("#ssVoice").value, speed: Number($("#ssSpeed").value),
-                 captions: $("#ssCaptions").value === "true", watermark: $("#ssMark").value };
+                 captions: $("#ssCaptions").value === "true", watermark: $("#ssMark").value, memes: $("#ssMemes").value };
   if (ssSource === "script" && !body.script.trim()) { $("#ssMsg").textContent = "Paste your script first."; return; }
   $("#ssBtn").disabled = true;
   try {
@@ -2695,7 +2722,7 @@ document.querySelectorAll("#sv-cc button").forEach((b) => b.onclick = () => {
 $("#svBtn").onclick = async () => {
   const body = { title: $("#sv-title").value, description: $("#sv-desc").value, hook: $("#sv-hook").value,
                  script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc,
-                 screen_text: $("#sv-screen").value };
+                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value };
   if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
   $("#svBtn").disabled = true;
   try {
@@ -2713,7 +2740,7 @@ api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions ===
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;

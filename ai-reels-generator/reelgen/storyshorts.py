@@ -36,7 +36,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field, create_model
 
-from . import aimusic, anim_engine, animated, media, repeats
+from . import aimusic, anim_engine, animated, media, memes, repeats
 from .animated import ART_STYLES, CAMERAS, NEGATIVE, TRANSITION_SOUND, ACharacter, Camera, Fx, Transition
 from .categories import CATEGORIES
 from .config import Config
@@ -109,6 +109,7 @@ class StoryRequest:
     speed: int = 8  # free voices' rate %
     captions: bool = False
     watermark: str = ""
+    memes: str = "off"  # the graphics look: off | some | lots (reelgen/memes.py)
 
 
 def default_voice(language: str) -> str:
@@ -263,7 +264,7 @@ def _graphics_rules(req: StoryRequest) -> str:
     from .longform import _system as long_system
 
     style = {"facts": "facts", "explainer": "facts", "news": "news", "comedy": "comedy"}.get(req.kind, "story")
-    full = long_system(style, "English")
+    full = long_system(style, "English", meme=req.memes)
     rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     rules = re.sub(r"\n- (Chapter breaks|Backgrounds):.*?(?=\n- |\n\n)", "", rules, flags=re.S)
     rules = re.sub(r"Music and sound:.*?\n\n", "", rules, flags=re.S)
@@ -357,7 +358,7 @@ Every part works on its own for a viewer who never saw the others.
 - Your own story and words: never copy another video's script, characters or structure.{recent}
 
 The voice speaks: {LANGUAGE_RULES[req.language]}
-
+{(chr(10) + memes.writing_rules(req.memes) + chr(10)) if req.visuals == "graphics" and req.memes in memes.EVERY else ""}
 {_directing(req, styles)}
 
 {sounds}"""

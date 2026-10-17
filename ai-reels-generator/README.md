@@ -97,6 +97,28 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
   installed, the hook's shots are cinematic AI stills (Settings > Hook pictures), checked by Claude before use; without
   it, they are motion graphics. Shorts open on a deep boom under the first word.
 
+## Memes and funny explaining (option)
+
+**Memes & humour** (Settings > Content, or per video on the Create page for medium and long videos, the Script tab and
+Shorts+ with the motion-graphics look): *Off* (told like a documentary), *Some* or *Lots*.
+
+- **Some / Lots**: the writer explains like a sharp, funny friend: every concept gets an everyday example you have lived
+  (a salary gone by the 10th, Netflix instead of studying, onion prices), a recurring everyday character can carry them,
+  and the jokes never bend a fact (the fact-check still runs). No jokes about religion, caste, region, bodies, poverty,
+  tragedies or real people.
+- **Memes** land the idea: about one beat in 8 (*Some*) or in 4 (*Lots*) is a meme whose format is the shape of the
+  idea: a sweating person between two red buttons for a trade-off, nope/yep for the smarter choice, the expanding brain,
+  "this is fine" in a burning room, panik/kalm/panik, expectation vs reality, "Nobody: / Me:", stonks and not stonks,
+  change my mind, the four-panel plan that backfires, two people pointing at each other, a starter pack, or a big
+  reaction face (shocked, crying, laughing, side-eye, mind blown...) with top and bottom text. They are drawn fresh by
+  the editor with cartoon people (one recurring character per video), with their own sounds (a record scratch, a
+  cartoon boing, the sad trombone...), so nothing is copied from a meme picture, a film or a real person.
+- **Your own memes**: Settings > Media library > Memes takes pictures, GIFs and short clips (GIFs and .mov are turned
+  into .mp4). Name each by what it means ("crying-cat-sad", "side-eye-doubt") and set its licence; Claude uses one only
+  where its name fits the line, with top and bottom text. Add only files you may use: film stills, TV clips and photos
+  of real people can bring copyright claims.
+- Script Videos and Shoot never change your words: memes only go on lines that already set one up.
+
 ## Shoot: you on camera (tab "Shoot")
 
 Film yourself with your phone's own camera app while this computer is your teleprompter.
@@ -175,6 +197,7 @@ reelgen/
   video.py          timeline, then the Remotion render (moviepy if Node is missing)
   sfx.py            whoosh and pop sound effects, made on the fly (and the hook's boom, riser, drone)
   cinehook.py       the cinematic hook: rules, timing, AI stills, sound design, silence
+  memes.py          the meme option: formats, the funny-explainer rules, checks
   shoot.py          the Shoot tab: shots, Claude's on-camera plan, your takes, the edit
   notifier.py       Telegram + GitHub run summary
   pipeline.py       runs all steps with verify-and-retry
@@ -185,6 +208,7 @@ remotion/           the video edit (React + Remotion), rendered by video.py
   src/HookTitle.tsx the opening hook card
   src/Background.tsx footage cuts, punch-in zoom, scene-change flash
   src/cine/         the cinematic hook's grades, film texture, typed labels, transitions, subscribe card
+  src/long/Meme.tsx the memes, drawn in code with the Toon editor's cartoon people
 ```
 
 To preview or tweak the edit: `cd remotion && npm run studio` opens Remotion Studio with sample props (`src/demo.ts`). The Python pipeline renders with `remotion render src/index.ts Reel out.mp4 --props=props.json --public-dir=<video folder>`.

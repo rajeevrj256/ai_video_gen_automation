@@ -229,6 +229,30 @@ def _flyby(duration: float = 1.6) -> np.ndarray:
 # name -> (make, peak, seconds the sound should lead its word by, what it's for)
 # boom, hit and rise were deleted at the user's request (they sounded bad on every video), and later every riser
 # (the built-in one and the hook's): the user banned them.
+def _boing(duration: float = 0.7) -> np.ndarray:
+    """A cartoon spring: a low note whose pitch wobbles fast, then settles (a silly moment, a meme's punchline)."""
+    t = np.arange(int(RATE * duration)) / RATE
+    freq = 170 * (1 + 0.45 * np.sin(2 * np.pi * 11 * t) * np.exp(-t * 4.5)) * (1 + 0.6 * np.exp(-t * 9))
+    phase = 2 * np.pi * np.cumsum(freq) / RATE
+    tone = np.sin(phase) + 0.35 * np.sin(2 * phase)
+    return tone * np.minimum(t / 0.004, 1) * np.exp(-t * 4)
+
+
+def _scratch(duration: float = 0.42) -> np.ndarray:
+    """A record scratch: the music stops ('wait, what?'). Noise pulled through a band that sweeps up, then down."""
+    n = int(RATE * duration)
+    t = np.arange(n) / RATE
+    x = t / duration
+    noise = np.random.default_rng(11).standard_normal(n)
+    centre = np.where(x < 0.45, 500 + 2600 * (x / 0.45), 3100 - 2700 * ((x - 0.45) / 0.55))
+    hi = noise
+    for _ in range(4):  # one pole rolls off too gently: white noise stayed a hiss at ~8 kHz
+        hi = _lowpass(hi, centre * 1.2)
+    band = hi - _lowpass(hi, centre * 0.5)
+    grain = 1 + 0.6 * np.sign(np.sin(2 * np.pi * (40 + 60 * x) * t))  # the groove's rasp
+    return band * grain * np.minimum(t / 0.005, 1) * np.minimum(1, (duration - t) / 0.06)
+
+
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
     "heartbeat": (_heartbeat, 0.55, 0.0, "a heartbeat: suspense, fear, a life-or-death moment"),
@@ -240,6 +264,8 @@ CUE_SOUNDS = {
     "click": (_click, 0.3, 0.0, "a crisp click: text or a counter landing"),
     "rumble": (_rumble, 0.5, 0.0, "a low rumble: shaking, a threat, fear"),
     "flyby": (_flyby, 0.4, 0.5, "something rushing past the camera: a plane, a car, a crowd"),
+    "boing": (_boing, 0.35, 0.0, "a cartoon spring: a silly moment, a joke's punchline"),
+    "scratch": (_scratch, 0.32, 0.0, "a record scratch: 'wait, what?', an awkward or surprising turn"),
 }
 
 

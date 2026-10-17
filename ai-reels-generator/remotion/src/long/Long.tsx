@@ -8,6 +8,7 @@ import {VisualView} from './Visuals';
 import {Cues, Music} from '../Sound';
 import {Footage, Model3D} from './Media';
 import {SceneView} from './Scene';
+import {MemeView} from './Meme';
 import {setCurrency} from './icon';
 import {Backdrop, HookView, Shot, lookOf, worldFor} from './Cinematic';
 import {ChapterBreak} from './Breaks';
@@ -32,6 +33,14 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   if (v.type === 'footage' && v.src) return <Footage v={v} frames={frames} accent={accent} />;
   if (v.type === 'model3d' && (v.src || v.parts?.length)) return <Model3D v={v} frames={frames} accent={accent} />;
   if (v.type === 'camera' && v.src) return <CameraTake v={v} />;
+  if (v.type === 'meme') {
+    return (
+      <>
+        <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />
+        <MemeView v={v} frames={frames} roomy={roomy} seed={look.seed} />
+      </>
+    );
+  }
   if (v.type === 'picture' && v.src) {
     return <Img src={staticFile(v.src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'}} />;
   }

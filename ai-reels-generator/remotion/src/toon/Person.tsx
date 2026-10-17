@@ -202,14 +202,16 @@ const Clothes: React.FC<{look: Look; l: number; r: number}> = ({look, l, r}) => 
   }
 };
 
-export const Person: React.FC<{look: Look; pose: Pose; mood: Mood; talk: number; frame: number; height: number; flip?: boolean; seated?: boolean}> = ({
-  look, pose, mood, talk, frame, height, flip, seated,
+// `arms`: angles of its own instead of the pose's (the long videos' memes: hands over two buttons, say).
+export const Person: React.FC<{look: Look; pose: Pose; mood: Mood; talk: number; frame: number; height: number; flip?: boolean; seated?: boolean;
+  arms?: [number, number, number, number]}> = ({
+  look, pose, mood, talk, frame, height, flip, seated, arms,
 }) => {
   const run = pose === 'run';
   const step = run ? Math.sin(frame / 3) : pose === 'sneak' ? Math.sin(frame / 9) * 0.5 : 0;
   const bob = run ? Math.abs(Math.sin(frame / 3)) * -10 : pose === 'celebrate' ? Math.abs(Math.sin(frame / 6)) * -14 : Math.sin(frame / 22) * 1.5;
   const crouch = pose === 'cower' || pose === 'sneak' ? 30 : 0;
-  const [la, lb, ra, rb] = ARMS[pose] ?? ARMS.stand;
+  const [la, lb, ra, rb] = arms ?? ARMS[pose] ?? ARMS.stand;
   const swing = run ? step * 35 : 0;
   const w = look.build === 'slim' ? -8 : look.build === 'broad' ? 10 : 0;
   const l = 104 - w, r = 196 + w;

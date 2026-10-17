@@ -32,9 +32,11 @@ from .sfx import CUE_SOUNDS, RATE, _write
 log = logging.getLogger(__name__)
 SFX_DIR = PROJECT_ROOT / "assets" / "sfx"
 MODELS_DIR = PROJECT_ROOT / "assets" / "models3d"
+MEMES_DIR = PROJECT_ROOT / "assets" / "memes"  # the user's own meme pictures and clips (reelgen/memes.py)
 AUDIO_TYPES = {".mp3", ".wav", ".ogg", ".m4a"}
 MODEL_TYPES = {".glb"}
-KINDS = ("sfx", "music", "models3d")
+MEME_TYPES = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".webm"}  # a .gif or .mov upload is turned into an .mp4
+KINDS = ("sfx", "music", "models3d", "memes")
 
 # How loud each cue is, before the file's own level.
 VOLUMES = {"soft": 0.35, "medium": 0.6, "strong": 0.9}
@@ -50,7 +52,7 @@ class Item:
 
 
 def folder(cfg: Config, kind: str) -> Path:
-    return {"sfx": SFX_DIR, "music": cfg.music_dir, "models3d": MODELS_DIR}[kind]
+    return {"sfx": SFX_DIR, "music": cfg.music_dir, "models3d": MODELS_DIR, "memes": MEMES_DIR}[kind]
 
 
 def slug(name: str) -> str:
@@ -148,6 +150,8 @@ def set_all_licences(cfg: Config, licence: str, only_unknown: bool = True) -> in
         raise ValueError("Unknown licence")
     count = 0
     for kind in KINDS:
+        if kind == "memes":  # a meme picture's rights are decided one by one, never all at once
+            continue
         lic = licences(cfg, kind)
         for item in _files(cfg, kind, everything=True):
             old = lic.get(item.path.name, {}).get("licence", "unknown")
@@ -174,7 +178,7 @@ def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
     if kind == "sfx" and not everything and not getattr(cfg, "use_my_sounds", False):
         return []
     root = folder(cfg, kind)
-    types = MODEL_TYPES if kind == "models3d" else AUDIO_TYPES
+    types = _types(kind)
     lic = licences(cfg, kind)
     items, seen = [], set()
     for path in sorted(root.glob("*")) if root.exists() else []:
@@ -189,6 +193,10 @@ def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
         seen.add(name)
         items.append(Item(name, name.replace("-", " "), path))
     return items
+
+
+def _types(kind: str) -> set[str]:
+    return MODEL_TYPES if kind == "models3d" else MEME_TYPES if kind == "memes" else AUDIO_TYPES
 
 
 def sounds(cfg: Config) -> list[Item]:
@@ -255,7 +263,7 @@ def listing(cfg: Config) -> list[dict]:
     out = []
     for kind in KINDS:
         builtin = {"sfx": [Item(n, a, None) for n, (_, _, _, a) in CUE_SOUNDS.items()],
-                   "music": [Item(n, a, None) for n, (a, _) in BEDS.items()], "models3d": []}[kind]
+                   "music": [Item(n, a, None) for n, (a, _) in BEDS.items()], "models3d": [], "memes": []}[kind]
         lic = licences(cfg, kind)
         for item in [*_files(cfg, kind, everything=True), *builtin]:
             own = lic.get(item.path.name, {}) if item.path else {}
@@ -273,7 +281,7 @@ def save_upload(cfg: Config, kind: str, filename: str, data: bytes, licence: str
     if kind not in KINDS:
         raise ValueError("Unknown library folder")
     ext = Path(filename).suffix.lower()
-    if ext not in (MODEL_TYPES if kind == "models3d" else AUDIO_TYPES):
+    if ext not in _types(kind) and not (kind == "memes" and ext in (".gif", ".mov")):
         raise ValueError(f"Can't use a {ext or 'file without an extension'} here")
     if len(data) > 60 * 1024 * 1024:
         raise ValueError("That file is over 60 MB")
@@ -281,8 +289,28 @@ def save_upload(cfg: Config, kind: str, filename: str, data: bytes, licence: str
     root.mkdir(parents=True, exist_ok=True)
     path = root / (slug(filename) + ext)
     path.write_bytes(data)
+    if kind == "memes" and ext in (".gif", ".mov"):  # the editor plays .mp4: an animated GIF or an iPhone .mov becomes one
+        path = _to_mp4(path)
     set_licence(cfg, kind, path.name, licence if licence in LICENCES else "unknown", credit)
     return path
+
+
+def _to_mp4(src: Path) -> Path:
+    """H.264 .mp4 of a GIF or .mov (even sizes, no sound for a GIF); the original is removed."""
+    import subprocess
+
+    import imageio_ffmpeg
+
+    out = src.with_suffix(".mp4")
+    run = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-v", "error", "-i", str(src), "-movflags", "+faststart",
+                          "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-crf", "20",
+                          *(["-an"] if src.suffix.lower() == ".gif" else ["-c:a", "aac"]), str(out)],
+                         capture_output=True, text=True, timeout=300)
+    src.unlink(missing_ok=True)
+    if run.returncode != 0 or not out.exists():
+        out.unlink(missing_ok=True)
+        raise ValueError("Couldn't turn that file into a video: " + (run.stderr.strip().splitlines() or ["?"])[-1][:200])
+    return out
 
 
 def remove(cfg: Config, kind: str, filename: str) -> None:

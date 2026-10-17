@@ -124,12 +124,32 @@ def update_helper() -> None:
         fail(f"updater: window/children of the old app {got}, expected (([30], 20), [70, 80])")
 
 
+def meme_lists() -> None:
+    """The meme formats and faces the writer is offered (memes.py) are the ones the editor draws (types.ts)."""
+    import re
+
+    from . import memes
+    from .longform import LVisual
+
+    ts = (ROOT / "remotion" / "src" / "long" / "types.ts").read_text(encoding="utf-8")
+    for name, ours in (("MemeFormat", set(memes.FORMATS)), ("MemeFace", set(memes.FACES))):
+        block = re.search(rf"export type {name} =(.*?);", ts, re.S)
+        theirs = set(re.findall(r"'([a-z-]+)'", block.group(1))) if block else set()
+        if ours != theirs:
+            fail(f"memes.py and types.ts {name} differ: only in Python {sorted(ours - theirs)}, only in the editor {sorted(theirs - ours)}")
+    v = LVisual(type="meme", headline="", sub="", items=[], icons=[], meme="nope-yep", labels=["a", "b", "c", " "])
+    memes.repair(v)
+    if v.labels != ["a", "b"]:
+        fail(f"memes.repair kept {v.labels} for a 2-label format")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
     duplicate_names()
     behaviour()
     update_helper()
+    meme_lists()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

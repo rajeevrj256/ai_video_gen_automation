@@ -22,7 +22,14 @@ export type VisualType =
   | 'model3d' // a 3D model animated in its own world (src = .glb)
   | 'picture' // a cinematic AI picture, full frame under the camera move (src = image): the hook's shots
   | 'camera' // you on camera: your own take (src = takes/shotNN.mp4) from `from` seconds (reelgen/shoot.py)
-  | 'scene'; // 1-4 icon actors acting the line out
+  | 'scene' // 1-4 icon actors acting the line out
+  | 'meme'; // a meme that makes the line's concept land (Meme.tsx): a format drawn in code, or the user's own file (src)
+
+// The meme formats drawn in code (reelgen/memes.py describes each one to the writer; keep the two lists in step).
+export type MemeFormat =
+  | 'two-buttons' | 'nope-yep' | 'distracted' | 'brain' | 'this-is-fine' | 'panik-kalm' | 'expectation-reality'
+  | 'nobody-me' | 'stonks' | 'not-stonks' | 'change-my-mind' | 'plan' | 'pointing' | 'starter-pack' | 'reaction';
+export type MemeFace = 'shocked' | 'crying' | 'laughing' | 'side-eye' | 'smug' | 'sweating' | 'mind-blown' | 'confused' | 'angry' | 'deadpan';
 
 export type Visual = {
   type: VisualType;
@@ -41,6 +48,9 @@ export type Visual = {
   from?: number; // camera: seconds into the take where this line starts
   until?: number; // camera: seconds of the take that belong to this line (its last frame holds after that)
   zoom?: number; // camera: 1, or a punch-in on every other take
+  meme?: MemeFormat; // meme: the format
+  labels?: string[]; // meme: the words on it, in the format's order (reelgen/memes.py FORMATS)
+  face?: MemeFace; // meme 'reaction': the face
 };
 
 export type Camera = 'push' | 'pull' | 'pan-left' | 'pan-right' | 'rise' | 'dutch' | 'orbit' | 'still';

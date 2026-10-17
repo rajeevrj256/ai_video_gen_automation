@@ -158,6 +158,8 @@ class JobManager:
                 cfg.long_voice = job["voice"]
             if job.get("story_form"):
                 cfg.story_form = job["story_form"]
+            if job.get("memes") in ("off", "some", "lots"):  # memes.LEVELS: this video's own choice
+                cfg.memes = job["memes"]
             if job.get("myvoice"):
                 from .myvoice import finish
                 r = job["myvoice"]
@@ -426,6 +428,7 @@ class GenerateRequest(BaseModel):
     length: str = "short"  # "short" (30s, 9:16), "medium" (5-6 min) or "long" (8-10 min), both 16:9 animated
     captions: bool | None = None  # subtitles; empty = the Settings value
     story_form: str = "auto"  # long/medium: longform.STORY_FORMS key, or auto
+    memes: str = ""  # long/medium: off | some | lots (reelgen/memes.py); empty = the Settings value
 
 
 class LicenceEdit(BaseModel):
@@ -483,6 +486,7 @@ class StoryBody(BaseModel):
     language: str = "english"  # english | hinglish | hindi
     screen_text: str = "english"  # english | voice
     visuals: str = "anim"  # anim | key | pictures | footage | graphics
+    memes: str = ""  # the graphics look: off | some | lots (reelgen/memes.py); empty = the Settings value
     style: str = "auto"
     quality: str = "auto"
     upscale: bool = True
@@ -541,6 +545,7 @@ class ScriptVideoRequest(BaseModel):
     voice: str | None = None  # empty = the long-video voice in Settings
     captions: bool | None = None
     screen_text: str = "english"  # words on screen: English (a Hinglish script still speaks Hinglish) or 'script'
+    memes: str = ""  # off | some | lots (reelgen/memes.py); empty = the Settings value
 
 
 class PostEdit(BaseModel):
@@ -1005,7 +1010,8 @@ def create_app(cfg: Config) -> FastAPI:
         length = body.length if body.length in ("long", "medium") else "short"
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
                            "manual", style, length, captions=body.captions,
-                           story_form=body.story_form if length != "short" else None)
+                           story_form=body.story_form if length != "short" else None,
+                           memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None)
 
     @app.get("/api/stick/voices")
     def stick_voices():
@@ -1221,7 +1227,8 @@ def create_app(cfg: Config) -> FastAPI:
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
                  "voice": voice, "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
-                 "watermark": body.watermark.strip()[:40]}
+                 "watermark": body.watermark.strip()[:40],
+                 "memes": body.memes if body.memes in ("off", "some", "lots") else load_settings(Config()).memes}
         if given["source"] == "script":
             parts = split_parts(given["script"], language, seconds, given["split"])
             if not parts:
@@ -1255,7 +1262,7 @@ def create_app(cfg: Config) -> FastAPI:
         given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script,
                  "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
-                           captions=body.captions)
+                           captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None)
 
     # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------
 

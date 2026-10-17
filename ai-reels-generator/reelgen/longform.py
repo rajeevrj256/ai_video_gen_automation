@@ -32,7 +32,7 @@ from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
-from . import aimusic, cinehook, music, sound_design, variety
+from . import aimusic, cinehook, memes, music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
 from . import repeats
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
@@ -82,7 +82,7 @@ FACT_FIXES = 2
 LLM_TIMEOUT = 2400  # a 1,300-word script with research at high effort can take well over 15 minutes
 LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
 VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart", "footage",
-                "model3d", "scene")
+                "model3d", "scene", "meme")
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
 ICON_TYPES = ("scene", "icons")  # generic icon visuals
 SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx; older hooks)
@@ -147,13 +147,14 @@ class SceneActor(BaseModel):
 
 class LVisual(BaseModel):
     type: Literal["title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart",
-                  "footage", "model3d", "scene"] = Field(
+                  "footage", "model3d", "scene", "meme"] = Field(
         description="title: a big headline. stat: one striking number. timeline: 2-5 dated moments. compare: "
                     "exactly 2 things side by side. steps: 2-4 steps of how something works. icons: 1-3 icons "
                     "that picture the line. quote: a real, verified quote. keyword: one word or short phrase. "
                     "chart: 3-6 real data points over time. footage: a real video clip of a place or scene, "
                     "full screen. model3d: an object from the story as an animated 3D model. scene: a small "
-                    "animated scene of 1-4 icon 'actors' that act the line out (enter, chase, fall, grow...).")
+                    "animated scene of 1-4 icon 'actors' that act the line out (enter, chase, fall, grow...). meme: a "
+                    "meme that makes the line's concept land (only when the instructions turn memes on).")
     headline: str = Field(description="title/keyword: the text (keyword max 3 words). stat: the number exactly as shown, e.g. '₹1.2 lakh'. quote: the quote. icons/timeline/compare/steps/chart: a short heading (max 7 words).")
     sub: str = Field(description="A short supporting line (max 10 words): what the stat is, who said the quote, the chart's unit. Can be empty.")
     items: list[LItem] = Field(description="timeline: 2-5, compare: exactly 2, steps: 2-4, chart: 3-6. Empty for the other types.")
@@ -167,6 +168,10 @@ class LVisual(BaseModel):
     camera: Literal["push", "pull", "pan-left", "pan-right", "rise", "dutch", "orbit", "still"] = Field(
         default="push", description="How the camera moves during this beat. Vary it; never the same move three beats in a row. 'still' only for a calm pause.")
     impact: bool = Field(default=False, description="True only for the few biggest moments (a reveal, the twist, a shocking number): a punch-in, a short freeze with a flash, a screen shake and a bass hit. At most one per chapter.")
+    meme: Literal[("",) + tuple(memes.FORMATS)] = Field(default="", description="meme only: the meme format. Empty otherwise.")
+    labels: list[str] = Field(default_factory=list, description=f"meme only: the meme's words, in the format's order, each at most {memes.LABEL_WORDS} words. Empty otherwise.")
+    face: Literal[("",) + memes.FACES] = Field(default="", description="meme 'reaction' only: the face. Empty otherwise.")
+    file: str = Field(default="", description="meme only: one of the user's own meme files by name, when one fits exactly; empty for a drawn format.")
 
 
 class LBeat(BaseModel):
@@ -227,10 +232,13 @@ class LongScript(BaseModel):
     music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
 
 
-def _system(style: str, language: str, minutes: float = 8) -> str:
+def _system(style: str, language: str, minutes: float = 8, meme: str = "off", meme_files: list | None = None) -> str:
+    """`meme`: off / some / lots (memes.py): the funny-explainer writing and 'meme' visuals."""
     sh = shape(minutes)
+    funny = meme in memes.EVERY
     kind = ("an original fiction story, clearly presented as a story" if style == "story" else
             "a news explainer about one real story from the last 7 days, every fact checked" if style == "news"
+            else "a true subject explained by a sharp, funny friend, every fact checked" if funny
             else "a true story told like a documentary, every fact checked")
     return f"""You write {sh['label']} YouTube videos that people watch to the end: {kind}. \
 The video is animated motion graphics, so every beat pairs one narration line with one animated \
@@ -274,7 +282,7 @@ forward, or it goes.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
 {cinehook.rules(minutes)}
-
+{chr(10) + memes.writing_rules(meme) + chr(10) if funny else ""}
 Show, don't write (very important): the story is told by evidence in motion, camera and sound; text only \
 supports it. The weak version is "big text, then another big text", or generic icons with an arrow \
 between them. The strong version: the real number counts up, a date lands on a timeline, the chart line \
@@ -328,7 +336,7 @@ model exists. Pick the scene: 'sky' only for things that fly (the model flies le
 front first), 'space' for space objects, 'studio' (a turntable) for everything else. Never in a \
 serious or tragic moment (a crash, a war, a death, a disaster): a toy-like 3D model there is \
 disrespectful. Headline: a short label, or empty.
-
+{memes.visual_rules(meme, meme_files) + chr(10) if funny else ""}
 Accuracy: only state facts you are confident about or have looked up with web search. Never invent \
 details, dialogue or figures in a true story. Timeless wording: never "today", "this week" or "five \
 days ago"; use dates. No politics or politicians, tragedies, violence, or rumours about real people. \
@@ -375,7 +383,8 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     from .hooks import block as hook_block
 
     prompt += hook_block(cfg)  # the trailer hook's and the cold open's first seconds
-    script = ask(cfg.ai_backend, cfg.claude_model, _system(cfg.video_style, cfg.long_language, minutes), prompt,
+    system = _system(cfg.video_style, cfg.long_language, minutes, memes.level(cfg), memes.own_files(cfg))
+    script = ask(cfg.ai_backend, cfg.claude_model, system, prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
     return script
@@ -476,6 +485,7 @@ def repair_long_script(script: LongScript) -> LongScript:
             v.actors = v.actors[:4]
         if v.type == "scene" and not v.actors and v.icons:
             v.type = "icons"
+        memes.repair(v)
 
     for h in s.hook:
         fix(h.visual)
@@ -552,6 +562,8 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
                     "steps, footage, 3D) instead.")
     if any(a and b and c for a, b, c in zip(iconish, iconish[1:], iconish[2:])):
         result.fail("Three icon scenes in a row; show the evidence in between.")
+    for issue in memes.issues([b.visual for b in all_beats], "lots"):  # the loosest limit: the level isn't known here
+        result.fail(issue)
     for ci, chapter in enumerate(script.chapters, 1):
         for bi, beat in enumerate(chapter.beats, 1):
             v = beat.visual
@@ -570,10 +582,13 @@ factual claim in the narration and in the on-screen visuals (numbers, dates, quo
 Use web search to confirm anything you are not certain of. Flag wrong or outdated facts, numbers that don't \
 match sources, quotes you can't verify word for word, invented details or dialogue presented as fact, \
 exaggerations, myths stated as fact, and lines that contradict each other. Don't comment on style. Be \
-strict: a viewer who knows the subject should find nothing to correct in the comments."""
+strict: a viewer who knows the subject should find nothing to correct in the comments. A meme's words are a joke \
+mapping the line onto a meme format: flag one only if it states a wrong figure or a false claim as fact."""
 
 
 def _visual_text(v: LVisual) -> str:
+    if v.type == "meme":
+        return memes.text(v)
     items = "; ".join(f"{i.label} {i.text} {i.display}".strip() for i in v.items)
     return f"[{v.type}: {v.headline}" + (f" | {v.sub}" if v.sub else "") + (f" | {items}" if items else "") + "]"
 
@@ -639,6 +654,8 @@ def _hook_timing(lengths: list[float | None], seconds: tuple[float, float] = HOO
 
 
 def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int], duration: float) -> dict:
+    if v.get("type") == "meme":
+        v = _meme_visual(v, cfg, work, index)
     v = _media_visual(v, cfg, work, index, clip_ids)
     v["icons"] = [i.strip().lower().replace(" ", "-") for i in v.get("icons") or []]
     times = sound_design.actor_times(len(v.get("actors") or []), duration)
@@ -699,7 +716,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                           "camera": h.visual.camera if h.visual.camera != "still" else "push"}
             else:
                 visual = _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)
-            shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": h.text.strip(),
+            # A meme carries its own words: a typed label over it collided with them (and typed for nothing).
+            label = "" if visual.get("type") == "meme" else h.text.strip()
+            shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": label,
                     "audio": rel(sa.path) if sa else None, "visual": visual, "grade": h.grade,
                     "transition": h.transition, "boom": h.boom, "flash": h.flash}
             if sa:
@@ -965,6 +984,30 @@ def _bake_plate(work: Path, rel: str) -> str | None:
     except Exception as exc:
         log.warning("Couldn't prepare %s: %s", rel, exc)
         return None
+
+
+def _meme_visual(v: dict, cfg: Config, work: Path, index: int) -> dict:
+    """A meme beat, repaired in code (kept whatever the setting is now: a re-make keeps the video's memes). The user's
+    own meme file (Settings > Media library > Memes) is copied in as `src`; a file that's gone falls back to the drawn
+    format."""
+    from types import SimpleNamespace
+
+    model = SimpleNamespace(type="meme", meme=v.get("meme") or "", labels=[str(t) for t in v.get("labels") or []],
+                            face=v.get("face") or "", file=v.get("file") or "", headline=v.get("headline") or "",
+                            sub=v.get("sub") or "", icons=list(v.get("icons") or []))
+    memes.repair(model)
+    v.update(type=model.type, meme=model.meme, labels=model.labels, face=model.face, headline=model.headline, icons=model.icons)
+    if v["type"] == "meme" and model.file:
+        own = next((f for f in memes.own_files(cfg) if f.name == model.file.strip()), None)
+        if own is not None:
+            (work / "memes").mkdir(parents=True, exist_ok=True)
+            dest = work / "memes" / f"beat{index:03d}{own.path.suffix.lower()}"
+            shutil.copy(own.path, dest)
+            v["src"] = dest.relative_to(work).as_posix()
+            v["fileName"] = own.path.name
+        else:
+            log.info("Meme file %r isn't in the library (or has no licence); drawing the %s format instead", model.file, model.meme)
+    return v
 
 
 def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) -> dict:
