@@ -90,7 +90,11 @@ class Config:
     # Kokoro voice override, e.g. af_heart, am_michael, bm_george, hf_alpha. Empty = match REEL_VOICE.
     kokoro_voice: str = field(default_factory=lambda: _env("REEL_KOKORO_VOICE"))
     # Speaking pace for the whole voiceover, e.g. "+10%" (brisk but clear), "+0%" (normal).
-    voice_rate: str = field(default_factory=lambda: _env("REEL_VOICE_RATE", "+10%"))
+    voice_rate: str = field(default_factory=lambda: _env("REEL_VOICE_RATE", "+10%"))  # 30-second Shorts
+    # Long, medium and Script videos speak at their own pace: the Shorts' brisk +10% made a Script Video's narration
+    # too fast ("i use andrew now they speak too fast"). Per video on the Script tab; changed afterwards on the video's
+    # page (rerender.py `pace`).
+    long_voice_rate: str = field(default_factory=lambda: _env("REEL_LONG_VOICE_RATE", "+0%"))
     # Sarvam voices' own pace (0.5-2.0): 1.0 is what the user liked in Sarvam's playground (Bulbul v4 Flash, Shubh)
     sarvam_pace: float = field(default_factory=lambda: float(_env("REEL_SARVAM_PACE", "1.0")))
     # Roman Hinglish rewritten in mixed script for the Hindi, multilingual and Sarvam voices (hinglish.py); the Script
@@ -150,7 +154,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes", "meme_source"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes", "meme_source", "long_voice_rate"]
 
 
 def settings_path(cfg: Config) -> Path:

@@ -116,10 +116,15 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
         return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace() * factor * sarvam_speed),
                                                temperature), narrations, speak)
     edge_error = None
+    from . import hinglish
+    from .numbers import speakable
+
+    mixed = hinglish.needs_mixing(voice, narrations) and hinglish.enabled()
+    # English narration: numbers in English words, or a Multilingual voice reads them in Hindi ('1 lakh' -> 'ek lakh')
+    english = narrations if mixed or hinglish.is_hindi_voice(voice) else [speakable(t) for t in narrations]
     if engine in ("auto", "edge"):
-        speak = narrations
-        from . import hinglish
-        if hinglish.needs_mixing(voice, narrations) and hinglish.enabled():  # Roman Hinglish: Hindi words in Devanagari
+        speak = english
+        if mixed:  # Roman Hinglish: Hindi words in Devanagari
             speak = hinglish.to_speech(narrations)
         for attempt in range(3):  # a long narration is a lot of text; one network hiccup shouldn't end it
             try:
@@ -139,8 +144,8 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
             "Install it with: .venv\\Scripts\\python -m pip install kokoro-onnx  (Mac/Linux: .venv/bin/python -m pip ...)"
             if edge_error else
             "The offline Kokoro voice isn't installed: run  .venv\\Scripts\\python -m pip install kokoro-onnx") from None
-    return _kokoro_scenes(narrations, kokoro_voice or KOKORO_FOR_EDGE.get(voice) or _kokoro_default(voice),
-                          out_dir, 1 + pct / 100)
+    return _shown_as_written(_kokoro_scenes(english, kokoro_voice or KOKORO_FOR_EDGE.get(voice) or _kokoro_default(voice),
+                                            out_dir, 1 + pct / 100), narrations, english)
 
 
 def _shown_as_written(scenes: list[SceneAudio], narrations: list[str], speak: list[str]) -> list[SceneAudio]:
@@ -150,10 +155,21 @@ def _shown_as_written(scenes: list[SceneAudio], narrations: list[str], speak: li
         return scenes
     from .hinglish import words as split_words
 
+    from .numbers import speakable
+
     for scene, text in zip(scenes, narrations):
         mine = split_words(text)
         if len(mine) == len(scene.words):
             scene.words = [Word(m, w.start, w.end) for m, w in zip(mine, scene.words)]
+            continue
+        # Numbers read as words ('1,400' -> 'one thousand four hundred'): each written word over its spoken words
+        groups = [(w, len(split_words(speakable(tok)))) for tok in text.split() for w in split_words(tok)]
+        if groups and all(n for _, n in groups) and sum(n for _, n in groups) == len(scene.words):
+            at, merged = 0, []
+            for w, n in groups:
+                merged.append(Word(w, scene.words[at].start, scene.words[at + n - 1].end))
+                at += n
+            scene.words = merged
     return scenes
 
 

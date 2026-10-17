@@ -24,20 +24,35 @@ log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
 
 
+def made_pace(cfg: Config, report: dict) -> str:
+    """The pace a video was spoken at: its report's, else (videos made before it was saved) what that kind of video
+    used then: the Shorts' pace setting for the free voices, a Sarvam voice's own pace (+0%)."""
+    if report.get("voice_rate"):
+        return report["voice_rate"]
+    return "+0%" if str(report.get("voice", "")).startswith("sarvam:") else cfg.voice_rate
+
+
 def rerender(cfg: Config, folder: Path, voice: str | None = None, captions: bool | None = None,
-             progress: Progress = log.info) -> dict:
+             progress: Progress = log.info, pace: str | None = None) -> dict:
+    """`pace` ('-10%', '+0%'...): the same voice spoken slower or faster, everything else kept (the user: "re-edit
+    only speed")."""
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     long = report.get("format") == "long"
     cfg = replace(cfg, captions=report.get("captions", True) if captions is None else captions)
+    old_pace = made_pace(cfg, report)
+    chosen = bool(pace and re.fullmatch(r"[+-]\d{1,2}%", pace))  # a speed picked: the voice is recorded again
+    pace = pace if chosen else old_pace
     if long:
-        cfg = replace(cfg, long_voice=voice or report.get("voice") or cfg.long_voice)
+        cfg = replace(cfg, long_voice=voice or report.get("voice") or cfg.long_voice, long_voice_rate=pace)
     else:
-        cfg = replace(cfg, voice=voice or report.get("voice") or cfg.voice)
+        cfg = replace(cfg, voice=voice or report.get("voice") or cfg.voice, voice_rate=pace)
+    if pace != old_pace:
+        progress(f"Speaking pace {old_pace} → {pace}")
     work = folder / "_rerender"
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir()
     try:
-        same_voice = not voice or voice == report.get("voice")
+        same_voice = (not voice or voice == report.get("voice")) and not chosen
         info = (_long(cfg, folder, work, report, progress, same_voice) if long
                 else _short(cfg, folder, work, progress))
         progress("Replacing the video")
@@ -50,7 +65,7 @@ def rerender(cfg: Config, folder: Path, voice: str | None = None, captions: bool
             move(work / "thumbnail.jpg", folder / "thumbnail.jpg.new")
             (folder / "thumbnail.jpg").unlink(missing_ok=True)
             move(folder / "thumbnail.jpg.new", folder / "thumbnail.jpg")
-        report.update(info, voice=cfg.long_voice if long else cfg.voice, captions=cfg.captions)
+        report.update(info, voice=cfg.long_voice if long else cfg.voice, captions=cfg.captions, voice_rate=pace)
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         progress("Done")
         return report
@@ -177,6 +192,10 @@ def _same_footage(folder: Path, work: Path, count: int) -> list[list[Path]] | No
     return result
 
 
+# The finished video's own files a re-make reuses (longform.build_long `remake`).
+KEEP = ("hook-pictures", "plates", "footage", "music", "models", "memes")
+
+
 def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progress, same_voice: bool = False) -> dict:
     from .longform import FFMPEG, HOOK_SECONDS, SCRIPT_HOOK_SECONDS, LongScript, build_long, youtube_chapters
     from .pipeline import _render_slot
@@ -185,10 +204,27 @@ def _long(cfg: Config, folder: Path, work: Path, report: dict, progress: Progres
     script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
     props = _same_voice_props(folder, work, cfg, script.music) if same_voice else None
     if props is None:
-        old = folder / "props.json"
-        look = json.loads(old.read_text(encoding="utf-8")).get("look") if old.exists() else None
+        old_path = folder / "props.json"
+        old = json.loads(old_path.read_text(encoding="utf-8")) if old_path.exists() else {}
+        look = old.get("look")
+        if look is not None:
+            look = dict(look)
+            look.setdefault("hookStyle", (old.get("hook") or {}).get("style") or "")  # videos made before it was kept
+            ai = next((p.get("name", "") for p in old.get("musicParts") or [] if p.get("name", "").startswith("AI music (")), "")
+            if ai:
+                look.setdefault("aiGenre", ai[len("AI music ("):-1])
+        # Everything the video was made with, so only the voice is new: nothing drawn, generated or searched again.
+        for sub in KEEP:
+            if (folder / sub).is_dir():
+                shutil.copytree(folder / sub, work / sub, dirs_exist_ok=True)
+        visuals = [b.get("visual") or {} for b in old.get("beats", [])] + [
+            s.get("visual") or {} for s in (old.get("hook") or {}).get("shots", [])]
+        if any(v.get("webName") for v in visuals):  # real memes: from the cache they were fetched into
+            cfg = replace(cfg, meme_source="web")
         hook_seconds = SCRIPT_HOOK_SECONDS if report.get("source") == "script" else HOOK_SECONDS
-        props = build_long(script, cfg, work, progress, look=look, hook_seconds=hook_seconds)  # same look and music, new voice
+        progress("Recording the voice again and re-timing the same edit to it (the pictures, footage, memes and music "
+                 "stay)")
+        props = build_long(script, cfg, work, progress, look=look, hook_seconds=hook_seconds, remake=True)
     else:
         progress("Same voice: keeping the recorded voiceover and timings, only the subtitles change")
     cli = _remotion_cli()

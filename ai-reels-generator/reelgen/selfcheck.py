@@ -72,6 +72,7 @@ HOOK = "Microsoft ne 1,400 flaws fix kiye. Lekin sawaal hai... kya aapka PC ab b
 
 def behaviour() -> None:
     from . import hinglish, scriptvideo, shoot, wordfix
+    from .numbers import speakable
     from .voice import Word
 
     hinglish_line = ["Aaj hum baat karenge ki Microsoft ne 1,400 se zyada security flaws kaise fix kiye aur aapka PC kitna safe hai"]
@@ -88,6 +89,10 @@ def behaviour() -> None:
             " ".join(scriptvideo.parse_script(SCRIPT)[0]).split(), [t for _, t in scriptvideo.parse_script(SCRIPT)[1]]),
          (SCRIPT_WORDS, ["Shuruaat", "Patch kya hai"])),
         ("scriptvideo.parse_hook keeps every word", lambda: " ".join(scriptvideo.parse_hook(HOOK)).split() == HOOK.split(), True),
+        ("numbers.speakable (English voices read numbers in English)", lambda: speakable(
+            "1 lakh in 2024, ₹2.5 crore, 1,00,000 and 18% at 7:30 in the 1990s; 5G and COVID-19 stay."),
+         "one lakh in twenty twenty-four, two point five crore rupees, one lakh and eighteen percent at seven thirty "
+         "in the nineteen nineties; 5G and COVID-nineteen stay."),
     ]
     for name, fn, want in checks:
         try:

@@ -355,6 +355,7 @@ def _make_video(cfg: Config, topic: str | None, progress: Progress, candidates: 
         "style": cfg.video_style,
         "category": script.category,
         "voice": cfg.voice,
+        "voice_rate": cfg.voice_rate,
         "captions": cfg.captions,
         "why_chosen": script.why_chosen,
         "subject": script.subject,

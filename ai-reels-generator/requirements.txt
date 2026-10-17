@@ -13,3 +13,4 @@ imageio-ffmpeg>=0.5
 kokoro-onnx>=0.4
 tzdata   # time zones in Claude's "limit resets at" messages
 faster-whisper>=1.0   # checks your own recorded voiceover against the script (optional)
+num2words==0.5.14  # numbers in English words for the English voices (reelgen/numbers.py)

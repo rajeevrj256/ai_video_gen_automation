@@ -136,7 +136,8 @@ def fill_defaults(shots: list[dict], grades: bool = False) -> None:
 
 # ---------- AI film stills ----------
 
-def pictures(cfg, prompts: dict[int, str], work: Path, seed: int, title: str, progress: Progress) -> dict[int, Path]:
+def pictures(cfg, prompts: dict[int, str], work: Path, seed: int, title: str, progress: Progress,
+             reuse: bool = False) -> dict[int, Path]:
     """The hook's shots as AI film stills (the AI engine's keyframes stage, 1344x768), checked by Claude like the
     animated videos' pictures: a broken one is drawn once more from an easier prompt, and one still broken is left
     out (that shot shows its visual). {} when the engine isn't installed, is busy, or the setting is off."""
@@ -144,6 +145,13 @@ def pictures(cfg, prompts: dict[int, str], work: Path, seed: int, title: str, pr
     from .stopper import Paused
 
     prompts = {i: p.strip() for i, p in prompts.items() if p and p.strip()}
+    if reuse:  # a re-make: the stills the video was made with (copied into work), nothing drawn or checked again
+        try:
+            gone = set(json.loads((work / "hook-pictures" / "check.json").read_text(encoding="utf-8")).get("dropped", []))
+        except (OSError, ValueError):
+            gone = set()
+        return {i: p for i in prompts if f"h{i:02d}" not in gone
+                and (p := work / "hook-pictures" / f"h{i:02d}.jpg").exists() and Path(str(p) + ".ok").exists()}
     if not prompts or not getattr(cfg, "hook_pictures", True) or not anim_engine.installed():
         return {}
     out_dir = work / "hook-pictures"

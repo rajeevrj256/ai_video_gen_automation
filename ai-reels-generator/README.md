@@ -89,6 +89,11 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
 - **Sound**: every narration is levelled to the same loudness, the music sits under the voice (quieter while it
   speaks, fuller in the pauses), and every finished video is mastered to -14 LUFS, the level YouTube and Instagram
   play at.
+- **Speaking speed**: 30-second Shorts speak briskly (+10%); long, medium, Script and Shorts+ videos at a normal pace
+  (Settings, and Speaking speed on the Script tab). English voices read numbers in English ("1 lakh" is "one lakh",
+  never "ek lakh"). On a finished video's page, **Voice, speed & subtitles → Speaking speed** re-records only the voice
+  at another speed and re-times the same edit to it: the slides, memes, pictures, footage and music stay as they are,
+  nothing is generated again and no Claude tokens are used.
 - **Cinematic hook** (long videos, Script Videos, animated videos): the opening is cut like a documentary trailer:
   each shot in its own colour grade (amber, red, black-and-white, fire, cold) under film grain and flicker, yellow
   labels typed onto the picture ("LONDON, 1928"), whips, VHS glitches, a photo flown in, paper torn across the frame,

@@ -160,6 +160,8 @@ class JobManager:
                 cfg.story_form = job["story_form"]
             if job.get("memes") in ("off", "some", "lots"):  # memes.LEVELS: this video's own choice
                 cfg.memes = job["memes"]
+            if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
+                cfg.long_voice_rate = job["voice_rate"]
             if job.get("myvoice"):
                 from .myvoice import finish
                 r = job["myvoice"]
@@ -177,7 +179,7 @@ class JobManager:
             elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
-                reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress)]
+                reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress, r.get("pace"))]
             elif job.get("anim_input"):  # Animated videos (reelgen/animated.py), new or resumed
                 from .animated import AnimRequest, run_anim_job
                 reports = run_anim_job(cfg, AnimRequest(**job["anim_input"]), job["count"], progress, job.get("anim_resume"))
@@ -546,6 +548,7 @@ class ScriptVideoRequest(BaseModel):
     captions: bool | None = None
     screen_text: str = "english"  # words on screen: English (a Hinglish script still speaks Hinglish) or 'script'
     memes: str = ""  # off | some | lots (reelgen/memes.py); empty = the Settings value
+    voice_rate: str = ""  # speaking pace, e.g. '-5%'; empty = Settings > Speaking pace (long and Script videos)
 
 
 class PostEdit(BaseModel):
@@ -803,7 +806,8 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(f"Re-make: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
                            report.get("format", "short"),
                            rerender={"id": video_id, "voice": body.get("voice") or None,
-                                     "captions": None if body.get("captions") is None else bool(body.get("captions"))})
+                                     "captions": None if body.get("captions") is None else bool(body.get("captions")),
+                                     "pace": body.get("pace") if re.fullmatch(r"[+-]\d{1,2}%", str(body.get("pace") or "")) else None})
 
     @app.post("/api/videos/{video_id}/sharpen")
     def sharpen_video_route(video_id: str):
@@ -1035,8 +1039,13 @@ def create_app(cfg: Config) -> FastAPI:
         from . import sarvam
 
         mix = bool(body.get("mix", True))
-        spoken = hinglish.to_speech([text])[0] if mix and hinglish.needs_mixing(voice, [text], least=0) else text
-        pct = int(re.sub(r"[^\d-]", "", cfg.voice_rate) or 0)
+        from .numbers import speakable
+
+        mixed = mix and hinglish.needs_mixing(voice, [text], least=0)
+        # as the video will say it: an English line's numbers in English words (a Multilingual voice reads digits in Hindi)
+        spoken = (hinglish.to_speech([text])[0] if mixed else text if hinglish.is_hindi_voice(voice) else speakable(text))
+        rate = str(body.get("rate") or "")  # the Script tab's pace; else the long videos' pace setting
+        pct = int(re.sub(r"[^\d-]", "", rate if re.fullmatch(r"[+-]\d{1,2}%", rate) else cfg.long_voice_rate) or 0)
         level = str(body.get("delivery") or "normal")
         temperature, factor = sarvam.delivery(level if level in sarvam.DELIVERY else "normal")
         key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|{level}|lv1|{spoken}".encode()).hexdigest()[:16]
@@ -1046,7 +1055,7 @@ def create_app(cfg: Config) -> FastAPI:
             try:
                 if sarvam.is_sarvam(voice):  # levelled like the video's takes, so the sample sounds like the video
                     raw = path.with_suffix(".wav")
-                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), min(2.0, sarvam.pace() * factor),
+                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), min(2.0, sarvam.pace() * factor * (1 + pct / 100)),
                                                temperature=temperature))
                     sarvam.level_file(raw, path)
                     raw.unlink(missing_ok=True)
@@ -1262,7 +1271,8 @@ def create_app(cfg: Config) -> FastAPI:
         given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script,
                  "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
-                           captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None)
+                           captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None,
+                           voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None)
 
     # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------
 

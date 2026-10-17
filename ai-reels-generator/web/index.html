@@ -464,6 +464,10 @@
       <label for="sv-screen">Words on screen</label>
       <select id="sv-screen"><option value="english">English (the voice still reads your script as written, e.g. Hinglish)</option>
         <option value="script">Same language as the script</option></select>
+      <label for="sv-pace">Speaking speed</label>
+      <select id="sv-pace"><option value="">⚙️ As in Settings</option>
+        <option value="-15%">🐢 Much slower (−15%)</option><option value="-10%">Slower (−10%)</option><option value="-5%">A little slower (−5%)</option>
+        <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select>
       <label for="sv-memes">Memes</label>
       <select id="sv-memes"><option value="">⚙️ As in Settings</option>
         <option value="off">🚫 Off</option>
@@ -797,7 +801,10 @@
         <option value="hi-IN-MadhurNeural">Hindi – Madhur, male</option>
         <option value="hi-IN-SwaraNeural">Hindi – Swara, female</option>
       </select>
-      <label for="s-voice_rate">Speaking pace</label>
+      <label for="s-long_voice_rate">Speaking pace: long, medium and Script videos</label>
+      <select id="s-long_voice_rate"><option value="-15%">🐢 Much slower (−15%)</option><option value="-10%">Slower (−10%)</option><option value="-5%">A little slower (−5%)</option>
+        <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select>
+      <label for="s-voice_rate">Speaking pace: 30-second Shorts</label>
       <select id="s-voice_rate">
         <option value="+0%">Normal</option>
         <option value="+5%">A little quick</option>
@@ -1357,10 +1364,13 @@ async function openVideo(id) {
     ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
     <div ${["stick", "anim", "storyshorts", "shoot"].includes(v.source) ? "hidden" : ""}>
-    <h4 class="section">Voice &amp; subtitles</h4>
-    <p class="hint">Re-make this video with another voice or with subtitles on/off. Same script and footage, no Claude tokens.</p>
+    <h4 class="section">Voice, speed &amp; subtitles</h4>
+    <p class="hint">Re-edit this video: another voice, another speaking speed, or subtitles on/off. Only the voice is recorded again and the same slides, memes, pictures and music are re-timed to it: nothing is generated again, no Claude tokens. Recording again also reads numbers in English words (“one lakh”, not “ek lakh”).</p>
     <div class="row">
       <div><label for="rv-voice">Voice</label><select id="rv-voice">${($(v.format === "long" ? "#s-long_voice" : "#s-voice") || {}).innerHTML || ""}</select></div>
+      <div><label for="rv-pace">Speaking speed</label><select id="rv-pace"><option value="">Keep this speed${v.voice_rate ? " (" + esc(v.voice_rate) + ")" : ""}</option>
+        <option value="-15%">🐢 Much slower (−15%)</option><option value="-10%">Slower (−10%)</option><option value="-5%">A little slower (−5%)</option>
+        <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select></div>
       <div><label for="rv-cc">Subtitles</label><select id="rv-cc"><option value="true">💬 On</option><option value="false">🚫 Off</option></select></div>
     </div>
     <button id="rvGo" style="width:100%;margin-top:8px">🎙️ Re-make with these settings</button>
@@ -1496,7 +1506,7 @@ async function openVideo(id) {
     $("#rvGo").disabled = true;
     try {
       await api(`/api/videos/${encodeURIComponent(id)}/rerender`, { method: "POST",
-        body: JSON.stringify({ voice: $("#rv-voice").value, captions: $("#rv-cc").value === "true" }) });
+        body: JSON.stringify({ voice: $("#rv-voice").value, captions: $("#rv-cc").value === "true", pace: $("#rv-pace").value || null }) });
       toast("Re-making the video — follow it on the Create page");
     } catch (e) { toast(e.message); $("#rvGo").disabled = false; }
   };
@@ -2693,7 +2703,7 @@ async function loadScriptView() {
   $("#vtGo").onclick = async () => {
     $("#vtGo").disabled = true; $("#vt-spoken").textContent = "Making the sample…";
     try {
-      const r = await api("/api/voice-test", { method: "POST", body: JSON.stringify({ voice: $("#sv-voice").value, text: $("#vt-text").value, mix: $("#vt-mix").checked, delivery: $("#vt-delivery").value }) });
+      const r = await api("/api/voice-test", { method: "POST", body: JSON.stringify({ voice: $("#sv-voice").value, text: $("#vt-text").value, mix: $("#vt-mix").checked, delivery: $("#vt-delivery").value, rate: $("#sv-pace").value }) });
       $("#vt-spoken").textContent = r.mixed ? "Spoken as: " + r.spoken : "Spoken as written.";
       $("#vt-audio").src = r.audio; $("#vt-audio").hidden = false; $("#vt-audio").play();
     } catch (e) { $("#vt-spoken").textContent = e.message; }
@@ -2726,7 +2736,7 @@ document.querySelectorAll("#sv-cc button").forEach((b) => b.onclick = () => {
 $("#svBtn").onclick = async () => {
   const body = { title: $("#sv-title").value, description: $("#sv-desc").value, hook: $("#sv-hook").value,
                  script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc,
-                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value };
+                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value, voice_rate: $("#sv-pace").value };
   if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
   $("#svBtn").disabled = true;
   try {

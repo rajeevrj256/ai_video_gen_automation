@@ -674,14 +674,18 @@ def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                voices: list[list[SceneAudio]] | None = None, look: dict | None = None,
                hook_seconds: tuple[float, float] = HOOK_SECONDS, voice_opts: dict | None = None,
-               hook_voices: list | None = None, overrides: dict | None = None) -> dict:
+               hook_voices: list | None = None, overrides: dict | None = None, remake: bool = False) -> dict:
     """Record the voice (one take per chapter) and lay out the hook and every beat on the timeline,
     with this video's look, music, ambience and sound design.
     `voices`: recordings to use instead (the user's own voiceover), one list per chapter.
     `look`: the look to keep (a re-make); a new video gets a fresh one.
     `voice_opts`: extra `synthesize_scenes` options for the chapters (the Shorts Studio's delivery and Sarvam speed).
     `hook_voices`: recordings for the hook's shots instead (None for a silent shot); `overrides`: visuals that replace
-    the script's, by (chapter, beat) or ('hook', shot) (a Shoot video's on-camera lines: shoot.voices_for)."""
+    the script's, by (chapter, beat) or ('hook', shot) (a Shoot video's on-camera lines: shoot.voices_for).
+    `remake`: a finished video edited again (rerender.py: a new voice or pace): only the voice is recorded and
+    everything re-timed to it; its own files, copied into `work` first, are used as they are (hook stills, background
+    photos, footage clips, AI music, the hook's music style, the user's tracks even if 'recently used'), nothing is
+    drawn, generated, searched or remembered again (the user: "re-edit only speed ... not re-generated animations")."""
     overrides = overrides or {}
     seed = _seed(script)
     new_look = look is None
@@ -698,6 +702,10 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     # grades, cuts, labels, AI film stills where the engine can draw them, music and drone, then a breath of silence.
     hook = {"duration": 0.0, "shots": [], "music": None, "style": ""}
     rel = lambda p: p.relative_to(work).as_posix()  # noqa: E731
+    # The pace (cfg.long_voice_rate, e.g. '-5%') for the free voices; a Sarvam voice takes it as a factor on its own
+    # pace setting, unless the caller sets one (the Shorts Studio speeds a part up that way).
+    pct = int(re.sub(r"[^\d-]", "", cfg.long_voice_rate or "") or 0)
+    pace = {"sarvam_speed": round(1 + pct / 100, 3), **(voice_opts or {})}
     if script.hook:
         progress("Recording the hook")
         said = [h.line.strip() for h in script.hook]
@@ -705,12 +713,13 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             audios = list(hook_voices)
         else:
             takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook", cfg.tts_engine,
-                                           cfg.kokoro_voice, cfg.voice_rate, delivery="hook") if any(said) else [])
+                                           cfg.kokoro_voice, cfg.long_voice_rate, delivery="hook",
+                                           sarvam_speed=pace["sarvam_speed"]) if any(said) else [])
             audios = [next(takes) if x else None for x in said]
         lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
                                   hook_seconds)
         pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook) if ("hook", i) not in overrides},
-                                 work, seed, script.youtube_title, progress)
+                                 work, seed, script.youtube_title, progress, reuse=remake)
         t = 0.0
         for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
             if ("hook", i) in overrides:  # you, on camera (a Shoot video)
@@ -745,10 +754,11 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             hook["shots"][0]["transition"] = "dip"  # out of black, on the first boom
         hook.update(duration=round(t + cinehook.DROP, 3), cine=True, drop=cinehook.DROP, subscribe=True,
                     pictures=len(pics))
-        hook["style"] = variety.fresh_trailer(cfg, script.hook_music, seed)
+        hook["style"] = (look.get("hookStyle") if remake else None) or variety.fresh_trailer(cfg, script.hook_music, seed)
+        look["hookStyle"] = hook["style"]  # a re-make keeps it
         # The user's track for the hook, unless a recent video already opened with it.
         mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()
-                     and media.fresh_track(cfg, m.name)), None)
+                     and (remake or media.fresh_track(cfg, m.name))), None)
         if mine is not None:  # the user's own track fits this trailer
             (work / "music").mkdir(parents=True, exist_ok=True)
             dest = work / "music" / f"hook-own{mine.path.suffix.lower()}"
@@ -772,7 +782,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         else:
             progress(f"Recording voiceover: chapter {ci + 1} of {len(script.chapters)}")
             audio = synthesize_scenes([b.narration for b in chapter.beats], cfg.long_voice, work / "audio" / f"ch{ci:02d}",
-                                      cfg.tts_engine, cfg.kokoro_voice, cfg.voice_rate, **(voice_opts or {}))
+                                      cfg.tts_engine, cfg.kokoro_voice, cfg.long_voice_rate, **pace)
         for bi, (beat, sa) in enumerate(zip(chapter.beats, audio)):
             duration = media_seconds(sa.path)
             v = (dict(overrides[(ci, bi)]) if (ci, bi) in overrides
@@ -801,12 +811,12 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     progress("Composing the music")
     main_start = hook["duration"]
     track = None
-    if (script.music and script.music != "none" and media.fresh_track(cfg, script.music)
+    if (script.music and script.music != "none" and (remake or media.fresh_track(cfg, script.music))
             and any(m.name == script.music and m.path for m in media.music(cfg))):
         track = media.pick_music(cfg, script.music, work / "music", t - main_start)
     # The user's own tracks, chapter by chapter where Claude found one that fits (the composed or
     # main track steps aside there); consecutive chapters with the same track share one part.
-    own = {m.name: m for m in media.music(cfg) if m.path and media.fresh_track(cfg, m.name)}
+    own = {m.name: m for m in media.music(cfg) if m.path and (remake or media.fresh_track(cfg, m.name))}
     parts: list[dict] = []
     for c, chapter in zip(chapters, script.chapters):
         name = chapter.music.strip()
@@ -824,8 +834,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     # one genre for the video, none of the last videos', each chapter at its own energy; the chapters it didn't make
     # get the composed score below.
     choice = script.music if track is not None else ""
-    if track is None and script.music != "none" and aimusic.available(cfg):
-        genre = aimusic.pick_genre(cfg, script.mood, seed)
+    if track is None and script.music != "none" and (aimusic.available(cfg) or (remake and look.get("aiGenre"))):
+        genre = (look.get("aiGenre") if remake else None) or aimusic.pick_genre(cfg, script.mood, seed)
         want = [aimusic.track(f"ch{c['index']}", work / "music" / f"ai-ch{c['index']:02d}.wav", c["end"] - c["start"] + 2,
                               genre, script.mood, (c["intensity"] - 1) / 4, script.music_prompt, seed + 20 + c["index"])
                 for c in chapters if not covered(c)]
@@ -833,9 +843,11 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             want.append(aimusic.track("hook", work / "music" / "ai-hook.wav", hook["duration"] - hook.get("drop", 0) + 0.5,
                                       genre, script.mood, 0.9, script.music_prompt, seed + 11, hook=True,
                                       cine=bool(hook.get("cine"))))
-        made = aimusic.make(cfg, want, work, progress, "Music (AI)")
+        made = aimusic.kept(want) if remake else aimusic.make(cfg, want, work, progress, "Music (AI)")
         if made:
-            aimusic.remember(cfg, genre)
+            look["aiGenre"] = genre  # a re-make keeps it (and its tracks)
+            if not remake:
+                aimusic.remember(cfg, genre)
             choice = (f"generated (ACE-Step, {genre})" if len(made) == len(want)
                       else f"generated (ACE-Step, {genre}) for {len(made)} of {len(want)} tracks, composed for the rest")
             if "hook" in made:
@@ -860,8 +872,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
 
     # Remembered for the next videos: their hook, main track and chapter tracks will differ.
     composed = track is not None and track.name == "main.wav"  # pick_music notes an upload itself
-    media.note_music(cfg, hook.get("own", ""), *[p["name"] for p in parts if not p["name"].startswith("AI music")],
-                     f"mood:{script.mood}" if composed else "")
+    if not remake:  # a re-make is the same video: its music was noted when it was made
+        media.note_music(cfg, hook.get("own", ""), *[p["name"] for p in parts if not p["name"].startswith("AI music")],
+                         f"mood:{script.mood}" if composed else "")
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))  # the user's whoosh/pop/... where one matches
     if hook.get("cine"):  # the cold open's booms, risers, whips, typing and drone
@@ -945,7 +958,9 @@ def _plates(script: LongScript, cfg: Config, work: Path, look: dict, progress: P
     for key, query in wanted.items():
         out = work / "plates" / f"{key}.jpg"
         try:
-            if key in urls:  # a re-make: the same picture
+            if key in urls and out.exists():  # a re-make with the video's own photo copied in
+                pass
+            elif key in urls:  # a re-make: the same picture
                 download_to(urls[key], out)
             elif query.strip() and cfg.pexels_api_key and pexels_photo(query, cfg.pexels_api_key, out, taken):
                 urls[key] = out.with_suffix(".url").read_text(encoding="utf-8").strip()
@@ -1016,6 +1031,8 @@ def _meme_visual(v: dict, cfg: Config, work: Path, index: int) -> dict:
             shutil.copy(own.path, dest)
             v["src"] = dest.relative_to(work).as_posix()
             v["fileName"] = own.path.name
+        elif kept := next((work / "memes").glob(f"beat{index:03d}.*"), None) if (work / "memes").is_dir() else None:
+            v["src"] = kept.relative_to(work).as_posix()  # a re-make: the copy the video was made with
         else:
             log.info("Meme file %r isn't in the library (or has no licence); drawing the %s format instead", model.file, model.meme)
     return v
@@ -1026,6 +1043,10 @@ def _media_visual(v: dict, cfg: Config, work: Path, index: int, used: set[int]) 
     Without one (no Pexels key, no matching clip, no real model) the beat becomes an animated scene."""
     if v["type"] == "footage":
         clip = None
+        kept = work / "footage" / f"beat{index:03d}.mp4"
+        if kept.exists() and kept.stat().st_size > 0:  # a re-make: the video's own clip, never a new search
+            v.update(src=kept.relative_to(work).as_posix(), length=round(media_seconds(kept), 3))
+            return v
         if cfg.pexels_api_key and v.get("query"):
             (work / "footage").mkdir(parents=True, exist_ok=True)
             try:
@@ -1705,6 +1726,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "style": cfg.video_style,
             "category": script.category,
             "voice": cfg.long_voice,
+            "voice_rate": cfg.long_voice_rate,
             "captions": cfg.captions,
             "why_chosen": script.why_chosen,
             "title": script.youtube_title,

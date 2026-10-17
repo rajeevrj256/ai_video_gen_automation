@@ -96,6 +96,20 @@ def track(tid: str, out: Path, seconds: float, genre: str, mood: str, energy: fl
             "caption": caption(genre, mood, energy, brief, hook, cine), "duration": round(min(LONGEST, max(10.0, seconds)), 1)}
 
 
+def kept(tracks: list[dict]) -> dict[str, Path]:
+    """The tracks already made (a re-make's own, copied in): nothing generated, whether or not the engine is here."""
+    from .animated import _loudnorm, _ready
+
+    out = {}
+    for t in tracks:
+        path = Path(t["out"])
+        if _ready(path):
+            if not Path(str(path) + ".norm").exists():
+                _loudnorm(path)
+            out[t["id"]] = path
+    return out
+
+
 def make(cfg, tracks: list[dict], work: Path, progress: Progress, label: str = "Music (AI)") -> dict[str, Path]:
     """The tracks the music model made (finished earlier ones kept), each brought to one loudness; {} when it isn't
     available or busy. Missing ones are the caller's to compose."""

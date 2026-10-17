@@ -1150,7 +1150,8 @@ def _graphics_parts(cfg: Config, req: StoryRequest, series: GSeries, work: Path,
         speed, factor = req.speed, 1.0
         progress(f"Recording the voiceover for part {k + 1} of {n} ({voice})")
         for attempt in range(3):
-            pcfg = replace(cfg, long_voice=voice, voice_rate=f"{max(-30, min(50, speed)):+d}%", captions=req.captions, fps=30)
+            rate = f"{max(-30, min(50, speed)):+d}%"
+            pcfg = replace(cfg, long_voice=voice, voice_rate=rate, long_voice_rate=rate, captions=req.captions, fps=30)
             props = build_long(script, pcfg, pdir, progress, look=look, voice_opts={"delivery": "hook", "sarvam_speed": factor})
             if (not _fit_length(req) or props["duration"] + tail <= req.seconds or attempt == 2
                     or props["duration"] + tail > req.seconds * (FIT + 0.05)):
