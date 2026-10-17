@@ -67,6 +67,11 @@
                   border: 1px solid var(--line); border-radius: 10px; outline: none; }
   input:focus, select:focus { border-color: var(--accent); }
   .row { display: flex; gap: 10px; } .row > * { flex: 1; }
+  .pace { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+  .pace input[type=range] { flex: 1 1 180px; accent-color: var(--accent); }
+  .pace output { font-weight: 700; min-width: 120px; }
+  .pace.blank output { opacity: .65; font-weight: 600; }
+  .pace .est { width: 100%; font-size: 13px; opacity: .75; }
   button { font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 13px 16px; cursor: pointer;
            background: var(--panel-2); color: var(--text); }
   button.primary { background: var(--accent); color: #111; width: 100%; font-size: 16px; margin-top: 16px; }
@@ -465,9 +470,7 @@
       <select id="sv-screen"><option value="english">English (the voice still reads your script as written, e.g. Hinglish)</option>
         <option value="script">Same language as the script</option></select>
       <label for="sv-pace">Speaking speed</label>
-      <select id="sv-pace"><option value="">⚙️ As in Settings</option>
-        <option value="-15%">🐢 Much slower (−15%)</option><option value="-10%">Slower (−10%)</option><option value="-5%">A little slower (−5%)</option>
-        <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select>
+      <select id="sv-pace" data-pace="As in Settings"><option value="">⚙️ As in Settings</option></select>
       <label for="sv-memes">Memes</label>
       <select id="sv-memes"><option value="">⚙️ As in Settings</option>
         <option value="off">🚫 Off</option>
@@ -802,8 +805,7 @@
         <option value="hi-IN-SwaraNeural">Hindi – Swara, female</option>
       </select>
       <label for="s-long_voice_rate">Speaking pace: long, medium and Script videos</label>
-      <select id="s-long_voice_rate"><option value="-15%">🐢 Much slower (−15%)</option><option value="-10%">Slower (−10%)</option><option value="-5%">A little slower (−5%)</option>
-        <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select>
+      <select id="s-long_voice_rate" data-pace=""><option value="+0%">Normal</option></select>
       <label for="s-voice_rate">Speaking pace: 30-second Shorts</label>
       <select id="s-voice_rate">
         <option value="+0%">Normal</option>
@@ -1347,8 +1349,44 @@ function issueRows(issues) {
   }).join("")}<div class="issue-tools"><button type="button" class="mini" onclick="this.closest('.issues').querySelectorAll('details').forEach(d=>d.open=true)">Open all</button> <button type="button" class="mini" onclick="this.closest('.issues').querySelectorAll('details').forEach(d=>d.open=false)">Close all</button></div></div>`;
 }
 // ---- Demos of a re-make (rerender.demo): the story's first 15-20 s with another speed, voice or subtitles ----
-const PACE_NAME = { "-15%": "Much slower −15%", "-10%": "Slower −10%", "-5%": "A little slower −5%", "+0%": "Normal",
-  "+5%": "A little quick +5%", "+10%": "Brisk +10%", "+15%": "Fast +15%" };
+// Speaking speed sliders: 1% steps from -20% to +20% (the free voices take whole percents only, so no -2.5%).
+// The hidden <select> keeps the value everything else reads ('-3%', or '' = keep / as in Settings).
+const paceLabel = (p) => { const n = parseInt(p, 10) || 0; return n === 0 ? "Normal" : n < 0 ? `${-n}% slower` : `${n}% faster`; };
+const mmssLong = (sec) => { sec = Math.round(sec); const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); };
+function setPace(sel, v) {
+  if (v && ![...sel.options].some((o) => o.value === v)) sel.add(new Option(paceLabel(v), v));
+  sel.value = v || "";
+  if (sel.syncPace) sel.syncPace();
+}
+// `blank`: the text for '' (null = no blank: always a speed). `base`: the speed '' stands for (or a function giving it).
+// `video`: {seconds, pace} of a finished video, to show its length at the new speed.
+function paceSlider(sel, { blank = null, base = "+0%", video = null } = {}) {
+  sel.hidden = true;
+  sel.nextElementSibling?.classList?.contains("pace") && sel.nextElementSibling.remove();
+  const wrap = document.createElement("div");
+  wrap.className = "pace";
+  wrap.innerHTML = `<input type="range" min="-20" max="20" step="1" aria-label="Speaking speed"><output></output>`
+    + (blank !== null ? `<button type="button" class="mini">${esc(blank)}</button>` : "") + (video ? `<div class="est"></div>` : "");
+  sel.after(wrap);
+  const range = wrap.querySelector("input"), out = wrap.querySelector("output"), keep = wrap.querySelector("button"), est = wrap.querySelector(".est");
+  sel.syncPace = () => {
+    const b = typeof base === "function" ? base() : base, v = sel.value, n = parseInt(v || b, 10) || 0;
+    range.value = n;
+    out.textContent = v ? paceLabel(v) : `${blank} (${paceLabel(b)})`;
+    wrap.classList.toggle("blank", !v);
+    if (keep) keep.hidden = !v;
+    if (est) {  // the narration's length scales with the speed; the hook's holds and the chapter cards stay about the same
+      const was = 1 + (parseInt(video.pace, 10) || 0) / 100, now = 1 + n / 100;
+      const after = video.seconds * was / now;
+      est.textContent = v ? `About ${mmssLong(after)} long at this speed (now ${mmssLong(video.seconds)}, ${after >= video.seconds ? "+" : "−"}${mmssLong(Math.abs(after - video.seconds))})`
+        : `Now ${mmssLong(video.seconds)} long`;
+    }
+  };
+  range.oninput = () => { const k = +range.value; setPace(sel, (k < 0 ? "-" : "+") + Math.abs(k) + "%"); sel.dispatchEvent(new Event("change")); };
+  if (keep) keep.onclick = () => { setPace(sel, ""); sel.dispatchEvent(new Event("change")); };
+  sel.syncPace();
+}
 const voiceName = (v) => String(v || "").replace(/^sarvam:/, "").replace(/^[a-z]{2}-[A-Z]{2}-/, "").replace(/(Multilingual)?Neural$/, "").replace(/_.*/, "");
 let demoTimer = null;
 function wireDemos(id, v) {
@@ -1364,11 +1402,11 @@ function wireDemos(id, v) {
     box.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
   };
   const pick = (d) => {  // a demo's settings become the re-make's
-    if ([...$("#rv-pace").options].some((o) => o.value === d.pace)) $("#rv-pace").value = d.pace;
+    setPace($("#rv-pace"), d.pace);
     if ([...$("#rv-voice").options].some((o) => o.value === d.voice)) $("#rv-voice").value = d.voice;
     $("#rv-cc").value = String(d.captions);
   };
-  const label = (d) => (PACE_NAME[d.pace] || d.pace) + (d.voice !== v.voice ? " · " + voiceName(d.voice) : "")
+  const label = (d) => paceLabel(d.pace) + (d.voice !== v.voice ? " · " + voiceName(d.voice) : "")
     + (d.captions !== (v.captions !== false) ? (d.captions ? " · subtitles" : " · no subtitles") : "");
   const load = async () => {
     if (!document.body.contains(box)) { clearInterval(demoTimer); demoTimer = null; return; }
@@ -1376,7 +1414,7 @@ function wireDemos(id, v) {
     try { d = await api(`/api/videos/${encodeURIComponent(id)}/demos`); } catch (e) { return; }
     original = d.original;
     const chips = [];
-    if (original) chips.push(`<button class="chip" data-key="original">▶ Original${v.voice_rate ? " (" + esc(PACE_NAME[v.voice_rate] || v.voice_rate) + ")" : ""}</button>`);
+    if (original) chips.push(`<button class="chip" data-key="original">▶ Original${v.voice_rate ? " (" + esc(paceLabel(v.voice_rate)) + ")" : ""}</button>`);
     for (const x of d.demos) chips.push(`<button class="chip" data-key="${esc(x.key)}">▶ ${esc(label(x))} · ${Math.round(x.seconds)} s</button>`);
     $("#rvDemoChips").innerHTML = chips.length > (original ? 1 : 0) ? chips.join("") : "";
     box.querySelectorAll(".chip").forEach((c) => {
@@ -1390,7 +1428,7 @@ function wireDemos(id, v) {
     });
     const busy = d.busy.find((b) => b.state !== "failed");
     const failed = d.busy.find((b) => b.state === "failed");
-    $("#rvDemoLine").textContent = busy ? `⏳ Making the ${PACE_NAME[busy.pace] || busy.pace} demo: ${busy.line} (1–3 min)`
+    $("#rvDemoLine").textContent = busy ? `⏳ Making the ${paceLabel(busy.pace).toLowerCase()} demo: ${busy.line} (1–3 min)`
       : failed ? "⚠️ The demo didn't work: " + failed.error
       : d.demos.length ? "Tap one to play it next to the original's same lines; playing a demo picks its settings for the re-make."
       : "";
@@ -1437,11 +1475,9 @@ async function openVideo(id) {
     <p class="hint">Re-edit this video: another voice, another speaking speed, or subtitles on/off. Only the voice is recorded again and the same slides, memes, pictures and music are re-timed to it: nothing is generated again, no Claude tokens. Recording again also reads numbers in English words (“one lakh”, not “ek lakh”).</p>
     <div class="row">
       <div><label for="rv-voice">Voice</label><select id="rv-voice">${($(v.format === "long" ? "#s-long_voice" : "#s-voice") || {}).innerHTML || ""}</select></div>
-      <div><label for="rv-pace">Speaking speed</label><select id="rv-pace"><option value="">Keep this speed${v.voice_rate ? " (" + esc(v.voice_rate) + ")" : ""}</option>
-        <option value="-15%">🐢 Much slower (−15%)</option><option value="-10%">Slower (−10%)</option><option value="-5%">A little slower (−5%)</option>
-        <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select></div>
       <div><label for="rv-cc">Subtitles</label><select id="rv-cc"><option value="true">💬 On</option><option value="false">🚫 Off</option></select></div>
     </div>
+    <label for="rv-pace">Speaking speed</label><select id="rv-pace"><option value="">Keep this speed</option></select>
     ${v.format === "long" && v.source !== "shoot" ? `<div id="rvDemoBox">
       <button id="rvDemo" style="width:100%;margin-top:8px">▶ Try it first: a 15–20 s demo with these settings</button>
       <div id="rvDemoLine" class="hint"></div>
@@ -1577,6 +1613,9 @@ async function openVideo(id) {
       toast("Sharpening to full HD — follow it on the Create page");
     } catch (e) { toast(e.message); $("#hdGo").disabled = false; }
   };
+  const madePace = v.voice_rate || "+0%";
+  paceSlider($("#rv-pace"), { blank: "Keep this speed", base: madePace,
+    video: v.duration_seconds ? { seconds: v.duration_seconds, pace: madePace } : null });
   if ($("#rvDemoBox")) wireDemos(id, v);
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
@@ -2293,7 +2332,9 @@ async function loadSettings() {
     const el = $("#s-" + k); if (!el) continue;
     if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(v))) el.add(new Option(v, v));
     el.value = v ?? "";
+    if (el.syncPace) el.syncPace();
   }
+  $("#sv-pace").syncPace();
   const ai = { "claude-code": "Claude Code (your login)", api: st.api_key_set ? "Anthropic API key" : "API key — NOT SET",
     missing: "NOT SET UP — install Claude Code and run `claude` once" }[st.backend];
   checkUpdate();
@@ -3293,6 +3334,9 @@ document.addEventListener("keydown", (e) => {
   else if (k === "]") { PR.wpm = Math.min(260, PR.wpm + 10); prSave(); if (PR.auto) prAuto(true); }
   else if (k === "Escape") closePrompter();
 });
+paceSlider($("#s-long_voice_rate"));
+paceSlider($("#sv-pace"), { blank: "As in Settings", base: () => $("#s-long_voice_rate").value || "+0%" });
+$("#s-long_voice_rate").addEventListener("change", () => $("#sv-pace").syncPace());
 </script>
 </body>
 </html>
