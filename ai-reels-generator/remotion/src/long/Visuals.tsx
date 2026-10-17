@@ -399,23 +399,61 @@ const CompareColumn: React.FC<{item: Item; color: string; height: number; grow: 
   );
 };
 
+// A step's title and text sized to its card: the longest word on one line (a 38 px 'communication,' ran out of a
+// 280 px card) and every line inside the card's height, one size for every card of the visual. Montserrat 800-900
+// lowercase measured ~0.6 em a letter here; 0.64 leaves room for capitals.
+const EM = 0.64;
+const longestWord = (s: string) => Math.max(1, ...s.split(/\s+/).map((w) => w.length));
+const wrapLines = (s: string, size: number, width: number) => {
+  let lines = 1;
+  let used = 0;
+  for (const w of s.split(/\s+/).filter(Boolean)) {
+    const len = w.length * size * EM;
+    if (used && used + size * EM * 0.3 + len > width) {
+      lines += 1;
+      used = len;
+    } else {
+      used += (used ? size * EM * 0.3 : 0) + len;
+    }
+  }
+  return lines;
+};
+const fitStep = (label: string, text: string, width: number, height: number, labelMax = 48, textMax = 38) => {
+  let sizes = {label: 20, text: 18};
+  for (let k = 1; k >= 0.42; k -= 0.04) {
+    const l = Math.floor(Math.min(labelMax * k, width / (longestWord(label) * EM)));
+    const t = Math.floor(Math.min(textMax * k, width / (longestWord(text) * EM)));
+    sizes = {label: l, text: t};
+    const h = wrapLines(label, l, width) * l * 1.15 + (text ? 16 + wrapLines(text, t, width) * t * 1.25 : 0);
+    if (h <= height) break;
+  }
+  return sizes;
+};
+
+type StepSize = {label: number; text: number};
+const smallest = (sizes: StepSize[]): StepSize => ({label: Math.min(...sizes.map((x) => x.label)), text: Math.min(...sizes.map((x) => x.text))});
+
 const Steps: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames, accent}) => {
   const items = v.items.slice(0, 4);
   const span = Math.min(Math.max(20, frames * 0.55), 75);
   if (BOX.V) {
+    const rowHeight = (BOX.BOTTOM - BOX.TOP - (v.headline ? 180 : 30) - 30 * (items.length - 1)) / items.length;
+    const size = smallest(items.map((it) => fitStep(it.label, it.text || '', BOX.INNER - 68 - 84 - 30, rowHeight - 60)));
     return (
       <>
         {v.headline ? <TallHeading text={v.headline} /> : null}
         <div style={{position: 'absolute', left: BOX.SIDE, width: BOX.INNER, top: BOX.TOP + (v.headline ? 180 : 30), bottom: BOX.H - BOX.BOTTOM,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 30}}>
           {items.map((it, i) => (
-            <StepRow key={i} n={i + 1} item={it} delay={4 + (span * i) / items.length} accent={accent} />
+            <StepRow key={i} n={i + 1} item={it} delay={4 + (span * i) / items.length} accent={accent} size={size} />
           ))}
         </div>
       </>
     );
   }
   const w = Math.min(470, (BOX.INNER - (items.length - 1) * 70) / items.length);
+  // the card's room for words: inside its padding, below the number, down to where the visuals end
+  const size = smallest(items.map((it) => fitStep(it.label, it.text || '', w - 60, BOX.BOTTOM - 250 - 88 - 84 - 26)));
   return (
     <>
       {v.headline ? (
@@ -423,14 +461,14 @@ const Steps: React.FC<{v: Visual; frames: number; accent: string}> = ({v, frames
       ) : null}
       <div style={{position: 'absolute', left: BOX.SIDE, width: BOX.INNER, top: 250, display: 'flex', justifyContent: 'center', alignItems: 'stretch', gap: 70}}>
         {items.map((it, i) => (
-          <StepCard key={i} n={i + 1} item={it} width={w} delay={4 + (span * i) / items.length} accent={accent} last={i === items.length - 1} />
+          <StepCard key={i} n={i + 1} item={it} width={w} size={size} delay={4 + (span * i) / items.length} accent={accent} last={i === items.length - 1} />
         ))}
       </div>
     </>
   );
 };
 
-const StepRow: React.FC<{n: number; item: Item; delay: number; accent: string}> = ({n, item, delay, accent}) => {
+const StepRow: React.FC<{n: number; item: Item; delay: number; accent: string; size: StepSize}> = ({n, item, delay, accent, size}) => {
   const e = useEnter(delay, {damping: 12, mass: 0.6});
   return (
     <div style={{display: 'flex', alignItems: 'center', gap: 30, padding: '30px 34px', borderRadius: 30, background: 'rgba(10,10,16,0.55)',
@@ -439,15 +477,15 @@ const StepRow: React.FC<{n: number; item: Item; delay: number; accent: string}> 
         display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
         {n}
       </div>
-      <div style={{textAlign: 'left'}}>
-        <div style={{fontSize: 48, fontWeight: 900, lineHeight: 1.12}}>{item.label}</div>
-        {item.text ? <div style={{marginTop: 8, fontSize: 38, fontWeight: 800, opacity: 0.85, lineHeight: 1.22}}>{item.text}</div> : null}
+      <div style={{textAlign: 'left', minWidth: 0, overflowWrap: 'break-word'}}>
+        <div style={{fontSize: size.label, fontWeight: 900, lineHeight: 1.12}}>{item.label}</div>
+        {item.text ? <div style={{marginTop: 8, fontSize: size.text, fontWeight: 800, opacity: 0.85, lineHeight: 1.22}}>{item.text}</div> : null}
       </div>
     </div>
   );
 };
 
-const StepCard: React.FC<{n: number; item: Item; width: number; delay: number; accent: string; last: boolean}> = ({n, item, width, delay, accent, last}) => {
+const StepCard: React.FC<{n: number; item: Item; width: number; size: StepSize; delay: number; accent: string; last: boolean}> = ({n, item, width, size, delay, accent, last}) => {
   const e = useEnter(delay, {damping: 12, mass: 0.6});
   return (
     <div
@@ -455,6 +493,7 @@ const StepCard: React.FC<{n: number; item: Item; width: number; delay: number; a
         position: 'relative',
         width,
         padding: '44px 30px',
+        overflowWrap: 'break-word',
         borderRadius: 32,
         background: 'rgba(10,10,16,0.55)',
         border: '2px solid rgba(255,255,255,0.12)',
@@ -466,8 +505,8 @@ const StepCard: React.FC<{n: number; item: Item; width: number; delay: number; a
       <div style={{margin: '0 auto', width: 84, height: 84, borderRadius: '50%', background: accent, color: COLORS.ink, fontSize: 48, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
         {n}
       </div>
-      <div style={{marginTop: 26, fontSize: 48, fontWeight: 900, lineHeight: 1.15}}>{item.label}</div>
-      {item.text ? <div style={{marginTop: 16, fontSize: 38, fontWeight: 800, opacity: 0.85, lineHeight: 1.25}}>{item.text}</div> : null}
+      <div style={{marginTop: 26, fontSize: size.label, fontWeight: 900, lineHeight: 1.15}}>{item.label}</div>
+      {item.text ? <div style={{marginTop: 16, fontSize: size.text, fontWeight: 800, opacity: 0.85, lineHeight: 1.25}}>{item.text}</div> : null}
       {!last ? <div style={{position: 'absolute', right: -58, top: '42%', fontSize: 56, color: accent, fontWeight: 900}}>→</div> : null}
     </div>
   );
