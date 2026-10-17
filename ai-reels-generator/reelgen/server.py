@@ -809,6 +809,81 @@ def create_app(cfg: Config) -> FastAPI:
                                      "captions": None if body.get("captions") is None else bool(body.get("captions")),
                                      "pace": body.get("pace") if re.fullmatch(r"[+-]\d{1,2}%", str(body.get("pace") or "")) else None})
 
+    # ---- A 15-20 s demo of a re-make before making it (rerender.demo): one at a time, kept per video ----
+    demo_state: dict[str, dict] = {}  # "<video id>/<key>" -> {state: waiting/running/failed, line, error}
+    demo_lock = threading.Lock()
+
+    def remaking(video_id: str) -> bool:
+        return any(j.get("rerender", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running"))
+
+    @app.get("/api/videos/{video_id}/demos")
+    def list_demos(video_id: str):
+        from . import rerender
+        from .longform import LongScript
+
+        folder = video_dir(cfg, video_id)
+        original = None
+        try:
+            script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
+            window = rerender.demo_window(script, json.loads((folder / "props.json").read_text(encoding="utf-8")))
+            original = list(window[1:]) if window else None
+        except (OSError, ValueError):
+            pass
+        made = rerender.demos(folder)
+        keys = {d["key"] for d in made}
+        busy = [{"key": k.split("/", 1)[1], **e} for k, e in list(demo_state.items())
+                if k.startswith(video_id + "/") and k.split("/", 1)[1] not in keys]
+        return {"original": original, "demos": made, "busy": busy}
+
+    @app.post("/api/videos/{video_id}/demo")
+    def make_demo(video_id: str, body: dict):
+        """The re-make's settings tried on the story's first 15-20 s (nothing generated, no Claude)."""
+        from . import rerender
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("format") != "long":
+            raise HTTPException(400, "Demos are made for long, medium and Script videos")
+        if remaking(video_id):
+            raise HTTPException(409, "This video is being re-made; try a demo when it's done")
+        pace = body.get("pace") if re.fullmatch(r"[+-]\d{1,2}%", str(body.get("pace") or "")) else None
+        voice = str(body.get("voice") or "") or None
+        captions = None if body.get("captions") is None else bool(body.get("captions"))
+        settings, pace_used, _, _ = rerender._settings(load_settings(Config()), report, voice, pace, captions)
+        key = rerender.demo_key(settings.long_voice, pace_used, settings.captions)
+        if (folder / rerender.DEMOS / f"{key}.mp4").exists():
+            return {"key": key, "state": "done"}
+        entry = demo_state.get(f"{video_id}/{key}")
+        if entry and entry["state"] in ("waiting", "running"):
+            return {"key": key, **entry}
+        entry = {"state": "waiting", "line": "Waiting for the demo before it", "error": "", "pace": pace_used}
+        demo_state[f"{video_id}/{key}"] = entry
+
+        def work():
+            with demo_lock:
+                entry.update(state="running", line="Starting")
+                try:
+                    if remaking(video_id):
+                        raise RuntimeError("This video is being re-made; try a demo when it's done")
+                    rerender.demo(load_settings(Config()), folder, voice, pace, captions,
+                                  progress=lambda m: entry.update(line=str(m)))
+                    demo_state.pop(f"{video_id}/{key}", None)
+                except Exception as exc:  # noqa: BLE001 - shown on the video page
+                    log.warning("Demo of %s failed: %s", video_id, exc)
+                    entry.update(state="failed", error=str(exc)[:300])
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"key": key, **entry}
+
+    @app.get("/media/{video_id}/demo/{name}")
+    def demo_media(video_id: str, name: str):
+        from .rerender import DEMOS
+
+        path = video_dir(cfg, video_id) / DEMOS / name
+        if not re.fullmatch(r"[0-9a-f]{10}\.mp4", name) or not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path)
+
     @app.post("/api/videos/{video_id}/sharpen")
     def sharpen_video_route(video_id: str):
         """An animated video re-edited with its clips and pictures upscaled to full HD (animated.sharpen_video)."""

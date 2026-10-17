@@ -1346,6 +1346,75 @@ function issueRows(issues) {
     return `<details class="issue"><summary><span class="n">${i + 1}</span>${kind ? `<span class="kind">${esc(kind)}</span>` : ""}${esc(title)}</summary><div class="body">${esc(body)}</div></details>`;
   }).join("")}<div class="issue-tools"><button type="button" class="mini" onclick="this.closest('.issues').querySelectorAll('details').forEach(d=>d.open=true)">Open all</button> <button type="button" class="mini" onclick="this.closest('.issues').querySelectorAll('details').forEach(d=>d.open=false)">Close all</button></div></div>`;
 }
+// ---- Demos of a re-make (rerender.demo): the story's first 15-20 s with another speed, voice or subtitles ----
+const PACE_NAME = { "-15%": "Much slower −15%", "-10%": "Slower −10%", "-5%": "A little slower −5%", "+0%": "Normal",
+  "+5%": "A little quick +5%", "+10%": "Brisk +10%", "+15%": "Fast +15%" };
+const voiceName = (v) => String(v || "").replace(/^sarvam:/, "").replace(/^[a-z]{2}-[A-Z]{2}-/, "").replace(/(Multilingual)?Neural$/, "").replace(/_.*/, "");
+let demoTimer = null;
+function wireDemos(id, v) {
+  const box = $("#rvDemoBox"), player = $("#rvDemoVideo");
+  let original = null, playing = "";
+  const play = (src, key, from, to) => {
+    playing = key;
+    player.hidden = false;
+    player.src = src;
+    player.ontimeupdate = to ? () => { if (player.currentTime >= to) player.pause(); } : null;
+    player.onloadedmetadata = () => { if (from && Math.abs(player.currentTime - from) > 0.5) player.currentTime = from; player.play().catch(() => {}); };
+    $("#video").pause();
+    box.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
+  };
+  const pick = (d) => {  // a demo's settings become the re-make's
+    if ([...$("#rv-pace").options].some((o) => o.value === d.pace)) $("#rv-pace").value = d.pace;
+    if ([...$("#rv-voice").options].some((o) => o.value === d.voice)) $("#rv-voice").value = d.voice;
+    $("#rv-cc").value = String(d.captions);
+  };
+  const label = (d) => (PACE_NAME[d.pace] || d.pace) + (d.voice !== v.voice ? " · " + voiceName(d.voice) : "")
+    + (d.captions !== (v.captions !== false) ? (d.captions ? " · subtitles" : " · no subtitles") : "");
+  const load = async () => {
+    if (!document.body.contains(box)) { clearInterval(demoTimer); demoTimer = null; return; }
+    let d;
+    try { d = await api(`/api/videos/${encodeURIComponent(id)}/demos`); } catch (e) { return; }
+    original = d.original;
+    const chips = [];
+    if (original) chips.push(`<button class="chip" data-key="original">▶ Original${v.voice_rate ? " (" + esc(PACE_NAME[v.voice_rate] || v.voice_rate) + ")" : ""}</button>`);
+    for (const x of d.demos) chips.push(`<button class="chip" data-key="${esc(x.key)}">▶ ${esc(label(x))} · ${Math.round(x.seconds)} s</button>`);
+    $("#rvDemoChips").innerHTML = chips.length > (original ? 1 : 0) ? chips.join("") : "";
+    box.querySelectorAll(".chip").forEach((c) => {
+      c.classList.toggle("on", c.dataset.key === playing);
+      c.onclick = () => {
+        if (c.dataset.key === "original") return play(`/media/${encodeURIComponent(id)}/reel.mp4#t=${original[0]},${original[1]}`, "original", original[0], original[1]);
+        const x = d.demos.find((y) => y.key === c.dataset.key);
+        pick(x);
+        play(`/media/${encodeURIComponent(id)}/demo/${x.key}.mp4?${encodeURIComponent(x.made)}`, x.key);
+      };
+    });
+    const busy = d.busy.find((b) => b.state !== "failed");
+    const failed = d.busy.find((b) => b.state === "failed");
+    $("#rvDemoLine").textContent = busy ? `⏳ Making the ${PACE_NAME[busy.pace] || busy.pace} demo: ${busy.line} (1–3 min)`
+      : failed ? "⚠️ The demo didn't work: " + failed.error
+      : d.demos.length ? "Tap one to play it next to the original's same lines; playing a demo picks its settings for the re-make."
+      : "";
+    $("#rvDemo").disabled = !!busy;
+    if (busy && !demoTimer) demoTimer = setInterval(load, 2500);
+    if (!busy && demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+    return d;
+  };
+  $("#rvDemo").onclick = async () => {
+    $("#rvDemo").disabled = true;
+    try {
+      const r = await api(`/api/videos/${encodeURIComponent(id)}/demo`, { method: "POST",
+        body: JSON.stringify({ voice: $("#rv-voice").value, captions: $("#rv-cc").value === "true", pace: $("#rv-pace").value || null }) });
+      const d = await load();
+      if (r.state === "done" && d) {
+        const x = d.demos.find((y) => y.key === r.key);
+        if (x) play(`/media/${encodeURIComponent(id)}/demo/${x.key}.mp4?${encodeURIComponent(x.made)}`, x.key);
+      }
+    } catch (e) { toast(e.message); $("#rvDemo").disabled = false; }
+  };
+  if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+  load();
+}
+
 async function openVideo(id) {
   const v = await api("/api/videos/" + encodeURIComponent(id));
   const src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
@@ -1373,6 +1442,12 @@ async function openVideo(id) {
         <option value="+0%">Normal</option><option value="+5%">A little quick (+5%)</option><option value="+10%">Brisk (+10%)</option><option value="+15%">Fast (+15%)</option></select></div>
       <div><label for="rv-cc">Subtitles</label><select id="rv-cc"><option value="true">💬 On</option><option value="false">🚫 Off</option></select></div>
     </div>
+    ${v.format === "long" && v.source !== "shoot" ? `<div id="rvDemoBox">
+      <button id="rvDemo" style="width:100%;margin-top:8px">▶ Try it first: a 15–20 s demo with these settings</button>
+      <div id="rvDemoLine" class="hint"></div>
+      <div id="rvDemoChips" class="chips"></div>
+      <video id="rvDemoVideo" controls playsinline preload="metadata" hidden style="width:100%;max-height:none;aspect-ratio:16/9;border-radius:10px;margin-top:8px;background:#000"></video>
+    </div>` : ""}
     <button id="rvGo" style="width:100%;margin-top:8px">🎙️ Re-make with these settings</button>
     <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
@@ -1502,6 +1577,7 @@ async function openVideo(id) {
       toast("Sharpening to full HD — follow it on the Create page");
     } catch (e) { toast(e.message); $("#hdGo").disabled = false; }
   };
+  if ($("#rvDemoBox")) wireDemos(id, v);
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {

@@ -687,6 +687,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     photos, footage clips, AI music, the hook's music style, the user's tracks even if 'recently used'), nothing is
     drawn, generated, searched or remembered again (the user: "re-edit only speed ... not re-generated animations")."""
     overrides = overrides or {}
+    if remake:  # no stock search: a beat that had no clip (or chapter no photo) stays the way the video was made
+        cfg = replace(cfg, pexels_api_key="")
     seed = _seed(script)
     new_look = look is None
     look = look or variety.pick_look(cfg, seed)

@@ -94,6 +94,8 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
   never "ek lakh"). On a finished video's page, **Voice, speed & subtitles → Speaking speed** re-records only the voice
   at another speed and re-times the same edit to it: the slides, memes, pictures, footage and music stay as they are,
   nothing is generated again and no Claude tokens are used.
+  **▶ Try it first** makes a 15-20 s demo of the story's first lines with the chosen speed, voice or subtitles
+  (1-3 minutes) and plays it next to the same lines of the original, so you can compare speeds before re-making.
 - **Cinematic hook** (long videos, Script Videos, animated videos): the opening is cut like a documentary trailer:
   each shot in its own colour grade (amber, red, black-and-white, fire, cold) under film grain and flicker, yellow
   labels typed onto the picture ("LONDON, 1928"), whips, VHS glitches, a photo flown in, paper torn across the frame,
