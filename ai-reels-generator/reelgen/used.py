@@ -113,6 +113,9 @@ def media_used(cfg: Config, video: Path) -> dict:
                                "source": f"Poly Haven (CC0): {src.split('polyhaven/')[1].split('/')[0]}" if poly else
                                f"Your library: {Path(src).name}", "times": []}
             models[key]["times"].append(round(at, 2))
+        elif v.get("type") == "meme" and v.get("src") and v.get("webName"):  # a real template (memeweb.py)
+            footage.append({"name": f"Meme: {v['webName']}" + (" (clip)" if v.get("clipSeconds") else ""), "file": v["src"],
+                            "source": f"imgflip.com template ({v.get('webPage', '')})", "times": [round(at, 2)]})
         elif v.get("type") == "meme" and v.get("src"):  # the user's own meme file
             footage.append({"name": "Meme: " + (v.get("fileName") or Path(v["src"]).name), "file": v["src"],
                             "source": f"Your library: {v.get('fileName') or Path(v['src']).name}", "times": [round(at, 2)]})
@@ -143,7 +146,7 @@ def media_used(cfg: Config, video: Path) -> dict:
                         "times": _times([s["start"] for s in hook["shots"]])})
     group = defaultdict(list)
     for at, v in visuals:
-        group[f"Meme: {'your file' if v.get('src') else v.get('meme') or '?'}" if v.get("type") == "meme"
+        group[f"Meme: {v.get('webName') or ('your file' if v.get('src') else v.get('meme') or '?')}" if v.get("type") == "meme"
               else f"Visual: {v.get('type', '?')}"].append(at)
         if v.get("camera"):
             group[f"Camera: {v['camera']}"].append(at)

@@ -84,7 +84,10 @@ FACE_SOUND = {"shocked": ("scratch", 0.0), "crying": ("sad", 0.32), "laughing": 
 def _meme_events(v: dict, start: float, duration: float) -> list[tuple[str, float, float]]:
     """The meme's own sounds, on its reveals in remotion/src/long/Meme.tsx (keep the fractions in step)."""
     fmt, d, f = v.get("meme"), duration, duration * FPS
-    if v.get("src"):  # the user's own meme file
+    if v.get("src"):  # the user's own meme file, or a real template (memeweb.py): a pop as each of its boxes lands
+        n = len(v.get("webBoxes") or [])
+        if n and not v.get("clipSeconds"):
+            return [("pop", start + d * (0.04 + 0.5 * i / n), 0.28) for i in range(n)]
         return [("pop", start + 0.05, 0.3)]
     if fmt == "two-buttons":
         return [("pop", start + 6 / FPS, 0.28), ("pop", start + 12 / FPS, 0.28), ("tick", start + 0.6, 0.16)]

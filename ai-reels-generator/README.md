@@ -117,6 +117,13 @@ Shorts+ with the motion-graphics look): *Off* (told like a documentary), *Some* 
   into .mp4). Name each by what it means ("crying-cat-sad", "side-eye-doubt") and set its licence; Claude uses one only
   where its name fits the line, with top and bottom text. Add only files you may use: film stills, TV clips and photos
   of real people can bring copyright claims.
+- **Real memes from the internet** (Settings > Meme pictures > Real memes from imgflip.com): instead of drawing, the
+  writer picks real meme templates: Imgflip's 100 most used pictures (Drake, Two Buttons, Distracted Boyfriend, Gru's
+  Plan, Monkey Puppet...) and its popular animated ones (short clips), and finds any other by search, Indian film and
+  TV memes included (Hera Pheri, Jethalal, "Paisa hi paisa hoga"...). The app downloads the picture or clip and writes
+  your lines into the template's own text boxes, where its text belongs; clips loop under the line, muted. Where no
+  template fits (or you're offline), the meme is drawn as before. Templates about politicians are never used. These are
+  other people's pictures and film or TV clips: they can bring copyright claims, which is why it's your choice.
 - Script Videos and Shoot never change your words: memes only go on lines that already set one up.
 
 ## Shoot: you on camera (tab "Shoot")
@@ -198,6 +205,7 @@ reelgen/
   sfx.py            whoosh and pop sound effects, made on the fly (and the hook's boom, riser, drone)
   cinehook.py       the cinematic hook: rules, timing, AI stills, sound design, silence
   memes.py          the meme option: formats, the funny-explainer rules, checks
+  memeweb.py        real meme templates and clips from imgflip.com (list, search, text boxes, download)
   shoot.py          the Shoot tab: shots, Claude's on-camera plan, your takes, the edit
   notifier.py       Telegram + GitHub run summary
   pipeline.py       runs all steps with verify-and-retry

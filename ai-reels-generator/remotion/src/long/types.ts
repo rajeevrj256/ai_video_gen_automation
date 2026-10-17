@@ -51,7 +51,17 @@ export type Visual = {
   meme?: MemeFormat; // meme: the format
   labels?: string[]; // meme: the words on it, in the format's order (reelgen/memes.py FORMATS)
   face?: MemeFace; // meme 'reaction': the face
+  // meme from imgflip.com (reelgen/memeweb.py): src is its picture or clip, the labels go into its own text boxes
+  webName?: string;
+  imgW?: number;
+  imgH?: number;
+  webBoxes?: WebBox[];
+  clipSeconds?: number; // a clip template: its length (it loops under the beat, muted)
 };
+
+// One text box of a real meme template, in fractions of its picture; start/end: % of a clip's length it shows for.
+export type WebBox = {x: number; y: number; w: number; h: number; rot: number; color: string; outline: string; caps: boolean;
+  align: string; valign: string; font: string; start?: number; end?: number};
 
 export type Camera = 'push' | 'pull' | 'pan-left' | 'pan-right' | 'rise' | 'dutch' | 'orbit' | 'still';
 

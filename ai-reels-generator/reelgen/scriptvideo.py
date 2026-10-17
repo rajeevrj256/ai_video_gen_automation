@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
-from . import cinehook, media, memes, variety
+from . import cinehook, media, memes, memeweb, variety
 from .config import Config
 from .llm import ask
 from .longform import (LLM_TIMEOUT, WORDS_PER_SECOND, HookShot, LBeat, LChapter, LongScript, LVisual, Progress,
@@ -178,7 +178,8 @@ def _board_system(cfg: Config, english: bool = True) -> str:
     """The long writer's own rules for visuals, sound and music (the same pipeline, the same look),
     with the writing, research and accuracy parts left out: the words are final. `english`: the words on
     screen are English even when the narration is Hinglish or Hindi."""
-    full = _system(cfg.video_style, cfg.long_language, meme=memes.level(cfg), meme_files=memes.own_files(cfg))
+    full = _system(cfg.video_style, cfg.long_language, meme=memes.level(cfg), meme_files=memes.own_files(cfg),
+                   meme_web=memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "")
     rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     return f"""You storyboard a finished YouTube video script for an animated motion-graphics video. The \
 script, its hook, title and description are written, fact-checked and approved by the user. Never change, \

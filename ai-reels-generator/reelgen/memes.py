@@ -76,7 +76,7 @@ def catalogue() -> str:
     return "\n".join(f"  - {k}: {about}. labels: {' | '.join(slots)}" for k, (slots, about) in FORMATS.items())
 
 
-def visual_rules(memes: str, files: list | None = None) -> str:
+def visual_rules(memes: str, files: list | None = None, web: str = "") -> str:
     """For every writer and storyboard (inside the long writer's visual rules): when and how to use a meme."""
     if memes not in EVERY:
         return ""
@@ -93,7 +93,7 @@ in the words of this video, the punchline short), 'face' for a reaction. The lin
 pays it off; never a random meme, never on a sad or serious moment (a death, a disaster, poverty, illness). Labels \
 state no figure or fact the narration doesn't. Formats:
 {catalogue()}
-  Faces (reaction): {', '.join(FACES)}.{own}"""
+  Faces (reaction): {', '.join(FACES)}.{own}{web}"""
 
 
 def writing_rules(memes: str) -> str:
@@ -135,7 +135,7 @@ def repair(v) -> None:
 
 def text(v) -> str:
     """A meme's words for the fact-checker."""
-    return f"[meme {v.file or v.meme}: " + " | ".join(v.labels) + "]"
+    return f"[meme {getattr(v, 'web_meme', '') or v.file or v.meme}: " + " | ".join(v.labels) + "]"
 
 
 def issues(visuals: list, memes: str) -> list[str]:

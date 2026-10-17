@@ -137,6 +137,17 @@ def meme_lists() -> None:
         theirs = set(re.findall(r"'([a-z-]+)'", block.group(1))) if block else set()
         if ours != theirs:
             fail(f"memes.py and types.ts {name} differ: only in Python {sorted(ours - theirs)}, only in the editor {sorted(theirs - ours)}")
+    from . import memeweb
+
+    page = ('memes=[{"id":181913649,"uid":27,"name":"Drake Hotline Bling","w":1200,"h":1200,"file_type":"jpg",'
+            '"default_settings":"[{\\"type\\":\\"text\\",\\"x\\":612,\\"y\\":12,\\"w\\":576,\\"h\\":576}]"}];')
+    found = memeweb._templates_on(page)
+    if [b["x"] for b in memeweb.boxes(found.get(181913649, {"w": 1, "h": 1}))] != [0.51]:
+        fail(f"memeweb: an Imgflip page's template boxes not read: {found}")
+    if not memeweb.blocked("Bernie I Am Once Again Asking For Your Support") or memeweb.blocked("Drake Hotline Bling"):
+        fail("memeweb.blocked: politicians must be left out, Drake kept")
+    if memeweb.base36(181913649) != "30b1gx":
+        fail("memeweb.base36: Drake's picture is i.imgflip.com/30b1gx.jpg")
     v = LVisual(type="meme", headline="", sub="", items=[], icons=[], meme="nope-yep", labels=["a", "b", "c", " "])
     memes.repair(v)
     if v.labels != ["a", "b"]:

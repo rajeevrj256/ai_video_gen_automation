@@ -1,13 +1,13 @@
 import React from 'react';
 import '@fontsource/permanent-marker/400.css';
-import {Img, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig, Easing} from 'remotion';
+import {Img, Loop, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig, Easing} from 'remotion';
 import {FONT, clamp, exitProgress} from '../theme';
 import {BOX} from './box';
 import {iconFor} from './icon';
 import {Person, skinTone} from '../toon/Person';
 import {shade} from '../toon/Mascot';
 import type {Look as PLook, Mood, Pose} from '../toon/types';
-import type {MemeFace, MemeFormat, Visual} from './types';
+import type {MemeFace, MemeFormat, Visual, WebBox} from './types';
 
 // Memes that explain the line (reelgen/memes.py): the classic formats people know (two buttons, nope/yep, the
 // distracted one, the expanding brain, this is fine...), redrawn here in code with the Toon editor's flat cartoon
@@ -776,16 +776,77 @@ const Reaction: React.FC<F> = ({v, labels, frames, w, h, seed}) => {
   );
 };
 
-// The user's own meme picture or clip (Settings > Media library > Memes), with top and bottom text.
-const OwnMeme: React.FC<F> = ({v, labels, frames, w, h}) => {
-  const top = labels[0] ?? '', bottom = labels[1] ?? '';
-  const isVideo = /\.(mp4|webm|mov)$/i.test(v.src ?? '');
+// The biggest size at which `text` fits a box of width x height (Montserrat ~0.6 em a letter, 1.1 line height).
+const fitBox = (text: string, width: number, height: number, max = 96, min = 14) => {
+  const len = Math.max(1, text.length), longest = Math.max(1, ...text.split(/\s+/).map((x) => x.length));
+  for (let size = max; size > min; size -= 2) {
+    const perLine = Math.max(1, Math.floor(width / (size * 0.62)));
+    if (longest > perLine) continue;
+    if (Math.ceil(len / perLine) * size * 1.12 <= height) return size;
+  }
+  return min;
+};
+
+// One label in a real template's own text box, styled like the template asks (Impact-like capitals with an outline,
+// or plain dark words on a light part of the picture).
+const BoxText: React.FC<{b: WebBox; text: string; rect: [number, number, number, number]; show: number}> = ({b, text, rect, show}) => {
+  const [ox, oy, dw, dh] = rect;
+  if (!text) return null;
+  const width = b.w * dw, height = b.h * dh;
+  const impact = b.font === 'impact';
+  const size = fitBox(impact && b.caps ? text.toUpperCase() : text, width * 0.94, height * 0.94, Math.min(110, height));
+  const plainDark = !impact && b.color.toLowerCase() !== '#ffffff';
   return (
-    <div style={{position: 'absolute', inset: 0, background: '#000'}}>
-      {isVideo ? <OffthreadVideo src={staticFile(v.src!)} muted style={{width: '100%', height: '100%', objectFit: 'contain'}} />
-        : <Img src={staticFile(v.src!)} style={{width: '100%', height: '100%', objectFit: 'contain'}} />}
-      <Shout text={top} size={fit(top, w * 0.92, 2, BOX.V ? 64 : 74, 24)} width={w * 0.94} delay={2} style={{left: w * 0.03, top: 14}} />
-      <Shout text={bottom} size={fit(bottom, w * 0.92, 2, BOX.V ? 64 : 74, 24)} width={w * 0.94} delay={Math.round(frames * 0.32)} style={{left: w * 0.03, bottom: 16}} />
+    <div style={{position: 'absolute', left: ox + b.x * dw, top: oy + b.y * dh, width, height, display: 'flex',
+      alignItems: b.valign === 'top' ? 'flex-start' : b.valign === 'bottom' ? 'flex-end' : 'center',
+      justifyContent: b.align === 'left' ? 'flex-start' : b.align === 'right' ? 'flex-end' : 'center',
+      transform: `rotate(${b.rot}deg) scale(${0.85 + 0.15 * show})`, opacity: show}}>
+      <div style={{fontFamily: FONT, fontWeight: impact ? 900 : 800, fontSize: size, lineHeight: 1.08, color: b.color,
+        textTransform: b.caps ? 'uppercase' : 'none', textAlign: b.align as React.CSSProperties['textAlign'], textWrap: 'balance',
+        textShadow: plainDark ? 'none' : outline(size, b.outline)}}>{text}</div>
+    </div>
+  );
+};
+
+// The user's own meme picture or clip (Settings > Media library > Memes), or a real template from imgflip.com
+// (reelgen/memeweb.py): a picture, or a short clip looping muted under the line. A template's labels go into its own
+// text boxes, where its text belongs; otherwise they are top and bottom text.
+const OwnMeme: React.FC<F> = ({v, labels, frames, w, h}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const isVideo = /\.(mp4|webm|mov)$/i.test(v.src ?? '');
+  const known = Boolean(v.imgW && v.imgH);
+  const k = known ? Math.min(w / v.imgW!, h / v.imgH!) : 1;
+  const dw = known ? v.imgW! * k : w, dh = known ? v.imgH! * k : h;
+  const ox = (w - dw) / 2, oy = (h - dh) / 2;
+  const loop = isVideo && v.clipSeconds ? Math.max(1, Math.round(v.clipSeconds * fps)) : 0;
+  const fill = {width: '100%', height: '100%', objectFit: 'contain' as const};
+  const boxes = v.webBoxes ?? [];
+  const pct = loop ? ((frame % loop) / loop) * 100 : 0;
+  const media = isVideo ? (
+    loop ? <Loop durationInFrames={loop}><OffthreadVideo src={staticFile(v.src!)} muted style={fill} /></Loop>
+      : <OffthreadVideo src={staticFile(v.src!)} muted style={fill} />
+  ) : <Img src={staticFile(v.src!)} style={fill} />;
+  const top = labels[0] ?? '', bottom = labels[1] ?? '';
+  return (
+    <div style={{position: 'absolute', inset: 0, background: '#0b0b0f', overflow: 'hidden'}}>
+      {!isVideo && known ? (
+        <Img src={staticFile(v.src!)} style={{position: 'absolute', inset: -40, width: w + 80, height: h + 80, objectFit: 'cover',
+          filter: 'blur(28px) brightness(0.45)'}} />
+      ) : null}
+      <div style={{position: 'absolute', left: ox, top: oy, width: dw, height: dh}}>{media}</div>
+      {boxes.length ? boxes.map((b, i) => {
+        const at = Math.round(frames * (0.04 + (0.5 * i) / boxes.length));
+        const show = loop ? (pct >= (b.start ?? 0) && pct <= (b.end ?? 100) ? 1 : 0)
+          : interpolate(frame, [at, at + 6], [0, 1], clamp);
+        return <BoxText key={i} b={b} text={labels[i] ?? ''} rect={[ox, oy, dw, dh]} show={show} />;
+      }) : (
+        <div style={{position: 'absolute', left: ox, top: oy, width: dw, height: dh}}>
+          <Shout text={top} size={fit(top, dw * 0.92, 2, BOX.V ? 64 : 74, 24)} width={dw * 0.94} delay={2} style={{left: dw * 0.03, top: 14}} />
+          <Shout text={bottom} size={fit(bottom, dw * 0.92, 2, BOX.V ? 64 : 74, 24)} width={dw * 0.94} delay={Math.round(frames * 0.32)}
+            style={{left: dw * 0.03, bottom: 16}} />
+        </div>
+      )}
     </div>
   );
 };

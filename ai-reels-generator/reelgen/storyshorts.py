@@ -36,7 +36,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field, create_model
 
-from . import aimusic, anim_engine, animated, media, memes, repeats
+from . import aimusic, anim_engine, animated, media, memes, memeweb, repeats
 from .animated import ART_STYLES, CAMERAS, NEGATIVE, TRANSITION_SOUND, ACharacter, Camera, Fx, Transition
 from .categories import CATEGORIES
 from .config import Config
@@ -258,13 +258,13 @@ class GBoard(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
-def _graphics_rules(req: StoryRequest) -> str:
+def _graphics_rules(req: StoryRequest, web: str = "") -> str:
     """The long writer's own rules for visuals, minus what a Short has no use for (chapter cards, the hook's own
     track), plus the tall frame's limits."""
     from .longform import _system as long_system
 
     style = {"facts": "facts", "explainer": "facts", "news": "news", "comedy": "comedy"}.get(req.kind, "story")
-    full = long_system(style, "English", meme=req.memes)
+    full = long_system(style, "English", meme=req.memes, meme_web=web)
     rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     rules = re.sub(r"\n- (Chapter breaks|Backgrounds):.*?(?=\n- |\n\n)", "", rules, flags=re.S)
     rules = re.sub(r"Music and sound:.*?\n\n", "", rules, flags=re.S)
@@ -314,9 +314,9 @@ def _screen_rule(req: StoryRequest) -> str:
     return "Words on screen: in the narration's own language and script, short."
 
 
-def _directing(req: StoryRequest, styles: str) -> str:
+def _directing(req: StoryRequest, styles: str, web: str = "") -> str:
     if req.visuals == "graphics":
-        return _graphics_rules(req)
+        return _graphics_rules(req, web)
     footage = req.visuals == "footage"
     pictures = ("The pictures are stock footage: give every shot a precise `footage` search; `scene` and `motion` are one "
                 "short sentence each (they aren't drawn), `characters` empty." if footage else
@@ -341,7 +341,7 @@ hook, reveals, the cliffhanger) = words, punch-in and a flash on the same word. 
 - {_screen_rule(req)}"""
 
 
-def _system(req: StoryRequest, styles: str, recent: str, sounds: str) -> str:
+def _system(req: StoryRequest, styles: str, recent: str, sounds: str, web: str = "") -> str:
     words = int((req.seconds - 3) * WPS.get(req.language, 2.6))
     many = req.parts > 1
     return f"""You write and direct short vertical stories for YouTube Shorts and Reels: one story told in {req.parts} \
@@ -359,9 +359,14 @@ Every part works on its own for a viewer who never saw the others.
 
 The voice speaks: {LANGUAGE_RULES[req.language]}
 {(chr(10) + memes.writing_rules(req.memes) + chr(10)) if req.visuals == "graphics" and req.memes in memes.EVERY else ""}
-{_directing(req, styles)}
+{_directing(req, styles, web)}
 
 {sounds}"""
+
+
+def _web(cfg: Config, req: StoryRequest) -> str:
+    """The real meme templates (imgflip.com) the graphics look may use, when the user chose them."""
+    return memeweb.prompt_block(cfg) if req.visuals == "graphics" and req.memes in memes.EVERY else ""
 
 
 def _styles_block(req: StoryRequest, cfg: Config) -> str:
@@ -394,7 +399,7 @@ def write_series(cfg: Config, req: StoryRequest, avoid: str = "") -> StorySeries
     prompt += hook_block(cfg)
     if req.kind in TRUE_KINDS:
         prompt += "\n- Research budget: at most 6 web searches and 5 opened pages, then write."
-    return ask(cfg.ai_backend, cfg.claude_model, _system(req, _styles_block(req, cfg), recent, _sounds_block(cfg)), prompt,
+    return ask(cfg.ai_backend, cfg.claude_model, _system(req, _styles_block(req, cfg), recent, _sounds_block(cfg), _web(cfg, req)), prompt,
                GSeries if req.visuals == "graphics" else StorySeries, allow_web=req.kind in TRUE_KINDS,
                effort=cfg.claude_effort, timeout=1800)
 
@@ -508,7 +513,7 @@ line number), showing exactly what that line says. The parts are fixed (## Part 
 
 The voice speaks the user's own text ({req.language.title()}).
 
-{_directing(req, _styles_block(req, cfg))}
+{_directing(req, _styles_block(req, cfg), _web(cfg, req))}
 
 {_sounds_block(cfg)}"""
     prompt = ((f"Series title, chosen by the user: {req.title.strip()}\n\n" if req.title.strip() else "")

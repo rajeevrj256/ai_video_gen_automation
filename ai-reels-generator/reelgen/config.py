@@ -68,6 +68,9 @@ class Config:
     # Memes and a funnier way of explaining (reelgen/memes.py): off / some / lots. Long and medium videos, Script
     # Videos, Shoot and the Shorts+ motion-graphics look; per video on the Create page, the Script tab and Shorts+.
     memes: str = field(default_factory=lambda: _env("REEL_MEMES", "off"))
+    # Where meme pictures come from (reelgen/memeweb.py): 'drawn' by the editor, or 'web' = real meme templates (pictures
+    # and short clips) from imgflip.com, drawn where none fits.
+    meme_source: str = field(default_factory=lambda: _env("REEL_MEME_SOURCE", "drawn"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
     # without it the video uses animated gradient backgrounds.
@@ -147,7 +150,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes", "meme_source"]
 
 
 def settings_path(cfg: Config) -> Path:

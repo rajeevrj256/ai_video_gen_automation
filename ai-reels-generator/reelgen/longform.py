@@ -32,7 +32,7 @@ from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
-from . import aimusic, cinehook, memes, music, sound_design, variety
+from . import aimusic, cinehook, memes, memeweb, music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
 from . import repeats
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
@@ -172,6 +172,7 @@ class LVisual(BaseModel):
     labels: list[str] = Field(default_factory=list, description=f"meme only: the meme's words, in the format's order, each at most {memes.LABEL_WORDS} words. Empty otherwise.")
     face: Literal[("",) + memes.FACES] = Field(default="", description="meme 'reaction' only: the face. Empty otherwise.")
     file: str = Field(default="", description="meme only: one of the user's own meme files by name, when one fits exactly; empty for a drawn format.")
+    web_meme: str = Field(default="", description="meme only, when the instructions list real meme templates: a template's exact name as listed, or 'search: words'. Empty otherwise.")
 
 
 class LBeat(BaseModel):
@@ -232,8 +233,10 @@ class LongScript(BaseModel):
     music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
 
 
-def _system(style: str, language: str, minutes: float = 8, meme: str = "off", meme_files: list | None = None) -> str:
-    """`meme`: off / some / lots (memes.py): the funny-explainer writing and 'meme' visuals."""
+def _system(style: str, language: str, minutes: float = 8, meme: str = "off", meme_files: list | None = None,
+            meme_web: str = "") -> str:
+    """`meme`: off / some / lots (memes.py): the funny-explainer writing and 'meme' visuals; `meme_web`: the real
+    templates the writer may use (memeweb.prompt_block)."""
     sh = shape(minutes)
     funny = meme in memes.EVERY
     kind = ("an original fiction story, clearly presented as a story" if style == "story" else
@@ -336,7 +339,7 @@ model exists. Pick the scene: 'sky' only for things that fly (the model flies le
 front first), 'space' for space objects, 'studio' (a turntable) for everything else. Never in a \
 serious or tragic moment (a crash, a war, a death, a disaster): a toy-like 3D model there is \
 disrespectful. Headline: a short label, or empty.
-{memes.visual_rules(meme, meme_files) + chr(10) if funny else ""}
+{memes.visual_rules(meme, meme_files, meme_web) + chr(10) if funny else ""}
 Accuracy: only state facts you are confident about or have looked up with web search. Never invent \
 details, dialogue or figures in a true story. Timeless wording: never "today", "this week" or "five \
 days ago"; use dates. No politics or politicians, tragedies, violence, or rumours about real people. \
@@ -383,7 +386,8 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
     from .hooks import block as hook_block
 
     prompt += hook_block(cfg)  # the trailer hook's and the cold open's first seconds
-    system = _system(cfg.video_style, cfg.long_language, minutes, memes.level(cfg), memes.own_files(cfg))
+    system = _system(cfg.video_style, cfg.long_language, minutes, memes.level(cfg), memes.own_files(cfg),
+                     memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "")
     script = ask(cfg.ai_backend, cfg.claude_model, system, prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
@@ -997,6 +1001,13 @@ def _meme_visual(v: dict, cfg: Config, work: Path, index: int) -> dict:
                             sub=v.get("sub") or "", icons=list(v.get("icons") or []))
     memes.repair(model)
     v.update(type=model.type, meme=model.meme, labels=model.labels, face=model.face, headline=model.headline, icons=model.icons)
+    web = memeweb.prepare(cfg, v.get("web_meme") or "", work / "memes", index) if v["type"] == "meme" else None
+    if web is not None:  # a real meme template (imgflip.com): its picture or clip, the labels in its own text boxes
+        v.update(src=web["path"].relative_to(work).as_posix(), webName=web["name"], webPage=web["page"],
+                 imgW=web["w"], imgH=web["h"], webBoxes=web["boxes"], clipSeconds=web["seconds"])
+        if web["boxes"]:
+            v["labels"] = (model.labels + [""] * len(web["boxes"]))[:len(web["boxes"])]
+        return v
     if v["type"] == "meme" and model.file:
         own = next((f for f in memes.own_files(cfg) if f.name == model.file.strip()), None)
         if own is not None:
