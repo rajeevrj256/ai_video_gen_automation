@@ -95,7 +95,6 @@ TEMPLATES = {
                   "drone. Slower and moodier."),
 }
 ENERGETIC = ("kinetic", "rapid", "stakes")
-HOOK_PUSH = {"kinetic": 8, "rapid": 10, "stakes": 6, "cinematic": 0}  # % faster voice in the hook than the story
 ENERGY_DROP = 0.9  # the breath of silence after an energetic hook (the cinematic one keeps DROP)
 ENERGY_LOOK = ("vivid cinematic photograph, bright punchy colours, high contrast, crisp detail, dynamic angle, "
                "realistic, no text")

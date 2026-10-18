@@ -1532,7 +1532,7 @@ function wireHooks(id, v) {
     $("#hkRewriteRow").style.display = data.yours ? "none" : "flex";  // a Script Video's words are yours
     box.querySelectorAll("#hkTpl .chip").forEach((c) => c.onclick = () => { pick = c.dataset.t; load(); });
     const chips = [`<button class="chip" data-key="orig">▶ This video's hook (${esc(HOOK_TPL[data.current]?.[0] || data.current)}, ${Math.round(data.seconds)} s)</button>`]
-      .concat(data.made.map((m) => `<button class="chip" data-key="${esc(m.key)}">▶ ${esc(m.name)} · ${Math.round(m.seconds)} s</button>`));
+      .concat(data.made.map((m) => `<button class="chip" data-key="${esc(m.key)}">▶ ${esc(m.name)} · ${Math.round(m.seconds)} s${m.pace && m.pace !== m.video_pace ? " · " + esc(paceLabel(m.pace)) : ""}</button>`));
     $("#hkMade").innerHTML = chips.join("");
     box.querySelectorAll("#hkMade .chip").forEach((c) => {
       c.classList.toggle("on", c.dataset.key === playing);
@@ -1552,7 +1552,7 @@ function wireHooks(id, v) {
   $("#hkGo").onclick = async () => {
     $("#hkGo").disabled = true;
     try {
-      await api(`/api/videos/${encodeURIComponent(id)}/hooks`, { method: "POST", body: JSON.stringify({ template: pick, rewrite: $("#hkRewrite").checked }) });
+      await api(`/api/videos/${encodeURIComponent(id)}/hooks`, { method: "POST", body: JSON.stringify({ template: pick, rewrite: $("#hkRewrite").checked, pace: $("#hkPace").value || null }) });
       load();
     } catch (e) { toast(e.message); $("#hkGo").disabled = false; }
   };
@@ -1601,6 +1601,7 @@ async function openVideo(id) {
       <div id="hkExBox"><button type="button" class="mini" id="hkEx">▶ See an example of this style</button> <span class="hint hk-ex-line"></span>
         <video controls playsinline hidden style="width:100%;aspect-ratio:16/9;border-radius:10px;margin-top:6px;background:#000"></video></div>
       <label id="hkRewriteRow" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="hkRewrite" checked style="width:auto"> Rewrite the hook's words for this style (only facts the video already states)</label>
+      <label for="hkPace">Hook speaking speed</label><select id="hkPace"><option value="">Same as the video</option></select>
       <button id="hkGo" style="width:100%;margin-top:8px">🪝 Make a new hook (preview, about 2–5 min)</button>
       <div id="hkLine" class="hint"></div>
       <div id="hkMade" class="chips"></div>
@@ -1739,7 +1740,10 @@ async function openVideo(id) {
   paceSlider($("#rv-pace"), { blank: "Keep this speed", base: madePace,
     video: v.duration_seconds ? { seconds: v.duration_seconds, pace: madePace } : null });
   if ($("#rvDemoBox")) wireDemos(id, v);
-  if ($("#hkBox")) wireHooks(id, v);
+  if ($("#hkBox")) {
+    paceSlider($("#hkPace"), { blank: "Same as the video", base: madePace });  // the hook's own speed
+    wireHooks(id, v);
+  }
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {

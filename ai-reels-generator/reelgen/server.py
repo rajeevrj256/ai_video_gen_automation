@@ -926,8 +926,10 @@ def create_app(cfg: Config) -> FastAPI:
             with demo_lock:  # one preview edit at a time (demos and hooks)
                 entry.update(state="running", line="Starting")
                 try:
+                    pace = str(body.get("pace") or "")
                     rehook.make_hook(load_settings(Config()), folder, template, bool(body.get("rewrite", True)),
-                                     progress=lambda m: entry.update(line=str(m)))
+                                     progress=lambda m: entry.update(line=str(m)),
+                                     pace=pace if re.fullmatch(r"[+-]\d{1,2}%", pace) else None)
                     hook_state.pop(k, None)
                 except Exception as exc:  # noqa: BLE001 - shown on the video page
                     log.warning("New hook for %s failed: %s", video_id, exc)

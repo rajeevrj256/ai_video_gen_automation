@@ -136,10 +136,9 @@ def _render_hook(cfg: Config, script, template: str, work: Path, look: dict, see
     from .sfx import write_cue_sounds, write_sfx
     from .video import _remotion_cli, _render_remotion
 
-    sarvam = str(cfg.long_voice).startswith("sarvam:")
     hook, lines, spoken, cues = _build_hook(
         script, cfg, work, look, seed, progress, hook_seconds=hook_seconds, hook_voices=None, overrides={},
-        remake=False, pct=pct, sarvam_speed=round((cfg.sarvam_pace if sarvam else 1) * (1 + pct / 100), 3),
+        remake=False, pct=pct, sarvam_speed=round(1 + pct / 100, 3),  # a factor on Sarvam's own pace setting
         template=template, clip_ids=set(), used={})
     rel = lambda p: p.relative_to(work).as_posix()  # noqa: E731
     if aimusic.available(cfg) and look.get("aiGenre") and not hook.get("own"):  # the video's genre, a new hook track
@@ -180,8 +179,10 @@ def _render_hook(cfg: Config, script, template: str, work: Path, look: dict, see
     return props
 
 
-def make_hook(cfg: Config, folder: Path, template: str, rewrite: bool = True, progress: Progress = log.info) -> dict:
-    """A new hook for this video, rendered on its own as a preview (see the module's notes)."""
+def make_hook(cfg: Config, folder: Path, template: str, rewrite: bool = True, progress: Progress = log.info,
+              pace: str | None = None) -> dict:
+    """A new hook for this video, rendered on its own as a preview (see the module's notes). `pace` ('-3%'): how fast
+    the hook is spoken; none = the video's own pace, so the hook matches the story after it."""
     from .longform import SCRIPT_HOOK_SECONDS, LongScript, _seed
     from .rerender import _remake_look, made_pace
 
@@ -195,7 +196,8 @@ def make_hook(cfg: Config, folder: Path, template: str, rewrite: bool = True, pr
     old = json.loads((folder / "props.json").read_text(encoding="utf-8"))
     yours = report.get("source") == "script"  # a Script Video: the hook's words are the user's
     minutes = float(report.get("duration_seconds") or 540) / 60
-    pace = made_pace(cfg, report)
+    video_pace = made_pace(cfg, report)
+    pace = pace if pace and re.fullmatch(r"[+-]\d{1,2}%", pace) else video_pace
     cfg = replace(cfg, long_voice=report.get("voice") or cfg.long_voice, long_voice_rate=pace, hook_template=template,
                   long_minutes=minutes, captions=report.get("captions", False))
     cfg, look = _remake_look(cfg, old)
@@ -222,7 +224,8 @@ def make_hook(cfg: Config, folder: Path, template: str, rewrite: bool = True, pr
     hook = props["hook"]
     shutil.copy2(work / "hook.mp4", folder / HOOKS / f"{key}.mp4")
     old_end = float(old["hook"]["duration"])
-    info = {"key": key, "template": template, "name": cinehook.TEMPLATES[template][0], "rewritten": not (yours or not rewrite),
+    info = {"key": key, "template": template, "name": cinehook.TEMPLATES[template][0], "pace": pace,
+            "video_pace": video_pace, "rewritten": not (yours or not rewrite),
             "seconds": round(hook["duration"], 1), "old_seconds": round(old_end, 1),
             "lines": [s.get("text") or "" for s in hook["shots"]], "said": [h.line for h in shots if h.line.strip()],
             "made": datetime.now().isoformat(timespec="seconds")}

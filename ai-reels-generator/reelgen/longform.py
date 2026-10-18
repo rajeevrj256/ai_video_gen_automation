@@ -692,13 +692,14 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
     look["hookTemplate"] = template  # a re-make keeps it
     progress(f"Recording the hook ({cinehook.TEMPLATES[template][0]})")
     said = [h.line.strip() for h in script.hook]
-    push = cinehook.HOOK_PUSH.get(template, 0)  # an energetic hook is spoken a little faster than the story
+    # The hook is spoken at the video's own pace (it used to run 6-10% faster on the energetic templates, and the
+    # user heard the preview's speed not match the video); the video page's hook slider sets its own pace.
     if hook_voices is not None:
         audios = list(hook_voices)
     else:
         takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook", cfg.tts_engine,
-                                       cfg.kokoro_voice, f"{pct + push:+d}%", delivery="hook",
-                                       sarvam_speed=round(sarvam_speed * (1 + push / 100), 3)) if any(said) else [])
+                                       cfg.kokoro_voice, f"{pct:+d}%", delivery="hook",
+                                       sarvam_speed=sarvam_speed) if any(said) else [])
         audios = [next(takes) if x else None for x in said]
     drop = cinehook.drop_for(template)
     if hype and hook_seconds != SCRIPT_HOOK_SECONDS:
