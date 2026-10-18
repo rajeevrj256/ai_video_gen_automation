@@ -22,6 +22,7 @@ from .config import Config
 
 LEVELS = ("off", "some", "lots")
 EVERY = {"some": 8, "lots": 4}  # about one meme in N beats
+HOOK = {"some": 1, "lots": 2}  # memes in the cinematic hook (the user: "why memes not inside the hooks???")
 MOST = {"some": 6, "lots": 3}  # never more than one in N (checked)
 LABEL_WORDS = 8
 
@@ -76,6 +77,10 @@ def catalogue() -> str:
     return "\n".join(f"  - {k}: {about}. labels: {' | '.join(slots)}" for k, (slots, about) in FORMATS.items())
 
 
+def _hook_count(memes: str) -> str:
+    return "exactly one" if HOOK[memes] == 1 else f"one or {HOOK[memes]}"
+
+
 def visual_rules(memes: str, files: list | None = None, web: str = "") -> str:
     """For every writer and storyboard (inside the long writer's visual rules): when and how to use a meme."""
     if memes not in EVERY:
@@ -91,7 +96,10 @@ idea: a trade-off is two-buttons, a better choice is nope-yep, a plan that backf
 are brain. Set 'meme' to the format, 'labels' to its words in the format's order (each at most {LABEL_WORDS} words, \
 in the words of this video, the punchline short), 'face' for a reaction. The line before sets it up and the meme \
 pays it off; never a random meme, never on a sad or serious moment (a death, a disaster, poverty, illness). Labels \
-state no figure or fact the narration doesn't. Formats:
+state no figure or fact the narration doesn't. In the cold open (the hook's shots), when there is one: \
+{_hook_count(memes)} hook shot{'' if HOOK[memes] == 1 else 's'} with a line {'is' if HOOK[memes] == 1 else 'are'} a meme too \
+(a 'meme' visual, 'picture' empty, grade natural): the funny jolt that makes the stakes relatable before the next \
+dark beat; never a flash shot, never the first or the last shot (the big question). Formats:
 {catalogue()}
   Faces (reaction): {', '.join(FACES)}.{own}{web}"""
 

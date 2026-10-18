@@ -720,7 +720,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             audios = [next(takes) if x else None for x in said]
         lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
                                   hook_seconds)
-        pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook) if ("hook", i) not in overrides},
+        # A meme shot shows its meme: no AI still is drawn for it (the still used to cover a meme the writer put there).
+        pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)
+                                       if ("hook", i) not in overrides and h.visual.type != "meme"},
                                  work, seed, script.youtube_title, progress, reuse=remake)
         t = 0.0
         for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
@@ -752,6 +754,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
             hook["shots"].append(shot)
             t += d
         cinehook.fill_defaults(hook["shots"])
+        for shot in hook["shots"]:
+            if shot["visual"].get("type") == "meme":  # a meme in its own colours, never tinted red or noir
+                shot["grade"] = "natural"
         if hook["shots"][0]["transition"] == "cut":
             hook["shots"][0]["transition"] = "dip"  # out of black, on the first boom
         hook.update(duration=round(t + cinehook.DROP, 3), cine=True, drop=cinehook.DROP, subscribe=True,

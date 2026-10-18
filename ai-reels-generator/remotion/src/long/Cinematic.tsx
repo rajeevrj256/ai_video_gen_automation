@@ -331,15 +331,18 @@ const CineHook: React.FC<{hook: Hook; look: Look; render: HookRender; subtitles?
         // The shot under a photo or a tear keeps running while the next one comes in over it.
         const over = next && next.transition && OVERLAPS.has(next.transition) ? TRANSITION_FRAMES[next.transition] : 0;
         const frames = Math.max(1, f(s.duration));
+        const grade = s.visual.type === 'meme' ? 'natural' : s.grade; // a meme keeps its own colours
         return (
-          <Sequence key={i} name={`hook ${i + 1} (${s.grade ?? 'natural'}, ${kind})`} from={f(s.start)} durationInFrames={frames + over}>
+          <Sequence key={i} name={`hook ${i + 1} (${grade ?? 'natural'}, ${kind})`} from={f(s.start)} durationInFrames={frames + over}>
             <CineIn kind={kind} seed={i + 1}>
-              <div style={{position: 'absolute', inset: 0, filter: gradeFilter(s.grade)}}>
-                <Shot v={{...s.visual, camera: s.visual.camera === 'still' ? 'push' : s.visual.camera}} frames={frames} transition="cut" intense>
+              <div style={{position: 'absolute', inset: 0, filter: gradeFilter(grade)}}>
+                {/* a meme holds still: the hook's hard push cut its card off at the edges */}
+                <Shot v={{...s.visual, camera: s.visual.type === 'meme' ? 'still' : s.visual.camera === 'still' ? 'push' : s.visual.camera}}
+                  frames={frames} transition="cut" intense={s.visual.type !== 'meme'}>
                   {render(s, frames)}
                 </Shot>
               </div>
-              <GradeWash grade={s.grade} />
+              <GradeWash grade={grade} />
             </CineIn>
             {s.text ? <TypedLabel text={s.text} vertical={BOX.V} subtitles={subtitles} /> : null}
           </Sequence>
