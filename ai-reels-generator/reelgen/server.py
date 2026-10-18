@@ -829,14 +829,17 @@ def create_app(cfg: Config) -> FastAPI:
         from .longform import LongScript
 
         folder = video_dir(cfg, video_id)
-        original = None
+        original, script, old = None, None, {}
         try:
             script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
-            window = rerender.demo_window(script, json.loads((folder / "props.json").read_text(encoding="utf-8")))
+            old = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+            window = rerender.demo_window(script, old)
             original = list(window[1:]) if window else None
         except (OSError, ValueError):
             pass
         made = rerender.demos(folder)
+        if script is not None and original is not None:
+            made = [rerender.fill_wpm(d, script, old) for d in made]
         keys = {d["key"] for d in made}
         busy = [{"key": k.split("/", 1)[1], **e} for k, e in list(demo_state.items())
                 if k.startswith(video_id + "/") and k.split("/", 1)[1] not in keys]

@@ -299,15 +299,34 @@ def demo_window(script, old: dict) -> tuple[int, float, float] | None:
     return k, round(float(beats[0]["start"]), 3), round(float(beats[k - 1]["start"]) + float(beats[k - 1]["duration"]), 3)
 
 
-def wpm(props: dict, start: float = 0.0, end: float = 1e9) -> int:
-    """Words a minute the narrator speaks between `start` and `end` (seconds), from the edit's own word timings: a 5%
-    step is hard to hear (the user found +3% and +8% demos alike: 129 vs 134 measured), so the page shows the number."""
-    words = [w for cap in props.get("all_captions") or props.get("captions") or [] for w in cap.get("words", [])
-             if start - 0.05 <= float(w["start"]) <= end + 0.05]
-    if len(words) < 2:
-        return 0
-    span = float(words[-1]["end"]) - float(words[0]["start"])
-    return round(len(words) / span * 60) if span > 0 else 0
+def wpm(beats: list[dict], narrations: list[str]) -> int:
+    """Words a minute the narrator speaks over these lines: their written words over the length of their own audio (beat
+    durations, each line's piece of the take). A 5% step is hard to hear (the user found +3% and +8% demos alike), so
+    the page shows the number. Measured from subtitle timings first, it counted each line's varying lead-in and tail
+    and showed 134 for the original against 159 for a demo +30% faster that was really 1.3x shorter."""
+    seconds = sum(float(b["duration"]) for b in beats)
+    words = sum(len(n.split()) for n in narrations)
+    return round(words / seconds * 60) if seconds > 0 and words else 0
+
+
+def _narrations(script, lines: int) -> list[str]:
+    return [b.narration for c in script.chapters for b in c.beats][:lines]
+
+
+def fill_wpm(info: dict, script, old: dict) -> dict:
+    """Words a minute for a demo made before they were measured from the beats: the original's from its saved edit,
+    the demo's from its length when its lines sit in one chapter (seconds = the lines + the chapter's end gap), else
+    none rather than a wrong number."""
+    from .longform import CHAPTER_GAP
+
+    if info.get("wpm_from") == "beats":
+        return info
+    lines = int(info.get("lines") or 0)
+    said = _narrations(script, lines)
+    info = dict(info, original_wpm=wpm((old.get("beats") or [])[:lines], said), wpm=0)
+    if lines and len(script.chapters[0].beats) >= lines and info.get("seconds"):
+        info["wpm"] = wpm([{"duration": float(info["seconds"]) - CHAPTER_GAP}], said)
+    return info
 
 
 def demo_key(voice: str, pace: str, captions: bool) -> str:
@@ -392,7 +411,8 @@ def demo(cfg: Config, folder: Path, voice: str | None = None, pace: str | None =
         move(work / "reel.mp4", folder / DEMOS / f"{key}.mp4")
         info = {"key": key, "voice": cfg.long_voice, "pace": pace, "captions": cfg.captions,
                 "seconds": round(float(props["duration"]), 1), "lines": lines, "original": [start, end],
-                "wpm": wpm(props), "original_wpm": wpm(old, start, end),
+                "wpm": wpm(props["beats"], _narrations(script, lines)),
+                "original_wpm": wpm(old["beats"][:lines], _narrations(script, lines)), "wpm_from": "beats",
                 "made": datetime.now().isoformat(timespec="seconds")}
         (folder / DEMOS / f"{key}.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
         return info
