@@ -18,7 +18,8 @@ import {SubscribeCard} from './Cine';
 //   promise: key words slam in, then the video's points tick onto a checklist;
 //   teaser:  a COMING UP tag over jump-cut pictures, each moment's tag below it.
 // The spoken words themselves are drawn only with subtitles on (hook.subtitles).
-// A thin bar across the top fills as the hook runs. The silence and the subscribe click at the end stay.
+// No progress bar across the top: on a phone the user saw it as a stray slider. The silence and the subscribe
+// click at the end stay.
 
 export type HookTemplate = 'cinematic' | 'kinetic' | 'rapid' | 'stakes' | 'myth' | 'mirror' | 'rewind' | 'promise' | 'teaser';
 type Render = (shot: HookShot, frames: number) => React.ReactNode;
@@ -341,7 +342,6 @@ export const EnergyHook: React.FC<{hook: Hook; look: Look; render: Render}> = ({
   const live = f(hook.duration - drop);
   const template = (hook.template ?? 'kinetic') as HookTemplate;
   const seed = look.seed ?? 1;
-  const bar = interpolate(frame, [0, live], [0, 1], clamp);
   return (
     <Layer name={`hook (${template})`} style={{background: '#000'}}>
       {hook.shots.map((s, i) => {
@@ -356,8 +356,6 @@ export const EnergyHook: React.FC<{hook: Hook; look: Look; render: Render}> = ({
           </Sequence>
         );
       })}
-      {frame < live ? <div style={{position: 'absolute', left: 0, top: 0, height: BOX.V ? 10 : 8, width: `${bar * 100}%`,
-        background: look.accents[0] ?? HOT[0], boxShadow: `0 0 18px ${look.accents[0] ?? HOT[0]}`}} /> : null}
       {drop > 0 ? (
         <Sequence name="silence" from={live}>
           {hook.subscribe ? <SubscribeCard frames={f(drop)} vertical={BOX.V} /> : <div style={{position: 'absolute', inset: 0, background: '#000'}} />}
