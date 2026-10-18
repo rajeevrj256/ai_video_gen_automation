@@ -362,7 +362,7 @@ def _render_short(cfg: Config, folder: Path, work: Path, report: dict, script: d
         script.setdefault(field, "")
     script.setdefault("category", "Life & People")
     s = ReelScript.model_validate(script)
-    cfg = replace(cfg, captions=report.get("captions", True))
+    cfg = replace(cfg, captions=report.get("captions", False))
     # The render reads every file from its own folder, so the lines move in next to it.
     local = []
     for k, sc in enumerate(scenes):
@@ -385,7 +385,7 @@ def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: di
     from .video import _remotion_cli, _render_remotion
 
     ls = LongScript.model_validate(script)
-    cfg = replace(cfg, captions=report.get("captions", True))
+    cfg = replace(cfg, captions=report.get("captions", False))
     voices, k = [], 0
     for ci, chapter in enumerate(ls.chapters):
         chunk = []

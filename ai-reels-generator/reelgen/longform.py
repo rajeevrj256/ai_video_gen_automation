@@ -682,7 +682,8 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
     a new video gets cfg.hook_template (auto: an energetic one the last video didn't use)."""
     template = template or (look.get("hookTemplate") or "cinematic" if remake else cinehook.pick_template(cfg))
     hype = cinehook.energetic(template)
-    hook = {"duration": 0.0, "shots": [], "music": None, "style": "", "template": template}
+    hook = {"duration": 0.0, "shots": [], "music": None, "style": "", "template": template,
+            "subtitles": bool(cfg.captions)}  # energetic hooks draw the spoken words only with subtitles on
     lines: list = []
     spoken: list = []
     cues: list = []

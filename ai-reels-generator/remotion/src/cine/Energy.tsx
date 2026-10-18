@@ -125,8 +125,8 @@ const Slam: React.FC<{text: string; color: string}> = ({text, color}) => {
   );
 };
 
-const EnergyShot: React.FC<{s: HookShot; i: number; frames: number; template: HookTemplate; accent: string; render: Render}> = (p) => {
-  const {s, i, frames, template, accent, render} = p;
+const EnergyShot: React.FC<{s: HookShot; i: number; frames: number; template: HookTemplate; accent: string; render: Render; spoken: boolean}> = (p) => {
+  const {s, i, frames, template, accent, render, spoken} = p;
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const meme = s.visual.type === 'meme';
@@ -147,9 +147,10 @@ const EnergyShot: React.FC<{s: HookShot; i: number; frames: number; template: Ho
   y += Math.cos(frame * 3.4 + i) * shake * 0.6;
   // A slide that carries its own words (a keyword, a title) would say the line twice next to the captions: it
   // sits back, dimmed and soft, like the kinetic template's picture.
-  const wordy = ['keyword', 'title', 'quote'].includes(s.visual.type);
-  const filter = meme ? 'none' : template === 'kinetic' || wordy ? 'brightness(0.42) saturate(1.15) blur(4px)'
-    : template === 'stakes' ? (s.text ? 'brightness(0.38) saturate(1.2) blur(5px)' : 'contrast(1.1) saturate(1.25)')
+  // With subtitles off (the default) no spoken word is drawn: only the shot's own key words slam in.
+  const wordy = spoken && ['keyword', 'title', 'quote'].includes(s.visual.type);
+  const filter = meme ? 'none' : spoken && (template === 'kinetic' || wordy) ? 'brightness(0.42) saturate(1.15) blur(4px)'
+    : template === 'stakes' || (!spoken && template === 'kinetic') ? (s.text ? 'brightness(0.38) saturate(1.2) blur(5px)' : 'contrast(1.1) saturate(1.25)')
     : 'contrast(1.12) saturate(1.3) brightness(1.04)';
   const flash = interpolate(frame, [0, 5], [i === 0 ? 1 : 0.5, 0], clamp);
   const split = template === 'rapid' && frame < 4 && !meme ? (4 - frame) * 9 : 0; // an RGB split on the cut
@@ -166,6 +167,7 @@ const EnergyShot: React.FC<{s: HookShot; i: number; frames: number; template: Ho
       ) : null}
       <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.5) 100%)'}} />
       {meme ? null /* a meme carries its own words: a caption only said them twice */
+        : !spoken ? (s.text ? <Slam text={s.text} color={accent} /> : null)
         : template === 'kinetic' ? <Kinetic s={s} accent={accent} />
         : template === 'stakes' ? (s.text ? <><Slam text={s.text} color={accent} /><Captions s={s} accent={accent} small /></> : <Kinetic s={s} accent={accent} />)
         : <>{s.text && !(s.words ?? []).length ? <Slam text={s.text} color={accent} /> : null}<Captions s={s} accent={accent} /></>}
@@ -191,7 +193,7 @@ export const EnergyHook: React.FC<{hook: Hook; look: Look; render: Render}> = ({
         const accent = i === 0 ? look.accents[0] ?? HOT[0] : HOT[(i + seed) % HOT.length];
         return (
           <Sequence key={i} name={`hook ${i + 1} (${template})`} from={f(s.start)} durationInFrames={frames}>
-            <EnergyShot s={s} i={i} frames={frames} template={template} accent={accent} render={render} />
+            <EnergyShot s={s} i={i} frames={frames} template={template} accent={accent} render={render} spoken={hook.subtitles === true} />
           </Sequence>
         );
       })}

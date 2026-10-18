@@ -110,6 +110,7 @@ export type Hook = {
   drone?: string | null; // the dark bed under the hook, cut where the silence starts
   subscribe?: boolean; // a subscribe button clicked, silently, in that silence
   template?: 'cinematic' | 'kinetic' | 'rapid' | 'stakes'; // reelgen/cinehook.py TEMPLATES (cine/Energy.tsx); none = cinematic
+  subtitles?: boolean; // energetic hooks: the spoken words on screen (kinetic words, captions) only with subtitles on
 };
 
 // One simple shape of a 3D object Claude designed (reelgen/models3d.py Part). Metres, +Y up, front +Z.

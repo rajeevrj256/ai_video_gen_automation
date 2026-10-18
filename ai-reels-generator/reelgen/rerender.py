@@ -35,7 +35,7 @@ def made_pace(cfg: Config, report: dict) -> str:
 def _settings(cfg: Config, report: dict, voice: str | None, pace: str | None,
               captions: bool | None) -> tuple[Config, str, str, bool]:
     """The settings a re-make (or its demo) uses: (cfg, pace, the pace it was made at, whether a pace was picked)."""
-    cfg = replace(cfg, captions=report.get("captions", True) if captions is None else captions)
+    cfg = replace(cfg, captions=report.get("captions", False) if captions is None else captions)
     old_pace = made_pace(cfg, report)
     chosen = bool(pace and re.fullmatch(r"[+-]\d{1,2}%", pace))  # a speed picked: the voice is recorded again
     pace = pace if chosen else old_pace

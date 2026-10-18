@@ -85,12 +85,12 @@ PIC_NEGATIVE = ", portrait, close-up of a face, cartoon, illustration, anime, 3d
 # retention at start, look like simple slide, read text". The energetic templates (remotion/src/cine/Energy.tsx)
 # open at full energy on frame 0 and keep something moving every half second; the cinematic one stays as a choice.
 TEMPLATES = {
-    "kinetic": ("⚡ Kinetic words", "Every word slams onto the screen as it's spoken, huge, the key words in colour, "
-                "over the dimmed picture. Fast voice, a beat from the first frame."),
+    "kinetic": ("⚡ Kinetic words", "The hardest-hitting words of each line slam onto the screen, huge, in colour "
+                "(every spoken word only with subtitles on). Fast voice, a beat from the first frame."),
     "rapid": ("🎬 Fast cuts", "Full, bright pictures with a jump-cut zoom every half second, an RGB hit on every cut and "
-              "bold 2-3 word captions with the spoken word lit up."),
+              "bold 2-3 word captions with the spoken word lit up when subtitles are on."),
     "stakes": ("💥 Big stakes", "Each shot's number or key words slam in giant and shake the frame (numbers count up), "
-               "the line in small captions below."),
+               "the line in small captions below when subtitles are on."),
     "cinematic": ("🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark "
                   "drone. Slower and moodier."),
 }
