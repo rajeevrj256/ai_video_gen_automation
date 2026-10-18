@@ -299,6 +299,17 @@ def demo_window(script, old: dict) -> tuple[int, float, float] | None:
     return k, round(float(beats[0]["start"]), 3), round(float(beats[k - 1]["start"]) + float(beats[k - 1]["duration"]), 3)
 
 
+def wpm(props: dict, start: float = 0.0, end: float = 1e9) -> int:
+    """Words a minute the narrator speaks between `start` and `end` (seconds), from the edit's own word timings: a 5%
+    step is hard to hear (the user found +3% and +8% demos alike: 129 vs 134 measured), so the page shows the number."""
+    words = [w for cap in props.get("all_captions") or props.get("captions") or [] for w in cap.get("words", [])
+             if start - 0.05 <= float(w["start"]) <= end + 0.05]
+    if len(words) < 2:
+        return 0
+    span = float(words[-1]["end"]) - float(words[0]["start"])
+    return round(len(words) / span * 60) if span > 0 else 0
+
+
 def demo_key(voice: str, pace: str, captions: bool) -> str:
     import hashlib
 
@@ -381,6 +392,7 @@ def demo(cfg: Config, folder: Path, voice: str | None = None, pace: str | None =
         move(work / "reel.mp4", folder / DEMOS / f"{key}.mp4")
         info = {"key": key, "voice": cfg.long_voice, "pace": pace, "captions": cfg.captions,
                 "seconds": round(float(props["duration"]), 1), "lines": lines, "original": [start, end],
+                "wpm": wpm(props), "original_wpm": wpm(old, start, end),
                 "made": datetime.now().isoformat(timespec="seconds")}
         (folder / DEMOS / f"{key}.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
         return info
