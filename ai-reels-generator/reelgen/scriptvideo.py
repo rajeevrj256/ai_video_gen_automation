@@ -128,6 +128,8 @@ class BoardShot(BaseModel):
     transition: cinehook.Transition = HookShot.model_fields["transition"]
     boom: bool = HookShot.model_fields["boom"]
     flash: bool = HookShot.model_fields["flash"]
+    stamp: str = HookShot.model_fields["stamp"]
+    rewind: bool = HookShot.model_fields["rewind"]
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects of the story itself, on a word of the line or word '*' on its label (booms, whips, glitches and typing are added for the hook automatically).")
 
 
@@ -264,7 +266,8 @@ def _hook_shots(board: Storyboard, hook: list[str]) -> list[HookShot]:
 
     def shot(s: BoardShot, line: str) -> HookShot:
         return HookShot(beat=s.beat, line=line, text=s.text, visual=s.visual, sounds=s.sounds, picture=s.picture,
-                        grade=s.grade, transition=s.transition, boom=s.boom, flash=s.flash and not line)
+                        grade=s.grade, transition=s.transition, boom=s.boom, flash=s.flash and not line,
+                        stamp=s.stamp, rewind=s.rewind)
 
     flashes = 0
     for s in board.hook:

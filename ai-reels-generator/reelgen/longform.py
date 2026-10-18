@@ -192,6 +192,8 @@ class HookShot(BaseModel):
     transition: cinehook.Transition = Field(default="cut", description=cinehook.TRANSITION_HELP)
     boom: bool = Field(default=False, description=cinehook.BOOM_HELP)
     flash: bool = Field(default=False, description=cinehook.FLASH_HELP)
+    stamp: str = Field(default="", description=cinehook.STAMP_HELP)
+    rewind: bool = Field(default=False, description=cinehook.REWIND_HELP)
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list, on a word of its line, or word '*' to land on its label. Booms, whips, glitches and typing are added for the hook automatically: use these for a sound of the story itself. Prefer the user's own files when they fit.")
 
 
@@ -424,7 +426,8 @@ def _numbered(script: LongScript, mark: set | None = None) -> str:
     out = []
     for hi, h in enumerate(script.hook, 1):
         m = ">> " if mark and (0, hi) in mark else ""
-        out.append(f"{m}H{hi} {h.line}  {_visual_text(h.visual)}" + (f" [text: {h.text}]" if h.text else ""))
+        out.append(f"{m}H{hi} {h.line}  {_visual_text(h.visual)}" + (f" [text: {h.text}]" if h.text else "")
+                   + (f" [stamped: {h.stamp}]" if h.stamp else ""))
     for ci, c in enumerate(script.chapters, 1):
         out.append(f"\nChapter {ci}: {c.title}" + (f" | on the break: {c.card_text}" if c.card_text else ""))
         for bi, b in enumerate(c.beats, 1):
@@ -674,6 +677,9 @@ def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int
     return v
 
 
+STAMP_HOLD = 0.7  # seconds an energetic hook's stamped shot runs past its line
+
+
 def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: int, progress: Progress, *,
                 hook_seconds: tuple[float, float], hook_voices: list | None, overrides: dict, remake: bool, pct: int,
                 sarvam_speed: float, template: str | None, clip_ids: set[int], used: dict) -> tuple[dict, list, list, list]:
@@ -705,7 +711,9 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
     drop = cinehook.drop_for(template)
     if hype and hook_seconds != SCRIPT_HOOK_SECONDS:
         hook_seconds = cinehook.seconds_for(cfg.long_minutes, template)
-    lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
+    # A stamped shot holds a moment longer so the stamp is seen (it lands after the line).
+    lengths = cinehook.timing([media_seconds(a.path) + (STAMP_HOLD if hype and h.stamp.strip() else 0) if a else None
+                               for a, h in zip(audios, script.hook)], [h.flash for h in script.hook],
                               hook_seconds, drop, breath=0.15 if hype else 0.4)
     # A meme shot shows its meme: no AI still is drawn for it (the still used to cover a meme the writer put there).
     pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)
@@ -721,11 +729,16 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
                       "camera": h.visual.camera if h.visual.camera != "still" else "push"}
         else:
             visual = _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)
-        # A meme carries its own words: a typed label over it collided with them (and typed for nothing).
-        label = "" if visual.get("type") == "meme" else h.text.strip()
+        # A meme carries its own words: a typed label over it collided with them (and typed for nothing). The energetic
+        # templates draw no text over a meme, but keep it (a checklist item, a stakes slam's sound).
+        label = "" if visual.get("type") == "meme" and not hype else h.text.strip()
         shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": label,
                 "audio": rel(sa.path) if sa else None, "visual": visual, "grade": h.grade,
                 "transition": h.transition, "boom": h.boom, "flash": h.flash}
+        if hype and h.stamp.strip():  # a rubber stamp after the line (MYTH, WRONG...), at most 2 words
+            shot["stamp"] = " ".join(h.stamp.split()[:2]).upper()
+        if hype and h.rewind and template == "rewind":
+            shot["rewind"] = True
         if sa:
             # The energetic templates draw the line's words themselves, as they are said (no subtitles twice).
             shot["words"] = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words]

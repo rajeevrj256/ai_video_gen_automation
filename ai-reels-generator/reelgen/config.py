@@ -96,7 +96,7 @@ class Config:
     # page (rerender.py `pace`).
     long_voice_rate: str = field(default_factory=lambda: _env("REEL_LONG_VOICE_RATE", "+0%"))
     # How long, medium, Script and Shoot videos open (cinehook.TEMPLATES): auto (an energetic template the last video
-    # didn't use), kinetic, rapid, stakes or cinematic. Per video on the Create page and the Script tab.
+    # didn't use), kinetic, rapid, stakes, myth, mirror, rewind, promise, teaser or cinematic. Per video on the Create page and the Script tab.
     hook_template: str = field(default_factory=lambda: _env("REEL_HOOK_TEMPLATE", "auto"))
     # Sarvam voices' own pace (0.5-2.0): 1.0 is what the user liked in Sarvam's playground (Bulbul v4 Flash, Shubh)
     sarvam_pace: float = field(default_factory=lambda: float(_env("REEL_SARVAM_PACE", "1.0")))

@@ -1466,6 +1466,11 @@ const HOOK_TPL = {
   kinetic: ["⚡ Kinetic words", "The hardest-hitting words of each line slam onto the screen, huge, in colour (every spoken word only with subtitles on). Fast voice, a beat from the first frame."],
   rapid: ["🎬 Fast cuts", "Full, bright pictures with a jump-cut zoom every half second, an RGB hit on every cut and bold 2-3 word captions with the spoken word lit up when subtitles are on."],
   stakes: ["💥 Big stakes", "Each shot's number or key words slam in giant and shake the frame (numbers count up), the line in small captions below when subtitles are on."],
+  myth: ["🚫 Myth buster", "Opens on what most people believe and stamps it MYTH in red, then teases the truth with key words slammed over bright pictures."],
+  mirror: ["👉 It's you", "Speaks to the viewer about a moment they live, each line popping up like a phone notification over bright everyday pictures, then the turn they didn't see coming."],
+  rewind: ["⏪ Ending first", "Opens on how it ends, then the tape rewinds (VHS lines, a time stamp) and the hook climbs back toward that moment."],
+  promise: ["✅ Promise + list", "The most striking fact, then exactly what you'll know by the end: the points tick onto a checklist as they're said."],
+  teaser: ["🎞 Coming up", "A trailer of the video's own best moments, a COMING UP tag and jump cuts, then the big question."],
   cinematic: ["🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark drone. Slower and moodier."],
 };
 function hookExample(box, tpl) {  // plays (and, the first time, makes) the example clip of a template
@@ -1491,7 +1496,7 @@ function hookPicker(sel) {
   sel.after(box);
   const sync = () => {
     const t = HOOK_TPL[sel.value];
-    box.querySelector(".hk-ex-desc").textContent = t ? t[1] : sel.value === "auto" ? "Each video gets kinetic words, fast cuts or big stakes, never the same as the last one." : "";
+    box.querySelector(".hk-ex-desc").textContent = t ? t[1] : sel.value === "auto" ? "Each video gets one of the energetic styles above, never one of the last three videos\u2019." : "";
     box.querySelector(".hk-ex-btn").hidden = !t;
     box.querySelector("video").hidden = true;
     box.querySelector(".hk-ex-line").textContent = "";

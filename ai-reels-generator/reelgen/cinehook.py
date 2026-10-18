@@ -91,10 +91,24 @@ TEMPLATES = {
               "bold 2-3 word captions with the spoken word lit up when subtitles are on."),
     "stakes": ("💥 Big stakes", "Each shot's number or key words slam in giant and shake the frame (numbers count up), "
                "the line in small captions below when subtitles are on."),
+    "myth": ("🚫 Myth buster", "Opens on what most people believe and stamps it MYTH in red, then teases the truth "
+             "with key words slammed over bright pictures."),
+    "mirror": ("👉 It's you", "Speaks to the viewer about a moment they live, each line popping up like a phone "
+               "notification over bright everyday pictures, then the turn they didn't see coming."),
+    "rewind": ("⏪ Ending first", "Opens on how it ends, then the tape rewinds (VHS lines, a time stamp) and the hook "
+               "climbs back toward that moment."),
+    "promise": ("✅ Promise + list", "The most striking fact, then exactly what you'll know by the end: the points tick "
+                "onto a checklist as they're said."),
+    "teaser": ("🎞 Coming up", "A trailer of the video's own best moments, a COMING UP tag and jump cuts, then the big "
+               "question."),
     "cinematic": ("🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark "
                   "drone. Slower and moodier."),
 }
-ENERGETIC = ("kinetic", "rapid", "stakes")
+# The user (600 impressions, 17 views, 1:47 watched on average) asked for more hook templates after research on
+# retention hooks: the five above the cinematic one are the openings the guides name again and again (a belief
+# proved wrong, the viewer's own situation, the ending first, a specific promise, a preview of the payoff). They all
+# open at full energy (cine/Energy.tsx); only the words' shape and the overlay differ.
+ENERGETIC = ("kinetic", "rapid", "stakes", "myth", "mirror", "rewind", "promise", "teaser")
 ENERGY_DROP = 0.9  # the breath of silence after an energetic hook (the cinematic one keeps DROP)
 ENERGY_LOOK = ("vivid cinematic photograph, bright punchy colours, high contrast, crisp detail, dynamic angle, "
                "realistic, no text")
@@ -126,7 +140,7 @@ def pick_template(cfg, chosen: str = "") -> str:
     if want in TEMPLATES:
         return want
     last = (recent_templates(cfg) or [""])[-1]
-    fresh = [t for t in ENERGETIC if t != last]
+    fresh = [t for t in ENERGETIC if t not in recent_templates(cfg)[-3:]] or [t for t in ENERGETIC if t != last]
     import random
     return random.choice(fresh)
 
@@ -137,8 +151,8 @@ def drop_for(template: str | None) -> float:
 
 def seconds_for(minutes: float, template: str | None = None) -> tuple[float, float]:
     """How long the hook runs (the silence included): a medium video's is shorter, an energetic one shorter still."""
-    if energetic(template):
-        return (16.0, 30.0) if minutes < 7 else (18.0, 34.0)
+    if energetic(template):  # the promise lands in ~10 s; the guides call a 45 s opening too long
+        return (14.0, 26.0) if minutes < 7 else (16.0, 30.0)
     return (28.0, 38.0) if minutes < 7 else (32.0, 45.0)
 
 
@@ -149,17 +163,62 @@ TEMPLATE_TEXT = {
     "stakes": "Every shot's text is its giant slam: the number with its unit ('₹1 lakh', '90%', '3 days') or 1-3 "
               "shocking words, true and stated in the story (never a ratio or total you work out yourself); a number "
               "counts up on screen.",
+    "myth": "Every shot's text is 1-3 key words of its line, slammed in big; the belief's shot gets its stamp.",
+    "mirror": "Every shot's text is its line as a short phone notification or message the viewer would get, 2-6 words "
+              "('Salary credited', 'Balance low', 'This month I save'), never a fact the story doesn't state.",
+    "rewind": "The rewind shot's text is the time jump exactly as the story states it ('2019', '10 DAYS EARLIER', 'THE "
+              "START'), shown like a camcorder's time stamp; other shots 1-3 key words of the line.",
+    "promise": "Shots 1-2: text = 1-3 key words, slammed. Each point the video covers: text = a 2-4 word checklist item "
+               "(they stack up on screen and tick as they're said).",
+    "teaser": "Every shot's text is a 2-4 word tag for the moment it teases (shown under a COMING UP tag).",
 }
 
-ENERGY_RULES = """The hook ({lo}-{hi} seconds, before chapter 1) is a high-energy cold open built to stop the scroll \
-and hold viewers through the first 30 seconds; the first 2 seconds decide whether they stay.
-- Shot 1 says the single most shocking, concrete, specific thing in the story in at most 8 words: a number, a \
+STAMP_HELP = ("Energetic hooks: a rubber stamp slammed across this shot right after its line, 1-2 capital words: MYTH, "
+              "WRONG or NOT TRUE only on a line stating a belief the story proves false, TRUE or CONFIRMED on a "
+              "surprising line the story confirms; empty for almost every shot (at most 2 per hook).")
+REWIND_HELP = ("'Ending first' hooks only: true on the one shot where the hook jumps back in time after showing how it "
+               "ends (the tape rewinds into it).")
+
+SHAPE = """- Shot 1 says the single most shocking, concrete, specific thing in the story in at most 8 words: a number, a \
 contradiction, a stake for the viewer ("Your salary is gone by the 10th."). Never a greeting, a setup, context, or a \
 question about what the viewer knows.
 - Then 5-9 more shots, each line 3-9 words, every one raising the stakes or opening a new loop (what, who, how much, \
 what nobody tells you), with a turn word where it fits ("But", "Except", "Then"). Never give the answer.
-- The last line is the big question or the promise of the payoff, under 10 words. After the hook a short breath of \
-silence, then chapter 1's first line re-asks it.
+- The last line is the big question or the promise of the payoff, under 10 words."""
+SHAPES = {
+    "myth": """- Shot 1 states, in the viewer's own words, the belief most people hold about this subject (at most 9 \
+words) that the script shows is wrong or only half the story; it gets stamp 'MYTH' (or 'WRONG'). Only a belief the \
+script itself corrects: never a straw man, never a claim about a real person.
+- Shot 2 turns it hard ("Except that's not why."), then 3-6 shots of the surprising facts the script states, each \
+raising the stakes, never the full answer.
+- The last line is the question the real answer settles, under 10 words.""",
+    "mirror": """- Speak to the viewer as "you" about a moment they live that this story is about. Shot 1 names that \
+exact moment in at most 8 words, concrete and everyday ("Your salary lands on the first.").
+- 2-3 shots make it sharper and more personal, then the turn: what they never noticed about it, from the script's \
+facts ("But nobody told you this."). Never a greeting, never 'Have you ever...'.
+- The last line is the question or promise the video answers, under 10 words.""",
+    "rewind": """- Shots 1-2 open on how the story ends: its most dramatic outcome or moment, vivid and concrete (what \
+happened, never why). Then one shot with rewind true jumps back (its line and text say when, as the script states it).
+- Then 3-5 shots climb back toward the ending, each raising the stakes, with a turn word where it fits.
+- The last line asks how or why it ended like that, under 10 words; the answer stays for the end.""",
+    "promise": """- Shot 1 is the most striking concrete fact of the story in at most 8 words.
+- Shot 2 is the promise, specific and in the title's words: what the viewer will know by the end ("By the end, \
+you'll know exactly where it goes.").
+- Then 3 shots, one per point the video really covers, in its order, each a short teaser (never the answer).
+- The last line says why it matters to the viewer, under 10 words.""",
+    "teaser": """- A trailer of this video's own best moments: 4-6 shots, each teasing one striking moment from a \
+different chapter, in the video's order; the line a short tease of it (at most 9 words, never its explanation) and \
+the visual the same as that moment's visual in the script.
+- The last line is the big question the video answers, under 10 words.""",
+}
+
+
+ENERGY_RULES = """The hook ({lo}-{hi} seconds, before chapter 1) is a high-energy cold open built to stop the scroll \
+and hold viewers through the first 30 seconds; the first 2 seconds decide whether they stay.
+- It confirms the title's promise at once: the viewer clicked for the title, so by the third shot (about 10 \
+seconds) they know exactly what this video will show them, in the title's own terms.
+{shape}
+- After the hook a short breath of silence, then chapter 1's first line re-asks its question.
 - This hook is drawn as '{name}': {desc} {text}
 - Visuals are real, concrete and fill the frame (picture, footage, stat, compare, scene, model3d, meme): never a \
 keyword or title slide in the hook (the template draws the words). Give most shots a picture (a bright, vivid photo \
@@ -171,7 +230,8 @@ def rules(minutes: float, template: str | None = None) -> str:
     lo, hi = seconds_for(minutes, template)
     if energetic(template):
         name, desc = TEMPLATES[template]
-        return ENERGY_RULES.format(lo=int(lo), hi=int(hi), name=name.split(" ", 1)[1], desc=desc, text=TEMPLATE_TEXT[template])
+        return ENERGY_RULES.format(lo=int(lo), hi=int(hi), name=name.split(" ", 1)[1], desc=desc, text=TEMPLATE_TEXT[template],
+                                   shape=SHAPES.get(template, SHAPE))
     return RULES.format(lo=int(lo), hi=int(hi))
 
 
@@ -187,7 +247,21 @@ words). {TEMPLATE_TEXT[template]} Text comes only from the hook or the script, n
 never a number they don't say (no ratio, total or change you work out yourself, e.g. no '4X' for 20 to 80). Give \
 most shots a picture (a bright, vivid photo prompt for an image model: no text, no real person's face), keeping a \
 visual for every shot. No flash montage; grade natural; transition cut; boom on the 2-3 biggest moments. After the \
-hook a short breath of silence, then the script starts."""
+hook a short breath of silence, then the script starts.{BOARD_EXTRA.get(template, "")}"""
+
+
+BOARD_EXTRA = {  # the user's words are final: a template's shape only where their lines already have it
+    "myth": " Give stamp 'MYTH' to a hook line that states a belief the script proves wrong (none if no line does).",
+    "rewind": " Set rewind true on the hook line where the hook jumps back in time (none if it never does).",
+    "teaser": " Where a hook line teases a moment of the script, use that moment's visual.",
+}
+
+
+def stamp_at(shot: dict) -> float:
+    """Seconds into a shot when its stamp lands: just after its line (keep in step with cine/Energy.tsx stampAt)."""
+    words = shot.get("words") or []
+    at = float(words[-1]["end"]) + 0.12 if words else float(shot["duration"]) * 0.55
+    return min(at, max(0.2, float(shot["duration"]) - 0.35))
 
 
 def timing(lengths: list[float | None], flashes: list[bool], seconds: tuple[float, float], drop: float = DROP,
@@ -380,8 +454,15 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
         if hype:
             if k:
                 cue("hook-whip", start - 0.08, 0.55)
-            if template == "stakes" and s.get("text") and not boom:
+            if template in ("stakes", "myth") and s.get("text") and not boom:
                 cue("impact", start + 0.05, 0.6)
+            if s.get("stamp"):
+                cue("impact", start + stamp_at(s), 0.85, full=True)
+            if s.get("rewind"):
+                cue("glitch", start, 0.6)
+                cue("hook-whip", start + 0.35, 0.5)
+            if template in ("mirror", "promise", "teaser") and s.get("text"):
+                cue("pop", start + 0.12, 0.55)
             continue
         kind = s.get("transition") or "cut"
         hit = 1.45 if s.get("flash") else 1.0  # the montage is the climax: its cuts hit harder

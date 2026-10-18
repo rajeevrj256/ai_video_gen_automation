@@ -100,7 +100,13 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
   energy from the first frame. Pick a style on the Create page, the Script tab or in Settings (▶ See an example plays
   a sample of each): ⚡ **Kinetic words** (every word slams onto the screen as it's spoken), 🎬 **Fast cuts** (bright
   pictures, a jump-cut zoom every half second, bold captions), 💥 **Big stakes** (the number or key words slam in
-  giant and shake the frame), or 🎞 **Cinematic** (the slower documentary look below). Auto rotates the energetic ones.
+  giant and shake the frame), 🚫 **Myth buster** (the common belief, stamped MYTH, then the truth teased), 👉 **It's
+  you** (the viewer's own moment, each line popping up like a phone notification), ⏪ **Ending first** (how it ends,
+  then a VHS rewind back to the start), ✅ **Promise + list** (a striking fact, what you'll know by the end, the points
+  ticking onto a checklist), 🎞 **Coming up** (a trailer of the video's own best moments), or 🎞 **Cinematic** (the
+  slower documentary look below). Auto rotates the energetic ones, never one of the last three videos'. Every hook
+  confirms the title's promise within about 10 seconds, and with memes on, every style gets its meme. The spoken
+  words only appear on screen with subtitles on.
 - **Re-create only the hook**: on a finished video's page, **🪝 Hook** makes a new hook in another style (Claude
   rewrites it from the video's own facts; a Script Video keeps your words) and plays it next to the current one.
   **Save as a new video** copies the video, puts the new hook first and joins the rest after it in a few minutes, with

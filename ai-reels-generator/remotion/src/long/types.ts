@@ -97,6 +97,8 @@ export type HookShot = {
   // The cinematic hook (cine/): the shot's colour grade and how it comes in.
   grade?: Grade;
   transition?: CineTransition;
+  stamp?: string; // energetic hooks: a rubber stamp after the line (MYTH, WRONG, TRUE...)
+  rewind?: boolean; // the 'Ending first' hook: the tape rewinds into this shot
 };
 
 export type Hook = {
@@ -109,7 +111,7 @@ export type Hook = {
   drop?: number; // seconds of silence at the end of the hook, before the story starts
   drone?: string | null; // the dark bed under the hook, cut where the silence starts
   subscribe?: boolean; // a subscribe button clicked, silently, in that silence
-  template?: 'cinematic' | 'kinetic' | 'rapid' | 'stakes'; // reelgen/cinehook.py TEMPLATES (cine/Energy.tsx); none = cinematic
+  template?: 'cinematic' | 'kinetic' | 'rapid' | 'stakes' | 'myth' | 'mirror' | 'rewind' | 'promise' | 'teaser'; // reelgen/cinehook.py TEMPLATES (cine/Energy.tsx); none = cinematic
   subtitles?: boolean; // energetic hooks: the spoken words on screen (kinetic words, captions) only with subtitles on
 };
 

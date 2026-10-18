@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import tunnel
+from . import cinehook, tunnel
 from .categories import CATEGORIES, categorize
 from .config import EDITABLE, PROJECT_ROOT, Config, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
@@ -160,7 +160,7 @@ class JobManager:
                 cfg.story_form = job["story_form"]
             if job.get("memes") in ("off", "some", "lots"):  # memes.LEVELS: this video's own choice
                 cfg.memes = job["memes"]
-            if job.get("hook_template") in ("auto", "kinetic", "rapid", "stakes", "cinematic"):  # cinehook.TEMPLATES: how this video opens
+            if job.get("hook_template") in ("auto", *cinehook.TEMPLATES):  # cinehook.TEMPLATES: how this video opens
                 cfg.hook_template = job["hook_template"]
             if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
                 cfg.long_voice_rate = job["voice_rate"]
@@ -1214,7 +1214,7 @@ def create_app(cfg: Config) -> FastAPI:
                            "manual", style, length, captions=body.captions,
                            story_form=body.story_form if length != "short" else None,
                            memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None,
-                           hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", "kinetic", "rapid", "stakes", "cinematic") else None)
+                           hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", *cinehook.TEMPLATES) else None)
 
     @app.get("/api/stick/voices")
     def stick_voices():
@@ -1471,7 +1471,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
                            captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None,
-                           hook_template=body.hook_template if body.hook_template in ("auto", "kinetic", "rapid", "stakes", "cinematic") else None,
+                           hook_template=body.hook_template if body.hook_template in ("auto", *cinehook.TEMPLATES) else None,
                            voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None)
 
     # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------

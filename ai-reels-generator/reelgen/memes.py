@@ -98,8 +98,8 @@ in the words of this video, the punchline short), 'face' for a reaction. The lin
 pays it off; never a random meme, never on a sad or serious moment (a death, a disaster, poverty, illness). Labels \
 state no figure or fact the narration doesn't. In the cold open (the hook's shots), when there is one: \
 {_hook_count(memes)} hook shot{'' if HOOK[memes] == 1 else 's'} with a line {'is' if HOOK[memes] == 1 else 'are'} a meme too \
-(a 'meme' visual, 'picture' empty, grade natural): the funny jolt that makes the stakes relatable before the next \
-dark beat; never a flash shot, never the first or the last shot (the big question). Formats:
+(a 'meme' visual, 'picture' empty, grade natural), whatever the hook's template: the funny jolt that makes the \
+stakes relatable before the next beat; never a flash shot, never the first or the last shot (the big question). Formats:
 {catalogue()}
   Faces (reaction): {', '.join(FACES)}.{own}{web}"""
 

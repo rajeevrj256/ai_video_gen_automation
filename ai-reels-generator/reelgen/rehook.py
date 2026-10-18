@@ -69,11 +69,17 @@ class NewHook(BaseModel):
 def _write(cfg: Config, script, template: str, keep_words: bool, minutes: float):
     """The new hook's shots (longform.HookShot), written by Claude for the template from the video's own script."""
     from .llm import ask
+    from . import memes, memeweb
     from .longform import LLM_TIMEOUT, HookShot, _system
     from pydantic import create_model
 
     schema = create_model("NewHook", shots=(list[HookShot], Field(description="The hook's shots in order.")))
-    full = _system(cfg.video_style, cfg.long_language, minutes, hook_template=template)
+    # Memes in every template: the Settings level, or 'some' for a video that already has memes in it.
+    level = memes.level(cfg)
+    if level == "off" and any(b.visual.type in ("meme", "web_meme") for c in script.chapters for b in c.beats):
+        level = "some"
+    full = _system(cfg.video_style, cfg.long_language, minutes, level, memes.own_files(cfg),
+                   memeweb.prompt_block(replace(cfg, memes=level)) if level != "off" else "", hook_template=template)
     visuals = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     old = [h.line for h in script.hook if h.line.strip()]
     story = "\n".join(f"{c.title}: " + " ".join(b.narration for b in c.beats) for c in script.chapters)
@@ -374,7 +380,7 @@ def save_as_new(cfg: Config, folder: Path, key: str, progress: Progress = log.in
 # ---------- what each template looks like (the Script tab, the Create page, Settings) ----------
 
 SAMPLES = "hook-samples"
-SAMPLE_VERSION = 2  # bump when a template changes, so the examples are made again
+SAMPLE_VERSION = 4  # bump when a template changes, so the examples are made again
 SAMPLE = [  # an everyday story every viewer knows; no figure that needs a source
     ("Your salary lands on the first.", "salary lands", "1st",
      {"type": "scene", "actors": [{"icon": "banknote", "action": "drop-in"}, {"icon": "smartphone", "action": "pulse"}]}),
@@ -387,6 +393,47 @@ SAMPLE = [  # an everyday story every viewer knows; no figure that needs a sourc
     ("So where does your money really go?", "really go", "Where?",
      {"type": "scene", "actors": [{"icon": "indian-rupee", "action": "flee"}, {"icon": "search", "action": "approach"}]}),
 ]
+
+
+# The templates with their own shape tell the same story their way: (line, text, picture of SAMPLE[k], extras).
+SHAPED = {
+    "myth": [("You think a bigger salary will fix it.", "BIGGER SALARY", 0, {"stamp": "MYTH"}),
+             ("A raise often vanishes the same way.", "SAME WAY", 1, {}),
+             ("Rent. EMIs. Groceries. Subscriptions.", "RENT. EMIS.", 2, {}),
+             ("The leak is in the small things.", "SMALL THINGS", 3, {}),
+             ("So where does your money really go?", "WHERE?", 4, {})],
+    "mirror": [("Your salary lands on the first.", "Salary credited", 0, {}),
+               ("You promise yourself: this month, I save.", "This month I save", 3, {}),
+               ("By the tenth, it's already gone.", "Balance low", 1, {}),
+               ("You didn't even buy anything big.", "Nothing big?", 2, {}),
+               ("So where does your money really go?", "Where did it go?", 4, {})],
+    "rewind": [("The tenth. Your account is almost empty.", "ALMOST EMPTY", 1, {}),
+               ("And you didn't buy anything big.", "NOTHING BIG", 3, {}),
+               ("Ten days earlier, your salary landed.", "10 DAYS EARLIER", 0, {"rewind": True}),
+               ("Rent. EMIs. Groceries. Subscriptions.", "RENT. EMIS.", 2, {}),
+               ("So where did it really go?", "WHERE?", 4, {})],
+    "promise": [("By the tenth, your salary is gone.", "GONE BY THE 10TH", 1, {}),
+                ("By the end, you'll know exactly where.", "EXACTLY WHERE", 4, {}),
+                ("The bills you see.", "Bills you see", 2, {}),
+                ("The leaks you don't.", "Leaks you don't", 3, {}),
+                ("And the one habit that stops it.", "The one habit", 0, {}),
+                ("Because it happens every single month.", "EVERY MONTH", 3, {})],
+    "teaser": [("A salary that's gone in ten days.", "10 DAYS", 1, {}),
+               ("The bills you pay without looking.", "THE BILLS", 2, {}),
+               ("The subscriptions you forgot.", "FORGOTTEN", 0, {}),
+               ("The month you worked for nothing.", "A WHOLE MONTH", 3, {}),
+               ("So where does your money really go?", "WHERE?", 4, {})],
+}
+
+
+SAMPLE_MEME = {  # shot 4 of every example is a meme (the user: memes in every template): (format, labels, face)
+    "": ("reaction", ["Worked the whole month", "Gone by the 10th"], "crying"),
+    "myth": ("two-buttons", ["Cancel subscriptions", "Keep them all"], ""),
+    "mirror": ("reaction", ["Didn't buy anything big", "Money still gone"], "confused"),
+    "rewind": ("reaction", ["Rent, EMIs, groceries", "Subscriptions too?"], "shocked"),
+    "promise": ("reaction", ["Me: I barely spend", "The small leaks"], "side-eye"),
+    "teaser": ("reaction", ["Worked all month", "For nothing"], "crying"),
+}
 
 
 def sample_path(cfg: Config, template: str) -> Path:
@@ -404,11 +451,18 @@ def make_sample(cfg: Config, template: str, progress: Progress = log.info) -> Pa
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     shots = []
-    for i, (line, hot, slam, v) in enumerate(SAMPLE):
-        text = hot if template == "kinetic" else slam if template == "stakes" else "" if template == "rapid" else slam.upper()
-        shots.append(HookShot(beat="curiosity", line=line, text=text, boom=i in (0, 4),
-                              visual=LVisual(headline="", sub="", items=[], icons=v.get("icons", []),
-                                             actors=v.get("actors", []), type=v["type"], camera="push")))
+    rows = SHAPED.get(template) or [(line, hot if template == "kinetic" else slam if template == "stakes"
+                                     else "" if template == "rapid" else slam.upper(), k, {})
+                                    for k, (line, hot, slam, _) in enumerate(SAMPLE)]
+    for i, (line, text, k, extra) in enumerate(rows):
+        v = SAMPLE[k][3]
+        visual = LVisual(headline="", sub="", items=[], icons=v.get("icons", []), actors=v.get("actors", []),
+                         type=v["type"], camera="push")
+        if i == 3:
+            fmt, labels, face = SAMPLE_MEME.get(template if template in SHAPED else "", SAMPLE_MEME[""])
+            visual = LVisual(headline="", sub="", items=[], icons=[], type="meme", meme=fmt, labels=labels, face=face,
+                             camera="still")
+        shots.append(HookShot(beat="curiosity", line=line, text=text, boom=i in (0, 4), **extra, visual=visual))
     script = LongScript(topic="Where your salary goes", why_chosen="example", facts_checked="none", category="Money",
                         subject="salary", hook_question="Where does it go?", answer="-", youtube_title="Example hook",
                         hook=shots, chapters=[], mood="energetic", hook_music="spy-pulse")
