@@ -159,6 +159,33 @@ def meme_lists() -> None:
         fail(f"memes.repair kept {v.labels} for a 2-label format")
 
 
+def hook_templates() -> None:
+    """The hook templates are the same in Python (cinehook.TEMPLATES), the page (HOOK_TPL) and the editor (types.ts);
+    shift_props moves the story and keeps the new hook."""
+    import re
+
+    from . import cinehook, rehook
+
+    ours = set(cinehook.TEMPLATES)
+    page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    block = re.search(r"const HOOK_TPL = \{(.*?)\n\};", page, re.S)
+    theirs = set(re.findall(r"^\s+([a-z]+): \[", block.group(1), re.M)) if block else set()
+    if ours != theirs:
+        fail(f"hook templates differ: cinehook {sorted(ours)}, web/index.html HOOK_TPL {sorted(theirs)}")
+    ts = (ROOT / "remotion" / "src" / "long" / "types.ts").read_text(encoding="utf-8")
+    m = re.search(r"template\?: ([^;]+);", ts)
+    if not m or set(re.findall(r"'([a-z]+)'", m.group(1))) != ours:
+        fail("hook templates differ between cinehook.TEMPLATES and types.ts Hook.template")
+    old = {"duration": 30.0, "hook": {"duration": 10.0, "shots": []}, "musicFrom": 10.0,
+           "chapters": [{"start": 10.0, "end": 20.0}], "beats": [{"start": 10.5}], "musicParts": [], "ambience": [],
+           "cues": [{"at": 2.0, "src": "a"}, {"at": 12.0, "src": "b"}], "speech": [[3.0, 4.0], [11.0, 12.0]],
+           "captions": [], "all_captions": [{"start": 11.0, "end": 12.0, "words": [{"start": 11.0, "end": 11.5}]}]}
+    new = rehook.shift_props(old, {"duration": 7.0}, {"cues": [{"at": 1.0}], "speech": [[1.0, 2.0]], "captions": []}, -3.0)
+    if (new["duration"], new["beats"][0]["start"], [c["at"] for c in new["cues"]], new["all_captions"][0]["start"]) != (
+            27.0, 7.5, [9.0, 1.0], 8.0):
+        fail(f"rehook.shift_props: the story didn't move with the new hook: {new}")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -166,6 +193,7 @@ def main() -> int:
     behaviour()
     update_helper()
     meme_lists()
+    hook_templates()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

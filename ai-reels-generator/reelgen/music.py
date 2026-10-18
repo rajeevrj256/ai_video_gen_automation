@@ -358,7 +358,7 @@ TRAILER_SPECS = {
 }
 
 
-def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path) -> Path:
+def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path, instant: bool = False) -> Path:
     """An energetic, original trailer track for the hook, built like an action/spy intro:
     a short build, then a driving groove (four-on-the-floor kick, backbeat clap, ticking hats,
     a minor bass ostinato, stabs), a lead that joins for the second half, a snare roll and a
@@ -371,7 +371,8 @@ def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path)
     minor = SCALES["harmonic" if rng.random() < 0.5 else "minor"]
     prog = [(0, 5, 3, 4), (0, 6, 5, 4), (0, 3, 5, 4)][int(rng.integers(3))]
     final = seconds
-    groove_in = min(3.2, final * 0.12)  # the build before the beat drops in
+    # The build before the beat drops in; `instant` (the energetic hook templates): the beat from the first frame.
+    groove_in = 0.0 if instant else min(3.2, final * 0.12)
     roll_from = final - min(3.5, final * 0.15)
     n = int(RATE * (final + 2.5))
     drums, bass_buf, music_buf, fx = (np.zeros(n) for _ in range(4))
@@ -380,7 +381,8 @@ def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path)
     arp = [(0, 2, 4, 2), (0, 4, 2, 4), (4, 2, 0, 2)][int(rng.integers(3))]
 
     # The build: a riser and a ticking pulse into the drop of the beat.
-    _add(fx, riser(groove_in), 0, 0.5)
+    if groove_in:
+        _add(fx, riser(groove_in), 0, 0.5)
     t, i = 0.0, 0
     while t < final - 0.32:
         p = t / final
@@ -430,7 +432,8 @@ def trailer(style: str, seconds: float, cuts: list[float], seed: int, out: Path)
         t += s16
         i += 1
     # A riser into the final cut, silence, then a stab (no booms: removed at the user's request).
-    _add(fx, riser(min(4.0, final * 0.2)), final - min(4.0, final * 0.2) - 0.3, 0.55)
+    if not instant:  # the energetic hooks have no riser (the user banned risers in hooks)
+        _add(fx, riser(min(4.0, final * 0.2)), final - min(4.0, final * 0.2) - 0.3, 0.55)
     x = drums * 0.9 + bass_buf * 0.75 + _reverb(music_buf, 0.3) * 0.8 + fx
     i0, i1 = int((final - 0.3) * RATE), int(final * RATE)
     x[i0:i1] *= np.linspace(1, 0.02, i1 - i0) ** 2

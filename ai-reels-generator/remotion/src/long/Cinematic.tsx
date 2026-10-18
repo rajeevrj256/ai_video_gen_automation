@@ -6,6 +6,7 @@ import type {Camera, Hook, HookShot, Look, Visual} from './types';
 import {BOX} from './box';
 import {CineIn, FilmTexture, GradeWash, SubscribeCard, TypedLabel, gradeFilter} from '../cine/Cine';
 import {OVERLAPS, TRANSITION_FRAMES} from '../cine/types';
+import {EnergyHook} from '../cine/Energy';
 
 // The camera, this video's look (backdrop and transitions), impacts and the cinematic hook.
 // Every video gets its own palette, backdrop style and transition style (reelgen/variety.py),
@@ -312,7 +313,8 @@ export const Backdrop: React.FC<{look: Look; chapter: number; seed: number; plat
 
 type HookRender = (shot: HookShot, frames: number) => React.ReactNode;
 
-export const HookView: React.FC<{hook: Hook; look: Look; render: HookRender; subtitles?: boolean}> = (p) => (p.hook.cine ? <CineHook {...p} /> : <TrailerHook {...p} />);
+export const HookView: React.FC<{hook: Hook; look: Look; render: HookRender; subtitles?: boolean}> = (p) =>
+  p.hook.template && p.hook.template !== 'cinematic' ? <EnergyHook {...p} /> : p.hook.cine ? <CineHook {...p} /> : <TrailerHook {...p} />;
 
 // The cinematic cold open (cine/, reelgen/longform.py `build_long`): every beat in its own colour grade under
 // film grain, dust and flicker, typed labels instead of slammed words, whips, VHS glitches, a photo flown in,

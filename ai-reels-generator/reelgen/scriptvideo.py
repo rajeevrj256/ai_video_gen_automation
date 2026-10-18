@@ -174,6 +174,28 @@ shows the quote in English, a faithful translation when the line quotes it in Hi
 and backdrops are English as always."""
 
 
+CINE_BOARD = """The hook is a cinematic cold open before the video, cut like a documentary trailer, built from the \
+user's hook lines H1, H2... Give every hook line exactly one shot, in order. Where a picture or a sound lands \
+harder without words, add a silent shot (line 0) between or after them, at most 3, and before the last hook \
+line a montage of 3-6 flash shots (line 0, flash: true): split-second striking images that build to the peak. \
+Spread the escalation across the shots in order: curiosity (a strong image and an instant question), unexpected \
+(the surprising situation), tension (build the stakes), problem (part of the problem), gap (the question left \
+hanging). Give every shot a grade and a transition that follow the emotion (the colour changes as the stakes \
+rise), mark boom on the 2-4 biggest moments, give about half the shots a typed label taken from the hook or the \
+script, and most shots a picture (a film-still prompt for an image model: no text, no real person's face), \
+keeping a visual for every shot. Use dramatic camera moves (push, dutch, orbit, pan). The pictures and visuals \
+must match the hook's words exactly, and never show the answer the script keeps for the end. After the hook the \
+music stops for a breath of silence and the script starts.
+
+Shot grades: """ + cinehook.GRADE_HELP + " Transitions: " + cinehook.TRANSITION_HELP
+
+
+def _hook_paragraph(cfg: Config) -> str:
+    """How the storyboard builds the hook: the template's own rules (cinehook.board_rules) or the cinematic cold open."""
+    template = cinehook.pick_template(cfg)
+    return cinehook.board_rules(template) if cinehook.energetic(template) else CINE_BOARD
+
+
 def _board_system(cfg: Config, english: bool = True) -> str:
     """The long writer's own rules for visuals, sound and music (the same pipeline, the same look),
     with the writing, research and accuracy parts left out: the words are final. `english`: the words on
@@ -190,20 +212,7 @@ effects. Numbers, dates, names and quotes on screen come only from the script's 
 line says them; never add a figure, date or quote the line doesn't state, never round one. A 'quote' visual \
 only for words the script itself quotes; a 'chart' or 'compare' only with figures the script gives.
 
-The hook is a cinematic cold open before the video, cut like a documentary trailer, built from the \
-user's hook lines H1, H2... Give every hook line exactly one shot, in order. Where a picture or a sound lands \
-harder without words, add a silent shot (line 0) between or after them, at most 3, and before the last hook \
-line a montage of 3-6 flash shots (line 0, flash: true): split-second striking images that build to the peak. \
-Spread the escalation across the shots in order: curiosity (a strong image and an instant question), unexpected \
-(the surprising situation), tension (build the stakes), problem (part of the problem), gap (the question left \
-hanging). Give every shot a grade and a transition that follow the emotion (the colour changes as the stakes \
-rise), mark boom on the 2-4 biggest moments, give about half the shots a typed label taken from the hook or the \
-script, and most shots a picture (a film-still prompt for an image model: no text, no real person's face), \
-keeping a visual for every shot. Use dramatic camera moves (push, dutch, orbit, pan). The pictures and visuals \
-must match the hook's words exactly, and never show the answer the script keeps for the end. After the hook the \
-music stops for a breath of silence and the script starts.
-
-Shot grades: {cinehook.GRADE_HELP} Transitions: {cinehook.TRANSITION_HELP}
+{_hook_paragraph(cfg)}
 
 Chapters: when the user marked chapters, keep them exactly (same first lines and titles) and set their \
 music. Otherwise group the lines into chapters at the story's natural turns: a cold open titled 'Intro', \
@@ -333,7 +342,9 @@ def run_script_video(cfg: Config, given: ScriptInput, progress: Progress = log.i
     work = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-script-working"
     work.mkdir(parents=True, exist_ok=True)
     progress(f"Saving progress in {work.name}")
-    progress("Claude is storyboarding your script and hook (visuals, sounds, music)")
+    template = cinehook.pick_template(cfg)  # how the hook opens (cinehook.TEMPLATES), decided once
+    cfg = replace(cfg, hook_template=template)
+    progress(f"Claude is storyboarding your script and hook (visuals, sounds, music; hook: {cinehook.TEMPLATES[template][0]})")
     board = storyboard(cfg, given, hook, lines, marked)
     script = assemble(given, board, hook, lines, marked)
     assert spoken_text(script) == " ".join(lines)  # not one spoken word changed
@@ -341,7 +352,7 @@ def run_script_video(cfg: Config, given: ScriptInput, progress: Progress = log.i
               "screen_text": given.screen_text}
     state = {"length": "long", "minutes": minutes, "topic": given.title, "stamp": stamp, "style": cfg.video_style,
              "candidates": [{"title": given.title, "source": "your script"}], "attempt": 1, "stage": "scripted",
-             "script": script.model_dump(), "manual": manual}  # usage: the loop's own saves record it
+             "script": script.model_dump(), "manual": manual, "hook_template": template}  # usage: the loop's own saves
     (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     return _long_loop(replace(cfg, long_minutes=minutes), work, [Trend(title=given.title, source="your script")],
                       given.title, stamp, progress, resume=state)

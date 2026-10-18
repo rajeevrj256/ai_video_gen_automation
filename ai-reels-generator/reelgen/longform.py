@@ -90,9 +90,9 @@ HOOK_SECONDS = cinehook.seconds_for(9)  # the cinematic cold open, its silence i
 LABEL_WORDS = 5  # a hook shot's typed label
 
 
-def hook_words_max(minutes: float) -> int:
+def hook_words_max(minutes: float, template: str | None = None) -> int:
     """Spoken words the hook's lines may have: its length less the silence and the montage, at the voice's pace."""
-    return int((cinehook.seconds_for(minutes)[1] - cinehook.DROP - 3) * WORDS_PER_SECOND * 0.92)
+    return int((cinehook.seconds_for(minutes, template)[1] - cinehook.drop_for(template) - 3) * WORDS_PER_SECOND * 0.92)
 SCRIPT_HOOK_SECONDS = (0.0, 600.0)  # a Script Video's own hook keeps its natural length (no stretching)
 
 
@@ -234,7 +234,7 @@ class LongScript(BaseModel):
 
 
 def _system(style: str, language: str, minutes: float = 8, meme: str = "off", meme_files: list | None = None,
-            meme_web: str = "") -> str:
+            meme_web: str = "", hook_template: str = "cinematic") -> str:
     """`meme`: off / some / lots (memes.py): the funny-explainer writing and 'meme' visuals; `meme_web`: the real
     templates the writer may use (memeweb.prompt_block)."""
     sh = shape(minutes)
@@ -284,7 +284,7 @@ forward, or it goes.
 - The call to action is a single plain line (subscribe, or comment an answer); it never names or teases another video.
 - Never use these phrases: {", ".join(AI_CLICHES)}.
 
-{cinehook.rules(minutes)}
+{cinehook.rules(minutes, hook_template)}
 {chr(10) + memes.writing_rules(meme) + chr(10) if funny else ""}
 Show, don't write (very important): the story is told by evidence in motion, camera and sound; text only \
 supports it. The weak version is "big text, then another big text", or generic icons with an arrow \
@@ -387,7 +387,7 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
 
     prompt += hook_block(cfg)  # the trailer hook's and the cold open's first seconds
     system = _system(cfg.video_style, cfg.long_language, minutes, memes.level(cfg), memes.own_files(cfg),
-                     memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "")
+                     memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "", cinehook.pick_template(cfg))
     script = ask(cfg.ai_backend, cfg.claude_model, system, prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
@@ -506,7 +506,7 @@ def repair_long_script(script: LongScript) -> LongScript:
     return s
 
 
-def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
+def check_long_script(script: LongScript, minutes: float, template: str | None = None) -> VerifyResult:
     result = VerifyResult()
     words = narration_words(script)
     target = minutes * 60 * WORDS_PER_SECOND
@@ -527,7 +527,10 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
         result.fail(f"The opening sentence is {len(hook.split())} words ('{hook}'); make the hook 12 words or fewer.")
     # The hook: a cinematic cold open of 8-14 shots plus a 3-6 shot flash montage, short lines.
     shots = [h for h in script.hook if not h.flash]
-    if not 7 <= len(shots) <= 16:
+    if cinehook.energetic(template):  # an energetic template: 6-10 fast shots, no montage
+        if not 5 <= len(shots) <= 12:
+            result.fail(f"The hook has {len(shots)} shots; write 6-10 short, escalating ones.")
+    elif not 7 <= len(shots) <= 16:
         result.fail(f"The hook has {len(shots)} shots besides its flash montage; write 8-14 that escalate.")
     hook_words = sum(len(h.line.split()) for h in script.hook)
     result.checks["hook_words"] = hook_words
@@ -538,10 +541,10 @@ def check_long_script(script: LongScript, minutes: float) -> VerifyResult:
     if first and weak(first[1]):
         result.fail(f"{first[0]}: the video opens with a generic phrase ('{weak(first[1])}'). Open on the most surprising "
                     "concrete thing itself (a number, a moment, a contradiction) in the first words, with energy.")
-    most = hook_words_max(minutes)
+    most = hook_words_max(minutes, template)
     if hook_words > most:
         result.fail(f"The hook's lines have {hook_words} words; keep them under {most} so the hook stays within "
-                    f"{int(cinehook.seconds_for(minutes)[1])} seconds.")
+                    f"{int(cinehook.seconds_for(minutes, template)[1])} seconds.")
     for hi, h in enumerate(script.hook, 1):
         if len(h.line.split()) > 13:
             result.fail(f"Hook shot {hi}: the line is {len(h.line.split())} words; trailer lines are 3-12 words.")
@@ -671,10 +674,109 @@ def _prep_visual(v: dict, cfg: Config, work: Path, index: int, clip_ids: set[int
     return v
 
 
+def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: int, progress: Progress, *,
+                hook_seconds: tuple[float, float], hook_voices: list | None, overrides: dict, remake: bool, pct: int,
+                sarvam_speed: float, template: str | None, clip_ids: set[int], used: dict) -> tuple[dict, list, list, list]:
+    """The hook's timeline (hook props, caption lines, spoken spans, Claude's sound cues) and its music.
+    `template` (cinehook.TEMPLATES): the one asked for; else a re-make keeps the video's own (older videos: cinematic),
+    a new video gets cfg.hook_template (auto: an energetic one the last video didn't use)."""
+    template = template or (look.get("hookTemplate") or "cinematic" if remake else cinehook.pick_template(cfg))
+    hype = cinehook.energetic(template)
+    hook = {"duration": 0.0, "shots": [], "music": None, "style": "", "template": template}
+    lines: list = []
+    spoken: list = []
+    cues: list = []
+    rel = lambda p: p.relative_to(work).as_posix()  # noqa: E731
+    if not script.hook:
+        return hook, lines, spoken, cues
+    look["hookTemplate"] = template  # a re-make keeps it
+    progress(f"Recording the hook ({cinehook.TEMPLATES[template][0]})")
+    said = [h.line.strip() for h in script.hook]
+    push = cinehook.HOOK_PUSH.get(template, 0)  # an energetic hook is spoken a little faster than the story
+    if hook_voices is not None:
+        audios = list(hook_voices)
+    else:
+        takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook", cfg.tts_engine,
+                                       cfg.kokoro_voice, f"{pct + push:+d}%", delivery="hook",
+                                       sarvam_speed=round(sarvam_speed * (1 + push / 100), 3)) if any(said) else [])
+        audios = [next(takes) if x else None for x in said]
+    drop = cinehook.drop_for(template)
+    if hype and hook_seconds != SCRIPT_HOOK_SECONDS:
+        hook_seconds = cinehook.seconds_for(cfg.long_minutes, template)
+    lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
+                              hook_seconds, drop, breath=0.15 if hype else 0.4)
+    # A meme shot shows its meme: no AI still is drawn for it (the still used to cover a meme the writer put there).
+    pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)
+                                   if ("hook", i) not in overrides and h.visual.type != "meme"},
+                             work, seed, script.youtube_title, progress, reuse=remake,
+                             look=cinehook.ENERGY_LOOK if hype else cinehook.CINE_LOOK)
+    t = 0.0
+    for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
+        if ("hook", i) in overrides:  # you, on camera (a Shoot video)
+            visual = dict(overrides[("hook", i)])
+        elif i in pics:  # the AI picture, under the shot's camera move
+            visual = {"type": "picture", "src": rel(pics[i]), "headline": "", "sub": "", "items": [], "icons": [],
+                      "camera": h.visual.camera if h.visual.camera != "still" else "push"}
+        else:
+            visual = _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)
+        # A meme carries its own words: a typed label over it collided with them (and typed for nothing).
+        label = "" if visual.get("type") == "meme" else h.text.strip()
+        shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": label,
+                "audio": rel(sa.path) if sa else None, "visual": visual, "grade": h.grade,
+                "transition": h.transition, "boom": h.boom, "flash": h.flash}
+        if sa:
+            # The energetic templates draw the line's words themselves, as they are said (no subtitles twice).
+            shot["words"] = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words]
+            if not hype:
+                lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
+                                       for w in sa.words])
+            spoken += [(t + w.start, t + w.end) for w in sa.words]
+        # Claude's own sound effects for the shot: on a word of its line, or '*' on its label.
+        spoken_cues = [c for c in h.sounds if c.word.strip() != "*"]
+        if sa and spoken_cues:
+            cues += media.resolve_cues(spoken_cues, sa.words, t, cfg, work / "sfx", rel, 2, used)
+        for c in [c for c in h.sounds if c.word.strip() == "*"][:1]:
+            star = media.resolve_cues([c.model_copy(update={"word": "label"})],
+                                      [_Word("label", cinehook.LABEL_AT, cinehook.LABEL_AT + 0.3)], t, cfg,
+                                      work / "sfx", rel, 1, used)
+            cues += star if h.text.strip() else []
+        hook["shots"].append(shot)
+        t += d
+    if hype:  # full energy from frame 0: no grades, no fade out of black, the template's own cuts
+        for shot in hook["shots"]:
+            shot.update(grade="natural", transition="cut")
+        hook["shots"][0]["boom"] = True
+    else:
+        cinehook.fill_defaults(hook["shots"])
+        for shot in hook["shots"]:
+            if shot["visual"].get("type") == "meme":  # a meme in its own colours, never tinted red or noir
+                shot["grade"] = "natural"
+        if hook["shots"][0]["transition"] == "cut":
+            hook["shots"][0]["transition"] = "dip"  # out of black, on the first boom
+    hook.update(duration=round(t + drop, 3), cine=True, drop=drop, subscribe=True, pictures=len(pics))
+    hook["style"] = (look.get("hookStyle") if remake else None) or variety.fresh_trailer(cfg, script.hook_music, seed)
+    look["hookStyle"] = hook["style"]  # a re-make keeps it
+    # The user's track for the hook, unless a recent video already opened with it.
+    mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()
+                 and (remake or media.fresh_track(cfg, m.name))), None)
+    if mine is not None:  # the user's own track fits this trailer
+        (work / "music").mkdir(parents=True, exist_ok=True)
+        dest = work / "music" / f"hook-own{mine.path.suffix.lower()}"
+        shutil.copy(mine.path, dest)
+        hook["music"], hook["own"] = rel(dest), mine.name
+    else:  # composed to the cuts; it stops dead where the silence starts (an energetic hook: the beat from frame 0)
+        cuts = [sh["start"] for sh in hook["shots"][1:]] + [t - 0.05]
+        hook["music"] = rel(music.trailer(hook["style"], t - 0.05, cuts, seed, work / "music" / "hook.wav", instant=hype))
+    if not remake:
+        cinehook.remember_template(cfg, template)
+    return hook, lines, spoken, cues
+
+
 def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                voices: list[list[SceneAudio]] | None = None, look: dict | None = None,
                hook_seconds: tuple[float, float] = HOOK_SECONDS, voice_opts: dict | None = None,
-               hook_voices: list | None = None, overrides: dict | None = None, remake: bool = False) -> dict:
+               hook_voices: list | None = None, overrides: dict | None = None, remake: bool = False,
+               template: str | None = None) -> dict:
     """Record the voice (one take per chapter) and lay out the hook and every beat on the timeline,
     with this video's look, music, ambience and sound design.
     `voices`: recordings to use instead (the user's own voiceover), one list per chapter.
@@ -700,80 +802,19 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     used: dict[str, str] = {}
     clip_ids: set[int] = set()  # never the same stock clip twice
 
-    # The hook: a cinematic cold open before the video (cinehook.py, remotion/src/cine/), with its own lines,
-    # grades, cuts, labels, AI film stills where the engine can draw them, music and drone, then a breath of silence.
-    hook = {"duration": 0.0, "shots": [], "music": None, "style": ""}
+    # The hook (cinehook.py, remotion/src/cine/): an energetic template or the cinematic cold open, its own lines,
+    # AI pictures where the engine can draw them, music, then a breath of silence.
     rel = lambda p: p.relative_to(work).as_posix()  # noqa: E731
     # The pace (cfg.long_voice_rate, e.g. '-5%') for the free voices; a Sarvam voice takes it as a factor on its own
     # pace setting, unless the caller sets one (the Shorts Studio speeds a part up that way).
     pct = int(re.sub(r"[^\d-]", "", cfg.long_voice_rate or "") or 0)
     pace = {"sarvam_speed": round(1 + pct / 100, 3), **(voice_opts or {})}
-    if script.hook:
-        progress("Recording the hook")
-        said = [h.line.strip() for h in script.hook]
-        if hook_voices is not None:
-            audios = list(hook_voices)
-        else:
-            takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook", cfg.tts_engine,
-                                           cfg.kokoro_voice, cfg.long_voice_rate, delivery="hook",
-                                           sarvam_speed=pace["sarvam_speed"]) if any(said) else [])
-            audios = [next(takes) if x else None for x in said]
-        lengths = cinehook.timing([media_seconds(a.path) if a else None for a in audios], [h.flash for h in script.hook],
-                                  hook_seconds)
-        # A meme shot shows its meme: no AI still is drawn for it (the still used to cover a meme the writer put there).
-        pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)
-                                       if ("hook", i) not in overrides and h.visual.type != "meme"},
-                                 work, seed, script.youtube_title, progress, reuse=remake)
-        t = 0.0
-        for i, (h, sa, d) in enumerate(zip(script.hook, audios, lengths)):
-            if ("hook", i) in overrides:  # you, on camera (a Shoot video)
-                visual = dict(overrides[("hook", i)])
-            elif i in pics:  # the AI film still, under the shot's camera move
-                visual = {"type": "picture", "src": rel(pics[i]), "headline": "", "sub": "", "items": [], "icons": [],
-                          "camera": h.visual.camera if h.visual.camera != "still" else "push"}
-            else:
-                visual = _prep_visual(h.visual.model_dump(), cfg, work, 900 + i, clip_ids, d)
-            # A meme carries its own words: a typed label over it collided with them (and typed for nothing).
-            label = "" if visual.get("type") == "meme" else h.text.strip()
-            shot = {"start": round(t, 3), "duration": d, "beat": h.beat, "text": label,
-                    "audio": rel(sa.path) if sa else None, "visual": visual, "grade": h.grade,
-                    "transition": h.transition, "boom": h.boom, "flash": h.flash}
-            if sa:
-                lines += _group_words([{"text": w.text, "start": round(t + w.start, 3), "end": round(t + w.end, 3)}
-                                       for w in sa.words])
-                spoken += [(t + w.start, t + w.end) for w in sa.words]
-            # Claude's own sound effects for the shot: on a word of its line, or '*' on its label.
-            spoken_cues = [c for c in h.sounds if c.word.strip() != "*"]
-            if sa and spoken_cues:
-                cues += media.resolve_cues(spoken_cues, sa.words, t, cfg, work / "sfx", rel, 2, used)
-            for c in [c for c in h.sounds if c.word.strip() == "*"][:1]:
-                label = media.resolve_cues([c.model_copy(update={"word": "label"})],
-                                           [_Word("label", cinehook.LABEL_AT, cinehook.LABEL_AT + 0.3)], t, cfg,
-                                           work / "sfx", rel, 1, used)
-                cues += label if h.text.strip() else []
-            hook["shots"].append(shot)
-            t += d
-        cinehook.fill_defaults(hook["shots"])
-        for shot in hook["shots"]:
-            if shot["visual"].get("type") == "meme":  # a meme in its own colours, never tinted red or noir
-                shot["grade"] = "natural"
-        if hook["shots"][0]["transition"] == "cut":
-            hook["shots"][0]["transition"] = "dip"  # out of black, on the first boom
-        hook.update(duration=round(t + cinehook.DROP, 3), cine=True, drop=cinehook.DROP, subscribe=True,
-                    pictures=len(pics))
-        hook["style"] = (look.get("hookStyle") if remake else None) or variety.fresh_trailer(cfg, script.hook_music, seed)
-        look["hookStyle"] = hook["style"]  # a re-make keeps it
-        # The user's track for the hook, unless a recent video already opened with it.
-        mine = next((m for m in media.music(cfg) if m.path and m.name == script.hook_track.strip()
-                     and (remake or media.fresh_track(cfg, m.name))), None)
-        if mine is not None:  # the user's own track fits this trailer
-            (work / "music").mkdir(parents=True, exist_ok=True)
-            dest = work / "music" / f"hook-own{mine.path.suffix.lower()}"
-            shutil.copy(mine.path, dest)
-            hook["music"], hook["own"] = rel(dest), mine.name
-        else:  # composed to the cuts; it stops dead where the silence starts
-            cuts = [s["start"] for s in hook["shots"][1:]] + [t - 0.05]
-            hook["music"] = rel(music.trailer(hook["style"], t - 0.05, cuts, seed, work / "music" / "hook.wav"))
+    hook, hook_lines, hook_spoken, hook_cues = _build_hook(
+        script, cfg, work, look, seed, progress, hook_seconds=hook_seconds, hook_voices=hook_voices, overrides=overrides,
+        remake=remake, pct=pct, sarvam_speed=pace["sarvam_speed"], template=template, clip_ids=clip_ids, used=used)
+    lines += hook_lines
+    spoken += hook_spoken
+    cues += hook_cues
     rehook = None  # where the story's first word lands (after the hook's silence): a boom there
 
     t = hook["duration"]
@@ -848,8 +889,9 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
                 for c in chapters if not covered(c)]
         if hook["shots"] and not hook.get("own"):
             want.append(aimusic.track("hook", work / "music" / "ai-hook.wav", hook["duration"] - hook.get("drop", 0) + 0.5,
-                                      genre, script.mood, 0.9, script.music_prompt, seed + 11, hook=True,
-                                      cine=bool(hook.get("cine"))))
+                                      genre, script.mood, 1.0 if cinehook.energetic(hook.get("template")) else 0.9,
+                                      script.music_prompt, seed + 11, hook=True,
+                                      cine=bool(hook.get("cine")) and not cinehook.energetic(hook.get("template"))))
         made = aimusic.kept(want) if remake else aimusic.make(cfg, want, work, progress, "Music (AI)")
         if made:
             look["aiGenre"] = genre  # a re-make keeps it (and its tracks)
@@ -886,7 +928,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))  # the user's whoosh/pop/... where one matches
     if hook.get("cine"):  # the cold open's booms, risers, whips, typing and drone
         hook_cues, hook["drone"] = cinehook.sound_design(hook["shots"], hook["duration"] - hook["drop"], work, rel,
-                                                         {k: rel(p) for k, p in sfx.items()}, rehook)
+                                                         {k: rel(p) for k, p in sfx.items()}, rehook,
+                                                         template=hook.get("template"))
         cues += hook_cues
     elif rehook is not None:  # no hook: a deep boom under the first word
         cues.append(cinehook.opening_boom(work / "sfx", rel, rehook))
@@ -1498,7 +1541,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     resume = resume or {}
     # The length it was written for: a resume under other settings must not call it too long or short.
     minutes = resume.get("minutes") or cfg.long_minutes
-    cfg = replace(cfg, long_minutes=minutes)  # the review and checks judge it by the length it was written for
+    # The hook template is decided once per video (the writer's rules, the checks and the edit all follow it).
+    template = resume.get("hook_template") or cinehook.pick_template(cfg)
+    cfg = replace(cfg, long_minutes=minutes, hook_template=template)  # judged by the length it was written for
     history_path = cfg.output_dir / "history.json"
     feedback = resume.get("feedback", "")
     if not resume.get("script") and resume.get("stage") and (work / "draft.json").exists():
@@ -1522,7 +1567,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     # changed dropped the script, and the next resume crashed after a finished 11-minute render.
     state = {**resume, "length": "long", "minutes": minutes, "topic": topic, "stamp": stamp,
              "style": cfg.video_style, "candidates": [asdict(c) for c in candidates], "best": resume.get("best"),
-             "manual": manual}
+             "manual": manual, "hook_template": template}
     state.pop("usage", None)
 
     def save(**changes) -> None:
@@ -1576,7 +1621,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                          changed=sorted(changed) if changed is not None else None, checked_all=checked_all)
                 first_fix = 0
                 script = repair_long_script(script)  # free fixes first
-                basic = check_long_script(script, minutes)
+                basic = check_long_script(script, minutes, cfg.hook_template)
                 checking = basic.passed and cfg.video_style != "story"
                 if checking:
                     progress(f"{tag} Claude is fact-checking the " + ("script" if not checked_all or changed is None
@@ -1754,6 +1799,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
             "editor": "remotion (Long)",
             "music": props.get("musicChoice", ""),
             "hook_style": "cinematic" if (props.get("hook") or {}).get("cine") else "trailer",
+            "hook_template": (props.get("hook") or {}).get("template") or ("cinematic" if (props.get("hook") or {}).get("cine") else "trailer"),
             "hook_pictures": (props.get("hook") or {}).get("pictures", 0),
         }
         if manual and manual.get("shoot"):  # filmed by you: your voice, your takes

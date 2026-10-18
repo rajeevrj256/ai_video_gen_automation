@@ -399,7 +399,8 @@ def _render_long(cfg: Config, folder: Path, work: Path, report: dict, script: di
     old = folder / "props.json"
     look = json.loads(old.read_text(encoding="utf-8")).get("look") if old.exists() else None
     props = build_long(ls, cfg, work, progress, voices=voices, look=look,
-                       hook_seconds=SCRIPT_HOOK_SECONDS if report.get("source") == "script" else HOOK_SECONDS)
+                       hook_seconds=SCRIPT_HOOK_SECONDS if report.get("source") == "script" else HOOK_SECONDS,
+                       template=(look or {}).get("hookTemplate") or "cinematic")  # the video's own hook template
     cli = _remotion_cli()
     if cli is None:
         raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")

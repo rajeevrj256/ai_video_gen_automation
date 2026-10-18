@@ -64,7 +64,7 @@ def job_label(job: dict) -> str:
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
-            else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
+            else "New hook" if job.get("rehook") else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
 
@@ -160,6 +160,8 @@ class JobManager:
                 cfg.story_form = job["story_form"]
             if job.get("memes") in ("off", "some", "lots"):  # memes.LEVELS: this video's own choice
                 cfg.memes = job["memes"]
+            if job.get("hook_template") in ("auto", "kinetic", "rapid", "stakes", "cinematic"):  # cinehook.TEMPLATES: how this video opens
+                cfg.hook_template = job["hook_template"]
             if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
                 cfg.long_voice_rate = job["voice_rate"]
             if job.get("myvoice"):
@@ -176,6 +178,9 @@ class JobManager:
             elif job.get("anim_music"):  # a finished animated video, its music made by ACE-Step again
                 from .animated import redo_music
                 reports = [redo_music(cfg, video_dir(cfg, job["anim_music"]["id"]), progress)]
+            elif job.get("rehook"):  # a finished video copied to a new one with a new hook (reelgen/rehook.py)
+                from .rehook import save_as_new
+                reports = [save_as_new(cfg, video_dir(cfg, job["rehook"]["id"]), job["rehook"]["key"], progress)]
             elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
@@ -431,6 +436,7 @@ class GenerateRequest(BaseModel):
     captions: bool | None = None  # subtitles; empty = the Settings value
     story_form: str = "auto"  # long/medium: longform.STORY_FORMS key, or auto
     memes: str = ""  # long/medium: off | some | lots (reelgen/memes.py); empty = the Settings value
+    hook_template: str = ""  # long/medium: cinehook.TEMPLATES key or auto; empty = the Settings value
 
 
 class LicenceEdit(BaseModel):
@@ -548,6 +554,7 @@ class ScriptVideoRequest(BaseModel):
     captions: bool | None = None
     screen_text: str = "english"  # words on screen: English (a Hinglish script still speaks Hinglish) or 'script'
     memes: str = ""  # off | some | lots (reelgen/memes.py); empty = the Settings value
+    hook_template: str = ""  # cinehook.TEMPLATES key or auto; empty = the Settings value
     voice_rate: str = ""  # speaking pace, e.g. '-5%'; empty = Settings > Speaking pace (long and Script videos)
 
 
@@ -875,6 +882,117 @@ def create_app(cfg: Config) -> FastAPI:
         threading.Thread(target=work, daemon=True).start()
         return {"key": key, **entry}
 
+    # ---- Re-create only the hook, as a new separate video (reelgen/rehook.py) ----
+    hook_state: dict[str, dict] = {}  # "<video id>/<template>" -> {state, line, error, template}
+
+    @app.get("/api/videos/{video_id}/hooks")
+    def list_hooks(video_id: str):
+        from . import cinehook, rehook
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        hook = {}
+        try:
+            hook = json.loads((folder / "props.json").read_text(encoding="utf-8")).get("hook") or {}
+        except (OSError, ValueError):
+            pass
+        return {"why_not": rehook.why_not(folder), "yours": report.get("source") == "script",
+                "current": hook.get("template") or ("cinematic" if hook.get("cine") else "trailer"),
+                "seconds": round(float(hook.get("duration") or 0), 2),
+                "templates": [{"key": k, "name": n, "desc": d} for k, (n, d) in cinehook.TEMPLATES.items()],
+                "made": rehook.hooks(folder),
+                "busy": [{"template": k.split("/", 1)[1], **e} for k, e in list(hook_state.items()) if k.startswith(video_id + "/")],
+                "saving": [j["id"] for j in jobs.jobs if j.get("rehook", {}).get("id") == video_id and j["status"] in ("queued", "running")]}
+
+    @app.post("/api/videos/{video_id}/hooks")
+    def make_hook_route(video_id: str, body: dict):
+        """A new hook for this video in the template asked for, rendered on its own (a preview, ~2-5 min)."""
+        from . import cinehook, rehook
+
+        folder = video_dir(cfg, video_id)
+        reason = rehook.why_not(folder)
+        if reason:
+            raise HTTPException(400, reason)
+        template = str(body.get("template") or "")
+        if template not in cinehook.TEMPLATES:
+            raise HTTPException(400, "Pick a hook template")
+        k = f"{video_id}/{template}"
+        if hook_state.get(k, {}).get("state") in ("waiting", "running"):
+            return hook_state[k]
+        entry = {"state": "waiting", "line": "Waiting for the edit before it", "error": "", "template": template}
+        hook_state[k] = entry
+
+        def work():
+            with demo_lock:  # one preview edit at a time (demos and hooks)
+                entry.update(state="running", line="Starting")
+                try:
+                    rehook.make_hook(load_settings(Config()), folder, template, bool(body.get("rewrite", True)),
+                                     progress=lambda m: entry.update(line=str(m)))
+                    hook_state.pop(k, None)
+                except Exception as exc:  # noqa: BLE001 - shown on the video page
+                    log.warning("New hook for %s failed: %s", video_id, exc)
+                    entry.update(state="failed", error=str(exc)[:300])
+
+        threading.Thread(target=work, daemon=True).start()
+        return entry
+
+    @app.post("/api/videos/{video_id}/hooks/{key}/save")
+    def save_hook_route(video_id: str, key: str):
+        """A new, separate video: this one copied with that hook in place of its own (the original stays as it is)."""
+        folder = video_dir(cfg, video_id)
+        if not re.fullmatch(r"[a-z]+-[0-9a-f]{6}", key) or not (folder / "hooks" / f"{key}.mp4").exists():
+            raise HTTPException(404, "That hook isn't there any more")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"New hook: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
+                           report.get("format", "long"), rehook={"id": video_id, "key": key})
+
+    sample_state: dict[str, dict] = {}  # template -> {state, line, error}
+
+    @app.get("/api/hook-samples/{template}")
+    def hook_sample(template: str):
+        """An example of a hook template (rehook.make_sample): made once on first ask (1-3 min), then kept."""
+        from . import cinehook, rehook
+
+        if template not in cinehook.TEMPLATES:
+            raise HTTPException(404)
+        settings = load_settings(Config())
+        if rehook.sample_path(settings, template).exists():
+            return {"ready": True, "url": f"/api/hook-samples/{template}/video?v={rehook.SAMPLE_VERSION}"}
+        entry = sample_state.get(template)
+        if entry and entry["state"] in ("waiting", "running"):
+            return entry
+        entry = {"state": "waiting", "line": "Waiting for the edit before it", "error": ""}
+        sample_state[template] = entry
+
+        def work():
+            with demo_lock:
+                entry.update(state="running", line="Making the example")
+                try:
+                    rehook.make_sample(load_settings(Config()), template, progress=lambda m: entry.update(line=str(m)))
+                    sample_state.pop(template, None)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Hook example %s failed: %s", template, exc)
+                    entry.update(state="failed", error=str(exc)[:300])
+
+        threading.Thread(target=work, daemon=True).start()
+        return entry
+
+    @app.get("/api/hook-samples/{template}/video")
+    def hook_sample_video(template: str):
+        from . import cinehook, rehook
+
+        path = rehook.sample_path(load_settings(Config()), template)
+        if template not in cinehook.TEMPLATES or not path.exists():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.get("/media/{video_id}/hook/{name}")
+    def hook_media(video_id: str, name: str):
+        path = video_dir(cfg, video_id) / "hooks" / name
+        if not re.fullmatch(r"[a-z]+-[0-9a-f]{6}\.mp4", name) or not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path)
+
     @app.get("/media/{video_id}/demo/{name}")
     def demo_media(video_id: str, name: str):
         from .rerender import DEMOS
@@ -1090,7 +1208,8 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
                            "manual", style, length, captions=body.captions,
                            story_form=body.story_form if length != "short" else None,
-                           memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None)
+                           memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None,
+                           hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", "kinetic", "rapid", "stakes", "cinematic") else None)
 
     @app.get("/api/stick/voices")
     def stick_voices():
@@ -1347,6 +1466,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
                            captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None,
+                           hook_template=body.hook_template if body.hook_template in ("auto", "kinetic", "rapid", "stakes", "cinematic") else None,
                            voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None)
 
     # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------

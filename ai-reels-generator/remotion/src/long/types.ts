@@ -84,11 +84,14 @@ export type Look = {
   platesBaked?: Record<string, string>; // the same photos already blurred, darkened and graded once (chapter index or 'hook')
 };
 
+export type HookWord = {text: string; start: number; end: number}; // seconds into the shot
+
 export type HookShot = {
   start: number;
   duration: number;
   beat: string;
-  text: string; // the cinematic hook: a typed label; the old trailer: a word slammed in
+  text: string; // the cinematic hook: a typed label; the old trailer: a word slammed in; energetic templates: the key words
+  words?: HookWord[]; // the line's spoken words (the energetic templates draw them as they are said)
   audio: string | null;
   visual: Visual;
   // The cinematic hook (cine/): the shot's colour grade and how it comes in.
@@ -106,6 +109,7 @@ export type Hook = {
   drop?: number; // seconds of silence at the end of the hook, before the story starts
   drone?: string | null; // the dark bed under the hook, cut where the silence starts
   subscribe?: boolean; // a subscribe button clicked, silently, in that silence
+  template?: 'cinematic' | 'kinetic' | 'rapid' | 'stakes'; // reelgen/cinehook.py TEMPLATES (cine/Energy.tsx); none = cinematic
 };
 
 // One simple shape of a 3D object Claude designed (reelgen/models3d.py Part). Metres, +Y up, front +Z.

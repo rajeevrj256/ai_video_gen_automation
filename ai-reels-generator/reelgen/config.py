@@ -95,6 +95,9 @@ class Config:
     # too fast ("i use andrew now they speak too fast"). Per video on the Script tab; changed afterwards on the video's
     # page (rerender.py `pace`).
     long_voice_rate: str = field(default_factory=lambda: _env("REEL_LONG_VOICE_RATE", "+0%"))
+    # How long, medium, Script and Shoot videos open (cinehook.TEMPLATES): auto (an energetic template the last video
+    # didn't use), kinetic, rapid, stakes or cinematic. Per video on the Create page and the Script tab.
+    hook_template: str = field(default_factory=lambda: _env("REEL_HOOK_TEMPLATE", "auto"))
     # Sarvam voices' own pace (0.5-2.0): 1.0 is what the user liked in Sarvam's playground (Bulbul v4 Flash, Shubh)
     sarvam_pace: float = field(default_factory=lambda: float(_env("REEL_SARVAM_PACE", "1.0")))
     # Roman Hinglish rewritten in mixed script for the Hindi, multilingual and Sarvam voices (hinglish.py); the Script
@@ -154,7 +157,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes", "meme_source", "long_voice_rate"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes", "meme_source", "long_voice_rate", "hook_template"]
 
 
 def settings_path(cfg: Config) -> Path:

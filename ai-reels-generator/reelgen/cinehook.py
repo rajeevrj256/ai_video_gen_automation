@@ -80,17 +80,119 @@ CINE_LOOK = ("cinematic film still, 35mm documentary photograph, dramatic natura
 PIC_NEGATIVE = ", portrait, close-up of a face, cartoon, illustration, anime, 3d render, painting"
 
 
-def seconds_for(minutes: float) -> tuple[float, float]:
-    """How long the hook runs (the silence included): a medium video's is shorter."""
+# ---------- hook templates ----------
+# The user, after a cinematic hook of slow dark stills with a small typed word: "hooks not energetic ... must be hook
+# retention at start, look like simple slide, read text". The energetic templates (remotion/src/cine/Energy.tsx)
+# open at full energy on frame 0 and keep something moving every half second; the cinematic one stays as a choice.
+TEMPLATES = {
+    "kinetic": ("⚡ Kinetic words", "Every word slams onto the screen as it's spoken, huge, the key words in colour, "
+                "over the dimmed picture. Fast voice, a beat from the first frame."),
+    "rapid": ("🎬 Fast cuts", "Full, bright pictures with a jump-cut zoom every half second, an RGB hit on every cut and "
+              "bold 2-3 word captions with the spoken word lit up."),
+    "stakes": ("💥 Big stakes", "Each shot's number or key words slam in giant and shake the frame (numbers count up), "
+               "the line in small captions below."),
+    "cinematic": ("🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark "
+                  "drone. Slower and moodier."),
+}
+ENERGETIC = ("kinetic", "rapid", "stakes")
+HOOK_PUSH = {"kinetic": 8, "rapid": 10, "stakes": 6, "cinematic": 0}  # % faster voice in the hook than the story
+ENERGY_DROP = 0.9  # the breath of silence after an energetic hook (the cinematic one keeps DROP)
+ENERGY_LOOK = ("vivid cinematic photograph, bright punchy colours, high contrast, crisp detail, dynamic angle, "
+               "realistic, no text")
+_MEMORY = "hook_templates.json"
+
+
+def energetic(template: str | None) -> bool:
+    return (template or "cinematic") in ENERGETIC
+
+
+def recent_templates(cfg) -> list[str]:
+    try:
+        return json.loads((cfg.output_dir / _MEMORY).read_text(encoding="utf-8"))[-6:]
+    except (OSError, ValueError):
+        return []
+
+
+def remember_template(cfg, template: str) -> None:
+    try:
+        path = cfg.output_dir / _MEMORY
+        path.write_text(json.dumps((recent_templates(cfg) + [template])[-12:]), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def pick_template(cfg, chosen: str = "") -> str:
+    """The template for a new video: the one asked for, else (auto) an energetic one the last video didn't use."""
+    want = (chosen or getattr(cfg, "hook_template", "") or "auto").strip()
+    if want in TEMPLATES:
+        return want
+    last = (recent_templates(cfg) or [""])[-1]
+    fresh = [t for t in ENERGETIC if t != last]
+    import random
+    return random.choice(fresh)
+
+
+def drop_for(template: str | None) -> float:
+    return ENERGY_DROP if energetic(template) else DROP
+
+
+def seconds_for(minutes: float, template: str | None = None) -> tuple[float, float]:
+    """How long the hook runs (the silence included): a medium video's is shorter, an energetic one shorter still."""
+    if energetic(template):
+        return (16.0, 30.0) if minutes < 7 else (18.0, 34.0)
     return (28.0, 38.0) if minutes < 7 else (32.0, 45.0)
 
 
-def rules(minutes: float) -> str:
-    lo, hi = seconds_for(minutes)
+TEMPLATE_TEXT = {
+    "kinetic": "Give every shot's text the 1-3 words of its line that hit hardest (they are drawn bigger, in colour, as "
+               "the line is spoken).",
+    "rapid": "Leave text empty on shots with a line (the line itself is the caption); a silent shot may carry 1-3 words.",
+    "stakes": "Every shot's text is its giant slam: the number with its unit ('₹1 lakh', '90%', '3 days') or 1-3 "
+              "shocking words, true and stated in the story (never a ratio or total you work out yourself); a number "
+              "counts up on screen.",
+}
+
+ENERGY_RULES = """The hook ({lo}-{hi} seconds, before chapter 1) is a high-energy cold open built to stop the scroll \
+and hold viewers through the first 30 seconds; the first 2 seconds decide whether they stay.
+- Shot 1 says the single most shocking, concrete, specific thing in the story in at most 8 words: a number, a \
+contradiction, a stake for the viewer ("Your salary is gone by the 10th."). Never a greeting, a setup, context, or a \
+question about what the viewer knows.
+- Then 5-9 more shots, each line 3-9 words, every one raising the stakes or opening a new loop (what, who, how much, \
+what nobody tells you), with a turn word where it fits ("But", "Except", "Then"). Never give the answer.
+- The last line is the big question or the promise of the payoff, under 10 words. After the hook a short breath of \
+silence, then chapter 1's first line re-asks it.
+- This hook is drawn as '{name}': {desc} {text}
+- Visuals are real, concrete and fill the frame (picture, footage, stat, compare, scene, model3d, meme): never a \
+keyword or title slide in the hook (the template draws the words). Give most shots a picture (a bright, vivid photo \
+prompt: no text, no real person's face). No flash montage; leave grade natural and transition cut; mark boom on the \
+2-3 biggest moments."""
+
+
+def rules(minutes: float, template: str | None = None) -> str:
+    lo, hi = seconds_for(minutes, template)
+    if energetic(template):
+        name, desc = TEMPLATES[template]
+        return ENERGY_RULES.format(lo=int(lo), hi=int(hi), name=name.split(" ", 1)[1], desc=desc, text=TEMPLATE_TEXT[template])
     return RULES.format(lo=int(lo), hi=int(hi))
 
 
-def timing(lengths: list[float | None], flashes: list[bool], seconds: tuple[float, float], drop: float = DROP) -> list[float]:
+def board_rules(template: str | None) -> str:
+    """The Script Video storyboard's hook paragraph for an energetic template (the user's hook words are final)."""
+    name, desc = TEMPLATES[template]
+    return f"""The hook is a high-energy cold open before the video, drawn as '{name.split(" ", 1)[1]}': {desc} \
+It is built from the user's hook lines H1, H2...: give every hook line exactly one shot, in order; add a silent shot \
+(line 0) only where a picture lands harder without words (at most 2). The viewer decides in the first 2 seconds: \
+shot 1's picture is the most striking, concrete image of the story. Visuals are real, concrete and fill the frame \
+(picture, footage, stat, compare, scene, model3d, meme), never a keyword or title slide (the template draws the \
+words). {TEMPLATE_TEXT[template]} Text comes only from the hook or the script, never a fact they don't state and \
+never a number they don't say (no ratio, total or change you work out yourself, e.g. no '4X' for 20 to 80). Give \
+most shots a picture (a bright, vivid photo prompt for an image model: no text, no real person's face), keeping a \
+visual for every shot. No flash montage; grade natural; transition cut; boom on the 2-3 biggest moments. After the \
+hook a short breath of silence, then the script starts."""
+
+
+def timing(lengths: list[float | None], flashes: list[bool], seconds: tuple[float, float], drop: float = DROP,
+           breath: float = 0.4) -> list[float]:
     """Shot lengths: each line plus a breath, a silent shot a short hold, flash shots faster and faster (never
     stretched), and the rest stretched (at most STRETCH_MAX each) or tightened so the whole hook, its silence
     included, fits `seconds`."""
@@ -103,8 +205,8 @@ def timing(lengths: list[float | None], flashes: list[bool], seconds: tuple[floa
             base.append(d), floor.append(d), fixed.append(True)
         else:
             n_flash = 0
-            base.append((ln + 0.4) if ln else 1.8)
-            floor.append((ln + 0.12) if ln else 1.2)
+            base.append((ln + breath) if ln else 1.8 if breath >= 0.4 else 1.0)
+            floor.append((ln + min(0.12, breath)) if ln else 1.2 if breath >= 0.4 else 0.8)
             fixed.append(False)
     lo, hi = seconds[0] - drop, seconds[1] - drop
     total = sum(base)
@@ -137,7 +239,7 @@ def fill_defaults(shots: list[dict], grades: bool = False) -> None:
 # ---------- AI film stills ----------
 
 def pictures(cfg, prompts: dict[int, str], work: Path, seed: int, title: str, progress: Progress,
-             reuse: bool = False) -> dict[int, Path]:
+             reuse: bool = False, look: str = CINE_LOOK) -> dict[int, Path]:
     """The hook's shots as AI film stills (the AI engine's keyframes stage, 1344x768), checked by Claude like the
     animated videos' pictures: a broken one is drawn once more from an easier prompt, and one still broken is left
     out (that shot shows its visual). {} when the engine isn't installed, is busy, or the setting is off."""
@@ -170,7 +272,7 @@ def pictures(cfg, prompts: dict[int, str], work: Path, seed: int, title: str, pr
             key = f"h{i:02d}"
             again = key in fixes
             items.append({"id": key, "out": str(out_dir / f"{key}.jpg"), "seed": seed + 300 + i + (1000 if again else 0),
-                          "prompt": f"{fixes.get(key, prompts[i])}, {CINE_LOOK}"})
+                          "prompt": f"{fixes.get(key, prompts[i])}, {look}"})
         from .animated import NEGATIVE
         return {"characters": [], "shots": items, "negative": NEGATIVE + PIC_NEGATIVE, "width": 1344, "height": 768, "steps": 4}
 
@@ -238,14 +340,17 @@ def _check(cfg, prompts: dict[int, str], out_dir: Path, title: str, progress: Pr
 
 # ---------- sound ----------
 
-def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str, str], rehook: float | None = None) -> tuple[list[dict], str | None]:
+def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str, str], rehook: float | None = None,
+                 template: str | None = None) -> tuple[list[dict], str | None]:
     """The hook's sounds as cues, and its drone: a sub boom on the first shot, on the boom shots and on the story's
     first word after the silence (`rehook`); the transition's own sound (whip, glitch, photo: whip + shutter, split:
     paper tear, punch: impact); a typewriter take per label; a boom on the shot after the climax montage. No riser
     anywhere: the user banned it. `end`: where the silence starts (the drone stops there).
     `files`: the video's other effect files by name (glitch, impact), relative."""
     sfx_dir = work / "sfx"
-    made = synth.write_hook_sounds(sfx_dir, end + 0.5, tuple(s.get("text", "") for s in shots))
+    hype = energetic(template)
+    # An energetic template has no dark drone and no typed labels: a whoosh on every cut and a hit on every slam.
+    made = synth.write_hook_sounds(sfx_dir, 0.0 if hype else end + 0.5, () if hype else tuple(s.get("text", "") for s in shots))
     f = {k: rel(p) for k, p in made.items()}
     cues: list[dict] = []
 
@@ -273,6 +378,12 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
         boom = k == 0 or bool(s.get("boom"))
         if boom:
             cue("hook-boom", start, 0.95, full=True)
+        if hype:
+            if k:
+                cue("hook-whip", start - 0.08, 0.55)
+            if template == "stakes" and s.get("text") and not boom:
+                cue("impact", start + 0.05, 0.6)
+            continue
         kind = s.get("transition") or "cut"
         hit = 1.45 if s.get("flash") else 1.0  # the montage is the climax: its cuts hit harder
         if kind == "whip":

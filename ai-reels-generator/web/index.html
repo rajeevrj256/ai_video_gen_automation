@@ -410,6 +410,8 @@
         <option value="some">😄 Some: explained like a funny friend, a meme now and then</option>
         <option value="lots">🤣 Lots: a meme every few lines</option></select>
         <p class="hint">Memes are drawn fresh for each video (two buttons, nope/yep, expanding brain, this is fine...), with everyday examples that make the idea click. Facts stay checked.</p>
+        <label for="hookTpl">Hook style</label>
+        <select id="hookTpl" data-hook="job"></select>
       </div>
       <label>Subtitles</label>
       <div class="segmented" id="cc">
@@ -477,6 +479,8 @@
         <option value="some">😄 Some: a meme where a line explains an idea or makes a joke</option>
         <option value="lots">🤣 Lots</option></select>
       <p class="hint">Your words never change: memes only go where your script already sets one up.</p>
+      <label for="sv-hooktpl">Hook style</label>
+      <select id="sv-hooktpl" data-hook="job"></select>
       <details class="used" id="vtBox">
         <summary>🔊 Try the voice on a line <span class="hint">(hear it before making the video)</span></summary>
         <textarea class="edit" id="vt-text" rows="3" maxlength="2000" placeholder="A line from your script, e.g. Aur ye hume next question tak lekar aata hai."></textarea>
@@ -894,6 +898,8 @@
       <label for="s-ai_music">Music</label>
       <select id="s-ai_music"><option value="true">🎵 New AI music for every video (when the AI engine is installed; a genre the last videos didn't use)</option>
         <option value="false">Composed music only (faster)</option></select>
+      <label for="s-hook_template">Hook style (long and medium videos, Script Videos, Shoot)</label>
+      <select id="s-hook_template" data-hook="settings"></select>
       <label for="s-memes">Memes &amp; humour (long and medium videos, Script Videos, Shoot, Shorts+ motion graphics)</label>
       <select id="s-memes"><option value="off">🚫 Off: told like a documentary</option>
         <option value="some">😄 Some: explained like a funny friend, a meme now and then</option>
@@ -1453,6 +1459,108 @@ function wireDemos(id, v) {
   load();
 }
 
+// ---- Hook templates (reelgen/cinehook.py TEMPLATES; keep in step): a picker with a live example ----
+const HOOK_TPL = {
+  kinetic: ["⚡ Kinetic words", "Every word slams onto the screen as it's spoken, huge, the key words in colour, over the dimmed picture. Fast voice, a beat from the first frame."],
+  rapid: ["🎬 Fast cuts", "Full, bright pictures with a jump-cut zoom every half second, an RGB hit on every cut and bold 2-3 word captions with the spoken word lit up."],
+  stakes: ["💥 Big stakes", "Each shot's number or key words slam in giant and shake the frame (numbers count up), the line in small captions below."],
+  cinematic: ["🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark drone. Slower and moodier."],
+};
+function hookExample(box, tpl) {  // plays (and, the first time, makes) the example clip of a template
+  const line = box.querySelector(".hk-ex-line"), vid = box.querySelector("video");
+  const go = async () => {
+    let d;
+    try { d = await api(`/api/hook-samples/${tpl}`); } catch (e) { line.textContent = e.message; return; }
+    if (d.ready) { line.textContent = ""; vid.hidden = false; vid.src = d.url; vid.play().catch(() => {}); return; }
+    line.textContent = d.state === "failed" ? "⚠️ " + d.error : `⏳ Making the ${HOOK_TPL[tpl][0]} example (once, 1–3 min): ${d.line}`;
+    if (d.state !== "failed" && document.body.contains(box)) setTimeout(go, 3000);
+  };
+  go();
+}
+function hookPicker(sel) {
+  const kind = sel.dataset.hook;
+  sel.innerHTML = (kind === "job" ? '<option value="">⚙️ As in Settings</option>' : "")
+    + '<option value="auto">🔀 Auto: an energetic style the last video didn\'t use</option>'
+    + Object.entries(HOOK_TPL).map(([k, [n]]) => `<option value="${k}">${n}</option>`).join("");
+  const box = document.createElement("div");
+  box.className = "hk-ex";
+  box.innerHTML = `<p class="hint hk-ex-desc"></p><button type="button" class="mini hk-ex-btn">▶ See an example</button>
+    <span class="hint hk-ex-line"></span><video controls playsinline hidden style="width:100%;aspect-ratio:16/9;border-radius:10px;margin-top:6px;background:#000"></video>`;
+  sel.after(box);
+  const sync = () => {
+    const t = HOOK_TPL[sel.value];
+    box.querySelector(".hk-ex-desc").textContent = t ? t[1] : sel.value === "auto" ? "Each video gets kinetic words, fast cuts or big stakes, never the same as the last one." : "";
+    box.querySelector(".hk-ex-btn").hidden = !t;
+    box.querySelector("video").hidden = true;
+    box.querySelector(".hk-ex-line").textContent = "";
+  };
+  sel.addEventListener("change", sync);
+  sel.syncHook = sync;
+  box.querySelector(".hk-ex-btn").onclick = () => HOOK_TPL[sel.value] && hookExample(box, sel.value);
+  sync();
+}
+
+// ---- Re-create only the hook, as a new separate video (reelgen/rehook.py) ----
+let hookTimer = null;
+function wireHooks(id, v) {
+  const box = $("#hkBox"), player = $("#hkVideo");
+  let pick = "", data = null, playing = "";
+  const play = (src, key, to) => {
+    playing = key; player.hidden = false; player.src = src;
+    player.ontimeupdate = to ? () => { if (player.currentTime >= to) player.pause(); } : null;
+    player.onloadedmetadata = () => player.play().catch(() => {});
+    $("#video").pause();
+    box.querySelectorAll("#hkMade .chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
+    const made = data && data.made.find((m) => m.key === key);
+    $("#hkSave").innerHTML = made ? `<button id="hkSaveBtn" style="width:100%;margin-top:8px">💾 Save as a new video with this hook</button>
+      <p class="hint">Copies this video to a new one, puts this hook at the start and joins the rest after it (no re-edit, a few minutes). This video stays as it is.</p>` : "";
+    if (made) $("#hkSaveBtn").onclick = async () => {
+      $("#hkSaveBtn").disabled = true;
+      try {
+        await api(`/api/videos/${encodeURIComponent(id)}/hooks/${made.key}/save`, { method: "POST" });
+        toast("Making the new video — follow it on the Create page; it appears in Videos when done");
+      } catch (e) { toast(e.message); $("#hkSaveBtn").disabled = false; }
+    };
+  };
+  const load = async () => {
+    if (!document.body.contains(box)) { clearInterval(hookTimer); hookTimer = null; return; }
+    try { data = await api(`/api/videos/${encodeURIComponent(id)}/hooks`); } catch (e) { return; }
+    if (data.why_not) { box.innerHTML = `<p class="hint">${esc(data.why_not)}</p>`; return; }
+    if (!pick) pick = data.templates.find((t) => t.key !== data.current && t.key !== "cinematic")?.key || "kinetic";
+    $("#hkTpl").innerHTML = data.templates.map((t) => `<button class="chip ${t.key === pick ? "on" : ""}" data-t="${t.key}">${esc(t.name)}${t.key === data.current ? " (now)" : ""}</button>`).join("");
+    $("#hkDesc").textContent = (data.templates.find((t) => t.key === pick) || {}).desc || "";
+    $("#hkRewriteRow").style.display = data.yours ? "none" : "flex";  // a Script Video's words are yours
+    box.querySelectorAll("#hkTpl .chip").forEach((c) => c.onclick = () => { pick = c.dataset.t; load(); });
+    const chips = [`<button class="chip" data-key="orig">▶ This video's hook (${esc(HOOK_TPL[data.current]?.[0] || data.current)}, ${Math.round(data.seconds)} s)</button>`]
+      .concat(data.made.map((m) => `<button class="chip" data-key="${esc(m.key)}">▶ ${esc(m.name)} · ${Math.round(m.seconds)} s</button>`));
+    $("#hkMade").innerHTML = chips.join("");
+    box.querySelectorAll("#hkMade .chip").forEach((c) => {
+      c.classList.toggle("on", c.dataset.key === playing);
+      c.onclick = () => c.dataset.key === "orig"
+        ? play(`/media/${encodeURIComponent(id)}/reel.mp4#t=0,${data.seconds}`, "orig", data.seconds)
+        : play(`/media/${encodeURIComponent(id)}/hook/${c.dataset.key}.mp4`, c.dataset.key);
+    });
+    const busy = data.busy.find((b) => b.state !== "failed"), failed = data.busy.find((b) => b.state === "failed");
+    $("#hkLine").textContent = busy ? `⏳ Making the ${HOOK_TPL[busy.template]?.[0] || busy.template} hook: ${busy.line}`
+      : failed ? "⚠️ The new hook didn't work: " + failed.error
+      : data.saving.length ? "💾 A new video with a new hook is being made (Create page)."
+      : data.made.length ? "Tap a hook to watch it; save the one you like as a new video." : "";
+    $("#hkGo").disabled = !!busy;
+    if (busy && !hookTimer) hookTimer = setInterval(load, 3000);
+    if (!busy && hookTimer) { clearInterval(hookTimer); hookTimer = null; }
+  };
+  $("#hkGo").onclick = async () => {
+    $("#hkGo").disabled = true;
+    try {
+      await api(`/api/videos/${encodeURIComponent(id)}/hooks`, { method: "POST", body: JSON.stringify({ template: pick, rewrite: $("#hkRewrite").checked }) });
+      load();
+    } catch (e) { toast(e.message); $("#hkGo").disabled = false; }
+  };
+  $("#hkEx").onclick = () => hookExample($("#hkExBox"), pick);
+  if (hookTimer) { clearInterval(hookTimer); hookTimer = null; }
+  load();
+}
+
 async function openVideo(id) {
   const v = await api("/api/videos/" + encodeURIComponent(id));
   const src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
@@ -1485,6 +1593,20 @@ async function openVideo(id) {
       <video id="rvDemoVideo" controls playsinline preload="metadata" hidden style="width:100%;max-height:none;aspect-ratio:16/9;border-radius:10px;margin-top:8px;background:#000"></video>
     </div>` : ""}
     <button id="rvGo" style="width:100%;margin-top:8px">🎙️ Re-make with these settings</button>
+    ${v.format === "long" && v.source !== "shoot" ? `<div id="hkBox">
+      <h4 class="section">🪝 Hook</h4>
+      <p class="hint">Make a new hook for this video in another style and compare it with this one. Saving makes a <b>new, separate video</b>: only the hook is made again and the rest of this video is joined after it (no re-edit). This video stays as it is.</p>
+      <div class="chips" id="hkTpl"></div>
+      <p class="hint" id="hkDesc"></p>
+      <div id="hkExBox"><button type="button" class="mini" id="hkEx">▶ See an example of this style</button> <span class="hint hk-ex-line"></span>
+        <video controls playsinline hidden style="width:100%;aspect-ratio:16/9;border-radius:10px;margin-top:6px;background:#000"></video></div>
+      <label id="hkRewriteRow" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="hkRewrite" checked style="width:auto"> Rewrite the hook's words for this style (only facts the video already states)</label>
+      <button id="hkGo" style="width:100%;margin-top:8px">🪝 Make a new hook (preview, about 2–5 min)</button>
+      <div id="hkLine" class="hint"></div>
+      <div id="hkMade" class="chips"></div>
+      <video id="hkVideo" controls playsinline preload="metadata" hidden style="width:100%;max-height:none;aspect-ratio:16/9;border-radius:10px;margin-top:8px;background:#000"></video>
+      <div id="hkSave"></div>
+    </div>` : ""}
     <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
       <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
@@ -1617,6 +1739,7 @@ async function openVideo(id) {
   paceSlider($("#rv-pace"), { blank: "Keep this speed", base: madePace,
     video: v.duration_seconds ? { seconds: v.duration_seconds, pace: madePace } : null });
   if ($("#rvDemoBox")) wireDemos(id, v);
+  if ($("#hkBox")) wireHooks(id, v);
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {
@@ -2335,6 +2458,7 @@ async function loadSettings() {
     if (el.syncPace) el.syncPace();
   }
   $("#sv-pace").syncPace();
+  if ($("#s-hook_template").syncHook) $("#s-hook_template").syncHook();
   const ai = { "claude-code": "Claude Code (your login)", api: st.api_key_set ? "Anthropic API key" : "API key — NOT SET",
     missing: "NOT SET UP — install Claude Code and run `claude` once" }[st.backend];
   checkUpdate();
@@ -2853,7 +2977,7 @@ document.querySelectorAll("#sv-cc button").forEach((b) => b.onclick = () => {
 $("#svBtn").onclick = async () => {
   const body = { title: $("#sv-title").value, description: $("#sv-desc").value, hook: $("#sv-hook").value,
                  script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc,
-                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value, voice_rate: $("#sv-pace").value };
+                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value, voice_rate: $("#sv-pace").value, hook_template: $("#sv-hooktpl").value };
   if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
   $("#svBtn").disabled = true;
   try {
@@ -2871,7 +2995,7 @@ api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions ===
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value, hook_template: $("#hookTpl").value }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;
@@ -3334,6 +3458,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "]") { PR.wpm = Math.min(260, PR.wpm + 10); prSave(); if (PR.auto) prAuto(true); }
   else if (k === "Escape") closePrompter();
 });
+document.querySelectorAll("select[data-hook]").forEach(hookPicker);
 paceSlider($("#s-long_voice_rate"));
 paceSlider($("#sv-pace"), { blank: "As in Settings", base: () => $("#s-long_voice_rate").value || "+0%" });
 $("#s-long_voice_rate").addEventListener("change", () => $("#sv-pace").syncPace());
