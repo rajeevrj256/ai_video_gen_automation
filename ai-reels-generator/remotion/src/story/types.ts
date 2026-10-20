@@ -18,9 +18,9 @@ export type Effect = 'none' | 'erupt' | 'smoke' | 'fire' | 'sparkle' | 'shake';
 export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect};
 export type Setting =
   | 'living-room' | 'classroom' | 'kitchen' | 'bedroom' | 'street' | 'office' | 'bathroom'
-  | 'park' | 'shop' | 'exam-hall' | 'blank';
+  | 'park' | 'shop' | 'exam-hall' | 'blank' | 'mine';
 export type Camera = 'wide' | 'close' | 'punch' | 'shake';
-export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right';
+export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right' | 'step';
 
 // A piece of furniture in the scene (kinds in sets.json): centre x and width on the 1920 px set.
 export type Piece = {kind: string; x: number; width: number};
@@ -55,6 +55,8 @@ export type ActorState = {
   propText?: string; // text on a paper / phone screen ("F", "₹93")
   propThing?: string; // with prop 'thing': what they hold ('volcano' or a lucide icon name)
   action: Action;
+  back?: boolean; // seen from behind (walking away into a place): no face, the back of the head
+  far?: boolean; // small, far away (a very wide shot): on the set's distant ground (ink.tsx FAR)
 };
 
 export type Word = {text: string; start: number; end: number}; // seconds from the shot's start

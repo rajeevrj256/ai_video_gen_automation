@@ -7,7 +7,7 @@ import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
 import {iconFor} from '../long/icon';
 import {PieceView, STOOL_SEAT, Stool, TABLE_TOP, TableUnder, defaultFurniture, seatAt, surfaceAt} from './furniture';
-import {HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHeadwear, InkSet, defaultDesign, inkPalette, type SetPal, GREY_PAL} from './ink';
+import {HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHairBackView, InkHeadwear, InkSet, InkThing, VEHICLES, defaultDesign, drawnKind, farOf, inkPalette, type SetPal, GREY_PAL} from './ink';
 import type {ActorState, CastMember, Design, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
 
 // A stick-figure comedy episode in the channel's style: light grey sets drawn in grey tones with
@@ -100,7 +100,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
     <Layer name="stick story" style={{backgroundColor: PAPER, fontFamily: FONT}}>
       {soundOnly ? null : shots.map((s, i) => (
         <Sequence key={i} name={`shot ${i + 1} ${s.setting}${s.speaker ? ` (${s.speaker})` : ''}`} from={f(s.start)} durationInFrames={Math.max(1, f(s.duration))}>
-          <ShotView shot={s} looks={looks} cast={cast} vertical={vertical} dialogue={dialogue} ink={art === 'ink'} newScene={i === 0 || shots[i - 1].scene !== s.scene} />
+          <ShotView shot={s} looks={looks} cast={cast} vertical={vertical} dialogue={dialogue} ink={art === 'ink'} newScene={i > 0 && shots[i - 1].scene !== s.scene} />
         </Sequence>
       ))}
       {shots.map((s, i) =>
@@ -163,13 +163,13 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
         {ink ? <InkDefs /> : null}
         <g transform={`translate(${OW / 2 + shake} ${OH / 2}) scale(${total}) translate(${-cx} ${-cy})`}>
           <g filter={ink ? 'url(#inkRough)' : undefined}>
-          {ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} /> : <SetView setting={shot.setting} sign={shot.sign} />}
+          {ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} t={t} /> : <SetView setting={shot.setting} sign={shot.sign} />}
           {furniture.map((p, i) => <PieceView key={`f${i}`} p={p} floor={FLOOR} pal={pal} />)}
           {shot.actors.filter((a) => a.pose === 'sit' && !a.action.startsWith('walk') && seatAt(furniture, a.x) === null).map((a) => (
             <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} pal={pal} />
           ))}
           {shot.actors.map((a) => (
-            <Figure key={a.id} a={a} seat={seat(a)} outfit={outfits[a.id]} design={designs[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
+            <Figure key={a.id} a={a} seat={seat(a)} outfit={outfits[a.id]} design={designs[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames} far={farOf(shot.setting)}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
           <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} pal={ink ? pal : undefined} />
@@ -223,8 +223,20 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
       dx = interpolate(t, [Math.max(0, d - 1), d], [0, 1100], {...clamp, easing: Easing.in(Easing.cubic)});
       break;
   }
-  const walking = (a.action.startsWith('walk-in') && t < 0.8) || (a.action.startsWith('walk-out') && t > d - 1);
-  return {dx, dy, rot, walking};
+  // One step forward (0.8-1.8 s): seen from behind it goes into the picture (a little smaller and higher),
+  // otherwise toward where they face. `stepT` gives the walking legs exactly one swing.
+  let k = 1;
+  let stepT: number | null = null;
+  if (a.action === 'step') {
+    const p = interpolate(t, [0.8, 1.8], [0, 1], {...clamp, easing: Easing.inOut(Easing.quad)});
+    if (a.back) {
+      k = 1 - 0.07 * p;
+      dy = -16 * p;
+    } else dx = 70 * p * a.facing;
+    if (t > 0.8 && t < 1.8) stepT = ((t - 0.8) / 1) * (Math.PI / 9);
+  }
+  const walking = (a.action.startsWith('walk-in') && t < 0.8) || (a.action.startsWith('walk-out') && t > d - 1) || stepT !== null;
+  return {dx, dy, rot, walking, k, stepT};
 };
 
 // Small body movements that carry an emotion (pixels and degrees; lean is toward where they look).
@@ -290,12 +302,13 @@ const Sleeves: React.FC<{r: Rig; colour?: string}> = ({r, colour}) => (
   </>
 );
 
-const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]}> = ({a, seat, look, outfit, design, t, frame, frames, talking}) => {
+const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]; far?: {lift: number; size: number}}> = ({a, seat, look, outfit, design, t, frame, frames, talking, far}) => {
   const {fps} = useVideoConfig();
-  const {dx, dy, rot, walking} = actionOffset(a, t, frames, fps);
+  const {dx, dy, rot, walking, k, stepT} = actionOffset(a, t, frames, fps);
   const pose: Pose = walking ? 'walk' : a.pose;
-  const small = look === 'kid' ? 0.78 : 1;
-  const r = rig(pose, t, seat);
+  const small = (look === 'kid' ? 0.78 : 1) * k * (a.far && far ? far.size : 1);
+  const lift = a.far && far ? far.lift : 0;
+  const r = rig(pose, stepT ?? t, seat);
   const breathe = 0; // no breathing bob: it read as the figures vibrating
   const speakingNow = talking.some((w) => t >= w.start && t <= w.end);
   const mouthOpen = speakingNow && frame % 6 < 3;
@@ -306,21 +319,28 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
   // A sitting leg bends at the knee instead of curving.
   const leg = (p: Pt, k: Pt, e: Pt) => (pose === 'sit' ? `M ${p[0]} ${p[1]} L ${k[0]} ${k[1]} L ${e[0]} ${e[1]}` : limb(p, k, e));
   return (
-    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * a.facing}) scale(${a.facing * small} ${small})`}>
+    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR - lift + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * a.facing}) scale(${a.facing * small} ${small})`}>
       <g transform={pose === 'lie' ? 'translate(-150 -40) rotate(-90 0 0)' : `translate(0 ${breathe})`}>
         <ellipse cx={0} cy={4} rx={60} ry={9} fill="rgba(0,0,0,0.18)" stroke="none" />
         {design ? (
           <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
-            <InkBody r={r} d={design} sitting={pose === 'sit'} />
-            <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />
+            <InkBody r={r} d={design} sitting={pose === 'sit'} back={!!a.back} />
+            {a.back ? null : <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />}
             <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head})`}>
-              <g transform={`scale(${FACE})`}><InkHairBack d={design} /></g>
+              {a.back ? null : <g transform={`scale(${FACE})`}><InkHairBack d={design} /></g>}
               <circle r={HEAD} fill={HEAD_FILL} strokeWidth={6} />
               <g transform={`scale(${FACE})`} strokeWidth={LINE / FACE}>
-                <InkHair d={design} />
-                <FaceView face={lying && a.face === 'neutral' ? 'dead' : a.face} frame={frame} mouthOpen={mouthOpen} look="man" />
-                <InkFaceExtras d={design} ex={10} />
-                <InkHeadwear d={design} />
+                {a.back ? (
+                  // From behind: the back of the head, no face.
+                  <InkHairBackView d={design} />
+                ) : (
+                  <>
+                    <InkHair d={design} />
+                    <FaceView face={lying && a.face === 'neutral' ? 'dead' : a.face} frame={frame} mouthOpen={mouthOpen} look="man" />
+                    <InkFaceExtras d={design} ex={10} />
+                  </>
+                )}
+                <InkHeadwear d={design} back={!!a.back} />
               </g>
             </g>
           </g>
@@ -611,6 +631,9 @@ const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect}
   if (/volcano|lava/.test(name)) {
     return <g transform={`rotate(${wiggle})`}><Volcano size={size * 1.5} t={t} erupt={effect === 'erupt'} /></g>;
   }
+  // Animals and vehicles are drawn whole (lucide's dog and cat are only faces, its vehicles thin outlines).
+  const drawn = drawnKind(name);
+  if (drawn) return <g transform={`rotate(${wiggle})`}><InkThing kind={drawn} name={name} size={size} /></g>;
   const Icon = iconFor(name);
   const s = size / 24;
   return (
@@ -647,11 +670,13 @@ const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: numb
   const size = th.big ? 190 : 120;
   // On the table or desk at its spot; on a table brought in when there's none.
   // A set with a counter in front of the cast (the kitchen) puts things on that counter.
-  const desk = th.table ? (front || surfaceAt(furniture, th.x)) : null;
-  const top = FLOOR - (desk ?? (th.table ? TABLE_TOP : 0));
+  const kind = drawnKind(th.name);
+  const onTable = th.table && !(kind && VEHICLES.has(kind)); // a vehicle always stands on the ground
+  const desk = onTable ? (front || surfaceAt(furniture, th.x)) : null;
+  const top = FLOOR - (desk ?? (onTable ? TABLE_TOP : 0));
   return (
     <g>
-      {th.table && desk === null ? <TableUnder x={th.x} floor={FLOOR} pal={pal} /> : null}
+      {onTable && desk === null ? <TableUnder x={th.x} floor={FLOOR} pal={pal} /> : null}
       <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} /></g>
     </g>
   );

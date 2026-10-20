@@ -29,6 +29,7 @@
     "park": [{"kind": "bench", "spot": "right", "seats": 2}],
     "shop": [{"kind": "shop-counter", "spot": "center", "seats": 2}],
     "street": [],
-    "blank": []
+    "blank": [],
+    "mine": []
   }
 }

@@ -81,7 +81,7 @@ const SHORT_SLEEVES = new Set(['tshirt', 'dress']);
 export const shoulderAt = (r: Rig, side: -1 | 1): Pt => [r.neck[0] + side * 38, r.neck[1] + 30];
 
 // Legs, shoes, the top and the arms, in drawing order. The head is drawn by the caller on top.
-export const InkBody: React.FC<{r: Rig; d: Design; sitting: boolean; under?: React.ReactNode}> = ({r, d, sitting, under}) => {
+export const InkBody: React.FC<{r: Rig; d: Design; sitting: boolean; back?: boolean; under?: React.ReactNode}> = ({r, d, sitting, back = false, under}) => {
   const [nx, ny] = r.neck;
   const [hx, hy] = r.hip;
   const top = d.top;
@@ -106,7 +106,7 @@ export const InkBody: React.FC<{r: Rig; d: Design; sitting: boolean; under?: Rea
   const extra = d.extraColour || '#8A6A44';
   return (
     <g strokeLinecap="round" strokeLinejoin="round">
-      {has('backpack') ? <rect x={nx - 84} y={ny + 30} width={44} height={110} rx={14} fill={extra} stroke={INK} strokeWidth={EDGE} /> : null}
+      {has('backpack') && !back ? <rect x={nx - 84} y={ny + 30} width={44} height={110} rx={14} fill={extra} stroke={INK} strokeWidth={EDGE} /> : null}
       {/* legs: trousers as wide tubes, shorts to the knee, bare stick legs under a dress or skirt */}
       {legs.map(([p, k, f], i) =>
         bare ? (
@@ -128,20 +128,27 @@ export const InkBody: React.FC<{r: Rig; d: Design; sitting: boolean; under?: Rea
         <path d={`M ${hx - 44} ${hy + 14} L ${hx - 64} ${hy + (sitting ? 46 : 82)} Q ${hx} ${hy + (sitting ? 54 : 92)} ${hx + 64} ${hy + (sitting ? 46 : 82)} L ${hx + 44} ${hy + 14} Z`}
           fill={d.bottomColour} stroke={INK} strokeWidth={EDGE} />
       ) : null}
-      <TopDetail top={top} nx={nx} ny={ny} hx={hx} hy={hy} hem={hem} />
-      {has('apron') ? (
+      {back ? (
+        // Seen from behind: a back seam, the hood lying on the back, the backpack on top; no buttons, pockets or tie.
+        <g stroke={INK} fill="none" strokeWidth={3.5}>
+          <path d={`M ${nx} ${ny + 26} L ${hx} ${hem - 4}`} strokeWidth={2.5} />
+          {top === 'hoodie' ? <path d={`M ${nx - 30} ${ny + 10} Q ${nx} ${ny + 70} ${nx + 30} ${ny + 10}`} fill={cloth} /> : null}
+          {has('backpack') ? <rect x={nx - 34} y={ny + 34} width={68} height={100} rx={14} fill={extra} strokeWidth={EDGE} /> : null}
+        </g>
+      ) : <TopDetail top={top} nx={nx} ny={ny} hx={hx} hy={hy} hem={hem} />}
+      {has('apron') && !back ? (
         <path d={`M ${nx - 26} ${ny + 52} h 52 L ${hx + 40} ${hy + 70} Q ${hx} ${hy + 76} ${hx - 40} ${hy + 70} Z`} fill={extra} stroke={INK} strokeWidth={EDGE - 1} />
       ) : null}
-      {has('tie') || top === 'suit' ? (
+      {(has('tie') || top === 'suit') && !back ? (
         <path d={`M ${nx - 7} ${ny + 14} h 14 l -3 10 l 9 64 l -13 16 l -13 -16 l 9 -64 Z`} fill={has('tie') ? extra : '#6E3434'} stroke={INK} strokeWidth={3.5} />
       ) : null}
-      {has('lanyard') ? (
+      {has('lanyard') && !back ? (
         <g stroke={INK} strokeWidth={3}>
           <path d={`M ${nx - 22} ${ny + 14} L ${nx} ${ny + 74} L ${nx + 22} ${ny + 14}`} stroke={extra} strokeWidth={5} fill="none" />
           <rect x={nx - 16} y={ny + 72} width={32} height={40} rx={4} fill="#EDE6D6" />
         </g>
       ) : null}
-      {has('stethoscope') ? (
+      {has('stethoscope') && !back ? (
         <path d={`M ${nx - 30} ${ny + 18} Q ${nx - 34} ${ny + 90} ${nx} ${ny + 96} Q ${nx + 20} ${ny + 96} ${nx + 22} ${ny + 70}`} stroke="#5D6266" strokeWidth={6} fill="none" />
       ) : null}
       {has('satchel') ? (
@@ -274,7 +281,13 @@ export const InkHairBack: React.FC<{d: Design}> = ({d}) => {
         </g>
       );
     case 'ponytail':
-      return <path d={`M ${-R + 10} -40 Q ${-R - 40} -30 ${-R - 30} 40 Q ${-R - 14} 10 ${-R + 6} -14 Z`} fill={c} {...edge} />;
+      // Tied at the back of the head and hanging close to it (a first version stuck far out like flying hair).
+      return (
+        <g>
+          <path d={`M -54 -40 Q -84 -30 -80 18 Q -78 48 -68 66 Q -64 34 -58 4 Z`} fill={c} {...edge} />
+          <ellipse cx={-60} cy={-36} rx={7} ry={9} fill={d.headwearColour || '#9C4A3C'} {...edge} strokeWidth={3} />
+        </g>
+      );
     case 'bun':
       return <circle cx={-10} cy={-R - 14} r={24} fill={c} {...edge} />;
     case 'braids':
@@ -356,10 +369,10 @@ export const InkFaceExtras: React.FC<{d: Design; ex: number}> = ({d, ex}) => {
   );
 };
 
-export const InkHeadwear: React.FC<{d: Design}> = ({d}) => {
+export const InkHeadwear: React.FC<{d: Design; back?: boolean}> = ({d, back = false}) => {
   const c = d.headwearColour || '#7A6A4E';
   const e = {stroke: INK, strokeWidth: 4, strokeLinejoin: 'round' as const};
-  const lamp = d.extras.includes('headlamp' as never);
+  const lamp = d.extras.includes('headlamp' as never) && !back; // the lamp is on the front: hidden from behind
   const lampAt = (y: number) => (lamp ? (
     <g>
       <rect x={30} y={y - 12} width={22} height={18} rx={4} fill="#2E2C2A" {...e} />
@@ -371,7 +384,7 @@ export const InkHeadwear: React.FC<{d: Design}> = ({d}) => {
       return (
         <g>
           <path d={`M -60 -24 Q -60 -78 0 -78 Q 58 -78 60 -26 Z`} fill={c} {...e} />
-          <path d={`M 34 -28 Q 80 -30 100 -18 Q 70 -16 40 -20 Z`} fill={c} {...e} />
+          {back ? null : <path d={`M 34 -28 Q 80 -30 100 -18 Q 70 -16 40 -20 Z`} fill={c} {...e} />}
           {lampAt(-46)}
         </g>
       );
@@ -487,7 +500,13 @@ const ROOMS: Record<Setting, Room> = {
   park: {wall: '#E2D8BE', trim: '#7F8A5E', floor: '#7F8A5E', boards: '#6B754E', pal: {...BASE, wood: '#8E6E4A'}},
   shop: {wall: '#D2C29C', trim: '#9A8660', floor: '#9A8F7A', boards: '#7F7663', pal: {...BASE, wood: '#8C6C4C'}},
   blank: {wall: '#D8CDB4', trim: '#9A8E70', floor: '#A8987A', boards: '#8E7F64', pal: BASE},
+  mine: {wall: '#E6DCC2', trim: '#8E7656', floor: '#B39470', boards: '#9A7E5C', pal: {...BASE, wood: '#7E5E3E'}},
 };
+
+// Where a far-away figure stands (actor.far): its ground above the floor line and its scale. Only sets with a
+// distant ground of their own have one; elsewhere 'far' just draws the figure smaller on the floor.
+export const FAR: Partial<Record<Setting, {lift: number; size: number}>> = {mine: {lift: 236, size: 0.24}}; // in front of the mine's mouth
+export const farOf = (setting: Setting) => FAR[setting] ?? {lift: 0, size: 0.6};
 export const inkPalette = (setting: Setting): SetPal => (ROOMS[setting] ?? ROOMS.blank).pal;
 
 const W = 1920;
@@ -535,7 +554,7 @@ const Floor: React.FC<{room: Room; floor: number}> = ({room, floor}) => (
   </g>
 );
 
-export const InkSet: React.FC<{setting: Setting; sign?: string; floor: number; hand: string; font: string}> = ({setting, sign, floor, hand, font}) => {
+export const InkSet: React.FC<{setting: Setting; sign?: string; floor: number; hand: string; font: string; t?: number}> = ({setting, sign, floor, hand, font, t = 0}) => {
   const room = ROOMS[setting] ?? ROOMS.blank;
   const base = <rect x={-400} y={-400} width={W + 800} height={H + 800} fill={room.wall} />;
   const signText = (x: number, y: number, size = 38, fill = INK) =>
@@ -692,6 +711,8 @@ export const InkSet: React.FC<{setting: Setting; sign?: string; floor: number; h
           <Floor room={room} floor={floor} />
         </g>
       );
+    case 'mine':
+      return <MineSet floor={floor} t={t} />;
     default:
       return (
         <g>
@@ -700,4 +721,243 @@ export const InkSet: React.FC<{setting: Setting; sign?: string; floor: number; h
         </g>
       );
   }
+};
+
+// A barren desert mountainside at first light: a far ridge, tan slopes, a terrace with a timbered mine entrance
+// and a wooden headframe, a dirt track winding up from the lower left, and dust drifting slowly out of the tunnel.
+// The terrace top is at floor - FAR.mine.lift, where a far-away figure stands at the mine's mouth.
+const MineSet: React.FC<{floor: number; t: number}> = ({floor, t}) => {
+  const g = floor - 262; // the terrace
+  const track = `M -120 ${H + 120} Q 300 ${floor + 90} 560 ${floor - 10} Q 800 ${floor - 90} 700 ${g + 110} Q 640 ${g + 50} 900 ${g + 30} L 1120 ${g + 6}`;
+  return (
+    <g>
+      <rect x={-400} y={-400} width={W + 800} height={H + 800} fill="#E6DCC2" />
+      <circle cx={420} cy={250} r={60} fill="#EFE5CB" {...ink} strokeWidth={3} />
+      <path d={`M -400 ${g - 40} L -60 ${g - 170} L 180 ${g - 90} L 420 ${g - 230} L 640 ${g - 120} L 860 ${g - 200} L 1040 ${g - 110} L 1180 ${g - 150} V ${H} H -400 Z`} fill="#B9B5AA" {...ink} />
+      <path d={`M -400 ${g + 160} L 120 ${g + 90} L 520 ${g - 20} L 860 ${g - 170} L 1160 ${g - 300} L 1440 ${g - 340} L 1760 ${g - 260} L ${W + 400} ${g - 200} V ${H + 400} H -400 Z`} fill="#C2A57E" {...ink} />
+      {[[980, g - 120, 60], [1300, g - 260, 46], [1640, g - 190, 70], [1500, g + 120, 54], [300, g + 230, 48]].map(([x, y, r], i) => (
+        <path key={i} d={`M ${x - r} ${y} L ${x - r * 0.4} ${y - r * 0.7} L ${x + r * 0.5} ${y - r * 0.55} L ${x + r} ${y} Z`} fill="#A98E68" {...ink} strokeWidth={3.5} />
+      ))}
+      <path d={`M 840 ${g} H 1560 L 1660 ${g + 90} H 760 Z`} fill="#B39470" {...ink} />
+      <path d={track} stroke={INK} strokeWidth={70} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={track} stroke="#D4C29C" strokeWidth={60} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {/* the mine entrance, timbered */}
+      <path d={`M 1108 ${g} L 1124 ${g - 128} L 1236 ${g - 128} L 1252 ${g} Z`} fill="#2A2622" {...ink} />
+      <rect x={1102} y={g - 140} width={22} height={140} fill="#7E5E3E" {...ink} strokeWidth={3.5} />
+      <rect x={1236} y={g - 140} width={22} height={140} fill="#7E5E3E" {...ink} strokeWidth={3.5} />
+      <rect x={1088} y={g - 160} width={184} height={24} fill="#7E5E3E" {...ink} strokeWidth={3.5} />
+      {/* the headframe */}
+      <g {...ink} strokeWidth={5} fill="none">
+        <path d={`M 1336 ${g} L 1404 ${g - 220} L 1472 ${g} M 1356 ${g - 70} H 1452 M 1374 ${g - 140} H 1434`} stroke="#5E4630" />
+        <path d={`M 1336 ${g} L 1404 ${g - 220} L 1472 ${g} M 1356 ${g - 70} H 1452 M 1374 ${g - 140} H 1434`} strokeWidth={2} />
+        <line x1={1404} y1={g - 220} x2={1262} y2={g - 150} strokeWidth={2.5} />
+      </g>
+      <circle cx={1404} cy={g - 222} r={26} fill="#8E7656" {...ink} strokeWidth={4} />
+      <circle cx={1404} cy={g - 222} r={6} fill={INK} />
+      {[[620, floor + 40], [180, floor + 150], [1700, floor + 60]].map(([x, y]) => (
+        <path key={x} d={`M ${x - 26} ${y} q 6 -30 12 -4 q 4 -40 14 -2 q 8 -28 14 2 Z`} fill="#8C8A62" {...ink} strokeWidth={3} />
+      ))}
+      {/* dust drifting slowly out of the tunnel and fading */}
+      {Array.from({length: 7}, (_, i) => {
+        // A thin veil: wide, flat, faint wisps that spread as they drift out and fade.
+        const p = (t * 0.14 + i / 7) % 1;
+        const o = 0.3 * (1 - p) * Math.min(1, p * 4);
+        return <ellipse key={i} cx={1180 - 20 - p * 320} cy={g - 34 - p * 50} rx={26 + p * 110} ry={10 + p * 26} fill="#DCCFB2" opacity={o} />;
+      })}
+    </g>
+  );
+};
+
+// The back of the head (a character seen from behind): hair over the back, or a few strokes under a hat's brim.
+export const InkHairBackView: React.FC<{d: Design}> = ({d}) => {
+  const c = d.hairColour || INK;
+  const hatted = d.headwear !== 'none' && d.headwear !== 'bow' && d.headwear !== 'headband';
+  const edge = {stroke: INK, strokeWidth: 3.6};
+  if (d.hair === 'bald') return null;
+  if (hatted) {
+    return (
+      <g stroke={c} strokeWidth={3.6} fill="none" strokeLinecap="round">
+        {[-46, -30, -14, 2, 18, 34, 48].map((x, i) => <path key={x} d={`M ${x} -30 q ${i % 2 ? 4 : -3} 12 ${i % 2 ? 1 : -2} ${18 + (i % 3) * 4}`} />)}
+      </g>
+    );
+  }
+  const cap = <path d="M -62 -6 Q -66 -66 0 -66 Q 66 -66 62 -6 Q 40 14 0 12 Q -40 14 -62 -6 Z" fill={c} {...edge} />;
+  switch (d.hair) {
+    case 'messy':
+    case 'spiky':
+      return (
+        <g>
+          {cap}
+          <g stroke={INK} strokeWidth={3.6} fill="none" strokeLinecap="round">
+            <path d="M -40 -58 Q -36 -80 -16 -76 M -8 -64 Q 4 -90 22 -78 M 20 -60 Q 44 -74 50 -52" />
+          </g>
+        </g>
+      );
+    case 'long':
+      return <path d="M -62 -10 Q -66 -66 0 -66 Q 66 -66 62 -10 Q 70 60 50 104 L -50 104 Q -70 60 -62 -10 Z" fill={c} {...edge} />;
+    case 'ponytail':
+      return <g>{cap}<path d="M -10 -30 Q -16 30 -6 80 Q 6 84 12 78 Q 18 30 10 -30 Z" fill={c} {...edge} /><ellipse cx={0} cy={-30} rx={10} ry={8} fill={d.headwearColour || '#9C4A3C'} {...edge} /></g>;
+    case 'bun':
+      return <g>{cap}<circle cx={0} cy={-58} r={22} fill={c} {...edge} /></g>;
+    case 'braids':
+      return <g>{cap}<path d="M -30 0 q -6 50 0 96 l 14 0 q -4 -46 6 -96 Z M 30 0 q 6 50 0 96 l -14 0 q 4 -46 -6 -96 Z" fill={c} {...edge} /></g>;
+    case 'curly':
+      return <g fill={c} {...edge}>{[-44, -22, 0, 22, 44].flatMap((x) => [-50, -22].map((y) => <circle key={`${x}${y}`} cx={x} cy={y - Math.abs(x) * 0.2} r={16} />))}</g>;
+    default:
+      return cap;
+  }
+};
+
+// ---------- drawn objects: animals and vehicles (icons only showed a dog's or a cat's face) ----------
+
+export type DrawnKind = 'dog' | 'cat' | 'bird' | 'car' | 'bus' | 'bike' | 'truck';
+const DRAWN_WORDS: Record<string, DrawnKind> = {
+  dog: 'dog', puppy: 'dog', cat: 'cat', kitten: 'cat', bird: 'bird', parrot: 'bird', pigeon: 'bird', sparrow: 'bird',
+  car: 'car', taxi: 'car', sedan: 'car', bus: 'bus', bike: 'bike', bicycle: 'bike', truck: 'truck', lorry: 'truck', van: 'truck',
+};
+export const drawnKind = (name: string): DrawnKind | null => {
+  for (const w of name.toLowerCase().split(/[-_\s]+/)) if (DRAWN_WORDS[w]) return DRAWN_WORDS[w];
+  return null;
+};
+export const VEHICLES = new Set<DrawnKind>(['car', 'bus', 'bike', 'truck']);
+// A colour per object name, from the muted palette, so 'red-car' and 'car' can differ but stay the same all video.
+const THING_COLOURS = ['#9C4A3C', '#34435E', '#6E6F45', '#B8914A', '#3E6B6A', '#A0613A', '#5B6670'];
+const pick = (name: string) => THING_COLOURS[[...name].reduce((n, ch) => n + ch.charCodeAt(0), 0) % THING_COLOURS.length];
+
+// Drawn standing on y = 0, centred on x = 0, facing right; `size` as for icons (120 small, 190 big).
+export const InkThing: React.FC<{kind: DrawnKind; name: string; size: number}> = ({kind, name, size}) => {
+  const k = size / 150;
+  const e = {stroke: INK, strokeWidth: 4.5 / k, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const};
+  const leg = (x: number, top: number, fill: string, w = 12) => (
+    <g key={x}>
+      <line x1={x} y1={top} x2={x} y2={-2} stroke={INK} strokeWidth={w + 8} strokeLinecap="round" />
+      <line x1={x} y1={top} x2={x} y2={-2} stroke={fill} strokeWidth={w} strokeLinecap="round" />
+    </g>
+  );
+  const wheel = (x: number, r: number) => (
+    <g key={x}>
+      <circle cx={x} cy={-r} r={r} fill="#2E2C2A" {...e} />
+      <circle cx={x} cy={-r} r={r * 0.38} fill="#A9A69A" {...e} strokeWidth={3} />
+    </g>
+  );
+  let art: React.ReactNode = null;
+  switch (kind) {
+    case 'dog': {
+      const fur = '#A0794F';
+      art = (
+        <g>
+          <path d="M -66 -72 Q -98 -86 -94 -118" stroke={INK} strokeWidth={16} fill="none" strokeLinecap="round" />
+          <path d="M -66 -72 Q -98 -86 -94 -118" stroke={fur} strokeWidth={8} fill="none" strokeLinecap="round" />
+          {[-50, -28].map((x) => leg(x, -48, '#8A6440'))}
+          <ellipse cx={0} cy={-62} rx={74} ry={30} fill={fur} {...e} />
+          {[34, 56].map((x) => leg(x, -48, fur))}
+          <circle cx={78} cy={-102} r={32} fill={fur} {...e} />
+          <ellipse cx={108} cy={-90} rx={22} ry={14} fill="#C9A87A" {...e} />
+          <circle cx={128} cy={-95} r={6} fill={INK} />
+          <ellipse cx={86} cy={-110} rx={4} ry={6} fill={INK} />
+          <path d="M 58 -126 Q 40 -112 50 -80 Q 64 -96 70 -120 Z" fill="#6E5236" {...e} />
+          <path d="M 104 -80 q 8 4 16 -2" stroke={INK} strokeWidth={3} fill="none" />
+        </g>
+      );
+      break;
+    }
+    case 'cat': {
+      const fur = '#8E8A80';
+      art = (
+        <g>
+          <path d="M -50 -50 Q -96 -58 -90 -112 Q -88 -124 -78 -122" stroke={INK} strokeWidth={15} fill="none" strokeLinecap="round" />
+          <path d="M -50 -50 Q -96 -58 -90 -112 Q -88 -124 -78 -122" stroke={fur} strokeWidth={7} fill="none" strokeLinecap="round" />
+          {[-38, -20, 26, 42].map((x) => leg(x, -40, fur, 9))}
+          <ellipse cx={0} cy={-50} rx={56} ry={24} fill={fur} {...e} />
+          <path d="M 44 -96 L 46 -126 L 64 -106 Z M 68 -106 L 84 -126 L 88 -98 Z" fill={fur} {...e} />
+          <circle cx={66} cy={-84} r={27} fill={fur} {...e} />
+          <ellipse cx={76} cy={-90} rx={4} ry={6} fill={INK} />
+          <path d="M 90 -80 l 3 4 l 3 -4" stroke={INK} strokeWidth={3} fill="#C98A7A" />
+          <path d="M 92 -74 l 26 -4 M 92 -70 l 26 4" stroke={INK} strokeWidth={2.5} />
+        </g>
+      );
+      break;
+    }
+    case 'bird': {
+      const c = '#5E6B7C';
+      art = (
+        <g>
+          <path d="M -6 -16 L -8 0 M 8 -16 L 10 0" stroke={INK} strokeWidth={4} />
+          <path d="M -32 -44 L -64 -56 L -58 -32 Z" fill={c} {...e} />
+          <ellipse cx={0} cy={-40} rx={38} ry={26} fill={c} {...e} />
+          <path d="M -22 -50 Q 4 -34 20 -46 Q 0 -62 -22 -50 Z" fill="#46505E" {...e} />
+          <circle cx={32} cy={-68} r={19} fill={c} {...e} />
+          <path d="M 48 -72 L 68 -66 L 48 -60 Z" fill="#C9A24A" {...e} />
+          <circle cx={37} cy={-72} r={3.5} fill={INK} />
+        </g>
+      );
+      break;
+    }
+    case 'car': {
+      const c = pick(name);
+      art = (
+        <g>
+          <path d="M -176 -40 Q -178 -80 -146 -86 L -96 -90 L -54 -142 Q -44 -152 -24 -152 L 70 -152 Q 92 -152 102 -140 L 134 -92 L 164 -86 Q 186 -80 184 -40 Z" fill={c} {...e} />
+          <path d="M -42 -136 L 22 -136 L 22 -96 L -78 -96 Z M 34 -136 L 84 -136 Q 94 -136 100 -128 L 118 -96 L 34 -96 Z" fill="#D8D2C0" {...e} strokeWidth={3.5} />
+          <path d="M 28 -94 V -44 M 46 -76 h 16" stroke={INK} strokeWidth={3} />
+          <ellipse cx={176} cy={-68} rx={7} ry={9} fill="#E8DFB0" {...e} strokeWidth={3} />
+          {wheel(-104, 34)}
+          {wheel(112, 34)}
+        </g>
+      );
+      break;
+    }
+    case 'bus': {
+      const c = pick(name + 'bus');
+      art = (
+        <g>
+          <rect x={-270} y={-236} width={540} height={196} rx={20} fill={c} {...e} />
+          <rect x={-270} y={-110} width={540} height={18} fill="#E6DCC6" {...e} strokeWidth={3} />
+          {[-250, -175, -100, -25, 50, 125].map((x) => <rect key={x} x={x} y={-216} width={62} height={62} rx={6} fill="#D8D2C0" {...e} strokeWidth={3.5} />)}
+          <rect x={200} y={-216} width={52} height={160} rx={6} fill="#D8D2C0" {...e} strokeWidth={3.5} />
+          <line x1={226} y1={-216} x2={226} y2={-56} stroke={INK} strokeWidth={3} />
+          {wheel(-180, 36)}
+          {wheel(160, 36)}
+        </g>
+      );
+      break;
+    }
+    case 'truck': {
+      const c = pick(name + 'truck');
+      art = (
+        <g>
+          <rect x={-240} y={-214} width={316} height={174} rx={8} fill="#C9B48E" {...e} />
+          <path d="M 84 -40 V -160 Q 84 -172 96 -172 L 160 -172 Q 176 -172 184 -156 L 208 -110 Q 212 -100 212 -88 V -40 Z" fill={c} {...e} />
+          <path d="M 104 -156 L 156 -156 L 180 -110 L 104 -110 Z" fill="#D8D2C0" {...e} strokeWidth={3.5} />
+          {wheel(-176, 34)}
+          {wheel(-96, 34)}
+          {wheel(150, 34)}
+        </g>
+      );
+      break;
+    }
+    case 'bike': {
+      const c = pick(name + 'bike');
+      const tube = (d: string) => (
+        <g>
+          <path d={d} stroke={INK} strokeWidth={13} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={d} stroke={c} strokeWidth={7} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      );
+      art = (
+        <g>
+          {[-74, 74].map((x) => (
+            <g key={x}>
+              <circle cx={x} cy={-50} r={48} fill="none" stroke={INK} strokeWidth={7} />
+              <path d={`M ${x - 46} -50 H ${x + 46} M ${x} -96 V -4`} stroke={INK} strokeWidth={2} opacity={0.6} />
+            </g>
+          ))}
+          {tube('M -74 -50 L -10 -50 L 40 -112 L -30 -112 Z M -10 -50 L -36 -124 M 40 -112 L 74 -50 M 40 -112 L 52 -142 L 74 -142')}
+          <ellipse cx={-38} cy={-128} rx={20} ry={7} fill="#2E2C2A" {...e} strokeWidth={3} />
+        </g>
+      );
+      break;
+    }
+  }
+  return <g transform={`scale(${k})`}>{art}</g>;
 };

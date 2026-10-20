@@ -43,9 +43,9 @@ Face = Literal["neutral", "happy", "laugh", "shock", "angry", "sad", "smirk", "c
 Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "sparkle", "lines"]
 Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
-                  "exam-hall", "blank"]
+                  "exam-hall", "blank", "mine"]
 Camera = Literal["wide", "close", "punch"]  # no "shake": the user wants no vibration
-Action = Literal["none", "jump", "fall", "spin", "walk-in-left", "walk-in-right", "walk-out-left",
+Action = Literal["none", "jump", "fall", "spin", "step", "walk-in-left", "walk-in-right", "walk-out-left",
                  "walk-out-right"]
 # The sets' furniture and the spots, shared with the editor (remotion/src/story/sets.json): a new kind of
 # furniture goes there (and gets a drawing in furniture.tsx); the writer's schema and prompt follow it.
@@ -63,9 +63,9 @@ EMOTIONS = {
 Emotion = Literal[tuple(EMOTIONS)]
 StickMood = Literal["playful", "quirky", "curious", "uplifting", "emotional", "mystery", "suspense", "energetic", "calm"]
 Effect = Literal["none", "erupt", "smoke", "fire", "sparkle", "shake"]
-THING_HELP = ("'volcano' (a science-project volcano, drawn by hand) or a lucide icon name in kebab-case for anything "
-              "else: trophy, cake, pizza, tv, gift, rocket, dog, cat, guitar, gamepad-2, lamp, plant, alarm-clock, "
-              "microscope, flask-conical, bomb, crown, car, bike, briefcase...")
+THING_HELP = ("drawn by hand: 'volcano' (a science-project volcano), 'dog', 'cat', 'bird', 'car', 'bus', 'bike', 'truck' "
+              "(vehicles stand on the ground); or a lucide icon name in kebab-case for anything else: trophy, cake, pizza, "
+              "tv, gift, rocket, guitar, gamepad-2, lamp, plant, alarm-clock, microscope, flask-conical, crown, briefcase...")
 
 
 class SThing(BaseModel):
@@ -190,7 +190,11 @@ class SActor(BaseModel):
     prop: Prop = "none"
     prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
     prop_thing: str = Field(default="", description="With prop 'thing': what they hold, " + THING_HELP)
-    action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, fall, spin.")
+    action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, fall, spin, "
+                           "or 'step' (one step forward: into the picture when seen from behind).")
+    from_behind: bool = Field(default=False, description="Seen from behind (no face): someone facing a place or walking into it.")
+    far: bool = Field(default=False, description="Small and far away, for a very wide establishing shot (the 'mine' setting puts "
+                      "them at the mine's mouth).")
 
 
 class SLine(BaseModel):
@@ -302,7 +306,7 @@ about groups, or anything mean-spirited. Never use these phrases: {", ".join(AI_
 
 The lines appear as small subtitles under the scene, so keep each one short (a few words to one sentence). \
 Pick the setting each scene needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
-bathroom, kitchen) and vary it between episodes: don't open in the same place as the recent episodes listed. \
+bathroom, kitchen, or 'mine': a desert mountainside with a mine entrance, for a very wide opening with far-away figures) and vary it between episodes: don't open in the same place as the recent episodes listed. \
 Washing dishes at the sink is one situation among many, only when the story is about it (set 'washing').
 
 Staging: every line lists everyone on screen with their spot, pose, face and facing (toward who they talk \
@@ -693,7 +697,8 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         actors = [{"id": a.id, "x": round(xs[a.spot]), "pose": a.pose, "face": a.face,
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
                    "propText": a.prop_text[:6],
-                   "propThing": a.prop_thing.strip().lower()[:40], "action": a.action} for a in ln.actors if a.id in looks]
+                   "propThing": a.prop_thing.strip().lower()[:40], "action": a.action,
+                   "back": a.from_behind, "far": a.far} for a in ln.actors if a.id in looks]
         shots.append({"start": round(t, 3), "duration": duration, "scene": si, "setting": scene.setting,
                       "sign": scene.sign or None,
                       "washing": scene.setting == "kitchen" and scene.washing, "furniture": furniture[si], "things": things, "caption": ln.caption or None, "camera": ln.camera,
