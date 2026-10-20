@@ -64,7 +64,7 @@ def job_label(job: dict) -> str:
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
-            else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
+            else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
 
@@ -193,6 +193,10 @@ class JobManager:
             elif job.get("rehook"):  # a finished video copied to a new one with a new hook (reelgen/rehook.py)
                 from .rehook import save_as_new
                 reports = [save_as_new(cfg, video_dir(cfg, job["rehook"]["id"]), job["rehook"]["key"], progress)]
+            elif job.get("stick_remake"):  # a Stick video at another speed / subtitles (stickstory.remake)
+                from .stickstory import remake
+                r = job["stick_remake"]
+                reports = [remake(cfg, video_dir(cfg, r["id"]), r.get("speed"), r.get("subtitles"), progress)]
             elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
@@ -487,6 +491,8 @@ class StickRequestBody(BaseModel):
     speed: float = 1.5
     style: str = "comedy"  # comedy | fiction | facts | documentary
     cast: str = ""
+    subtitles: str = "auto"  # auto | on | off
+    opening: str = "auto"  # stickstory.OPENINGS key or auto
     count: int = 1
     ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
@@ -844,8 +850,18 @@ def create_app(cfg: Config) -> FastAPI:
     def rerender_video(video_id: str, body: dict):
         """New voice and/or subtitles on or off: same script and footage, no Claude tokens."""
         report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
-        if any(j.get("rerender", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+        if any((j.get("rerender") or j.get("stick_remake") or {}).get("id") == video_id
+               for j in jobs.jobs if j["status"] in ("queued", "running")):
             raise HTTPException(409, "This video is already being re-made")
+        if report.get("source") == "stick":  # same story, pictures and music; voices at another speed (stickstory.remake)
+            try:
+                speed = min(2.0, max(0.8, float(body.get("speed")))) if body.get("speed") else None
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Speed should be a number like 1.25")
+            return jobs.submit(f"Re-make: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
+                               report.get("length", "stick"), stick_remake={
+                                   "id": video_id, "speed": speed,
+                                   "subtitles": body.get("subtitles") if body.get("subtitles") in ("auto", "on", "off") else None})
         return jobs.submit(f"Re-make: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
                            report.get("format", "short"),
                            rerender={"id": video_id, "voice": body.get("voice") or None,
@@ -1406,13 +1422,15 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/stick")
     def stick(body: StickRequestBody):
-        from .stickstory import DEFAULT_CAST
+        from .stickstory import DEFAULT_CAST, OPENINGS
 
         fmt = "short" if body.format == "short" else "long"
         given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))), "seconds": body.seconds if body.seconds in (15, 30, 45, 60) else 0,
                  "language": body.language if body.language in ("english", "hindi") else "english",
                  "speed": min(2.0, max(0.8, float(body.speed))), "cast": body.cast.strip() or DEFAULT_CAST,
-                 "style": body.style if body.style in ("comedy", "fiction", "facts", "documentary") else "comedy"}
+                 "style": body.style if body.style in ("comedy", "fiction", "facts", "documentary") else "comedy",
+                 "subtitles": body.subtitles if body.subtitles in ("on", "off") else "auto",
+                 "opening": body.opening if body.opening in OPENINGS else "auto"}
         return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick",
                            {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given["style"], "comedy"),
                            "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False, ai=body.ai)

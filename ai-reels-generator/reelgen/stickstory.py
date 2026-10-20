@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, get_args
@@ -186,6 +186,21 @@ class StickRequest:
     seconds: int = 0  # a Short's length: 15, 30 or 45 s (0 = 25-50 s)
     style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked) | documentary (narrated true story)
     cast: str = DEFAULT_CAST
+    subtitles: str = "auto"  # auto (on, off for documentaries) | on | off
+    opening: str = "auto"  # how the first line hooks: a key of OPENINGS, or auto (the writer picks one the last videos didn't use)
+
+
+# The Stick tab's opening (hook) choice: the kinds of first line hooks.RULES describes, one asked for by name.
+OPENINGS = {
+    "shock": "a shocking number or fact, said in the first words",
+    "claim": "a bold claim the video then proves",
+    "action": "a cold open: the most dramatic moment already happening, explained after",
+    "contradiction": "a contradiction or paradox the viewer needs resolved",
+    "question": "a stakes question the viewer can't leave without the answer to",
+    "countdown": "a countdown or a deadline: time running out",
+    "you": "'you' in the situation: the viewer put inside the moment",
+    "ending": "the ending first, then how it got there",
+}
 
 
 # ---------- the episode Claude writes ----------
@@ -694,6 +709,8 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
     from .hooks import block as hook_block
 
     prompt += hook_block(cfg)
+    if req.opening in OPENINGS:  # chosen on the Stick tab: this kind of opening, whatever the last videos used
+        prompt += f"\n\nOpen with this kind of hook: {OPENINGS[req.opening]}. Only facts the video states."
     return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
                allow_web=req.style in TRUE_STYLES, effort=cfg.claude_effort, timeout=1800)
 
@@ -830,7 +847,9 @@ def close_gaps(cfg: Config, ep: "Episode", hook_at: tuple[int, int] | None, prog
 
 # ---------- from the episode to the editor's props ----------
 
-def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress) -> dict:
+def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress,
+          keep_music: tuple[Path, str] | None = None) -> dict:
+    """`keep_music` (a re-make): this track and its label instead of a new one (it loops when the video grows)."""
     short = req.format == "short"
     looks = {c.id: c.look for c in ep.cast}
     voices = VOICES.get(req.language, VOICES["english"])  # fallback for a character nobody assigned
@@ -891,6 +910,13 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     # Proof pictures from Wikimedia Commons, one download per search, credited in the description.
     from . import evidence
 
+    # What was found is kept in evidence/index.json: a second build (after the picture check, or a re-make at
+    # another speed) uses the same pictures without searching again.
+    index_file = work / "evidence" / "index.json"
+    try:
+        cache = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
     found: dict[str, dict | None] = {}
     credits: list[str] = []
 
@@ -899,10 +925,17 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         if not key:
             return None
         if key not in found:
-            pic = evidence.find(key, work / "evidence", f"e{len(found):02d}")
+            hit = cache.get(key)
+            if hit and (work / hit["src"]).exists():
+                found[key] = {k: hit[k] for k in ("src", "w", "h")}
+                credits.append(hit["credit"])
+                return found[key]
+            pic = evidence.find(key, work / "evidence", f"e{len(cache):02d}")
             found[key] = {"src": rel(pic.path), "w": pic.width, "h": pic.height} if pic else None
             if pic:
                 credits.append(pic.credit())
+                cache[key] = {**found[key], "credit": pic.credit()}
+                index_file.write_text(json.dumps(cache, indent=1, ensure_ascii=False), encoding="utf-8")
                 progress(f"Proof picture: {pic.title.removeprefix('File:')} ({pic.licence})")
         return found[key]
 
@@ -962,7 +995,9 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     choice = (ep.music or "compose").strip()
     mine = {m.name for m in media.music(cfg) if m.path is not None}
     ai = {}
-    if choice not in mine and choice != "none" and aimusic.available(cfg):  # new music from the AI music model
+    if keep_music:  # a re-make keeps the video's own track
+        ai["main"], kept_label = keep_music
+    elif choice not in mine and choice != "none" and aimusic.available(cfg):  # new music from the AI music model
         seed = int(uuid.uuid4().int % 2**31)
         genre = aimusic.pick_genre(cfg, ep.mood, seed)
         energy = sum(sc_.intensity for sc_ in ep.scenes) / max(1, len(ep.scenes))
@@ -970,7 +1005,9 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
                                               ep.music_prompt, seed)], work, progress, "Music (AI)")
         if ai:
             aimusic.remember(cfg, genre)
-    if "main" in ai:
+    if keep_music:
+        track, choice = ai["main"], kept_label
+    elif "main" in ai:
         track, choice = ai["main"], f"generated (ACE-Step, {genre})"
     elif choice in mine and media.fresh_track(cfg, choice):  # never the upload a recent video used
         track = media.pick_music(cfg, choice, work / "music", t)
@@ -994,8 +1031,9 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()}, "ambience": ambience,
         "credits": credits,
     }
-    if req.style == "documentary" and not cfg.captions:
-        props["dialogue"] = "none"  # the engine's clips carry no words on screen: the narration is heard, not shown
+    # Subtitles (the Stick tab's choice): auto = on, but off for a documentary (the narration is heard, not shown).
+    if req.subtitles == "off" or (req.subtitles != "on" and req.style == "documentary" and not cfg.captions):
+        props["dialogue"] = "none"
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
     props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "StickStory")  # the music under the voice
     return props
@@ -1090,7 +1128,8 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
             "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
             "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
-            "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)", "captions": False,
+            "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)",
+            "captions": props.get("dialogue") != "none", "stick_request": asdict(req),  # for a re-make (remake)
             "music": props.get("musicChoice", ""),
             "voice": req.language, "youtube_title": ep.title[:100],
             "youtube_description": with_sources(ep.youtube_description.strip(), sources, props.get("credits") or []), "youtube_hashtags": ep.hashtags[:3],
@@ -1108,6 +1147,68 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
     except Exception:
         shutil.rmtree(work, ignore_errors=True)
         raise
+
+
+def remake(cfg: Config, folder: Path, speed: float | None, subtitles: str | None, progress: Progress = log.info) -> dict:
+    """A finished Stick video again at another speaking speed and/or with subtitles on or off (the user: "why speed
+    slider changes ... not inside this stick create tab"): the same episode, pictures, proof photos and music, only
+    the voices recorded again and the edit re-timed. No Claude, nothing searched again. The video is replaced in place."""
+    from .fsutil import move
+    from .pipeline import _render_slot
+
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    ep = Episode.model_validate_json((folder / "episode.json").read_text(encoding="utf-8"))
+    old = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    known = {k: v for k, v in (report.get("stick_request") or {}).items() if k in StickRequest.__dataclass_fields__}
+    req = StickRequest(**known) if known else StickRequest(  # videos made before the request was kept
+        format="short" if report.get("format") == "short" else "long", style=report.get("stick_type") or "comedy",
+        language=report.get("voice") if report.get("voice") in ("english", "hindi") else "english",
+        speed=1.0 if report.get("stick_type") == "documentary" else 1.5)
+    if speed:
+        req.speed = min(2.0, max(0.8, float(speed)))
+    if subtitles in ("auto", "on", "off"):
+        req.subtitles = subtitles
+    work = folder / "_remake"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
+    try:
+        if (folder / "evidence").is_dir():
+            shutil.copytree(folder / "evidence", work / "evidence")
+        keep = None
+        if old.get("music") and (folder / old["music"]).exists():
+            (work / "music").mkdir(exist_ok=True)
+            kept = work / "music" / ("kept-" + Path(old["music"]).name)
+            shutil.copy2(folder / old["music"], kept)
+            keep = (kept, old.get("musicChoice") or "kept")
+        progress(f"Speaking speed {req.speed:g}x, subtitles {req.subtitles}")
+        props = build(ep, req, cfg, work, progress, keep_music=keep)
+        progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
+        cli = _remotion_cli()
+        if cli is None:
+            raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
+        with _render_slot(cfg):
+            _render_remotion(cli, props, work / "reel.mp4", composition="StickStory", crf=18, progress=progress)
+        info = probe(work / "reel.mp4")
+        if not info.get("has_audio") or not info.get("width"):
+            raise RuntimeError("The re-made video came out broken; the original is kept.")
+        progress("Replacing the video")
+        for sub in ("audio", "audio-fit", "sfx", "music", "evidence"):
+            shutil.rmtree(folder / sub, ignore_errors=True)
+            if (work / sub).is_dir():
+                move(work / sub, folder / sub)
+        move(work / "reel.mp4", folder / "reel.mp4.new")
+        (folder / "reel.mp4").unlink(missing_ok=True)
+        move(folder / "reel.mp4.new", folder / "reel.mp4")
+        (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "2", "-i", str(folder / "reel.mp4"), "-frames:v", "1",
+                        "-q:v", "3", str(folder / "thumbnail.jpg")], check=False)
+        report.update({"stick_request": asdict(req), "duration_seconds": round(props["duration"], 1),
+                       "captions": props.get("dialogue") != "none", "checks": {**(report.get("checks") or {}), "probe": info}})
+        (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        progress("Done")
+        return report
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress) -> list[dict]:
