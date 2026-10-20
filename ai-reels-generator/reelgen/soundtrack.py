@@ -183,6 +183,10 @@ def _story(m: Mixer, p: dict) -> None:
             m.add(s["audio"], f(float(s["start"]) + float(s.get("lead") or 0)))
     if p.get("music"):
         m.add(p["music"], 0, loop=True, volume=_music_level(m.fps, m.frames, speech, 0.16, 0.06))
+    for a in p.get("ambience") or []:  # Story.tsx: a scene's bed, 0 -> 0.1 over 30 frames and back
+        n = max(32, f(a["to"] - a["from"]))
+        m.add(a["src"], f(a["from"]), length_frames=n, loop=True,
+              volume=lambda fr, n=n: _interp(fr, [0, 30, max(31, n - 30), n], [0, 0.1, 0.1, 0]))
     _cues(m, p.get("cues"), speech)
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
@@ -21,13 +22,13 @@ from typing import Callable, Literal, get_args
 
 from pydantic import BaseModel, Field
 
-from . import aimusic, media
+from . import aimusic, media, music
 from .config import Config
 from .llm import ask
 from .categories import CATEGORIES
 from .longform import LSource, verify_sources, with_sources
 from .script_writer import AI_CLICHES, SoundCue
-from .sfx import write_sfx
+from .sfx import write_cue_sounds, write_sfx
 from .verify import probe
 from .video import FFMPEG, REMOTION_DIR, _remotion_cli, _render_remotion, media_seconds
 from .voice import Word as _Word, synthesize_scenes
@@ -44,8 +45,8 @@ Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "spar
 Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
                   "exam-hall", "blank", "mine"]
-Camera = Literal["wide", "close", "punch"]  # no "shake": the user wants no vibration
-Action = Literal["none", "jump", "fall", "spin", "step", "walk-in-left", "walk-in-right", "walk-out-left",
+Camera = Literal["wide", "close", "punch", "push"]  # no "shake": the user wants no vibration; push = a very slow push-in
+Action = Literal["none", "jump", "fall", "spin", "step", "walk-across", "turn", "look-up", "walk-in-left", "walk-in-right", "walk-out-left",
                  "walk-out-right"]
 # The sets' furniture and the spots, shared with the editor (remotion/src/story/sets.json): a new kind of
 # furniture goes there (and gets a drawing in furniture.tsx); the writer's schema and prompt follow it.
@@ -117,6 +118,36 @@ VOICE_NAMES = {  # for the tab's voice picker
     "en-US-MichelleNeural": "Michelle (woman, soft)",
 }
 WORDS_PER_SECOND = 2.2  # dialogue with comic pauses
+# Types written from researched facts (web search, every claim checked, sources in the description).
+TRUE_STYLES = ("facts", "documentary")
+# The documentary type follows the user's "Stickman Explainer Engine" prompt: a narration beat of about 9-10 words
+# for every ~4-second shot, so the number of shots follows the length (15 s = 4, 30 s = 8, 60 s = 15).
+BEAT_SECONDS = 4
+
+
+def beats_for(seconds: float) -> int:
+    return max(3, math.ceil(seconds / BEAT_SECONDS))
+
+
+# What may be drawn (the engine's visual safety rule): the narration can carry real names and facts, the picture never
+# needs them. For every type; the documentary type leans on it most.
+VISUAL_SAFETY = ("What is drawn (signs, captions, objects, props) never names a real person and never shows a real brand, "
+                 "logo, military insignia or a flag in a conflict; a place tied to a tragedy stays generic ('a city', 'a "
+                 "coastal road'). Never show violence, injury, death, blood, a weapon being used or anyone being harmed: "
+                 "show the moment before, the aftermath far away, or an object standing in for it (an empty chair, a "
+                 "closed door, a stopped clock, smoke on the horizon). Disaster only as a distant silhouette or "
+                 "aftermath. Keep it restrained: understatement carries more weight than spectacle.")
+
+DOC_SHOTS = ("Every beat is one shot with ONE clear, plain action, never several: a character's step forward ('step'), "
+             "walking across the frame ('walk-across'), a head turn ('turn'), looking up ('look-up'), sitting down, "
+             "picking up or putting down an object, or the scene itself moving (dust, smoke or rain drifting, the light "
+             "turning to dusk). Vary the shots across the video and never repeat one twice in a row: a very wide "
+             "establishing shot (people 'far', often 'from_behind' facing the place), a wide shot, a close-up ('close' "
+             "on a face), a profile (facing across the frame), someone seen from behind, a very slow push-in ('push'). "
+             "Give every scene its weather, light and ambience (wind, rain, room tone, city, night...) from its place "
+             "and time. The main character is designed for the story's era and work (clothes by garment and colour) "
+             "and keeps that look; others are generic people ('a man in a dark suit'), never a real person's likeness. "
+             "No captions; a sign only with a generic word.")
 
 
 @dataclass
@@ -127,7 +158,7 @@ class StickRequest:
     language: str = "english"
     speed: float = 1.5  # how fast everyone talks: 1.5 = 50% faster than normal (snappy comedy timing)
     seconds: int = 0  # a Short's length: 15, 30 or 45 s (0 = 25-50 s)
-    style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked)
+    style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked) | documentary (narrated true story)
     cast: str = DEFAULT_CAST
 
 
@@ -191,7 +222,8 @@ class SActor(BaseModel):
     prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
     prop_thing: str = Field(default="", description="With prop 'thing': what they hold, " + THING_HELP)
     action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, fall, spin, "
-                           "or 'step' (one step forward: into the picture when seen from behind).")
+                           "'step' (one step forward: into the picture when seen from behind), 'walk-across' (across the "
+                           "frame the way they face), 'turn' (turns to face the other way halfway), 'look-up'.")
     from_behind: bool = Field(default=False, description="Seen from behind (no face): someone facing a place or walking into it.")
     far: bool = Field(default=False, description="Small and far away, for a very wide establishing shot (the 'mine' setting puts "
                       "them at the mine's mouth).")
@@ -204,7 +236,8 @@ class SLine(BaseModel):
     emotion: Emotion = Field(default="neutral", description="How it's said (the voice changes pace, pitch and loudness); "
                              "match the speaker's face.")
     pause_before: float = Field(default=0.2, ge=0, le=1.5, description="Seconds of silence before it: 0.6-1.2 before a punchline or a reaction.")
-    camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a punchline or a shock.")
+    camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a "
+                           "punchline or a shock, 'push' for a very slow push-in on a quiet, weighty moment.")
     focus: str = Field(default="", description="Cast id the camera frames on 'close' (default: the speaker).")
     caption: str = Field(default="", description="A meme caption at the top ('POV: ...', 'Meanwhile...', '5 minutes later'), usually empty.")
     actors: list[SActor] = Field(description="Everyone on screen during this line, with their pose, face and position now.")
@@ -223,6 +256,11 @@ class SScene(BaseModel):
                           "dishes at the sink (draws running water and soap foam in front of them). Otherwise false.")
     intensity: float = Field(default=0.5, ge=0, le=1, description="How full the music is in this scene: 0.2 quiet, "
                              "0.5 normal, 0.9 chaos or the climax.")
+    weather: Literal["none", "rain", "snow", "dust", "smoke"] = Field(default="none", description="What drifts through "
+                                                                       "the scene (outdoors, or smoke anywhere).")
+    light: Literal["day", "dawn", "dusk", "night"] = "day"
+    ambience: Literal[tuple(music.AMBIENCES)] = Field(default="none", description="A quiet background sound for the "
+                                                       "place: wind outdoors, rain, room tone, city, night, crowd...")
     lines: list[SLine]
 
 
@@ -247,9 +285,10 @@ def _system(short: bool, minutes: float, language: str, style: str = "comedy", s
     lang = ("natural, casual American English, the way kids, teens and parents really talk (no Indian or British "
             "words, no rupees: dollars, US schools, US homes)" if language == "english"
             else "everyday Hindi in Devanagari script, as families really talk")
-    payoff = {"comedy": "punchline", "fiction": "twist", "facts": "answer"}.get(style, "punchline")
+    payoff = {"comedy": "punchline", "fiction": "twist", "facts": "answer", "documentary": "closing line"}.get(style, "punchline")
     hook = {"comedy": "with a 'POV:' caption", "fiction": "with someone already in trouble",
-            "facts": "with a surprising question or a wrong belief someone holds"}.get(style, "")
+            "facts": "with a surprising question or a wrong belief someone holds",
+            "documentary": "with the most striking true detail, in plain words"}.get(style, "")
     if short:
         span = (f"{seconds} seconds (at most {seconds + 3}): ONE situation, {max(3, seconds // 4)}-{max(4, seconds // 3)} "
                 "short lines" if seconds else "25-50 seconds: ONE situation, 5-12 lines")
@@ -261,7 +300,31 @@ At most 3 characters, standing close together (spots left, center, right)."""
         form = f"""a {minutes:g}-minute YouTube episode (16:9), about {words} words of dialogue in 4-8 scenes. One \
 story: a setup that pulls the viewer in ({hook}), a problem that grows with two or three complications, a turn, \
 and a {payoff} that pays off the start."""
-    if style == "facts":
+    if style == "documentary":
+        secs = (seconds or 45) if short else minutes * 60
+        n = beats_for(secs)
+        rest = secs - (n - 1) * BEAT_SECONDS
+        form = (f"a YouTube Short (9:16) of {secs:g} seconds: exactly {n} beats" if short
+                else f"a {minutes:g}-minute YouTube documentary (16:9): about {n} beats in 4-8 scenes") + (
+            f", each beat one line of about 9-10 spoken words (one ~4-second shot)"
+            + (f"; the last beat shorter, about {max(3, round(rest * 2.4))} words" if short and rest < BEAT_SECONDS else "")
+            + (". At most 3 characters on screen." if short else "."))
+        brief = f"""You make narrated, hand-inked stick-figure documentaries for the channel Stickcident: one real, \
+researchable story from history, documentary, true crime or remarkable true events (no invented events, no \
+conspiracy premises), chosen for strong visual beats that can be shown without depicting violence. You write {form}
+
+Research first: search the web and open the pages. Every name, date, figure and cause the narrator says must be on a \
+page you opened, and those pages go in 'sources'; where something is genuinely disputed, say so rather than \
+flattening it. Stories with real victims stay factual and restrained: no gore, no dramatised suffering.
+
+The narration carries the story: every line's speaker is 'narrator' (the cast never speaks; they act it out \
+silently), one beat per line, written plainly and conversationally in short sentences. The first beat hooks the \
+viewer ({hook}); the middle beats carry the story forward one idea at a time; the last beat lands the closing line. \
+No sponsor copy, no subscribe prompts, no sign-offs. The tone is restrained and slightly melancholy (music mood calm, \
+emotional or mystery).
+
+{DOC_SHOTS}"""
+    elif style == "facts":
         brief = f"""You make stick-figure explainers of TRUE facts for the channel Stickcident: one real, surprising, \
 checkable fact (science, the human body, animals, history, money, how everyday things work) that the small \
 recurring cast acts out. You write {form}
@@ -292,6 +355,21 @@ misunderstandings, a confident character being wrong, deadpan replies, sarcasm, 
 that recontextualises everything, visual gags (a prop, a sign, a phone screen), reaction shots, running gags \
 and a callback for the final punchline. Cut every line that isn't a setup or a punchline. Sounds help the joke: \
 a pop on a reveal, the sad trombone ('sad') on a fail, a click or ding on a phone, a whoosh on a fast exit."""
+    if style == "documentary":  # a calm narrator, quiet acting, real people named only in the narration
+        return f"""{brief}
+
+The narration is in {"clear, natural American English" if language == "english" else "clear, natural Hindi in Devanagari script"}, \
+read at a calm pace (emotion 'neutral', 'sad' or 'whisper' where it fits). The cast acts quietly: faces and poses \
+show the feeling (concerned, surprised, weary, resolved), no comic emotes, jumps or falls for laughs.
+
+No politics, religion, rumours or insults. Real people can be named in the narration when the sources do; the \
+drawings stay generic. {VISUAL_SAFETY} Never use these phrases: {", ".join(AI_CLICHES)}.
+
+Pick the setting each shot needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
+bathroom, kitchen, or 'mine': a desert mountainside with a mine entrance) and its furniture. {_furniture_help()} \
+Keep spots steady within a scene; use walk-in/walk-out for entrances and exits and change the setting for a new \
+place. Show the real object, never a paper with its name; things stand on a table or the floor, held ones as prop \
+'thing' with prop_thing. {DESIGN_RULES}"""
     return f"""{brief}
 
 The dialogue is in {lang}. The cast talks fast (about 1.5x normal speed), so write snappy lines; let silence and reactions do work (silent beats with \
@@ -302,7 +380,7 @@ speaker's face: angry and shouting lines with '!', sad ones slower with '...', l
 whispering. Vary it: a scene where everyone is neutral is flat.
 
 Clean and family-friendly, something anyone can relate to. No politics, religion, real people, brands, insults \
-about groups, or anything mean-spirited. Never use these phrases: {", ".join(AI_CLICHES)}.
+about groups, or anything mean-spirited. {VISUAL_SAFETY} Never use these phrases: {", ".join(AI_CLICHES)}.
 
 The lines appear as small subtitles under the scene, so keep each one short (a few words to one sentence). \
 Pick the setting each scene needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
@@ -560,10 +638,16 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
     short = req.format == "short"
     cast = parse_cast(req.cast)
     kept = kept_designs(cfg, cast)
-    prompt = ("The cast (use these ids and looks):\n" + "\n".join(
-                  f"- {c['id']}: {c['name']} ({c['look']})"
-                  + (f", fixed look: {kept[c['id']].model_dump_json()}" if c["id"] in kept
-                     else f", looks like: {c['about']}" if c.get("about") else "") for c in cast)
+    if req.style == "documentary":  # a true story has its own people, dressed for its time and place
+        roster = ("The cast: design the people this true story needs, 1-3 (the main character first), ids like 'miner' "
+                  "or 'officer', names as roles ('The miner'), each with a design for the era and the work; generic "
+                  "people, never a real person's likeness. The channel's recurring cast doesn't appear.")
+    else:
+        roster = "The cast (use these ids and looks):\n" + "\n".join(
+            f"- {c['id']}: {c['name']} ({c['look']})"
+            + (f", fixed look: {kept[c['id']].model_dump_json()}" if c["id"] in kept
+               else f", looks like: {c['about']}" if c.get("about") else "") for c in cast)
+    prompt = (roster
               + (f"\n\nThe idea: {req.idea}" if req.idea.strip() else "\n\nPick a fresh, relatable situation yourself.")
               + ("\n\nAlready made (never repeat one of these stories, not even with a new title or another "
                  "character; also avoid their opening place and music mood):\n"
@@ -575,7 +659,7 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
 
     prompt += hook_block(cfg)
     return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
-               allow_web=req.style == "facts", effort=cfg.claude_effort, timeout=1800)
+               allow_web=req.style in TRUE_STYLES, effort=cfg.claude_effort, timeout=1800)
 
 
 # ---------- facts: checked before anything is recorded ----------
@@ -679,6 +763,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     shots, cues, spoken, used = [], [], [], {}
+    steps = None  # the footsteps sound, written the first time a documentary needs it
     place = [_scene_x(sc, short) for sc in ep.scenes]
     spacing = SHORT_GAP if short else SETS["spacing"]
     furniture = [[{"kind": p.kind, "x": round(place[si][p.spot]), "width": _piece_width(p.kind, p.seats, spacing)}
@@ -702,7 +787,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         shots.append({"start": round(t, 3), "duration": duration, "scene": si, "setting": scene.setting,
                       "sign": scene.sign or None,
                       "washing": scene.setting == "kitchen" and scene.washing, "furniture": furniture[si], "things": things, "caption": ln.caption or None, "camera": ln.camera,
-                      "focus": ln.focus or None, "actors": actors,
+                      "focus": ln.focus or None, "actors": actors, "weather": scene.weather, "light": scene.light,
                       "speaker": ln.speaker if sa else None, "emotion": ln.emotion, "text": ln.line if sa else None, "words": words,
                       "audio": rel(sa.path) if sa else None, "lead": lead})
         if sa:
@@ -712,10 +797,26 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         for c in [c for c in ln.sounds if c.word.strip() == "*"][:1]:
             cues += media.resolve_cues([c.model_copy(update={"word": "beat"})], [_Word("beat", lead, lead + 0.3)], t, cfg,
                                        work / "sfx", rel, 1, used)
-        if li == 0 and si > 0 and "whoosh" in sfx:  # a new place: a whoosh on the cut
+        # Footsteps under a step or a walk (documentaries, whose sound is the place's own).
+        if req.style == "documentary" and any(a["action"] in ("step", "walk-across") for a in actors):
+            steps = steps or write_cue_sounds(work / "sfx", {"footsteps"}).get("footsteps")
+            walk = next(a["action"] for a in actors if a["action"] in ("step", "walk-across"))
+            if steps:
+                cues.append({"src": rel(steps), "at": round(t + (0.8 if walk == "step" else 0.1), 3),
+                             "volume": 0.35, "name": "footsteps"})
+        if li == 0 and si > 0 and "whoosh" in sfx and req.style != "documentary":  # a new place: a whoosh on the cut
             cues.append({"src": rel(sfx["whoosh"]), "at": round(max(0.0, t - 0.1), 3), "volume": 0.4, "name": "whoosh"})
         t += duration
     t += 0.6
+    # Each scene's ambience (wind, rain, room tone...) as a quiet bed under it.
+    ambience = []
+    for si, sc_ in enumerate(ep.scenes):
+        span = [s_ for s_ in shots if s_["scene"] == si]
+        if sc_.ambience != "none" and span:
+            a, b = span[0]["start"], span[-1]["start"] + span[-1]["duration"] + (0.6 if si == len(ep.scenes) - 1 else 0)
+            bed = music.ambience(sc_.ambience, b - a, int(uuid.uuid4().int % 2**31), work / "music" / f"ambience{si:02d}.wav")
+            if bed:
+                ambience.append({"src": rel(bed), "from": round(a, 3), "to": round(b, 3)})
     # A track of its own for every video: composed in the mood Claude picked, from a fresh seed (key,
     # tempo, chords), following each scene's intensity; one of the user's tracks only when Claude picked it.
     choice = (ep.music or "compose").strip()
@@ -750,8 +851,10 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         "cast": [{"id": c.id, "name": c.name, "look": c.look, "outfit": _outfits(ep.cast)[c.id],
                   "design": ink_design(c.design, c.look, i)} for i, c in enumerate(ep.cast)],
         "shots": shots, "music": rel(track) if track else None, "musicChoice": choice, "cues": cues,
-        "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()},
+        "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()}, "ambience": ambience,
     }
+    if req.style == "documentary" and not cfg.captions:
+        props["dialogue"] = "none"  # the engine's clips carry no words on screen: the narration is heard, not shown
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
     props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "StickStory")  # the music under the voice
     return props
@@ -775,7 +878,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
     progress(f"Saving progress in {work.name}")
     try:
         recent = made_before(cfg)
-        progress(("Claude is researching and writing" if req.style == "facts" else "Claude is writing")
+        progress(("Claude is researching and writing" if req.style in TRUE_STYLES else "Claude is writing")
                  + (" the Short" if short else " the episode"))
         ep = write_episode(cfg, req, recent)
         # A story too close to one already made is written again once (not when you gave the idea).
@@ -783,14 +886,15 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         if twin:
             progress(f"That story was already made (\"{twin.get('title')}\"); Claude is writing a different one")
             ep = write_episode(cfg, req, recent, avoid=f"\"{twin.get('title')}\": {twin.get('logline', '')}")
-        lock_designs(cfg, ep, parse_cast(req.cast))  # a recurring character keeps their look
+        if req.style != "documentary":  # a documentary's people are dressed for their own story, never kept
+            lock_designs(cfg, ep, parse_cast(req.cast))  # a recurring character keeps their look
         from .hooks import sharpen
         sharpen(cfg, [next((ln for s in ep.scenes for ln in s.lines if ln.line.strip()), None)], ep.logline, progress)
         # Remembered now, before voices and render: a video made at the same time sees it.
         remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
                        "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": ep.mood})
         fact_issues, findings, sources, dropped = [], [], [], []
-        if req.style == "facts":
+        if req.style in TRUE_STYLES:
             ep, fact_issues, findings = check_facts(cfg, ep, progress)
             sources, dropped = verify_sources(ep.sources)
         (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
@@ -808,7 +912,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         info = probe(out)
         want = (1080, 1920) if short else (1920, 1080)
         issues = list(fact_issues)
-        if req.style == "facts" and not sources:
+        if req.style in TRUE_STYLES and not sources:
             issues.append("No source link could be opened; check the facts before posting.")
         if (info.get("width"), info.get("height")) != want:
             issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
@@ -819,9 +923,10 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         report = {
             "id": final.name, "format": "short" if short else "long", "length": "short" if short else "stick",
             "source": "stick", "topic": ep.title, "topic_source": "stick story",
-            "style": {"facts": "facts", "fiction": "story"}.get(req.style, "comedy"),
+            "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.style, "comedy"),
+            "stick_type": req.style,
             "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
-            else {"fiction": "Stories", "facts": "Science & Space"}.get(req.style, "Comedy"),
+            else {"fiction": "Stories", "facts": "Science & Space", "documentary": "History"}.get(req.style, "Comedy"),
             "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
             "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
             "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
@@ -831,7 +936,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             "youtube_description": with_sources(ep.youtube_description.strip(), sources, []), "youtube_hashtags": ep.hashtags[:3],
             "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
         }
-        if req.style == "facts":
+        if req.style in TRUE_STYLES:
             report.update({"fact_check": findings, "sources": sources, "sources_unreachable": dropped})
         (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
         report["usage"] = summarize_usage(meter_records())

@@ -19,8 +19,8 @@ export type Thing = {name: string; x: number; table: boolean; big: boolean; effe
 export type Setting =
   | 'living-room' | 'classroom' | 'kitchen' | 'bedroom' | 'street' | 'office' | 'bathroom'
   | 'park' | 'shop' | 'exam-hall' | 'blank' | 'mine';
-export type Camera = 'wide' | 'close' | 'punch' | 'shake';
-export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right' | 'step';
+export type Camera = 'wide' | 'close' | 'punch' | 'shake' | 'push';
+export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right' | 'step' | 'walk-across' | 'turn' | 'look-up';
 
 // A piece of furniture in the scene (kinds in sets.json): centre x and width on the 1920 px set.
 export type Piece = {kind: string; x: number; width: number};
@@ -80,6 +80,8 @@ export type Shot = {
   words: Word[];
   audio?: string | null; // the line's voice file
   lead: number; // seconds of silence before the line starts (comic timing)
+  weather?: 'none' | 'rain' | 'snow' | 'dust' | 'smoke'; // what drifts through the scene
+  light?: 'day' | 'dawn' | 'dusk' | 'night';
 };
 
 
@@ -96,7 +98,9 @@ export type StoryProps = {
   cues: Cue[]; // same shape as the other compositions' cues
   speech: [number, number][];
   sfx: Record<string, string> | null;
-  dialogue?: 'subtitle' | 'bubble'; // how lines show: small subtitles under the scene (the channel's style) or speech bubbles
+  // how lines show: small subtitles under the scene (the channel's style), speech bubbles, or none (documentaries: the narration is heard, not shown)
+  dialogue?: 'subtitle' | 'bubble' | 'none';
   vertical?: boolean; // a 9:16 Short: the same sets, framed on whoever is speaking
   art?: 'ink' | 'grey'; // ink = the hand-inked look (ink.tsx); missing = the old grey channel look
+  ambience?: {src: string; from: number; to: number}[]; // quiet beds per scene (wind, rain, room tone)
 };

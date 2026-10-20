@@ -513,7 +513,7 @@
         that story (a miner gets coveralls, a hard hat and boots) and the editor animates it.</p>
       <label>Type</label>
       <div class="segmented" id="stStyle">
-        <button data-style="comedy" class="on">😂 Comedy</button><button data-style="fiction">📖 Story</button><button data-style="facts">🔬 Facts</button>
+        <button data-style="comedy" class="on">😂 Comedy</button><button data-style="fiction">📖 Story</button><button data-style="facts">🔬 Facts</button><button data-style="documentary">🎞 Documentary</button>
       </div>
       <p class="hint" id="stStyleHint"></p>
       <label>Format</label>
@@ -522,7 +522,7 @@
       </div>
       <div id="stSecBox" hidden>
         <label for="stSeconds">Length</label>
-        <select id="stSeconds"><option value="15">About 15 s</option><option value="30">About 30 s</option><option value="45">About 45 s</option><option value="0" selected>25-50 s (Claude decides)</option></select>
+        <select id="stSeconds"><option value="15">About 15 s</option><option value="30">About 30 s</option><option value="45">About 45 s</option><option value="60">About 60 s</option><option value="0" selected>25-50 s (Claude decides)</option></select>
       </div>
       <div id="stLenBox">
         <label for="stMinutes">Length</label>
@@ -532,7 +532,7 @@
       <textarea class="edit" id="stIdea" rows="3" placeholder="e.g. Ben hides his report card from Mom. Leave empty and Claude picks a fresh situation."></textarea>
       <div class="grid2">
         <div><label for="stSpeed">Speaking speed</label>
-          <select id="stSpeed"><option value="1.25">1.25×</option><option value="1.5" selected>1.5× (snappy)</option><option value="1.75">1.75×</option></select></div>
+          <select id="stSpeed"><option value="1">1× (calm narration)</option><option value="1.25">1.25×</option><option value="1.5" selected>1.5× (snappy)</option><option value="1.75">1.75×</option></select></div>
         <div><label for="stCount">How many</label>
           <select id="stCount"><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
       </div>
@@ -2795,13 +2795,21 @@ const ST_STYLE_HINT = {
   fiction: "A short story with stakes and a twist ending (mystery, suspense, heartwarming). Fiction: no fact-check.",
   facts: "One true, surprising fact the cast acts out, with a narrator. Claude researches it on the web, every claim is fact-checked " +
          "(a wrong line is fixed and checked again, an unconfirmed one is cut) and the sources go in the description.",
+  documentary: "A narrated true story (history, documentary, true crime, remarkable events), restrained and slightly melancholy. " +
+               "A narrator tells it in beats of 9-10 words, one ~4-second shot each (30 s = 8 shots), while the cast acts it out " +
+               "silently: wide establishing shots, close-ups, figures seen from behind, slow push-ins, rain, dust or dusk light, " +
+               "wind and footsteps. Researched on the web and fact-checked; nothing violent is shown, and no words on screen.",
 };
 const stStyleSet = (v) => {
   stStyle = ST_STYLE_HINT[v] ? v : "comedy";
   document.querySelectorAll("#stStyle button").forEach((x) => x.classList.toggle("on", x.dataset.style === stStyle));
   $("#stStyleHint").textContent = ST_STYLE_HINT[stStyle];
   $("#stIdea").placeholder = { comedy: "e.g. Ben hides his report card from Mom.", fiction: "e.g. Lily finds a note in a library book that predicts tomorrow.",
-    facts: "e.g. Why does popcorn pop? / Can you really see the Great Wall from space?" }[stStyle] + " Leave empty and Claude picks one.";
+    facts: "e.g. Why does popcorn pop? / Can you really see the Great Wall from space?",
+    documentary: "e.g. The miners trapped for 69 days in Chile in 2010." }[stStyle] + " Leave empty and Claude picks one.";
+  // A documentary is narrated calmly: 1x unless you pick another speed; the other types go back to the snappy 1.5x.
+  if (stStyle === "documentary" && $("#stSpeed").value === "1.5") $("#stSpeed").value = "1";
+  if (stStyle !== "documentary" && $("#stSpeed").value === "1") $("#stSpeed").value = "1.5";
   try { localStorage.setItem("stickStyle", stStyle); } catch (e) {}
 };
 document.querySelectorAll("#stStyle button").forEach((b) => b.onclick = () => stStyleSet(b.dataset.style));

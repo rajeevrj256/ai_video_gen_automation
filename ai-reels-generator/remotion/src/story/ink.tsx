@@ -1,4 +1,5 @@
 import React from 'react';
+import {useVideoConfig} from 'remotion';
 import type {Design, Setting} from './types';
 
 // The "ink" look of a stick episode (props.art === 'ink'), after the hand-inked explainer style the user
@@ -960,4 +961,50 @@ export const InkThing: React.FC<{kind: DrawnKind; name: string; size: number}> =
     }
   }
   return <g transform={`scale(${k})`}>{art}</g>;
+};
+
+// ---------- weather and light over a whole scene (screen space, under the paper finish) ----------
+
+// Deterministic drift, slow and even: nothing flickers or jitters (the user dislikes vibration).
+export const Weather: React.FC<{kind: 'rain' | 'snow' | 'dust' | 'smoke'; t: number}> = ({kind, t}) => {
+  const {width: w, height: h} = useVideoConfig();
+  const n = {rain: 130, snow: 90, dust: 46, smoke: 7}[kind];
+  const items = Array.from({length: n}, (_, i) => {
+    const r1 = ((i * 7919) % 1000) / 1000;
+    const r2 = ((i * 104729) % 1000) / 1000;
+    return {r1, r2};
+  });
+  return (
+    <svg width={w} height={h} style={{position: 'absolute', inset: 0, pointerEvents: 'none'}}>
+      {kind === 'dust' ? <rect width={w} height={h} fill="#D9C9A3" opacity={0.12} /> : null}
+      {kind === 'rain' ? <rect width={w} height={h} fill="#5E6670" opacity={0.12} /> : null}
+      {items.map(({r1, r2}, i) => {
+        if (kind === 'rain') {
+          const y = ((t * 780 + r2 * (h + 200)) % (h + 200)) - 100;
+          const x = r1 * (w + 200) - 100 - y * 0.18;
+          return <line key={i} x1={x} y1={y} x2={x - 11} y2={y + 58} stroke="#C9D0D2" strokeWidth={3.2} opacity={0.75} strokeLinecap="round" />;
+        }
+        if (kind === 'snow') {
+          const y = ((t * (60 + r2 * 50) + r2 * (h + 40)) % (h + 40)) - 20;
+          const x = r1 * w + Math.sin(t * 0.8 + i) * 14;
+          return <circle key={i} cx={x} cy={y} r={4 + r2 * 5} fill="#FBF8F0" opacity={0.95} stroke="#8E8A80" strokeWidth={1.2} />;
+        }
+        if (kind === 'dust') {
+          const x = ((t * (26 + r2 * 30) + r1 * (w + 100)) % (w + 100)) - 50;
+          const y = h * (0.3 + 0.6 * r2) + Math.sin(t * 0.6 + i) * 10;
+          return <circle key={i} cx={x} cy={y} r={1.5 + r1 * 3} fill="#E6D8B6" opacity={0.55} />;
+        }
+        // smoke: big soft puffs rising slowly and fading
+        const p = (t * 0.07 + i / n) % 1;
+        return <ellipse key={i} cx={w * (0.08 + 0.84 * r1) + p * 60} cy={h * 0.95 - p * h * 0.8} rx={120 + p * 160} ry={70 + p * 90}
+          fill="#8E8A82" opacity={0.3 * (1 - p) * Math.min(1, p * 4)} />;
+      })}
+    </svg>
+  );
+};
+
+// The time of day as a colour wash multiplied over the scene (dawn warm and pale, dusk amber, night blue and dark).
+export const Light: React.FC<{kind: 'dawn' | 'dusk' | 'night'}> = ({kind}) => {
+  const wash = {dawn: ['#F2D9B6', 0.45], dusk: ['#C98A5C', 0.5], night: ['#36425E', 0.72]}[kind] as [string, number];
+  return <div style={{position: 'absolute', inset: 0, background: wash[0], opacity: wash[1], mixBlendMode: 'multiply', pointerEvents: 'none'}} />;
 };

@@ -253,6 +253,21 @@ def _scratch(duration: float = 0.42) -> np.ndarray:
     return band * grain * np.minimum(t / 0.005, 1) * np.minimum(1, (duration - t) / 0.06)
 
 
+def _footsteps(duration: float = 1.0, every: float = 0.5) -> np.ndarray:
+    """Soft footsteps on gravel or a floor: a low heel thud and a short crunch per step."""
+    n = int(duration * RATE)
+    out = np.zeros(n)
+    rng = np.random.default_rng(11)
+    for k, at in enumerate(np.arange(0.04, duration - 0.1, every)):
+        m = int(0.14 * RATE)
+        i = int(at * RATE)
+        t = np.arange(m) / RATE
+        thud = np.sin(2 * np.pi * (90 + 10 * (k % 2)) * t) * np.exp(-t / 0.028)
+        crunch = _lowpass(rng.standard_normal(m), 3200) * np.exp(-t / 0.04)
+        out[i:i + m] += (0.7 * thud + 0.5 * crunch / max(1e-9, np.abs(crunch).max()))[: n - i]
+    return out
+
+
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
     "heartbeat": (_heartbeat, 0.55, 0.0, "a heartbeat: suspense, fear, a life-or-death moment"),
@@ -266,6 +281,7 @@ CUE_SOUNDS = {
     "flyby": (_flyby, 0.4, 0.5, "something rushing past the camera: a plane, a car, a crowd"),
     "boing": (_boing, 0.35, 0.0, "a cartoon spring: a silly moment, a joke's punchline"),
     "scratch": (_scratch, 0.32, 0.0, "a record scratch: 'wait, what?', an awkward or surprising turn"),
+    "footsteps": (_footsteps, 0.3, 0.0, "a few soft footsteps: someone walking or stepping forward"),
 }
 
 

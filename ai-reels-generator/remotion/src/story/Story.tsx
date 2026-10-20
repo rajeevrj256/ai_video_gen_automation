@@ -7,7 +7,7 @@ import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
 import {iconFor} from '../long/icon';
 import {PieceView, STOOL_SEAT, Stool, TABLE_TOP, TableUnder, defaultFurniture, seatAt, surfaceAt} from './furniture';
-import {HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHairBackView, InkHeadwear, InkSet, InkThing, VEHICLES, defaultDesign, drawnKind, farOf, inkPalette, type SetPal, GREY_PAL} from './ink';
+import {HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHairBackView, InkHeadwear, InkSet, InkThing, Light, VEHICLES, Weather, defaultDesign, drawnKind, farOf, inkPalette, type SetPal, GREY_PAL} from './ink';
 import type {ActorState, CastMember, Design, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
 
 // A stick-figure comedy episode in the channel's style: light grey sets drawn in grey tones with
@@ -90,7 +90,7 @@ const rig = (pose: Pose, t: number, SEAT: number): Rig => {
 
 // ---------- the composition ----------
 
-export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, speech, vertical = false, dialogue = 'subtitle', soundOnly = false, art = 'grey'}) => {
+export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, speech, vertical = false, dialogue = 'subtitle', soundOnly = false, art = 'grey', ambience = []}) => {
   useFonts();
   useHandFont();
   const {fps} = useVideoConfig();
@@ -111,6 +111,13 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
         ) : null,
       )}
       {music ? <Music src={music} speech={speech} full={0.16} duck={0.06} /> : null}
+      {ambience.map((a, i) => (
+        // A scene's quiet bed (wind, rain, room tone), faded in and out; soundtrack._story mirrors it.
+        <Sequence key={`amb${i}`} name={`ambience ${i + 1}`} from={f(a.from)} durationInFrames={Math.max(1, f(a.to - a.from))}>
+          <Audio src={staticFile(a.src)} loop
+            volume={(fr) => interpolate(fr, [0, 30, Math.max(31, f(a.to - a.from) - 30), Math.max(32, f(a.to - a.from))], [0, 0.1, 0.1, 0], clamp)} />
+        </Sequence>
+      ))}
       <Cues cues={cues} speech={speech} />
     </Layer>
   );
@@ -118,7 +125,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
 
 // ---------- one shot ----------
 
-const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble'; ink: boolean}> = ({shot, looks, cast, newScene, vertical, dialogue, ink}) => {
+const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble' | 'none'; ink: boolean}> = ({shot, looks, cast, newScene, vertical, dialogue, ink}) => {
   const frame = useCurrentFrame();
   const {fps, width: OW, height: OH} = useVideoConfig();
   // A Short frames the cast close (big heads, like the channel's Shorts): a slice of the 1920 px set
@@ -134,12 +141,16 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   let scale = 1;
   // A Short is already framed close: its close-up and punch-in are gentler.
   const zoomMax = vertical ? 1.22 : 1.5;
+  // A very slow push-in over the whole shot (documentaries: the camera stays locked or creeps in).
+  if (shot.camera === 'push') scale = interpolate(frame, [0, frames], [1, vertical ? 1.06 : 1.1], {...clamp, easing: Easing.inOut(Easing.sin)});
   if (shot.camera === 'close') scale = interpolate(frame, [0, 10], [1 + (zoomMax - 1) * 0.5, zoomMax], {...clamp, easing: Easing.out(Easing.cubic)});
   // A 'shake' camera (older props) is a punch-in now: the user wants no vibration at all.
   if (shot.camera === 'punch' || shot.camera === 'shake') scale = 1 + (vertical ? 0.1 : 0.2) * spring({frame: frame - Math.round(shot.lead * fps), fps, config: {damping: 14}});
   const shake = 0;
   const fx = focus ? focus.x : W / 2;
-  const fy = FLOOR - 300;
+  // A far-away figure (actor.far) stands on the set's distant ground: the camera centres on it there.
+  const farInfo = farOf(shot.setting);
+  const fy = focus?.far ? FLOOR - farInfo.lift - 260 * farInfo.size : FLOOR - 300;
   const group = xsOnScreen.length ? (Math.max(...xsOnScreen) + Math.min(...xsOnScreen)) / 2 : W / 2;
   const total = base * scale;
   const halfW = OW / (2 * total);
@@ -177,6 +188,8 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
           </g>
         </g>
       </svg>
+      {shot.weather && shot.weather !== 'none' ? <Weather kind={shot.weather} t={t} /> : null}
+      {shot.light && shot.light !== 'day' ? <Light kind={shot.light} /> : null}
       {ink ? <InkFinish /> : null}
       {speaker && shot.text && dialogue === 'subtitle' ? (
         <Subtitle text={shot.text} lead={shot.lead} top={vertical ? floorY + 40 : undefined} big={vertical} ink={ink} />
@@ -185,7 +198,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
         <Bubble text={shot.text} words={shot.words} lead={shot.lead} x={(speaker.x - cx) * total + OW / 2}
           y={(FLOOR - 470 - (speaker.pose === 'sit' ? -(165 - seat(speaker)) : 0) - cy) * total + OH / 2} big={vertical} />
       ) : null}
-      {!speaker && shot.text ? <Narration text={shot.text} top={vertical ? floorY + 40 : undefined} big={vertical} /> : null}
+      {!speaker && shot.text && dialogue !== 'none' ? <Narration text={shot.text} top={vertical ? floorY + 40 : undefined} big={vertical} /> : null}
       {shot.caption ? <Caption text={shot.caption} top={vertical ? 230 : 36} ink={ink} /> : null}
       {flash > 0 ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: flash}} /> : null}
     </Layer>
@@ -235,8 +248,15 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
     } else dx = 70 * p * a.facing;
     if (t > 0.8 && t < 1.8) stepT = ((t - 0.8) / 1) * (Math.PI / 9);
   }
-  const walking = (a.action.startsWith('walk-in') && t < 0.8) || (a.action.startsWith('walk-out') && t > d - 1) || stepT !== null;
-  return {dx, dy, rot, walking, k, stepT};
+  // Across the frame the way they face, walking the whole shot.
+  if (a.action === 'walk-across') dx = interpolate(t, [0, d], [-520, 520], clamp) * a.facing;
+  // A head turn: they face the other way from halfway through.
+  const facing = a.action === 'turn' && t > d / 2 ? -a.facing : a.facing;
+  // Looking up: the head tips back and stays there (one movement, no wobble).
+  const headUp = a.action === 'look-up' ? -interpolate(t, [0.3, 0.9], [0, 20], {...clamp, easing: Easing.out(Easing.quad)}) : 0;
+  const walking = (a.action.startsWith('walk-in') && t < 0.8) || (a.action.startsWith('walk-out') && t > d - 1) || stepT !== null
+    || a.action === 'walk-across';
+  return {dx, dy, rot, walking, k, stepT, facing, headUp};
 };
 
 // Small body movements that carry an emotion (pixels and degrees; lean is toward where they look).
@@ -304,7 +324,7 @@ const Sleeves: React.FC<{r: Rig; colour?: string}> = ({r, colour}) => (
 
 const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]; far?: {lift: number; size: number}}> = ({a, seat, look, outfit, design, t, frame, frames, talking, far}) => {
   const {fps} = useVideoConfig();
-  const {dx, dy, rot, walking, k, stepT} = actionOffset(a, t, frames, fps);
+  const {dx, dy, rot, walking, k, stepT, facing, headUp} = actionOffset(a, t, frames, fps);
   const pose: Pose = walking ? 'walk' : a.pose;
   const small = (look === 'kid' ? 0.78 : 1) * k * (a.far && far ? far.size : 1);
   const lift = a.far && far ? far.lift : 0;
@@ -319,14 +339,14 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
   // A sitting leg bends at the knee instead of curving.
   const leg = (p: Pt, k: Pt, e: Pt) => (pose === 'sit' ? `M ${p[0]} ${p[1]} L ${k[0]} ${k[1]} L ${e[0]} ${e[1]}` : limb(p, k, e));
   return (
-    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR - lift + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * a.facing}) scale(${a.facing * small} ${small})`}>
+    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR - lift + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * facing}) scale(${facing * small} ${small})`}>
       <g transform={pose === 'lie' ? 'translate(-150 -40) rotate(-90 0 0)' : `translate(0 ${breathe})`}>
         <ellipse cx={0} cy={4} rx={60} ry={9} fill="rgba(0,0,0,0.18)" stroke="none" />
         {design ? (
           <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
             <InkBody r={r} d={design} sitting={pose === 'sit'} back={!!a.back} />
             {a.back ? null : <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />}
-            <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head})`}>
+            <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head + headUp})`}>
               {a.back ? null : <g transform={`scale(${FACE})`}><InkHairBack d={design} /></g>}
               <circle r={HEAD} fill={HEAD_FILL} strokeWidth={6} />
               <g transform={`scale(${FACE})`} strokeWidth={LINE / FACE}>
@@ -353,7 +373,7 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
           <path d={limb(shoulder(r, 1), r.rE, r.rH)} />
           {dressed(look) ? null : <Sleeves r={r} colour={outfit} />}
           <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />
-          <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head})`}>
+          <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head + headUp})`}>
             <g transform={`scale(${FACE})`}><Hair look={look} back /></g>
             <circle r={HEAD} fill="#FFFFFF" />
             <g transform={`scale(${FACE})`} strokeWidth={LINE / FACE}>
@@ -364,8 +384,8 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
         </g>
         )}
       </g>
-      <g transform={`scale(${a.facing} 1)`}>
-        <EmoteView emote={a.emote} t={t} head={[r.head[0] * a.facing, r.head[1]]} />
+      <g transform={`scale(${facing} 1)`}>
+        <EmoteView emote={a.emote} t={t} head={[r.head[0] * facing, r.head[1]]} />
       </g>
     </g>
   );
