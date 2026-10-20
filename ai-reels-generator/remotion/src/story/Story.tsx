@@ -185,7 +185,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
           y={(FLOOR - 470 - (speaker.pose === 'sit' ? -(165 - seat(speaker)) : 0) - cy) * total + OH / 2} big={vertical} />
       ) : null}
       {!speaker && shot.text ? <Narration text={shot.text} top={vertical ? floorY + 40 : undefined} big={vertical} /> : null}
-      {shot.caption ? <Caption text={shot.caption} top={vertical ? 230 : 36} /> : null}
+      {shot.caption ? <Caption text={shot.caption} top={vertical ? 230 : 36} ink={ink} /> : null}
       {flash > 0 ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: flash}} /> : null}
     </Layer>
   );
@@ -858,9 +858,16 @@ const Narration: React.FC<{text: string; top?: number; big?: boolean}> = ({text,
   </div>
 );
 
-const Caption: React.FC<{text: string; top: number}> = ({text, top}) => (
-  <div style={{position: 'absolute', left: 80, right: 80, top, textAlign: 'center', fontSize: 52, fontWeight: 400, fontFamily: HAND, color: INK, textWrap: 'balance',
-    textShadow: '0 0 6px #fff, 0 0 10px #fff'}}>
-    {text}
-  </div>
-);
+const Caption: React.FC<{text: string; top: number; ink?: boolean}> = ({text, top, ink}) =>
+  ink ? (
+    // The ink look: a cream card with an ink edge, readable over a chalkboard or a dark wall.
+    <div style={{position: 'absolute', left: 60, right: 60, top, display: 'flex', justifyContent: 'center'}}>
+      <div style={{background: 'rgba(242,235,220,0.95)', border: `4px solid ${INK}`, borderRadius: 10, padding: '8px 22px', fontSize: 50,
+        fontFamily: HAND, color: INK, textAlign: 'center', textWrap: 'balance', transform: 'rotate(-1.2deg)'}}>{text}</div>
+    </div>
+  ) : (
+    <div style={{position: 'absolute', left: 80, right: 80, top, textAlign: 'center', fontSize: 52, fontWeight: 400, fontFamily: HAND, color: INK, textWrap: 'balance',
+      textShadow: '0 0 6px #fff, 0 0 10px #fff'}}>
+      {text}
+    </div>
+  );
