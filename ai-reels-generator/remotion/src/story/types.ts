@@ -15,7 +15,7 @@ export type Emote = 'none' | '!' | '?' | '!?' | 'sweat' | 'anger' | 'hearts' | '
 export type Prop = 'none' | 'phone' | 'book' | 'paper' | 'cup' | 'bag' | 'laptop' | 'ball' | 'plate' | 'remote' | 'thing';
 export type Effect = 'none' | 'erupt' | 'smoke' | 'fire' | 'sparkle' | 'shake';
 // An object in the scene: 'volcano' (drawn by hand) or a lucide icon name; on a small table or the floor.
-export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect; svg?: string | null}; // svg: Claude's own drawing (200x200)
+export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect; svg?: string | null; photo?: {src: string; w: number; h: number} | null}; // svg: Claude's own drawing (200x200); photo: a real picture as proof (Wikimedia Commons), shown as a pinned print
 export type Setting =
   | 'living-room' | 'classroom' | 'kitchen' | 'bedroom' | 'street' | 'office' | 'bathroom'
   | 'park' | 'shop' | 'exam-hall' | 'blank' | 'mine' | 'tunnel' | 'garage' | 'warehouse';

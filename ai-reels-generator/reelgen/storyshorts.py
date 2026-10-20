@@ -819,8 +819,8 @@ def check_pictures(cfg: Config, series: StorySeries, tls: list[dict], work: Path
     prompt = (f"Story: {series.title}. Recurring characters: {', '.join(c.name for c in series.characters) or 'none'}. "
               "The pictures are tall (9:16).\n" + "\n".join(f"{label}: {lines[label]}" for label, _ in pics)
               + f"\n\n{len(sheets)} contact sheet(s) attached. List only the broken pictures.")
-    review = ask(cfg.ai_backend, cfg.claude_model, animated.PIC_SYSTEM, prompt, animated.PicReview, images=sheets,
-                 effort=cfg.claude_effort, timeout=900)
+    review = ask(cfg.ai_backend, cfg.fact_model, animated.PIC_SYSTEM, prompt, animated.PicReview, images=sheets,
+                 effort=cfg.fact_effort, timeout=900)  # a check: the job's checker model
     known = {label for label, _ in pics}
     return [b for b in review.broken if b.id in known and b.prompt.strip()]
 

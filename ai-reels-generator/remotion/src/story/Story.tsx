@@ -131,7 +131,9 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   // A Short frames the cast close (big heads, like the channel's Shorts): a slice of the 1920 px set
   // in the upper part of the frame, following whoever speaks; subtitles go below it. The slice is as
   // close as possible (1.9x, ~570 px) but always wide enough for everyone and every object on screen.
-  const xsOnScreen = [...shot.actors.map((a) => a.x), ...(shot.things ?? []).map((th) => th.x)];
+  // A proof picture is wide: both its edges must be in the frame, not only its centre.
+  const photos = placePhotos(shot.things ?? [], vertical);
+  const xsOnScreen = [...shot.actors.map((a) => a.x), ...(shot.things ?? []).filter((th) => !th.photo).map((th) => th.x), ...photos.flatMap((ph) => [ph.x - ph.box / 2 - 30, ph.x + ph.box / 2 + 30])];
   const spread = xsOnScreen.length ? Math.max(...xsOnScreen) - Math.min(...xsOnScreen) : 0;
   const base = vertical ? Math.min(1.9, Math.max(1.1, OW / (spread + 300))) : 1;
   const t = frame / fps;
@@ -184,8 +186,10 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
           <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} pal={ink ? pal : undefined} />
-          {(shot.things ?? []).map((th, i) => <ThingView key={`th${i}`} th={th} furniture={furniture} front={front} t={t} pal={pal} />)}
+          {(shot.things ?? []).map((th, i) => (th.photo ? null : <ThingView key={`th${i}`} th={th} furniture={furniture} front={front} t={t} pal={pal} />))}
           </g>
+          {/* Proof pictures stay sharp: outside the rough ink filter, which would wobble a real logo's edges. */}
+          {photos.map((ph, i) => <PhotoCard key={`ph${i}`} th={ph.th} x={ph.x} frame={frame} fps={fps} tilt={i % 2 ? 2.5 : -3} box={ph.box} high={vertical} />)}
         </g>
       </svg>
       {shot.weather && shot.weather !== 'none' ? <Weather kind={shot.weather} t={t} /> : null}
@@ -701,6 +705,55 @@ const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: numb
     <g>
       {onTable && desk === null ? <TableUnder x={th.x} floor={FLOOR} pal={pal} /> : null}
       <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} svg={th.svg} /></g>
+    </g>
+  );
+};
+
+// A real picture as proof (a logo, a building, a document): a print pinned to the wall with tape,
+// popping in at the start of the line. The picture is fitted inside the white border, never cropped.
+// The picture's longer side (a Short's narrow slice of the set gets smaller prints).
+const photoBox = (th: Thing, vertical: boolean) => (vertical ? (th.big ? 420 : 340) : th.big ? 560 : 430);
+
+// Several pictures in one line (a comparison) never overlap: side by side, smaller when they would not
+// fit (a Short's slice of the set is ~1000 px wide; there they hang together above the cast).
+const placePhotos = (things: Thing[], vertical: boolean) => {
+  const list = things.filter((th) => th.photo);
+  if (list.length < 2) return list.map((th) => ({th, x: th.x, box: photoBox(th, vertical)}));
+  const room = vertical ? 1000 : 1700;
+  const box = Math.min(...list.map((th) => photoBox(th, vertical)), room / list.length - 70);
+  const step = box + 70;
+  const sorted = [...list].sort((a, b) => a.x - b.x);
+  if (vertical) {
+    const mid = list.reduce((a, th) => a + th.x, 0) / list.length;
+    return sorted.map((th, k) => ({th, x: mid + (k - (list.length - 1) / 2) * step, box}));
+  }
+  // 16:9: each stays on its own spot (one nobody stands on) and is only pushed clear of the one before.
+  const xs: number[] = [];
+  sorted.forEach((th, k) => xs.push(k ? Math.max(th.x, xs[k - 1] + step) : th.x));
+  const over = Math.max(0, xs[xs.length - 1] + box / 2 - (W - 60));
+  return sorted.map((th, k) => ({th, x: Math.max(60 + box / 2 + k * step, xs[k] - over), box}));
+};
+
+const PhotoCard: React.FC<{th: Thing; x: number; frame: number; fps: number; tilt: number; box: number; high: boolean}> = ({th, x, frame, fps, tilt, box, high}) => {
+  const photo = th.photo!;
+  const ratio = photo.w / Math.max(1, photo.h);
+  const iw = ratio >= 1 ? box : box * ratio;
+  const ih = ratio >= 1 ? box / ratio : box;
+  const pad = 22;
+  const cw = iw + pad * 2;
+  const ch = ih + pad * 2 + 26;
+  // On the wall beside the cast; a Short packs the cast close, so there it hangs above their heads.
+  const cy = high ? FLOOR - 590 - ch / 2 : Math.min(FLOOR - 120 - ch / 2, FLOOR - 470);
+  const pop = spring({frame: frame - 3, fps, config: {damping: 12, stiffness: 140}});
+  const s = interpolate(pop, [0, 1], [0.6, 1]);
+  return (
+    <g transform={`translate(${x} ${cy}) rotate(${tilt * pop}) scale(${s})`} opacity={Math.min(1, pop * 1.4)}>
+      <rect x={-cw / 2 + 10} y={-ch / 2 + 14} width={cw} height={ch} fill="#000" opacity={0.22} rx={4} />
+      <rect x={-cw / 2} y={-ch / 2} width={cw} height={ch} fill="#F7F3EA" stroke={INK} strokeWidth={4} rx={4} />
+      <rect x={-iw / 2} y={-ch / 2 + pad} width={iw} height={ih} fill="#fff" />
+      <image href={staticFile(photo.src)} x={-iw / 2} y={-ch / 2 + pad} width={iw} height={ih} preserveAspectRatio="xMidYMid meet" />
+      <rect x={-iw / 2} y={-ch / 2 + pad} width={iw} height={ih} fill="none" stroke={INK} strokeWidth={2} opacity={0.5} />
+      <rect x={-70} y={-ch / 2 - 18} width={140} height={38} fill="#E9DDB8" opacity={0.85} transform="rotate(-4)" />
     </g>
   );
 };

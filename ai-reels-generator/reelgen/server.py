@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from . import cinehook, tunnel
 from .categories import CATEGORIES, categorize
-from .config import EDITABLE, PROJECT_ROOT, Config, load_settings, save_settings
+from .config import EDITABLE, PROJECT_ROOT, Config, ai_pick, apply_ai, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
 from .pipeline import run
 from .script_writer import ReelScript
@@ -89,8 +89,11 @@ class JobManager:
 
     def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None,
                length: str = "short", resume: list[str] | None = None, **extra) -> dict:
+        current = load_settings(Config())
+        # Every job keeps the Claude models and efforts it runs with (shown on its card, applied in _run_job).
+        ai = ai_pick(current, _ai(extra.pop("ai", None)))
         job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger, "resume": resume or [],
-               "style": style or load_settings(Config()).video_style, "length": length,
+               "style": style or current.video_style, "length": length, "ai": ai,
                "status": "queued", "log": [], "created": time.time(), "results": [], **extra}
         with self.lock:
             self.jobs.appendleft(job)
@@ -150,7 +153,7 @@ class JobManager:
         # Stop and remove: kills the Claude call or render running now (reelgen/stopper.py).
         progress.should_pause.stop = lambda job=job: bool(job.get("cancel"))
         try:
-            cfg = load_settings(Config())
+            cfg = apply_ai(load_settings(Config()), job.get("ai"))
             cfg.video_style = job["style"]
             if job.get("captions") is not None:
                 cfg.captions = bool(job["captions"])
@@ -267,7 +270,7 @@ def scheduler(jobs: JobManager) -> None:
         try:
             cfg = load_settings(Config())
             for a in automations.due(cfg, datetime.now()):
-                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
+                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions, ai=a.ai or None)
         except Exception:  # a bad file must not stop the scheduler for good
             log.exception("Automation check failed")
         time.sleep(20)
@@ -437,6 +440,21 @@ def video_dir(cfg: Config, video_id: str) -> Path:
 
 # ---------- app ----------
 
+class AIPick(BaseModel):
+    """A job's own Claude choice (every tab's "Claude" picker); blank = the Settings value (config.ai_pick)."""
+    model: str = ""  # writes: scripts, storyboards, hooks, fixes, reviews
+    effort: str = ""
+    check_model: str = ""  # checks: fact-checks, picture checks
+    check_effort: str = ""
+
+
+def _ai(pick) -> dict | None:
+    """AIPick or a plain dict from a route that takes `body: dict`."""
+    if isinstance(pick, AIPick):
+        return pick.model_dump()
+    return pick if isinstance(pick, dict) else None
+
+
 class GenerateRequest(BaseModel):
     topic: str | None = None
     count: int = 1
@@ -446,6 +464,7 @@ class GenerateRequest(BaseModel):
     story_form: str = "auto"  # long/medium: longform.STORY_FORMS key, or auto
     memes: str = ""  # long/medium: off | some | lots (reelgen/memes.py); empty = the Settings value
     hook_template: str = ""  # long/medium: cinehook.TEMPLATES key or auto; empty = the Settings value
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class LicenceEdit(BaseModel):
@@ -469,6 +488,7 @@ class StickRequestBody(BaseModel):
     style: str = "comedy"  # comedy | fiction | facts | documentary
     cast: str = ""
     count: int = 1
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class ToonRequestBody(BaseModel):
@@ -481,6 +501,7 @@ class ToonRequestBody(BaseModel):
     captions: bool = True
     watermark: str = ""
     count: int = 1
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class MusicTestBody(BaseModel):
@@ -511,6 +532,7 @@ class StoryBody(BaseModel):
     speed: int = 8
     captions: bool = False
     watermark: str = ""
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class AnimRequestBody(BaseModel):
@@ -526,6 +548,7 @@ class AnimRequestBody(BaseModel):
     captions: bool = False
     watermark: str = ""
     count: int = 1
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class SoundRemoveBody(BaseModel):
@@ -541,10 +564,12 @@ class ShootBody(BaseModel):
     language: str = "english"  # english | hinglish | hindi (speech following and transcription)
     format: str = "long"  # long (16:9) | short (9:16)
     screen_text: str = "english"
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class ShootMakeBody(BaseModel):
     captions: bool | None = None
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class ShootVoiceBody(BaseModel):
@@ -565,6 +590,7 @@ class ScriptVideoRequest(BaseModel):
     memes: str = ""  # off | some | lots (reelgen/memes.py); empty = the Settings value
     hook_template: str = ""  # cinehook.TEMPLATES key or auto; empty = the Settings value
     voice_rate: str = ""  # speaking pace, e.g. '-5%'; empty = Settings > Speaking pace (long and Script videos)
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class PostEdit(BaseModel):
@@ -776,7 +802,7 @@ def create_app(cfg: Config) -> FastAPI:
         return report
 
     @app.post("/api/videos/{video_id}/post-text")
-    def write_post_text(video_id: str):
+    def write_post_text(video_id: str, body: dict | None = None):
         """(Re)write the Instagram/YouTube text for a video, e.g. one made before this existed."""
         from .post_copy import apply_post_copy, save_post_text
 
@@ -787,7 +813,7 @@ def create_app(cfg: Config) -> FastAPI:
 
             long_script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
             try:
-                report.update(write_long_post(long_script, {"chapters": report.get("chapters", [])}, load_settings(Config())))
+                report.update(write_long_post(long_script, {"chapters": report.get("chapters", [])}, apply_ai(load_settings(Config()), (body or {}).get("ai"))))
             except Exception as exc:
                 raise HTTPException(502, f"Couldn't write the post text: {exc}")
             report.pop("post_text_error", None)
@@ -802,7 +828,7 @@ def create_app(cfg: Config) -> FastAPI:
         script = ReelScript.model_validate(data)
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         try:
-            apply_post_copy(report, script, load_settings(Config()), folder)
+            apply_post_copy(report, script, apply_ai(load_settings(Config()), (body or {}).get("ai")), folder)
         except Exception as exc:
             raise HTTPException(502, f"Couldn't write the post text: {exc}")
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -940,7 +966,7 @@ def create_app(cfg: Config) -> FastAPI:
                 entry.update(state="running", line="Starting")
                 try:
                     pace = str(body.get("pace") or "")
-                    rehook.make_hook(load_settings(Config()), folder, template, bool(body.get("rewrite", True)),
+                    rehook.make_hook(apply_ai(load_settings(Config()), body.get("ai")), folder, template, bool(body.get("rewrite", True)),
                                      progress=lambda m: entry.update(line=str(m)),
                                      pace=pace if re.fullmatch(r"[+-]\d{1,2}%", pace) else None)
                     hook_state.pop(k, None)
@@ -999,7 +1025,7 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(f"Short: {report.get('title', video_id)}", 1, "rerender", report.get("style"), "short",
                            clip_short={"id": video_id, "first": first, "last": last, "mode": mode,
                                        "seconds": seconds if seconds in clipshort.LENGTHS else 60,
-                                       "hook": body.get("hook", True) is not False, "link": link})
+                                       "hook": body.get("hook", True) is not False, "link": link}, ai=body.get("ai"))
 
     sample_state: dict[str, dict] = {}  # template -> {state, line, error}
 
@@ -1254,11 +1280,11 @@ def create_app(cfg: Config) -> FastAPI:
 
     # ---- YouTube thumbnail (reelgen/thumbnail.py): Claude plans, Gemini draws, Claude checks ----
     @app.post("/api/videos/{video_id}/thumbnail/plan")
-    def plan_thumbnail(video_id: str):
+    def plan_thumbnail(video_id: str, body: dict | None = None):
         from . import thumbnail
 
         try:
-            return thumbnail.plan(load_settings(Config()), video_dir(cfg, video_id))
+            return thumbnail.plan(apply_ai(load_settings(Config()), (body or {}).get("ai")), video_dir(cfg, video_id))
         except Exception as exc:
             raise HTTPException(502, f"Couldn't design the thumbnail: {exc}")
 
@@ -1282,7 +1308,7 @@ def create_app(cfg: Config) -> FastAPI:
         style = body.style if body.style in ("facts", "news", "story", "comedy", "mix") else None
         length = body.length if body.length in ("long", "medium") else "short"
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
-                           "manual", style, length, captions=body.captions,
+                           "manual", style, length, captions=body.captions, ai=body.ai,
                            story_form=body.story_form if length != "short" else None,
                            memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None,
                            hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", *cinehook.TEMPLATES) else None)
@@ -1389,7 +1415,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "style": body.style if body.style in ("comedy", "fiction", "facts", "documentary") else "comedy"}
         return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick",
                            {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given["style"], "comedy"),
-                           "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False)
+                           "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False, ai=body.ai)
 
     @app.get("/api/toon/options")
     def toon_options():
@@ -1407,7 +1433,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "toon", "facts", "toon",
-                           toon_input=given, captions=given["captions"])
+                           toon_input=given, captions=given["captions"], ai=body.ai)
 
     @app.get("/api/anim/options")
     def anim_options():
@@ -1478,7 +1504,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 3)), "anim", "facts", "anim",
-                           anim_input=given, captions=given["captions"])
+                           anim_input=given, captions=given["captions"], ai=body.ai)
 
     @app.post("/api/story")
     def story(body: StoryBody):
@@ -1519,7 +1545,7 @@ def create_app(cfg: Config) -> FastAPI:
             given["parts"] = max(1, min(MAX_PARTS, int(body.parts)))
         title = given["title"] or given["topic"][:80] or None
         return jobs.submit(title, given["parts"], "story", given["kind"], "storyshorts", story_input=given,
-                           captions=given["captions"])
+                           captions=given["captions"], ai=body.ai)
 
     @app.get("/api/story/estimate")
     def story_estimate(language: str = "english", seconds: int = 30, text: str = "", split: str = "auto"):
@@ -1543,7 +1569,8 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
                            captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None,
                            hook_template=body.hook_template if body.hook_template in ("auto", *cinehook.TEMPLATES) else None,
-                           voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None)
+                           voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None,
+                           ai=body.ai)
 
     # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------
 
@@ -1569,7 +1596,7 @@ def create_app(cfg: Config) -> FastAPI:
             proj = shoot.new_project(cfg, body.model_dump())
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        shoot.plan_in_background(load_settings(Config()), proj["id"])
+        shoot.plan_in_background(apply_ai(load_settings(Config()), _ai(body.ai)), proj["id"])
         return shoot.load(cfg, proj["id"])
 
     @app.get("/api/shoot/{pid}")
@@ -1579,13 +1606,13 @@ def create_app(cfg: Config) -> FastAPI:
         return shoot.recheck_old(cfg, _shoot(pid))  # takes checked an older way get checked again
 
     @app.post("/api/shoot/{pid}/plan")
-    def shoot_plan(pid: str):
+    def shoot_plan(pid: str, body: dict | None = None):
         from . import shoot
 
         if _shoot(pid)["plan"]["status"] == "running":
             raise HTTPException(409, "Claude is planning it already")
         shoot.update(cfg, pid, lambda p: p["plan"].update(status="running", error=""))
-        shoot.plan_in_background(load_settings(Config()), pid)
+        shoot.plan_in_background(apply_ai(load_settings(Config()), (body or {}).get("ai")), pid)
         return shoot.load(cfg, pid)
 
     @app.post("/api/shoot/{pid}/lines/{k}/camera")
@@ -1679,7 +1706,7 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, f"Upload a take of shot{'s' if len(missing) > 1 else ''} {', '.join(map(str, missing))} first.")
         if proj["plan"]["status"] == "running":
             raise HTTPException(409, "Claude is still planning which lines show you: a minute more")
-        job = jobs.submit(proj["title"], 1, "shoot", None, "shoot", shoot_input={"id": pid}, captions=body.captions)
+        job = jobs.submit(proj["title"], 1, "shoot", None, "shoot", shoot_input={"id": pid}, captions=body.captions, ai=body.ai)
         shoot.update(cfg, pid, lambda p: p.update(video={"status": "queued", "job": job["id"]}))
         return job
 
@@ -1796,7 +1823,7 @@ def create_app(cfg: Config) -> FastAPI:
             return jobs.submit((saved.get("series") or {}).get("title") or given.get("topic") or None,
                                len((saved.get("series") or {}).get("parts") or []) or given.get("parts", 1), "resume",
                                given.get("kind", "story"), "storyshorts", story_input=given, story_resume=stories[:1],
-                               captions=given.get("captions"))
+                               captions=given.get("captions"), ai=body.get("ai"))
         anims = [f for f in body.get("folders", []) if f in unfinished_anims(cfg) and f not in busy_folders()]
         if anims:  # Animated videos resume through their own pipeline too
             if body.get("music") == "redo":  # "Resume with AI music": the failed music step runs again
@@ -1810,13 +1837,13 @@ def create_app(cfg: Config) -> FastAPI:
             if body.get("motion") in ("key", "stills"):  # "Resume, key shots only": fewer clips from here on
                 given = {**given, "motion": body["motion"]}
             return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(anims), "resume",
-                               "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"))
+                               "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"), ai=body.get("ai"))
         toons = [f for f in body.get("folders", []) if f in unfinished_toons(cfg) and f not in busy_folders()]
         if toons:  # Toon videos resume through their own pipeline, never the Shorts/long one
             saved = json.loads((cfg.output_dir / toons[0] / TOON_CHECKPOINT).read_text(encoding="utf-8"))
             given = saved.get("request") or {}
             return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(toons), "resume",
-                               "facts", "toon", toon_input=given, toon_resume=toons, captions=given.get("captions"))
+                               "facts", "toon", toon_input=given, toon_resume=toons, captions=given.get("captions"), ai=body.get("ai"))
         available = {u["id"] for u in unfinished(cfg)} - busy_folders()
         folders = [f for f in body.get("folders", []) if f in available]
         if not folders:
@@ -1826,7 +1853,7 @@ def create_app(cfg: Config) -> FastAPI:
         first = next(u for u in unfinished(cfg) if u["id"] == folders[0])
         title = first.get("title") or (first.get("topic") if first.get("topic") != "Trending topic" else None)
         return jobs.submit(title, len(folders), "resume", first.get("style"), first.get("length", "short"),
-                           resume=folders)
+                           resume=folders, ai=body.get("ai"))
 
     @app.post("/api/jobs/{job_id}/pause")
     def pause_job(job_id: str):
@@ -1852,21 +1879,21 @@ def create_app(cfg: Config) -> FastAPI:
             if not saved:
                 raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
             return jobs.submit(job["topic"], len(saved), "resume", "facts", "anim", anim_input=job["anim_input"],
-                               anim_resume=saved, captions=job.get("captions"))
+                               anim_resume=saved, captions=job.get("captions"), ai=job.get("ai"))
         if job.get("story_input"):  # a Story Shorts job resumes its own saved series (story-checkpoint.json)
             from .storyshorts import unfinished_stories
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_stories(cfg) and f not in busy_folders()]
             if not saved:
                 raise HTTPException(400, "Nothing saved to resume for this story; make it again.")
             return jobs.submit(job["topic"], job["count"], "resume", job.get("style"), "storyshorts",
-                               story_input=job["story_input"], story_resume=saved[:1], captions=job.get("captions"))
+                               story_input=job["story_input"], story_resume=saved[:1], captions=job.get("captions"), ai=job.get("ai"))
         if job.get("toon_input"):  # a Toon job resumes its own saved videos (toon-checkpoint.json)
             from .toon import unfinished_toons
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_toons(cfg) and f not in busy_folders()]
             if not saved:
                 raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
             return jobs.submit(job["topic"], len(saved), "resume", "facts", "toon", toon_input=job["toon_input"],
-                               toon_resume=saved, captions=job.get("captions"))
+                               toon_resume=saved, captions=job.get("captions"), ai=job.get("ai"))
         available = {u["id"] for u in unfinished(cfg)} - busy_folders()
         folders = list(dict.fromkeys(f for f in job.get("folders", []) if f in available))
         fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
@@ -1875,7 +1902,8 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(job["topic"], len(folders) + fresh, "resume", job.get("style"), job.get("length", "short"),
                            resume=folders, script_input=job.get("script_input"), stick_input=job.get("stick_input"),
                            voice=job.get("voice"),
-                           captions=job.get("captions"), story_form=job.get("story_form"))
+                           captions=job.get("captions"), story_form=job.get("story_form"), ai=job.get("ai"),
+                           memes=job.get("memes"), hook_template=job.get("hook_template"), voice_rate=job.get("voice_rate"))
 
     @app.get("/api/automations")
     def list_automations():
@@ -1907,7 +1935,7 @@ def create_app(cfg: Config) -> FastAPI:
         a = next((x for x in automations.load(cfg) if x.id == automation_id), None)
         if a is None:
             raise HTTPException(404, "No such automation")
-        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
+        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions, ai=a.ai or None)
 
     @app.get("/api/library")
     def library():

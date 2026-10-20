@@ -76,6 +76,8 @@ class SThing(BaseModel):
     big: bool = False
     effect: Effect = Field(default="none", description="What it does during this line: erupt (a volcano's lava), smoke, fire, sparkle, shake.")
     svg: str = Field(default="", description="Only when nothing built in shows it: your own drawing of it (see Drawings).")
+    photo: str = Field(default="", description="A real picture as proof (see Proof pictures): Wikimedia Commons search "
+                       "words, e.g. 'Google logo 2010', 'YouTube logo 2005', 'San Diego Zoo elephants'.")
 
 class SPiece(BaseModel):
     kind: FurnitureKind
@@ -133,8 +135,8 @@ def beats_for(seconds: float) -> int:
 
 # What may be drawn (the engine's visual safety rule): the narration can carry real names and facts, the picture never
 # needs them. For every type; the documentary type leans on it most.
-VISUAL_SAFETY = ("What is drawn (signs, captions, objects, props) never names a real person and never shows a real brand, "
-                 "logo, military insignia or a flag in a conflict; a place tied to a tragedy stays generic ('a city', 'a "
+VISUAL_SAFETY = ("What is drawn (signs, captions, objects, props) never names a real person and never draws a real brand, "
+                 "logo, military insignia or a flag in a conflict (a real logo or photo only as a proof picture, below); a place tied to a tragedy stays generic ('a city', 'a "
                  "coastal road'). Never show violence, injury, death, blood, a weapon being used or anyone being harmed: "
                  "show the moment before, the aftermath far away, or an object standing in for it (an empty chair, a "
                  "closed door, a stopped clock, smoke on the horizon). Disaster only as a distant silhouette or "
@@ -153,6 +155,14 @@ DRAWINGS = ("Drawings: the settings, furniture and drawn objects above are the a
             "#6E6F45, brown #7E5E3E), simple geometric shapes, sparse detail; only path, circle, ellipse, rect, "
             "polygon, polyline, line and g; no text, logos, images or gradients; a background under 5000 characters, "
             "an object under 1500. Never draw a real person, brand or logo.")
+
+# Real pictures as proof (evidence.py): Wikimedia Commons files with a free licence, credited in the description.
+PROOF = ("Proof pictures: when a real image proves or names what the line says better than a drawing (a company buying "
+         "another: both companies' logos of that time; the real building or place; a document, a newspaper front page, "
+         "the product as it looked), add a thing with `photo` = Wikimedia Commons search words, the era included ('YouTube "
+         "logo 2005', 'Google logo 2010', 'Googleplex building'). It appears as a pinned photo card in the scene, and its "
+         "credit goes in the description. Use it where it adds proof (a few per video), not for every line; logos, places, "
+         "objects and documents, never violence; a real person only when the narration names them.")
 
 DOC_SHOTS = ("Every beat is one shot with ONE clear, plain action, never several: a character's step forward ('step'), "
              "walking across the frame ('walk-across'), a head turn ('turn'), looking up ('look-up'), sitting down, "
@@ -389,7 +399,9 @@ Keep spots steady within a scene; use walk-in/walk-out for entrances and exits a
 place. Show the real object, never a paper with its name; things stand on a table or the floor, held ones as prop \
 'thing' with prop_thing. {DESIGN_RULES}
 
-{DRAWINGS}"""
+{DRAWINGS}
+
+{PROOF}"""
     return f"""{brief}
 
 The dialogue is in {lang}. The cast talks fast (about 1.5x normal speed), so write snappy lines; let silence and reactions do work (silent beats with \
@@ -416,7 +428,9 @@ goes off), a birthday has a cake, a prize a trophy. Use things for objects in th
 prop_thing for something held. Paper is only for a test, a note or a report card. {DESIGN_RULES} Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
 setting for a new scene.
 
-{DRAWINGS}"""
+{DRAWINGS}
+
+{PROOF}"""
 
 
 def _furniture_help() -> str:
@@ -711,7 +725,9 @@ def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None) -
     signs = [f"Scene {i + 1} sign: {sc.sign}" for i, sc in enumerate(ep.scenes) if sc.sign]
     system = ("You fact-check a short educational stick-figure video. Search the web and open reliable pages. A line "
               "is confirmed only if a source you opened says the same; a figure must match (rounding is fine if the "
-              "line says 'about'). Jokes, reactions and obvious fiction about the characters aren't claims.")
+              "line says 'about'). Jokes, reactions and obvious fiction about the characters aren't claims. Budget: "
+              "open the writer's sources first and confirm what they cover; search only for claims they don't, at most "
+              "6 searches and 6 pages in all (open-ended research made one 3-minute video's check cost 1.2M tokens).")
     prompt = (f"Title: {ep.title}\nThe writer's sources: " + "; ".join(f"{x.title} {x.url}" for x in ep.sources)
               + ("\n\nCheck only the lines marked >> (the rest was checked before)." if only else "")
               + "\n\n" + "\n".join(rows + signs))
@@ -750,6 +766,16 @@ def check_facts(cfg: Config, ep: Episode, progress: Progress) -> tuple[Episode, 
             if not ln.line.strip() and ln.speaker not in ("none", ""):
                 ln.speaker = "none"
     return ep, issues, findings
+
+
+def board_rules(short: bool, style: str = "documentary") -> str:
+    """What the storyboard pass (stickboard.storyboard) may use: the sets, furniture, objects, drawings and rules."""
+    return (f"Settings: living-room, classroom, exam-hall, office, street, park, shop, bedroom, bathroom, kitchen, "
+            f"'mine' (a desert mountainside with a mine entrance), 'tunnel' (underground), 'garage' (shelves of boxes), "
+            f"'warehouse' (racks and a conveyor), 'blank' (with backdrop_svg: your own drawing). {_furniture_help()}\n"
+            f"Spots: far-left, left, center, right, far-right" + (" (a Short: at most 3 people, left/center/right)" if short else "")
+            + f". Objects ('things'): {THING_HELP}\n" + (DOC_SHOTS + "\n" if style == "documentary" else "")
+            + f"{VISUAL_SAFETY}\n{DRAWINGS}\n{PROOF}")
 
 
 def close_gaps(cfg: Config, ep: "Episode", hook_at: tuple[int, int] | None, progress: Progress, issues: list[str]) -> "Episode":
@@ -862,6 +888,24 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         return clean_svg(svg, uid, limit, shapes) or None if (svg or "").strip() else None
 
     backdrops = [art(sc.backdrop_svg, f"b{si}", 6000, 260) for si, sc in enumerate(ep.scenes)]
+    # Proof pictures from Wikimedia Commons, one download per search, credited in the description.
+    from . import evidence
+
+    found: dict[str, dict | None] = {}
+    credits: list[str] = []
+
+    def proof(words: str) -> dict | None:
+        key = (words or "").strip().lower()
+        if not key:
+            return None
+        if key not in found:
+            pic = evidence.find(key, work / "evidence", f"e{len(found):02d}")
+            found[key] = {"src": rel(pic.path), "w": pic.width, "h": pic.height} if pic else None
+            if pic:
+                credits.append(pic.credit())
+                progress(f"Proof picture: {pic.title.removeprefix('File:')} ({pic.licence})")
+        return found[key]
+
     t = 0.0
     for si, li, ln in lines:
         scene = ep.scenes[si]
@@ -872,8 +916,8 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         words = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in (sa.words if sa else [])]
         xs = place[si]
         things = [{"name": th.name.strip().lower()[:40] or "box", "x": round(xs[th.spot]), "table": th.on_table,
-                   "big": th.big, "effect": th.effect, "svg": art(th.svg, f"t{si}-{k}", 1500, 80)}
-                  for k, th in enumerate(ln.things)]
+                   "big": th.big, "effect": th.effect, "svg": art(th.svg, f"t{si}-{k}", 1500, 80),
+                   "photo": proof(th.photo)} for k, th in enumerate(ln.things)]
         actors = [{"id": a.id, "x": round(xs[a.spot]), "pose": a.pose, "face": a.face,
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
                    "propText": a.prop_text[:6],
@@ -948,6 +992,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
                   "design": ink_design(c.design, c.look, i)} for i, c in enumerate(ep.cast)],
         "shots": shots, "music": rel(track) if track else None, "musicChoice": choice, "cues": cues,
         "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()}, "ambience": ambience,
+        "credits": credits,
     }
     if req.style == "documentary" and not cfg.captions:
         props["dialogue"] = "none"  # the engine's clips carry no words on screen: the narration is heard, not shown
@@ -996,8 +1041,23 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             if req.style == "documentary":
                 ep = close_gaps(cfg, ep, hook_at, progress, fact_issues)
             sources, dropped = verify_sources(ep.sources)
+        board_note = None
+        # Every line gets a picture of what it says, for every type (stickboard.py; the user: "not only changes for
+        # documentry do it for all stick video generation").
+        from . import stickboard
+
+        progress("Storyboarding: a picture of what every line says")
+        ep = stickboard.storyboard(cfg, ep, board_rules(short, req.style), progress, narrated=req.style == "documentary")
         (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
         props = build(ep, req, cfg, work, progress)
+        bad = stickboard.check(cfg, props, ep, work, short, progress)  # every type: pictures checked against their lines
+        board_note = {"flagged": len(bad), "beats": {str(k): v for k, v in bad.items()}}
+        if bad:
+            progress(f"{len(bad)} picture(s) didn't show their line: staging them again")
+            ep = stickboard.storyboard(cfg, ep, board_rules(short, req.style), progress, only=bad,
+                                       narrated=req.style == "documentary")
+            (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
+            props = build(ep, req, cfg, work, progress)
         progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
         cli = _remotion_cli()
         if cli is None:
@@ -1024,6 +1084,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             "source": "stick", "topic": ep.title, "topic_source": "stick story",
             "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.style, "comedy"),
             "stick_type": req.style,
+            **({"picture_check": board_note} if board_note is not None else {}),
             "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
             else {"fiction": "Stories", "facts": "Science & Space", "documentary": "History"}.get(req.style, "Comedy"),
             "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
@@ -1032,7 +1093,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)", "captions": False,
             "music": props.get("musicChoice", ""),
             "voice": req.language, "youtube_title": ep.title[:100],
-            "youtube_description": with_sources(ep.youtube_description.strip(), sources, []), "youtube_hashtags": ep.hashtags[:3],
+            "youtube_description": with_sources(ep.youtube_description.strip(), sources, props.get("credits") or []), "youtube_hashtags": ep.hashtags[:3],
             "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
         }
         if req.style in TRUE_STYLES:

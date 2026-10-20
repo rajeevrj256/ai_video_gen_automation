@@ -401,7 +401,7 @@ def _check(cfg, prompts: dict[int, str], out_dir: Path, title: str, progress: Pr
                   + "\n".join(f"h{i:02d}: {prompts[i]}" for i in sorted(prompts))
                   + f"\n\n{len(sheets)} contact sheet(s) attached. Also flag any still with readable or fake writing, "
                     "or a recognisable face of a real person. List only the broken stills.")
-        review = ask(cfg.ai_backend, cfg.claude_model, PIC_SYSTEM, prompt, PicReview, images=sheets, effort="low", timeout=900)
+        review = ask(cfg.ai_backend, cfg.fact_model, PIC_SYSTEM, prompt, PicReview, images=sheets, effort="low", timeout=900)
     except Paused:
         raise
     except Exception as exc:  # noqa: BLE001 - a check that can't run never stops the video

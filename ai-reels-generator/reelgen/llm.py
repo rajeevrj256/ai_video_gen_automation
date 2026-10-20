@@ -27,6 +27,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from . import stopper
+from .config import MODELS as MODEL_NAMES
 
 log = logging.getLogger(__name__)
 
@@ -118,8 +119,9 @@ def meter_records() -> list[dict]:
     return list(getattr(_meter, "records", []))
 
 
-def _record(schema, usage: dict) -> None:
-    rec = {"step": STEP_NAMES.get(schema.__name__, schema.__name__), "at": round(time.time(), 1), **usage}
+def _record(schema, usage: dict, model: str = "", effort: str = "") -> None:
+    rec = {"step": STEP_NAMES.get(schema.__name__, schema.__name__), "at": round(time.time(), 1), **usage,
+           "model": model, "effort": effort}  # which model wrote or checked it, shown next to the step's tokens
     rec["tokens"] = rec["input"] + rec["output"] + rec["cache_read"] + rec["cache_write"]
     if hasattr(_meter, "records"):
         _meter.records.append(rec)
@@ -153,6 +155,11 @@ def summarize_usage(records: list[dict]) -> dict:
         for k in ("tokens", "input", "output", "cache_read", "cache_write"):
             s[k] += int(r.get(k) or 0)
         s["cost_usd"] = round(s["cost_usd"] + float(r.get("cost_usd") or 0), 4)
+        if r.get("model"):  # the model (and effort) of the step's calls: 'Opus 5.5 high', or several when a step mixed
+            label = MODEL_NAMES.get(r["model"], r["model"]) + (f" {r['effort']}" if r.get("effort") else "")
+            s.setdefault("models", [])
+            if label not in s["models"]:
+                s["models"].append(label)
     total = {k: sum(s[k] for s in steps.values()) for k in ("calls", "tokens", "input", "output", "cache_read", "cache_write")}
     total["cost_usd"] = round(sum(s["cost_usd"] for s in steps.values()), 4)
     return {"steps": steps, "total": total}
@@ -313,7 +320,7 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
     if out.get("is_error"):
         raise LLMError(f"Claude Code error: {out.get('result') or out.get('subtype')}")
 
-    _record(schema, _cli_usage(out))
+    _record(schema, _cli_usage(out), model, effort)
     data = out.get("structured_output")
     if data is None:  # older CLI versions: parse the text result
         data = _extract_json(out.get("result", ""))
@@ -347,7 +354,8 @@ def _ask_api(model: str, system: str, prompt: str, schema: type[T], images: list
     u = response.usage
     _record(schema, {"input": u.input_tokens or 0, "output": u.output_tokens or 0,
                      "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0,
-                     "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0, "cost_usd": None, "web_searches": 0})
+                     "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0, "cost_usd": None, "web_searches": 0},
+            model or "claude-opus-5-5", effort)
     if response.stop_reason == "refusal" or response.parsed_output is None:
         raise LLMError(f"Claude returned no usable answer (stop_reason={response.stop_reason})")
     return response.parsed_output

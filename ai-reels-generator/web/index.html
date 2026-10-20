@@ -90,6 +90,14 @@
   .job.paused { border-left-color: var(--muted); } .pill.paused { background: var(--panel-2); color: var(--text); }
   .tokens { margin-top: 10px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .tokens b { color: var(--text); }
+  .tok i { font-style: normal; opacity: .75; }
+  .aipick { margin: 10px 0 4px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); }
+  .aipick summary { cursor: pointer; font-size: 14px; }
+  .aipick .ai-sum { color: var(--muted); }
+  .ai-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 8px; }
+  .ai-grid label { font-size: 13px; margin: 0; }
+  .ai-grid select { margin-top: 3px; }
+  .ai-used { margin: 4px 0 0; }
   .tok { padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; white-space: nowrap; display: inline-block; margin: 2px 0; }
   .vtok { font-size: 12px; color: var(--muted); margin-left: 6px; }
   .vrow .vname { min-width: 80px; }
@@ -946,23 +954,28 @@
       <label for="s-claude_model">Claude model</label>
       <select id="s-claude_model">
         <option value="claude-opus-5-5">Opus 5.5 (recommended)</option>
-        <option value="claude-opus-5">Opus 5</option>
-        <option value="claude-sonnet-5">Sonnet 5 (faster, uses less of your limit)</option>
+        <option value="claude-sonnet-5-5">Sonnet 5.5 (faster, uses less of your limit)</option>
+        <option value="claude-haiku-5-5">Haiku 5.5 (fastest, uses the least)</option>
+        <option value="claude-fable-5-1">Fable 5.1 (needs usage credits)</option>
       </select>
+      <p class="hint">The default for every video. Each tab has its own 🤖 Claude picker to try another model or effort for one video; the job card and the video's token counts say which model each step ran on.</p>
       <label for="s-claude_effort">How hard Claude thinks</label>
       <select id="s-claude_effort">
+        <option value="low">Low (fastest, fewest tokens)</option>
         <option value="medium">Medium (faster)</option>
         <option value="high">High (recommended)</option>
         <option value="xhigh">Extra high (slower)</option>
         <option value="max">Max (slowest, uses the most of your limit)</option>
       </select>
-      <label for="s-fact_model">Fact-check model</label>
+      <label for="s-fact_model">Checking model (fact-checks, picture checks)</label>
       <select id="s-fact_model">
         <option value="claude-sonnet-5-5">Sonnet 5.5 (recommended: checks against sources, costs less)</option>
+        <option value="claude-haiku-5-5">Haiku 5.5 (fewest tokens)</option>
         <option value="claude-opus-5-5">Opus 5.5</option>
       </select>
       <label for="s-fact_effort">How hard the fact-check thinks</label>
       <select id="s-fact_effort">
+        <option value="low">Low (fewest tokens: searches less)</option>
         <option value="medium">Medium (recommended)</option>
         <option value="high">High</option>
       </select>
@@ -1579,7 +1592,7 @@ function wireShort(id, v) {
     try {
       await api(`/api/videos/${encodeURIComponent(id)}/short`, { method: "POST", body: JSON.stringify({
         first, last: last >= 0 ? last : first, mode: $("#csMode").value, seconds: +$("#csLen").value,
-        hook: $("#csHook").checked, link: $("#csLink").value.trim() }) });
+        hook: $("#csHook").checked, link: $("#csLink").value.trim(), ai: aiValue("clip") }) });
       toast("Making the Short — follow it on the Create page; it appears in Videos when done");
       $("#csLine").textContent = "✂️ A Short from this video is being made (Create page).";
     } catch (e) { toast(e.message); $("#csGo").disabled = false; }
@@ -1636,7 +1649,7 @@ function wireHooks(id, v) {
   $("#hkGo").onclick = async () => {
     $("#hkGo").disabled = true;
     try {
-      await api(`/api/videos/${encodeURIComponent(id)}/hooks`, { method: "POST", body: JSON.stringify({ template: pick, rewrite: $("#hkRewrite").checked, pace: $("#hkPace").value || null }) });
+      await api(`/api/videos/${encodeURIComponent(id)}/hooks`, { method: "POST", body: JSON.stringify({ template: pick, rewrite: $("#hkRewrite").checked, pace: $("#hkPace").value || null, ai: aiValue("hook") }) });
       load();
     } catch (e) { toast(e.message); $("#hkGo").disabled = false; }
   };
@@ -1660,7 +1673,8 @@ async function openVideo(id) {
     <div class="sub"><select id="catSel" class="mini" title="Category">${Object.keys(CAT_ICON).map((c) =>
       `<option ${c === v.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select> ${esc(v.topic)} · ${esc(v.topic_source)} · ${v.format === "long" ? "🎬 " + mmss(v.duration_seconds) + " · 16:9" : Math.round(v.duration_seconds) + "s"}</div>
     ${verdict}
-    ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
+    ${v.usage ? usageHtml({ models: Object.fromEntries(Object.entries(v.usage.steps || {}).filter(([, x]) => x.models).map(([k, x]) => [k, x.models])),
+      steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
     <div ${["stick", "anim", "storyshorts", "shoot", "clip"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice, speed &amp; subtitles</h4>
@@ -1686,6 +1700,7 @@ async function openVideo(id) {
         <video controls playsinline hidden style="width:100%;aspect-ratio:16/9;border-radius:10px;margin-top:6px;background:#000"></video></div>
       <label id="hkRewriteRow" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="hkRewrite" checked style="width:auto"> Rewrite the hook's words for this style (only facts the video already states)</label>
       <label for="hkPace">Hook speaking speed</label><select id="hkPace"><option value="">Same as the video</option></select>
+      ${aiPicker("hook", { writes: "the new hook", check: false })}
       <button id="hkGo" style="width:100%;margin-top:8px">🪝 Make a new hook (preview, about 2–5 min)</button>
       <div id="hkLine" class="hint"></div>
       <div id="hkMade" class="chips"></div>
@@ -1706,6 +1721,7 @@ async function openVideo(id) {
       <label id="csHookRow" style="display:none;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="csHook" checked style="width:auto"> Start with a 10–18 s hook Claude writes from these lines</label>
       <label for="csLink">Link to this video on YouTube (optional: it goes in the Short's description)</label>
       <input id="csLink" placeholder="https://youtu.be/...">
+      ${aiPicker("clip", { writes: "the Short's script", check: false })}
       <button id="csGo" style="width:100%;margin-top:8px" disabled>✂️ Make the Short (about 3–6 min)</button>
       <div id="csLine" class="hint"></div>
       </div>
@@ -1731,6 +1747,7 @@ async function openVideo(id) {
     <h4 class="section">Thumbnail</h4>
     <p class="hint">Claude designs a click-worthy thumbnail from this video (its subject, colours and words), you make the picture in the Gemini app, and Claude checks it matches the video.</p>
     ${thumbHtml(id, v)}
+    ${aiPicker("thumb", { writes: "the design", check: false })}
     <button id="thumbPlan" style="width:100%;margin-top:8px">🎨 ${v.thumbnail_design && v.thumbnail_design.plan ? "Design a new thumbnail" : "Design thumbnail"}</button>
     <div id="thumbBox">${v.thumbnail_design && v.thumbnail_design.plan ? thumbSteps(v.thumbnail_design.plan, v.format) : ""}</div>
     <div class="actions">
@@ -1741,6 +1758,7 @@ async function openVideo(id) {
       <button class="ok" id="acceptVideo">✓ Accept</button><button class="no" id="rejectVideo">✕ Reject (delete)</button></div>`}
     ${v.post_text_error ? `<div class="errbox">⚠️ Writing the post text failed, so this is only the rough draft: ${esc(v.post_text_error)}</div>`
       : v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
+    ${v.source === "clip" ? "" : aiPicker("post", { writes: "the post text", check: false })}
     <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px" ${v.source === "clip" ? "hidden" : ""}>
       ${v.youtube_description ? "↻ Rewrite title, description &amp; hashtags" : "✍️ Write title, description &amp; hashtags"}</button>
     <div ${v.format === "long" ? "hidden" : ""}>
@@ -1801,7 +1819,7 @@ async function openVideo(id) {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>Claude is checking trending hashtags… (1–2 min)';
     try {
-      await api("/api/videos/" + encodeURIComponent(id) + "/post-text", { method: "POST" });
+      await api("/api/videos/" + encodeURIComponent(id) + "/post-text", { method: "POST", body: JSON.stringify({ ai: aiValue("post") }) });
       toast("Post text ready");
       const top = $("#player").scrollTop;
       await openVideo(id);
@@ -1811,12 +1829,13 @@ async function openVideo(id) {
   document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
   if (v.voice) $("#rv-voice").value = v.voice;
   $("#rv-cc").value = String(v.captions !== false);
+  initPickers($("#player"));
   $("#thumbPlan").onclick = async () => {
     const btn = $("#thumbPlan");
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>Claude is watching the video and designing it… (1–2 min)';
     try {
-      const d = await api(`/api/videos/${encodeURIComponent(id)}/thumbnail/plan`, { method: "POST" });
+      const d = await api(`/api/videos/${encodeURIComponent(id)}/thumbnail/plan`, { method: "POST", body: JSON.stringify({ ai: aiValue("thumb") }) });
       $("#thumbBox").innerHTML = thumbSteps(d.plan, v.format); wireThumb(id);
       btn.disabled = false; btn.textContent = "🎨 Design a new thumbnail";
     } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Try again"; }
@@ -2089,12 +2108,16 @@ const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
 function sumUsage(records) {
-  const steps = {}; let total = 0, cost = 0;
-  (records || []).forEach((r) => { steps[r.step] = (steps[r.step] || 0) + (r.tokens || 0); total += r.tokens || 0; cost += r.cost_usd || 0; });
-  return { steps, total, cost };
+  const steps = {}, models = {}; let total = 0, cost = 0;
+  (records || []).forEach((r) => {
+    steps[r.step] = (steps[r.step] || 0) + (r.tokens || 0); total += r.tokens || 0; cost += r.cost_usd || 0;
+    if (r.model) { const m = modelName(r.model) + (r.effort ? " " + r.effort : ""); (models[r.step] = models[r.step] || []).includes(m) || models[r.step].push(m); }
+  });
+  return { steps, total, cost, models };
 }
+// Each step's tokens with the model (and effort) it ran on: "EpisodeCheck 1.2M · Sonnet 5.5 low".
 const usageHtml = (u, label = "Claude tokens") => u.total ? `<div class="tokens">🪙 ${label}: <b>${fmtTok(u.total)}</b>
-    ${Object.entries(u.steps).map(([s, n]) => `<span class="tok">${esc(s)} ${fmtTok(n)}</span>`).join("")}
+    ${Object.entries(u.steps).map(([s, n]) => `<span class="tok">${esc(s)} ${fmtTok(n)}${u.models && u.models[s] ? ` <i>· ${esc(u.models[s].join(", "))}</i>` : ""}</span>`).join("")}
     ${u.cost ? `<span title="What these tokens would cost on the Anthropic API; your Claude plan isn't charged per token">≈ $${u.cost.toFixed(2)} at API prices</span>` : ""}</div>` : "";
 
 // Timers: elapsed times come from the server's clock (j.now), then tick locally each second.
@@ -2142,6 +2165,66 @@ function videosOf(j) {
 
 const miniSteps = (step) => `<span class="mini-steps">${STEPS.map(([name], i) =>
   `<i class="${i < step ? "done" : i === step ? "now" : ""}" title="${name}"></i>`).join("")}</span>`;
+
+// ---- Claude per job (config.ai_pick): which model writes and which checks, and how hard each thinks. Every
+// tab and every re-create action has the picker; the job card says what its job runs on. ----
+const AI_MODELS = [["claude-opus-5-5", "Opus 5.5"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"],
+  ["claude-fable-5-1", "Fable 5.1 (needs usage credits)"]];
+const AI_EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra high"], ["max", "Max"]];
+const modelName = (m) => ((AI_MODELS.find((x) => x[0] === m) || [m, m])[1]).replace(/ \(.*/, "");
+let aiDefaults = { model: "claude-opus-5-5", effort: "high", check_model: "claude-sonnet-5-5", check_effort: "medium" };
+const aiLabel = (a) => `${modelName(a.model)} ${a.effort}` + (a.check_model ? ` · checks: ${modelName(a.check_model)} ${a.check_effort}` : "");
+const NO_CLAUDE = ["rerender", "myvoice", "anim_hd", "music_replace", "sound_remove", "anim_music", "rehook"];
+const aiLine = (j) => j.ai && !NO_CLAUDE.some((k) => j[k]) ? `<div class="hint ai-used">🤖 Claude: ${esc(aiLabel(j.ai))}</div>` : "";
+// opts.check: the job also checks (facts, pictures); opts.checkEffort: this tab's own default for the checker.
+function aiPicker(key, opts = {}) {
+  const sel = (f, list) => `<select data-ai="${f}"><option value="">As in Settings</option>${list.map(([v, n]) => `<option value="${v}">${n}</option>`).join("")}</select>`;
+  return `<details class="aipick" data-key="${key}" data-check="${opts.check === false ? 0 : 1}" data-check-effort="${opts.checkEffort || ""}">
+    <summary>🤖 Claude: <span class="ai-sum"></span></summary>
+    <div class="ai-grid"><label>Writes${opts.writes ? ` (${opts.writes})` : ""}${sel("model", AI_MODELS)}</label><label>Thinks${sel("effort", AI_EFFORTS)}</label>
+    ${opts.check === false ? "" : `<label>Checks (facts, pictures)${sel("check_model", AI_MODELS)}</label><label>Thinks${sel("check_effort", AI_EFFORTS)}</label>`}</div>
+    <p class="hint">Pick per video to compare models; remembered on this device. Settings has the default.</p></details>`;
+}
+function aiResolved(box) {
+  const out = {};
+  box.querySelectorAll("select[data-ai]").forEach((s) => out[s.dataset.ai] = s.value || aiDefaults[s.dataset.ai]);
+  return out;
+}
+function initPickers(root = document) {
+  root.querySelectorAll(".aipick").forEach((box) => {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem("ai:" + box.dataset.key) || "{}"); } catch (e) {}
+    if (!saved.check_effort && box.dataset.checkEffort) saved.check_effort = box.dataset.checkEffort;
+    box.querySelectorAll("select[data-ai]").forEach((s) => {
+      if (saved[s.dataset.ai] !== undefined) s.value = saved[s.dataset.ai];
+      s.onchange = () => {
+        const v = {}; box.querySelectorAll("select[data-ai]").forEach((x) => v[x.dataset.ai] = x.value);
+        try { localStorage.setItem("ai:" + box.dataset.key, JSON.stringify(v)); } catch (e) {}
+        box.querySelector(".ai-sum").textContent = aiLabel(aiResolved(box));
+      };
+    });
+    box.querySelector(".ai-sum").textContent = aiLabel(aiResolved(box));
+  });
+}
+// What a request sends: blank fields mean Settings (the server fills them in).
+function aiValue(key) {
+  const box = document.querySelector(`.aipick[data-key="${key}"]`);
+  if (!box) return null;
+  const v = {}; box.querySelectorAll("select[data-ai]").forEach((s) => { if (s.value) v[s.dataset.ai] = s.value; });
+  return v;
+}
+// The pickers on the tabs, placed above each Make button.
+[["create", "#genBtn", { writes: "script, hook, fixes" }], ["shoot", "#shCreate", { writes: "shot plan", check: false }], ["script", "#svBtn", { writes: "storyboard" }],
+ ["stick", "#stBtn", { writes: "episode, storyboard", checkEffort: "low" }], ["toon", "#toBtn", { writes: "script" }],
+ ["anim", "#anBtn", { writes: "script" }], ["story", "#ssBtn", { writes: "story, storyboard" }]].forEach(([key, btn, opts]) => {
+  const b = document.querySelector(btn);
+  if (b) b.insertAdjacentHTML("beforebegin", aiPicker(key, opts));
+});
+api("/api/settings").then((s) => {
+  aiDefaults = { model: s.claude_model || aiDefaults.model, effort: s.claude_effort || aiDefaults.effort,
+    check_model: s.fact_model || aiDefaults.check_model, check_effort: s.fact_effort || aiDefaults.check_effort };
+  initPickers();
+}).catch(() => initPickers());
 
 function jobCard(j) {
   if (j.now) clockOffset = j.now - Date.now() / 1000;
@@ -2220,7 +2303,7 @@ function jobCard(j) {
   return `<div class="panel job ${j.status}">
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
       <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${label}</span></div>
-    ${body}${usageHtml(usage)}${errBox}${pauseBtn}${resumeBtn}${thumbs}
+    ${aiLine(j)}${body}${usageHtml(usage)}${errBox}${pauseBtn}${resumeBtn}${thumbs}
     ${running || j.status === "queued"
       ? `<button class="mini danger removejob" data-job="${esc(j.id)}" data-stop="1" data-unfinished="${j.started ? 1 : 0}" style="margin-top:8px">⏹ Stop now and remove</button>`
       : `<button class="mini removejob" data-job="${esc(j.id)}" data-unfinished="${canResume ? 1 : 0}" style="margin-top:8px">✕ Remove from list</button>`}
@@ -2826,6 +2909,7 @@ $("#stBtn").onclick = async () => {
                  style: stStyle, cast: stSerialize(), count: Number($("#stCount").value) };
   $("#stBtn").disabled = true;
   try {
+    body.ai = aiValue("stick");
     await api("/api/stick", { method: "POST", body: JSON.stringify(body) });
     $("#stMsg").textContent = "Started. Follow it on the Create tab.";
     show("create");
@@ -2860,6 +2944,7 @@ $("#toBtn").onclick = async () => {
   try { localStorage.setItem("toonMark", body.watermark); } catch (e) {}
   $("#toBtn").disabled = true;
   try {
+    body.ai = aiValue("toon");
     await api("/api/toon", { method: "POST", body: JSON.stringify(body) });
     $("#toMsg").textContent = "Started. Follow it on the Create tab.";
     show("create");
@@ -2934,6 +3019,7 @@ $("#anBtn").onclick = async () => {
   try { localStorage.setItem("animMark", body.watermark); } catch (e) {}
   $("#anBtn").disabled = true;
   try {
+    body.ai = aiValue("anim");
     await api("/api/anim", { method: "POST", body: JSON.stringify(body) });
     $("#anMsg").textContent = "Started. Follow it on the Create tab (Pictures → Animation → Music → Editing).";
     show("create");
@@ -3019,6 +3105,7 @@ $("#ssBtn").onclick = async () => {
   if (ssSource === "script" && !body.script.trim()) { $("#ssMsg").textContent = "Paste your script first."; return; }
   $("#ssBtn").disabled = true;
   try {
+    body.ai = aiValue("story");
     const job = await api("/api/story", { method: "POST", body: JSON.stringify(body) });
     $("#ssMsg").textContent = `Started: ${job.count} Short${job.count > 1 ? "s" : ""}. Follow it on the Create tab.`;
     show("create");
@@ -3104,6 +3191,7 @@ $("#svBtn").onclick = async () => {
   if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
   $("#svBtn").disabled = true;
   try {
+    body.ai = aiValue("script");
     await api("/api/script-video", { method: "POST", body: JSON.stringify(body) });
     $("#sv-msg").textContent = "Started. Follow it on the Create tab.";
     show("create");
@@ -3118,7 +3206,7 @@ api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions ===
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value, hook_template: $("#hookTpl").value }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value, hook_template: $("#hookTpl").value, ai: aiValue("create") }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;
@@ -3178,7 +3266,7 @@ $("#sh-script").oninput = () => {
 };
 $("#shCreate").onclick = async () => {
   const body = { title: $("#sh-title").value.trim(), description: $("#sh-desc").value, hook: $("#sh-hook").value,
-    script: $("#sh-script").value, language: $("#sh-lang").value, format: $("#sh-format").value, screen_text: $("#sh-screen").value };
+    script: $("#sh-script").value, language: $("#sh-lang").value, format: $("#sh-format").value, screen_text: $("#sh-screen").value, ai: aiValue("shoot") };
   if (!body.title || !body.script.trim()) return toast("The title and the script are needed");
   $("#shCreate").disabled = true;
   try {
@@ -3292,7 +3380,7 @@ function renderShoot() {
     : plan.status === "running" ? "⏳ Claude is planning which lines show you and which show B-roll (a minute or two). You can start filming already: you read every line either way."
     : plan.status === "failed" ? `⚠️ Planning failed: ${esc(plan.error)} <button class="mini" id="shReplan">Try again</button>`
     : `<button class="mini" id="shReplan">Plan the shots</button>`;
-  if ($("#shReplan")) $("#shReplan").onclick = async () => { try { SH = await api(shUrl("/plan"), { method: "POST" }); renderShoot(); } catch (e) { toast(e.message); } };
+  if ($("#shReplan")) $("#shReplan").onclick = async () => { try { SH = await api(shUrl("/plan"), { method: "POST", body: JSON.stringify({ ai: aiValue("shoot") }) }); renderShoot(); } catch (e) { toast(e.message); } };
   $("#shShots").innerHTML = p.shots.map(shotCard).join("");
   document.querySelectorAll("#shShots [data-line]").forEach((el) => {
     el.onclick = async () => {
@@ -3352,7 +3440,7 @@ function uploadTake(n, file) {
 
 $("#shMake").onclick = async () => {
   try {
-    await api(shUrl("/make"), { method: "POST", body: JSON.stringify({ captions: $("#sh-cc").value === "true" }) });
+    await api(shUrl("/make"), { method: "POST", body: JSON.stringify({ captions: $("#sh-cc").value === "true", ai: aiValue("shoot") }) });
     toast("Making the video: follow it on the Create tab");
     show("create");
   } catch (e) { toast(e.message); }

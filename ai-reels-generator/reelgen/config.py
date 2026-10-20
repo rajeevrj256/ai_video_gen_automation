@@ -202,6 +202,32 @@ def load_settings(cfg: Config) -> Config:
     return cfg
 
 
+# The models and efforts a job can pick (the Create page and every tab's "Claude" picker, Settings for the default).
+# Fable needs usage credits on some plans: Claude Code then answers "Fable 5.1 requires usage credits".
+MODELS = {"claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5",
+          "claude-fable-5-1": "Fable 5.1"}
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def ai_pick(cfg: Config, pick: dict | None = None) -> dict:
+    """A job's Claude choice, every blank or unknown value filled from Settings: `model`/`effort` write (scripts,
+    storyboards, hooks, fixes, reviews), `check_model`/`check_effort` check (fact-checks, picture checks)."""
+    pick = pick or {}
+    ok = lambda v, allowed, default: v if v in allowed else default  # noqa: E731
+    return {"model": ok(pick.get("model"), MODELS, cfg.claude_model), "effort": ok(pick.get("effort"), EFFORTS, cfg.claude_effort),
+            "check_model": ok(pick.get("check_model"), MODELS, cfg.fact_model),
+            "check_effort": ok(pick.get("check_effort"), EFFORTS, cfg.fact_effort)}
+
+
+def apply_ai(cfg: Config, pick: dict | None) -> Config:
+    """Put a job's Claude choice (`ai_pick`) on its config: every pipeline reads cfg.claude_model/fact_model."""
+    if pick:
+        got = ai_pick(cfg, pick)
+        cfg.claude_model, cfg.claude_effort = got["model"], got["effort"]
+        cfg.fact_model, cfg.fact_effort = got["check_model"], got["check_effort"]
+    return cfg
+
+
 def _typed(cfg: Config, key: str, value):
     """Settings arrive as text from the app; bool("false") would be True, so parse yes/no."""
     kind = type(getattr(cfg, key))
