@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 API = "https://commons.wikimedia.org/w/api.php"
 AGENT = {"User-Agent": "ReelStudio/1.0 (https://github.com/rajeevrj256/ai_video_gen_automation; local video tool)"}  # Wikimedia asks for a contact URL
 FREE = re.compile(r"^(public domain|pd\b|cc0|cc[ -]by(-sa)?\b|cc by(-sa)? \d)", re.I)
+GENERIC = {"wordmark", "official", "old", "new", "icon", "symbol", "emblem", "original", "version", "color", "colour",
+           "black", "white", "transparent", "vector", "full", "text"}  # words a file name adds without naming anything else
 STOP = {"logo", "the", "of", "a", "an", "and", "in", "on", "photo", "picture", "image", "file", "svg", "png", "jpg"}
 
 
@@ -73,10 +75,15 @@ def search(words: str, limit: int = 10) -> list[dict]:
         ii = (p.get("imageinfo") or [{}])[0]
         meta = ii.get("extmetadata") or {}
         val = lambda k: re.sub(r"<[^>]+>", "", (meta.get(k) or {}).get("value", "")).strip()  # noqa: E731
-        out.append({"title": p.get("title", ""), "url": ii.get("thumburl") or ii.get("url", ""),
+        # A bitmap smaller than 960 px has no 960 thumbnail: its thumb link is at its own, non-standard width,
+        # which Wikimedia refuses (429 "use thumbnail sizes"), so the original file is taken. SVGs always render.
+        if "svg" not in ii.get("mime", "") and (ii.get("width") or 0) < 400:
+            continue  # too small for a card (a 176 px Google logo would show blurred)
+        small = "svg" not in ii.get("mime", "") and 0 < (ii.get("width") or 0) <= 960
+        out.append({"title": p.get("title", ""), "url": (ii.get("url") if small else ii.get("thumburl")) or ii.get("url", ""),
                     "page": ii.get("descriptionurl", ""), "licence": val("LicenseShortName"),
-                    "author": val("Artist")[:80], "width": ii.get("thumbwidth") or ii.get("width", 0),
-                    "height": ii.get("thumbheight") or ii.get("height", 0), "mime": ii.get("mime", "")})
+                    "author": val("Artist")[:80], "width": (ii.get("width") if small else ii.get("thumbwidth")) or ii.get("width", 0),
+                    "height": (ii.get("height") if small else ii.get("thumbheight")) or ii.get("height", 0), "mime": ii.get("mime", "")})
     return out
 
 
@@ -97,12 +104,22 @@ def find(words: str, out_dir: Path, name: str) -> Picture | None:
         # The search's main name (its first word) must be in the file's name; then the fewest other names win, and
         # the year: 'Google logo 2010' prefers 'Google logo (2010-2013)' to 'Google Buzz logo (2010-2011)'.
         title = _words(h["title"])
-        extra = {w for w in title if not w.isdigit()} - set(names)
+        extra = {w for w in title if not w.isdigit()} - set(names) - GENERIC
         return (len(extra), -len(set(names) & title), -any(y in h["title"] for y in years))
 
-    ok = [h for h in hits if h["url"] and FREE.match(h["licence"] or "")
-          and (not names or names[0] in _words(h["title"]))]
-    for h in sorted(ok, key=fit):  # sorted is stable: Commons' own ranking breaks ties
+    def era_ok(title: str) -> bool:
+        # A year asked for must fall in the file's years: 'YouTube logo 2005' never gives 'Logo of YouTube (2015-2017)'.
+        spans = [(int(a), int(b or a)) for a, b in re.findall(r"\b((?:19|20)\d\d)(?:\s*[-–]\s*((?:19|20)\d\d))?\b", title)]
+        return not years or not spans or any(lo <= int(y) <= hi for y in years for lo, hi in spans)
+
+    ok = sorted((h for h in hits if h["url"] and FREE.match(h["licence"] or "") and era_ok(h["title"])
+                 and (not names or names[0] in _words(h["title"]))), key=fit)  # stable: Commons' ranking breaks ties
+    # Only the best-fitting kind: when the right file can't be downloaded, no picture beats a wrong one
+    # (a failed 'Google logo' download once fell back to the Google Scholar logo).
+    ok = [h for h in ok if fit(h)[0] == fit(ok[0])[0]] if ok else []
+    if "logo" in words.lower():  # a logo is the company's own: no other name in the file (Google Scholar, Google Buzz)
+        ok = [h for h in ok if fit(h)[0] == 0]
+    for h in ok:
         ext = ".png" if h["url"].lower().endswith((".png", ".svg.png")) or "svg" in h["mime"] else ".jpg"
         path = out_dir / f"{name}{ext}"
         try:

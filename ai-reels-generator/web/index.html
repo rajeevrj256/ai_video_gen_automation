@@ -1686,7 +1686,7 @@ async function openVideo(id) {
     ${verdict}
     ${v.usage ? usageHtml({ models: Object.fromEntries(Object.entries(v.usage.steps || {}).filter(([, x]) => x.models).map(([k, x]) => [k, x.models])),
       steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
-      total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
+      total: v.usage.total.tokens, cost: v.usage.total.cost_usd, cached: v.usage.total.cache_read }, "Claude tokens used for this video") : ""}
     ${v.source === "stick" ? `<h4 class="section">Speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: the same story, pictures, proof photos and music, only the voices recorded again at another speed. No Claude tokens. The video is replaced.</p>
     <div class="row">
@@ -2146,15 +2146,17 @@ const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
 function sumUsage(records) {
-  const steps = {}, models = {}; let total = 0, cost = 0;
+  const steps = {}, models = {}; let total = 0, cost = 0, cached = 0;
   (records || []).forEach((r) => {
-    steps[r.step] = (steps[r.step] || 0) + (r.tokens || 0); total += r.tokens || 0; cost += r.cost_usd || 0;
+    steps[r.step] = (steps[r.step] || 0) + (r.tokens || 0); total += r.tokens || 0; cost += r.cost_usd || 0; cached += r.cache_read || 0;
     if (r.model) { const m = modelName(r.model) + (r.effort ? " " + r.effort : ""); (models[r.step] = models[r.step] || []).includes(m) || models[r.step].push(m); }
   });
-  return { steps, total, cost, models };
+  return { steps, total, cost, models, cached };
 }
 // Each step's tokens with the model (and effort) it ran on: "EpisodeCheck 1.2M · Sonnet 5.5 low".
+// Most of a web-searching step's tokens are its own context read again on every turn (cache reads, a tenth of the price).
 const usageHtml = (u, label = "Claude tokens") => u.total ? `<div class="tokens">🪙 ${label}: <b>${fmtTok(u.total)}</b>
+    ${u.cached ? `<span title="Each turn of a step (every web search, every page opened) reads the whole conversation so far again; those re-reads come from the cache and cost a tenth of new tokens">(${Math.round(100 * u.cached / u.total)}% re-read from cache)</span>` : ""}
     ${Object.entries(u.steps).map(([s, n]) => `<span class="tok">${esc(s)} ${fmtTok(n)}${u.models && u.models[s] ? ` <i>· ${esc(u.models[s].join(", "))}</i>` : ""}</span>`).join("")}
     ${u.cost ? `<span title="What these tokens would cost on the Anthropic API; your Claude plan isn't charged per token">≈ $${u.cost.toFixed(2)} at API prices</span>` : ""}</div>` : "";
 

@@ -709,6 +709,10 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
     from .hooks import block as hook_block
 
     prompt += hook_block(cfg)
+    if req.style in TRUE_STYLES:  # every search result stays in the context and is re-read on every later turn
+        prompt += ("\n\nResearch budget: at most 5 web searches and 4 opened pages in all. Find 2-4 solid sources "
+                   "early, take every figure, date and name from them, and stop searching (a 3-minute video's writing "
+                   "once cost 1.2M tokens with open-ended research).")
     if req.opening in OPENINGS:  # chosen on the Stick tab: this kind of opening, whatever the last videos used
         prompt += f"\n\nOpen with this kind of hook: {OPENINGS[req.opening]}. Only facts the video states."
     return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
@@ -733,7 +737,7 @@ def _refs(ep: Episode) -> dict[str, SLine]:
     return {f"S{si + 1}L{li + 1}": ln for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines)}
 
 
-def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None) -> EpisodeCheck:
+def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None, notes: list[dict] | None = None) -> EpisodeCheck:
     """Every factual line checked against the web on the fact-check model (`only`: just these refs)."""
     rows = [f"{r}{' >>' if only and r in only else ''} [{ln.speaker}] {ln.line}"
             + (f" (caption: {ln.caption})" if ln.caption else "")
@@ -747,8 +751,15 @@ def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None) -
               "6 searches and 6 pages in all (open-ended research made one 3-minute video's check cost 1.2M tokens).")
     prompt = (f"Title: {ep.title}\nThe writer's sources: " + "; ".join(f"{x.title} {x.url}" for x in ep.sources)
               + ("\n\nCheck only the lines marked >> (the rest was checked before)." if only else "")
+              + ("\n\nWhat the first check found (your evidence: the corrected lines were rewritten from it):\n"
+                 + "\n".join(f"{n['ref']}: {n['verdict']}: {n.get('note', '')}" for n in notes) if notes else "")
               + "\n\n" + "\n".join(rows + signs))
-    return ask(cfg.ai_backend, cfg.fact_model, system, prompt, EpisodeCheck, allow_web=True,
+    if notes:
+        system += (" This is a re-check without web search: the first check's findings below are your sources. Confirm a "
+                   "rewritten line when they support it; mark it unsupported only when they don't.")
+    # A re-check of lines rewritten from the first check's findings needs no new search: those findings are the
+    # evidence (the user's 3-minute Facts video re-checked 7 lines with web search: the check cost 903k tokens).
+    return ask(cfg.ai_backend, cfg.fact_model, system, prompt, EpisodeCheck, allow_web=not notes,
                effort=cfg.fact_effort, timeout=1200)
 
 
@@ -771,7 +782,8 @@ def check_facts(cfg: Config, ep: Episode, progress: Progress) -> tuple[Episode, 
     rewritten = {r for r in changed if refs[r].line}
     if rewritten:
         progress(f"Re-checking the {len(rewritten)} corrected line(s)")
-        for c in fact_check_episode(cfg, ep, only=rewritten).lines:
+        notes = [f for f in findings if f.get("ref") in rewritten]
+        for c in fact_check_episode(cfg, ep, only=rewritten, notes=notes).lines:
             if c.ref not in rewritten:
                 continue
             findings.append({**c.model_dump(), "round": 2})
