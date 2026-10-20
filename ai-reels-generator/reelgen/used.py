@@ -66,6 +66,8 @@ def media_used(cfg: Config, video: Path) -> dict:
         music.append({"name": f"Chapter music ({m['from'] // 60:.0f}:{m['from'] % 60:02.0f}–{m['to'] // 60:.0f}:{m['to'] % 60:02.0f})",
                       "file": m["src"], "source": f"Your library: {_library_file(cfg, 'music', m['name']) or m['name']}",
                       "times": [round(m["from"], 2)], "play": m["src"]})
+    for m in music:  # a claimed track can be swapped for a composed one (remix.replace_music)
+        m["replace"] = m["file"]
     for a in props.get("ambience") or []:
         music.append({"name": f"Ambience: {Path(a['src']).stem}", "file": a["src"], "source": "Composed ambience bed",
                       "times": [round(a["from"], 2)], "play": a["src"]})

@@ -64,7 +64,7 @@ def job_label(job: dict) -> str:
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
-            else "New hook" if job.get("rehook") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
+            else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
 
@@ -171,6 +171,10 @@ class JobManager:
             elif job.get("anim_hd"):  # a finished animated video, its clips upscaled and re-edited
                 from .animated import sharpen_video
                 reports = [sharpen_video(cfg, video_dir(cfg, job["anim_hd"]["id"]), progress)]
+            elif job.get("music_replace"):  # a claimed track swapped for a composed one (reelgen/remix.py)
+                from .remix import replace_music
+                r = job["music_replace"]
+                reports = [replace_music(cfg, video_dir(cfg, r["id"]), r["src"], progress)]
             elif job.get("sound_remove"):  # a sound taken out of a finished video (reelgen/remix.py)
                 from .remix import remove_sound
                 r = job["sound_remove"]
@@ -624,8 +628,9 @@ def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Reel Studio", docs_url=None, redoc_url=None)
     jobs = JobManager(cfg)
     import_samples(cfg)
-    from .media import forget_removed
+    from .media import forget_removed, mark_claimed
     forget_removed(cfg)  # sounds you asked to have deleted from your library
+    mark_claimed(cfg)  # tracks YouTube claims (media.CLAIMED): never used again
     # Which code this server is running (shown in Settings), so a git pull without a
     # restart is easy to spot: the running app keeps the code it started with.
     try:
@@ -1090,12 +1095,33 @@ def create_app(cfg: Config) -> FastAPI:
         folder = video_dir(cfg, video_id)
         if not (folder / "props.json").exists():
             raise HTTPException(400, "This video was made before its sounds were saved, so they can't be changed")
-        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("sound_remove", "anim_music", "anim_hd")
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("sound_remove", "music_replace", "anim_music", "anim_hd")
                if j["status"] in ("queued", "running")):
             raise HTTPException(409, "This video is already being worked on: try again when that's done")
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         return jobs.submit(f"Without '{body.name}': {report.get('title', video_id)}", 1, "rerender", "facts",
                            report.get("length") or report.get("format") or "short", sound_remove={"id": video_id, "name": body.name})
+
+    @app.post("/api/videos/{video_id}/music/replace")
+    def replace_music_route(video_id: str, body: dict):
+        """A music track YouTube claimed: a composed one in its place, the sound mixed again (reelgen/remix.py)."""
+        from .remix import why_not
+
+        folder = video_dir(cfg, video_id)
+        reason = why_not(folder)
+        if reason:
+            raise HTTPException(400, reason)
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("sound_remove", "music_replace", "anim_music", "anim_hd")
+               if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being worked on: try again when that's done")
+        src = str(body.get("src") or "")
+        from .remix import _music_slots
+
+        if not _music_slots(json.loads((folder / "props.json").read_text(encoding="utf-8")), src):
+            raise HTTPException(400, "That track isn't in this video")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"New music for: {report.get('title', video_id)}", 1, "rerender", "facts",
+                           report.get("length") or report.get("format") or "short", music_replace={"id": video_id, "src": src})
 
     # ---- your own voiceover ----
     @app.get("/api/videos/{video_id}/myvoice")

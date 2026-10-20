@@ -86,6 +86,16 @@ BOOM_WORDS = {"boom", "booms", "braam", "braams", "braaam", "brahm", "bwaa", "bw
 # Files the user asked to have deleted from their library: removed when the app starts (`forget_removed`).
 REMOVED = ("biodynamic-impact-braam",)
 
+# Uploaders whose tracks YouTube's Content ID claims (the start of a Pixabay file name is its uploader): never used,
+# marked 'claimed' in the library when the app starts (`mark_claimed`). artmylife = Artem Pedan, whose 'Powerful
+# Dramatic Trailer' got the user's video claimed by HAAWK. A track the user flags on a video page is marked the same.
+CLAIMED = ("artmylife",)
+
+# Which uploaded music videos may use (config.my_music): Content ID claims come from tracks registered by their
+# artists, which royalty-free sites (Pixabay...) can't rule out, so by default only tracks marked as your own or
+# free-licence (CC0, CC BY) are used, and AI-made or composed music plays everywhere else.
+MY_MUSIC = {"safe": ("own", "cc0", "cc-by"), "all": USABLE, "none": ()}
+
 
 def forget_removed(cfg: Config) -> list[str]:
     """Delete the sound files the user asked to have removed (REMOVED: part of the file's name) from the library."""
@@ -100,13 +110,40 @@ def forget_removed(cfg: Config) -> list[str]:
     return gone
 
 
+def claimed_name(name: str) -> bool:
+    """A file from an uploader whose tracks YouTube claims (CLAIMED)."""
+    return any(slug(name).startswith(c) for c in CLAIMED)
+
+
+def mark_claimed(cfg: Config, kind: str = "music", filename: str = "") -> list[str]:
+    """Mark library files as claimed by YouTube's Content ID and banned: `filename`, or every file of a CLAIMED
+    uploader (run when the app starts). Returns the names marked."""
+    root = folder(cfg, kind)
+    names = [Path(filename).name] if filename else [p.name for p in sorted(root.glob("*")) if root.exists()
+                                                   and p.is_file() and p.name != LICENCE_FILE and claimed_name(p.name)]
+    data, marked = licences(cfg, kind), []
+    for name in names:
+        if not (root / name).is_file() or data.get(name, {}).get("claimed"):
+            continue
+        entry = data.setdefault(name, {"licence": "unknown", "credit": ""})
+        entry.update(banned=True, claimed=True)
+        marked.append(name)
+    if marked:
+        (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+        log.info("Banned after a YouTube copyright claim: %s", ", ".join(marked))
+    return marked
+
+
 def boom_named(name: str) -> bool:
     return bool(BOOM_WORDS & set(re.findall(r"[a-z]+", name.lower())))
 
 
 def banned(cfg: Config, kind: str, filename: str) -> str:
     """Why this file is never used ('you' or 'boom'), or ''."""
-    if licences(cfg, kind).get(Path(filename).name, {}).get("banned"):
+    entry = licences(cfg, kind).get(Path(filename).name, {})
+    if entry.get("claimed") or (kind == "music" and claimed_name(filename)):
+        return "claimed"
+    if entry.get("banned"):
         return "you"
     return "boom" if kind == "sfx" and boom_named(filename) else ""
 
@@ -177,6 +214,7 @@ def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
     sound effects only when the user turned them on (Settings > Media library, `use_my_sounds`, off by default)."""
     if kind == "sfx" and not everything and not getattr(cfg, "use_my_sounds", False):
         return []
+    allowed = MY_MUSIC.get(getattr(cfg, "my_music", "safe"), MY_MUSIC["safe"]) if kind == "music" else USABLE
     root = folder(cfg, kind)
     types = _types(kind)
     lic = licences(cfg, kind)
@@ -184,8 +222,8 @@ def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
     for path in sorted(root.glob("*")) if root.exists() else []:
         if path.suffix.lower() not in types:
             continue
-        if not everything and (lic.get(path.name, {}).get("licence") not in USABLE or lic.get(path.name, {}).get("banned")
-                               or (kind == "sfx" and boom_named(path.name))):
+        if not everything and (lic.get(path.name, {}).get("licence") not in allowed or lic.get(path.name, {}).get("banned")
+                               or (kind == "sfx" and boom_named(path.name)) or claimed_name(path.name)):
             continue
         name = slug(path.name)
         while name in seen:

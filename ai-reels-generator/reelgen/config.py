@@ -112,6 +112,11 @@ class Config:
     # Your uploaded sound effects (Settings > Media library) in videos: off by default, the user found their uploads in
     # a video ("if uploaded one used its bug"); videos then use only the built-in synthesised sounds.
     use_my_sounds: bool = field(default_factory=lambda: _env("REEL_USE_MY_SOUNDS", "0").lower() in ("1", "true", "yes", "on"))
+    # Your uploaded music in videos (media.MY_MUSIC): 'safe' (default: only tracks marked as your own, CC0 or CC BY),
+    # 'all' (every licensed upload) or 'none'. A Pixabay track in the user's library ('Powerful Dramatic Trailer' by
+    # Artem Pedan) brought a YouTube Content ID claim (HAAWK for the artist): royalty-free sites' tracks can be
+    # registered with Content ID whatever the site's licence says.
+    my_music: str = field(default_factory=lambda: _env("REEL_MY_MUSIC", "safe"))
     # The cinematic hook's shots as AI-drawn film stills (reelgen/cinehook.py) when the AI engine is installed.
     hook_pictures: bool = field(default_factory=lambda: _env("REEL_HOOK_PICTURES", "1").lower() not in ("0", "false", "no", "off"))
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
@@ -157,7 +162,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "memes", "meme_source", "long_voice_rate", "hook_template"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "my_music", "memes", "meme_source", "long_voice_rate", "hook_template"]
 
 
 def settings_path(cfg: Config) -> Path:

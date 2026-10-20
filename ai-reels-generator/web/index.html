@@ -977,6 +977,11 @@
         <b>Memes:</b> videos with memes on can use your own meme pictures and clips (name them by what they mean, e.g.
         “crying-cat-sad” or “side-eye-doubt”), with top and bottom text. Add only ones you may use: film stills, TV clips and
         photos of real people can bring copyright claims. Without any, the app draws its own memes.</p>
+      <label for="s-my_music">Your uploaded music in videos</label>
+      <select id="s-my_music"><option value="safe">🛡️ Only tracks marked as my own, CC0 or CC BY (safest)</option>
+        <option value="all">✅ Every licensed track, royalty-free sites too (Pixabay tracks can bring YouTube copyright claims)</option>
+        <option value="none">🚫 None: only AI-made or composed music</option></select>
+      <p class="hint">Some artists on royalty-free sites register their tracks with YouTube's Content ID, so a video using them gets claimed even with the site's licence. AI-made and composed music is never claimed.</p>
       <label for="s-use_my_sounds">Your uploaded sound effects in videos</label>
       <select id="s-use_my_sounds"><option value="false">🚫 Don't use them: only the app's own built-in sounds</option>
         <option value="true">✅ Use them where they fit (Claude picks them by file name)</option></select>
@@ -1258,6 +1263,7 @@ async function loadUsed(id) {
         ${withFile && x.file ? `<div>📄 ${esc(x.file)}</div>` : ""}
         ${x.source ? `<div>${esc(x.source)}</div>` : ""}${x.detail ? `<div>${esc(x.detail)}</div>` : ""}${x.note ? `<div>${esc(x.note)}</div>` : ""}
         ${x.times && x.times.length ? `<div class="times">${times(x.times)}</div>` : ""}
+        ${x.replace && !u.fixed ? `<div class="row" style="gap:6px;margin-top:6px"><button class="mini danger" data-claim="${esc(x.replace)}" style="flex:0 0 auto">🚩 YouTube claimed this: replace it</button></div>` : ""}
         ${x.sound && x.file !== "sfx/silence.wav" ? `<div class="row" style="gap:6px;margin-top:6px">${u.fixed ? "" : `<button class="mini danger" data-rm="${esc(x.name)}" style="flex:0 0 auto">🗑 Remove from this video</button>`}
           ${x.library ? `<button class="mini danger" data-ban="${esc(x.library)}" style="flex:0 0 auto">🚫 Never use this file again</button>` : ""}</div>` : ""}
       </div>`).join("");
@@ -1272,6 +1278,13 @@ async function loadUsed(id) {
       b.disabled = true;
       try { await api(`/api/videos/${encodeURIComponent(id)}/sounds/remove`, { method: "POST", body: JSON.stringify({ name: b.dataset.rm }) });
         toast("Taking it out: follow it on the Create page"); }
+      catch (e) { toast(e.message); b.disabled = false; }
+    });
+    box.querySelectorAll("[data-claim]").forEach((b) => b.onclick = async () => {
+      if (!confirm("Replace this track with new music composed for the same length? The sound is mixed again under the same picture (no re-edit, about a minute); the old version is kept as reel-original.mp4. A track from your library is also never used again.")) return;
+      b.disabled = true;
+      try { await api(`/api/videos/${encodeURIComponent(id)}/music/replace`, { method: "POST", body: JSON.stringify({ src: b.dataset.claim }) });
+        toast("Replacing the music: follow it on the Create page, then upload the new file"); }
       catch (e) { toast(e.message); b.disabled = false; }
     });
     box.querySelectorAll("[data-ban]").forEach((b) => b.onclick = async () => {
@@ -2457,6 +2470,7 @@ async function loadLibrary() {
         ${i.banned === "boom" ? `<div class="lic warn">🚫 Never used: its name says boom, braam or hit (banned outside the hook)</div>`
           : `<button class="mini ${i.banned ? "" : "danger"}" data-lib-ban="${k}/${esc(i.file)}" data-on="${i.banned ? "false" : "true"}">${i.banned ? "✓ Allow again" : "🚫 Ban: never use"}</button>`}
         ${i.banned === "you" ? `<div class="lic warn">🚫 Banned by you: never used in any video</div>` : ""}
+        ${i.banned === "claimed" ? `<div class="lic warn">🚩 YouTube claimed it (Content ID): never used in any video</div>` : ""}
         <div class="lic ${i.licence === "unknown" ? "warn" : ""}">${i.licence === "unknown" ? "⚠️ Not used until its licence is set · " : ""}
           <select class="mini" data-lic="${k}/${esc(i.file)}">${licenceSelect(i.licence || "unknown")}</select>
           <input class="mini" data-credit="${k}/${esc(i.file)}" placeholder="Credit (CC BY)" value="${esc(i.credit || "")}" ${i.licence === "cc-by" ? "" : "hidden"}></div></div>`).join("")
@@ -3092,6 +3106,12 @@ $("#genBtn").onclick = async () => {
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;
+};
+$("#s-my_music").onchange = async () => {
+  try {
+    await api("/api/settings", { method: "POST", body: JSON.stringify({ my_music: $("#s-my_music").value }) });
+    toast({ safe: "Videos use only your own, CC0 and CC BY tracks", all: "Videos may use every licensed track", none: "Videos use only AI-made or composed music" }[$("#s-my_music").value]);
+  } catch (e) { toast(e.message); }
 };
 $("#s-use_my_sounds").onchange = async () => {
   try {

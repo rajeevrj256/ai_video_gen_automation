@@ -115,6 +115,12 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
   hook before them. It reuses the video's own voice and graphics. Paste the long video's YouTube link and it goes in
   the description; in YouTube Studio set the long video as the Short's *Related video*. The Short is a new video in
   your library; the long one stays as it is.
+- **Copyright claims on music**: if YouTube claims a track in one of your videos, open the video's **Effects & media
+  used** panel and tap **🚩 YouTube claimed this: replace it** next to the track. New music is composed in its place at
+  the same loudness and the sound is mixed again under the same picture in about a minute; upload the new file. A track
+  from your library is then never used again. By default, videos only use your uploaded music when it's marked as your
+  own, CC0 or CC BY (Settings > Media library > Your uploaded music in videos): tracks from royalty-free sites like
+  Pixabay can be registered with YouTube's Content ID by their artists and get claimed despite the site's licence.
 - **Re-create only the hook**: on a finished video's page, **🪝 Hook** makes a new hook in another style (Claude
   rewrites it from the video's own facts; a Script Video keeps your words) and plays it next to the current one.
   **Save as a new video** copies the video, puts the new hook first and joins the rest after it in a few minutes, with
