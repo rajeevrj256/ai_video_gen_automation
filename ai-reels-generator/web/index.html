@@ -178,6 +178,7 @@
   .cast-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
   .cast-row { display: grid; grid-template-columns: 1.2fr 1fr 1.6fr auto auto; gap: 6px; align-items: center; }
   .cast-row input, .cast-row select { padding: 8px 10px; font-size: 14px; }
+  .cast-row .cast-about { grid-column: 1 / -1; font-size: 13px; }
   .cast-row button { padding: 8px 12px; }
   .cast-row button { width: auto; min-width: 40px; }
   /* A phone: still one line per character, just tighter (voice names are cut, the list shows them in full). */
@@ -507,8 +508,9 @@
   <section class="view" id="view-stick">
     <div class="panel">
       <h2>Stick Stories</h2>
-      <p class="hint">Stick-figure videos in your channel's style: grey sets, round heads, subtitles under the scene, a recurring cast with
-        their own voices. Claude writes the episode and the editor animates it.</p>
+      <p class="hint">Hand-inked stick-figure videos: rough ink lines, round heads, muted clothes and earthy sets with a paper texture,
+        subtitles under the scene, a recurring cast with their own voices. Claude writes the episode, designs what each character wears for
+        that story (a miner gets coveralls, a hard hat and boots) and the editor animates it.</p>
       <label>Type</label>
       <div class="segmented" id="stStyle">
         <button data-style="comedy" class="on">😂 Comedy</button><button data-style="fiction">📖 Story</button><button data-style="facts">🔬 Facts</button>
@@ -535,7 +537,8 @@
           <select id="stCount"><option>1</option><option>2</option><option>3</option><option>5</option></select></div>
       </div>
       <label>Cast and voices</label>
-      <p class="hint">Each character's look and voice. "Auto" gives everyone a different voice; ▶ plays a sample at the chosen speed.</p>
+      <p class="hint">Each character's look and voice. "Auto" gives everyone a different voice; ▶ plays a sample at the chosen speed.
+        A character's clothes are designed once and kept for that name in every episode; type a new description to change them.</p>
       <div id="stCastRows" class="cast-rows"></div>
       <button type="button" class="mini" id="stAdd">+ Add character</button>
       <button class="primary" id="stBtn">✨ Make it</button>
@@ -2731,11 +2734,15 @@ let stFormat = "long", STV = null;
 const ST_CAST = "Ben - boy\nLily - girl\nMom - woman\nDad - man\nMr. Carter - man";
 const ST_LOOKS = ["boy", "girl", "man", "woman", "kid", "old-man", "old-woman"];
 let stCast = [];
+// "Name - look - voice - how they look" (voice and description optional; the same rule as stickstory.parse_cast).
+const stIsVoice = (x) => /Neural$|^sarvam:/.test(x);
 const stParse = (text) => text.split("\n").filter((r) => r.trim()).map((r) => {
-  const [name = "", look = "boy", voice = ""] = r.split(" - ").map((x) => x.trim());
-  return { name, look: ST_LOOKS.includes(look) ? look : "boy", voice };
+  const [name = "", look = "boy", ...more] = r.split(" - ").map((x) => x.trim());
+  return { name, look: ST_LOOKS.includes(look) ? look : "boy", voice: more.find(stIsVoice) || "",
+    about: more.filter((x) => x && !stIsVoice(x)).join(", ") };
 });
-const stSerialize = () => stCast.filter((c) => c.name.trim()).map((c) => `${c.name.trim()} - ${c.look}${c.voice ? " - " + c.voice : ""}`).join("\n");
+const stSerialize = () => stCast.filter((c) => c.name.trim()).map((c) =>
+  `${c.name.trim()} - ${c.look}${c.voice ? " - " + c.voice : ""}${(c.about || "").trim() ? " - " + c.about.trim().replace(/ - /g, ", ") : ""}`).join("\n");
 // The same rule as stickstory.assign_voices: a chosen voice, else the first for the look nobody uses yet.
 function stAuto() {
   const taken = new Set(stCast.map((c) => c.voice).filter(Boolean)), out = [];
@@ -2757,6 +2764,7 @@ function stRender() {
         `<option value="${v}" ${v === c.voice ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
       <button type="button" class="mini" data-play title="Play a sample">▶</button>
       <button type="button" class="mini danger" data-del title="Remove">✕</button>
+      <input class="cast-about" data-k="about" value="${esc(c.about || "")}" placeholder="How they look (optional): e.g. miner, navy coveralls, hard hat, boots. Empty = Claude designs it">
     </div>`).join("");
   try { localStorage.setItem("stickCast3", stSerialize()); } catch (e) {}
 }
@@ -2768,7 +2776,7 @@ stRender();
 $("#stCastRows").addEventListener("input", (e) => {
   const row = e.target.closest("[data-i]"); if (!row) return;
   stCast[+row.dataset.i][e.target.dataset.k] = e.target.value;
-  if (e.target.dataset.k !== "name") stRender(); else try { localStorage.setItem("stickCast3", stSerialize()); } catch (err) {}
+  if (e.target.dataset.k !== "name" && e.target.dataset.k !== "about") stRender(); else try { localStorage.setItem("stickCast3", stSerialize()); } catch (err) {}
 });
 $("#stCastRows").addEventListener("click", (e) => {
   const row = e.target.closest("[data-i]"); if (!row) return;

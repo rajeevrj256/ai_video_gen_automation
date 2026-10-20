@@ -25,7 +25,24 @@ export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left
 // A piece of furniture in the scene (kinds in sets.json): centre x and width on the 1920 px set.
 export type Piece = {kind: string; x: number; width: number};
 
-export type CastMember = {id: string; name: string; look: Look; outfit?: string}; // outfit: shirt or dress colour
+// A character's design in the ink look (ink.tsx): written per story, kept for that name across episodes.
+export type Design = {
+  hair: 'messy' | 'spiky' | 'side-part' | 'curly' | 'short' | 'long' | 'ponytail' | 'bun' | 'braids' | 'bald';
+  hairColour: string;
+  top: 'hoodie' | 'tshirt' | 'shirt' | 'jacket' | 'suit' | 'sweater' | 'coat' | 'dress' | 'coveralls' | 'kurta';
+  topColour: string;
+  bottom: 'trousers' | 'jeans' | 'shorts' | 'skirt' | 'none';
+  bottomColour: string;
+  shoes: 'shoes' | 'boots' | 'sneakers' | 'sandals';
+  shoesColour: string;
+  headwear: 'none' | 'cap' | 'hard-hat' | 'beanie' | 'fedora' | 'cowboy' | 'helmet' | 'chef-hat' | 'headscarf' | 'beret' | 'bow' | 'headband';
+  headwearColour: string;
+  extras: ('glasses' | 'sunglasses' | 'beard' | 'stubble' | 'mustache' | 'earrings' | 'tie' | 'scarf' | 'satchel' | 'backpack'
+    | 'apron' | 'lanyard' | 'stethoscope' | 'watch' | 'headlamp')[];
+  extraColour: string; // tie, scarf, bag, apron
+};
+
+export type CastMember = {id: string; name: string; look: Look; outfit?: string; design?: Design}; // outfit: the grey look's shirt or dress colour
 
 export type ActorState = {
   id: string;
@@ -79,4 +96,5 @@ export type StoryProps = {
   sfx: Record<string, string> | null;
   dialogue?: 'subtitle' | 'bubble'; // how lines show: small subtitles under the scene (the channel's style) or speech bubbles
   vertical?: boolean; // a 9:16 Short: the same sets, framed on whoever is speaking
+  art?: 'ink' | 'grey'; // ink = the hand-inked look (ink.tsx); missing = the old grey channel look
 };

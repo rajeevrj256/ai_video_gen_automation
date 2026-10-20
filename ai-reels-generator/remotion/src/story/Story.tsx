@@ -7,7 +7,8 @@ import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
 import {iconFor} from '../long/icon';
 import {PieceView, STOOL_SEAT, Stool, TABLE_TOP, TableUnder, defaultFurniture, seatAt, surfaceAt} from './furniture';
-import type {ActorState, CastMember, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
+import {HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHeadwear, InkSet, defaultDesign, inkPalette, type SetPal, GREY_PAL} from './ink';
+import type {ActorState, CastMember, Design, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
 
 // A stick-figure comedy episode in the channel's style: light grey sets drawn in grey tones with
 // ink outlines, white round heads, thin stick bodies, speech bubbles. One Sequence per shot (one
@@ -89,7 +90,7 @@ const rig = (pose: Pose, t: number, SEAT: number): Rig => {
 
 // ---------- the composition ----------
 
-export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, speech, vertical = false, dialogue = 'subtitle', soundOnly = false}) => {
+export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, speech, vertical = false, dialogue = 'subtitle', soundOnly = false, art = 'grey'}) => {
   useFonts();
   useHandFont();
   const {fps} = useVideoConfig();
@@ -99,7 +100,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
     <Layer name="stick story" style={{backgroundColor: PAPER, fontFamily: FONT}}>
       {soundOnly ? null : shots.map((s, i) => (
         <Sequence key={i} name={`shot ${i + 1} ${s.setting}${s.speaker ? ` (${s.speaker})` : ''}`} from={f(s.start)} durationInFrames={Math.max(1, f(s.duration))}>
-          <ShotView shot={s} looks={looks} cast={cast} vertical={vertical} dialogue={dialogue} newScene={i === 0 || shots[i - 1].scene !== s.scene} />
+          <ShotView shot={s} looks={looks} cast={cast} vertical={vertical} dialogue={dialogue} ink={art === 'ink'} newScene={i === 0 || shots[i - 1].scene !== s.scene} />
         </Sequence>
       ))}
       {shots.map((s, i) =>
@@ -117,7 +118,7 @@ export const StickStory: React.FC<StoryProps> = ({cast, shots, music, cues, spee
 
 // ---------- one shot ----------
 
-const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble'}> = ({shot, looks, cast, newScene, vertical, dialogue}) => {
+const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMember[]; newScene: boolean; vertical: boolean; dialogue: 'subtitle' | 'bubble'; ink: boolean}> = ({shot, looks, cast, newScene, vertical, dialogue, ink}) => {
   const frame = useCurrentFrame();
   const {fps, width: OW, height: OH} = useVideoConfig();
   // A Short frames the cast close (big heads, like the channel's Shorts): a slice of the 1920 px set
@@ -152,25 +153,32 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   const furniture = shot.furniture ?? defaultFurniture(shot.setting);
   const outfits: Record<string, string | undefined> = Object.fromEntries(cast.map((c) => [c.id, c.outfit]));
   const seat = (a: ActorState) => seatAt(furniture, a.x) ?? STOOL_SEAT;
+  // The ink look: each character's own design (a default from their look for older props).
+  const designs: Record<string, Design | undefined> = ink ? Object.fromEntries(cast.map((c, i) => [c.id, c.design ?? defaultDesign(c.look, i)])) : {};
+  const pal = ink ? inkPalette(shot.setting) : GREY_PAL;
   return (
     <Layer name="shot">
-      <svg width={OW} height={OH} viewBox={`0 0 ${OW} ${OH}`} style={{position: 'absolute', inset: 0}}>
+      <svg width={OW} height={OH} viewBox={`0 0 ${OW} ${OH}`} style={{position: 'absolute', inset: 0, filter: ink ? INK_GRADE : undefined}}>
+        {ink ? <InkDefs /> : null}
         <g transform={`translate(${OW / 2 + shake} ${OH / 2}) scale(${total}) translate(${-cx} ${-cy})`}>
-          <SetView setting={shot.setting} sign={shot.sign} />
-          {furniture.map((p, i) => <PieceView key={`f${i}`} p={p} floor={FLOOR} />)}
+          <g filter={ink ? 'url(#inkRough)' : undefined}>
+          {ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} /> : <SetView setting={shot.setting} sign={shot.sign} />}
+          {furniture.map((p, i) => <PieceView key={`f${i}`} p={p} floor={FLOOR} pal={pal} />)}
           {shot.actors.filter((a) => a.pose === 'sit' && !a.action.startsWith('walk') && seatAt(furniture, a.x) === null).map((a) => (
-            <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} />
+            <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} pal={pal} />
           ))}
           {shot.actors.map((a) => (
-            <Figure key={a.id} a={a} seat={seat(a)} outfit={outfits[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
+            <Figure key={a.id} a={a} seat={seat(a)} outfit={outfits[a.id]} design={designs[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
-          <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} />
-          {(shot.things ?? []).map((th, i) => <ThingView key={`th${i}`} th={th} furniture={furniture} front={front} t={t} />)}
+          <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} pal={ink ? pal : undefined} />
+          {(shot.things ?? []).map((th, i) => <ThingView key={`th${i}`} th={th} furniture={furniture} front={front} t={t} pal={pal} />)}
+          </g>
         </g>
       </svg>
+      {ink ? <InkFinish /> : null}
       {speaker && shot.text && dialogue === 'subtitle' ? (
-        <Subtitle text={shot.text} lead={shot.lead} top={vertical ? floorY + 40 : undefined} big={vertical} />
+        <Subtitle text={shot.text} lead={shot.lead} top={vertical ? floorY + 40 : undefined} big={vertical} ink={ink} />
       ) : null}
       {speaker && shot.text && dialogue === 'bubble' ? (
         <Bubble text={shot.text} words={shot.words} lead={shot.lead} x={(speaker.x - cx) * total + OW / 2}
@@ -283,7 +291,7 @@ const Sleeves: React.FC<{r: Rig; colour?: string}> = ({r, colour}) => (
   </>
 );
 
-const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; t: number; frame: number; frames: number; talking: Word[]}> = ({a, seat, look, outfit, t, frame, frames, talking}) => {
+const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]}> = ({a, seat, look, outfit, design, t, frame, frames, talking}) => {
   const {fps} = useVideoConfig();
   const {dx, dy, rot, walking} = actionOffset(a, t, frames, fps);
   const pose: Pose = walking ? 'walk' : a.pose;
@@ -302,6 +310,22 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
     <g transform={`translate(${a.x + dx + act.dx} ${FLOOR + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * a.facing}) scale(${a.facing * small} ${small})`}>
       <g transform={pose === 'lie' ? 'translate(-150 -40) rotate(-90 0 0)' : `translate(0 ${breathe})`}>
         <ellipse cx={0} cy={4} rx={60} ry={9} fill="rgba(0,0,0,0.18)" stroke="none" />
+        {design ? (
+          <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <InkBody r={r} d={design} sitting={pose === 'sit'} />
+            <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />
+            <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head})`}>
+              <g transform={`scale(${FACE})`}><InkHairBack d={design} /></g>
+              <circle r={HEAD} fill={HEAD_FILL} strokeWidth={6} />
+              <g transform={`scale(${FACE})`} strokeWidth={LINE / FACE}>
+                <InkHair d={design} />
+                <FaceView face={lying && a.face === 'neutral' ? 'dead' : a.face} frame={frame} mouthOpen={mouthOpen} look="man" />
+                <InkFaceExtras d={design} ex={10} />
+                <InkHeadwear d={design} />
+              </g>
+            </g>
+          </g>
+        ) : (
         <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
           <path d={leg(r.hip, r.lK, r.lF)} />
           <path d={leg(r.hip, r.rK, r.rF)} />
@@ -319,6 +343,7 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
             </g>
           </g>
         </g>
+        )}
       </g>
       <g transform={`scale(${a.facing} 1)`}>
         <EmoteView emote={a.emote} t={t} head={[r.head[0] * a.facing, r.head[1]]} />
@@ -618,7 +643,7 @@ const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect}
   );
 };
 
-const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: number}> = ({th, furniture, front, t}) => {
+const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: number; pal: SetPal}> = ({th, furniture, front, t, pal}) => {
   const ink = {stroke: INK, strokeWidth: SET_LINE, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const};
   const size = th.big ? 190 : 120;
   // On the table or desk at its spot; on a table brought in when there's none.
@@ -627,7 +652,7 @@ const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: numb
   const top = FLOOR - (desk ?? (th.table ? TABLE_TOP : 0));
   return (
     <g>
-      {th.table && desk === null ? <TableUnder x={th.x} floor={FLOOR} /> : null}
+      {th.table && desk === null ? <TableUnder x={th.x} floor={FLOOR} pal={pal} /> : null}
       <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} /></g>
     </g>
   );
@@ -641,7 +666,7 @@ const COUNTER = 190; // the kitchen counter's height: it hides the legs, the sce
 
 // What stands in front of the cast: the kitchen counter; its tap, running water and soap foam only
 // when the scene is about washing dishes (otherwise every kitchen scene looked like the same dish gag).
-const SetFront: React.FC<{setting: Setting; washing: boolean; xs: number[]; t: number}> = ({setting, washing, xs, t}) => {
+const SetFront: React.FC<{setting: Setting; washing: boolean; xs: number[]; t: number; pal?: SetPal}> = ({setting, washing, xs, t, pal}) => {
   if (setting !== 'kitchen') return null;
   const top = FLOOR - COUNTER;
   const left = xs.length ? Math.min(...xs) : 800;
@@ -649,7 +674,18 @@ const SetFront: React.FC<{setting: Setting; washing: boolean; xs: number[]; t: n
   const foam = Array.from({length: 9}, (_, i) => [left - 70 + i * 17, top - 8 - (i % 3) * 13 - Math.sin(t * 3 + i) * 2, 20 + (i % 4) * 5]);
   return (
     <g>
-      <rect x={-400} y={top} width={W + 800} height={H + 400} fill={PAPER} />
+      <rect x={-400} y={top} width={W + 800} height={H + 400} fill={pal ? pal.fabric : PAPER} />
+      {pal ? (
+        <g stroke={INK} strokeWidth={3.5}>
+          <rect x={-400} y={top - 4} width={W + 800} height={30} fill={pal.wood} />
+          {Array.from({length: 13}, (_, i) => (
+            <g key={i}>
+              <rect x={-120 + i * 180} y={top + 50} width={150} height={260} rx={6} fill={pal.fabricDeep} />
+              <line x1={-120 + i * 180 + (i % 2 ? 20 : 130)} y1={top + 90} x2={-120 + i * 180 + (i % 2 ? 20 : 130)} y2={top + 150} strokeWidth={7} />
+            </g>
+          ))}
+        </g>
+      ) : null}
       <line x1={-400} y1={top} x2={W + 400} y2={top} stroke={INK} strokeWidth={SET_LINE + 1} />
       <g stroke={INK} strokeWidth={SET_LINE} fill="#fff" strokeLinejoin="round">
         {washing && <path d={`M ${tapX} ${top} v -110 h 70 v 30 h -14 v -16 h -42 v 96 Z`} />}
@@ -798,7 +834,7 @@ const Bubble: React.FC<{text: string; words: Word[]; lead: number; x: number; y:
 };
 
 // The channel's way: the line as a small subtitle in white boxes under the scene.
-const Subtitle: React.FC<{text: string; lead: number; top?: number; big?: boolean}> = ({text, lead, top, big}) => {
+const Subtitle: React.FC<{text: string; lead: number; top?: number; big?: boolean; ink?: boolean}> = ({text, lead, top, big, ink}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   if (frame / fps < lead - 0.05) return null;
@@ -806,8 +842,8 @@ const Subtitle: React.FC<{text: string; lead: number; top?: number; big?: boolea
   return (
     <div style={{position: 'absolute', left: 60, right: 60, ...pos, display: 'flex', justifyContent: 'center'}}>
       <div style={{fontSize: big ? 46 : 40, lineHeight: 1.35, textAlign: 'center', maxWidth: big ? 920 : 1400, textWrap: 'balance'}}>
-        <span style={{background: '#fff', color: INK, padding: '3px 12px', boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone',
-          fontFamily: FONT, fontWeight: 800}}>{text}</span>
+        <span style={{background: ink ? 'rgba(242,235,220,0.94)' : '#fff', color: INK, padding: ink ? '4px 14px' : '3px 12px', boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone',
+          fontFamily: FONT, fontWeight: 800, borderRadius: ink ? 6 : 0, boxShadow: ink ? `0 0 0 3px ${INK}` : undefined}}>{text}</span>
       </div>
     </div>
   );

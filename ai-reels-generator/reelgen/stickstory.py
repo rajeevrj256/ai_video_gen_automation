@@ -133,10 +133,51 @@ class StickRequest:
 
 # ---------- the episode Claude writes ----------
 
+# ---------- how each character looks (the ink look: remotion/src/story/ink.tsx) ----------
+# Muted, desaturated cloth colours (the hand-inked explainer style the user chose), by name for Claude.
+INK_COLOURS = {
+    "navy": "#34435E", "brick": "#9C4A3C", "olive": "#6E6F45", "mustard": "#B8914A", "teal": "#3E6B6A",
+    "plum": "#6B4A5E", "rust": "#A0613A", "slate": "#5B6670", "sand": "#C9B48E", "forest": "#3F5A45",
+    "charcoal": "#3A3A3D", "cream": "#E6DCC6", "denim": "#4C5D74", "maroon": "#6E3434", "khaki": "#A29470",
+    "grey": "#8C8C88", "tan": "#A08458", "brown": "#5A4232", "black": "#1E1B18", "white": "#EDE6D6",
+}
+HAIR_COLOURS = {"black": "#1E1B18", "dark-brown": "#3B2E24", "brown": "#5A3E2B", "auburn": "#7A3E2A",
+                "blonde": "#B89A5E", "grey": "#8E8A84", "white": "#D8D2C4"}
+Colour = Literal[tuple(INK_COLOURS)]
+
+
+class SDesign(BaseModel):
+    hair: Literal["messy", "spiky", "side-part", "curly", "short", "long", "ponytail", "bun", "braids", "bald"]
+    hair_colour: Literal[tuple(HAIR_COLOURS)] = "black"
+    top: Literal["hoodie", "tshirt", "shirt", "jacket", "suit", "sweater", "coat", "dress", "coveralls", "kurta"] = Field(
+        description="What they wear on top (coveralls and a dress cover the legs too).")
+    top_colour: Colour
+    bottom: Literal["trousers", "jeans", "shorts", "skirt", "none"] = Field(description="'none' under a dress.")
+    bottom_colour: Colour = "charcoal"
+    shoes: Literal["shoes", "boots", "sneakers", "sandals"] = "shoes"
+    shoes_colour: Colour = "brown"
+    headwear: Literal["none", "cap", "hard-hat", "beanie", "fedora", "cowboy", "helmet", "chef-hat", "headscarf", "beret",
+                      "bow", "headband"] = "none"
+    headwear_colour: Colour = "mustard"
+    extras: list[Literal["glasses", "sunglasses", "beard", "stubble", "mustache", "earrings", "tie", "scarf", "satchel",
+                         "backpack", "apron", "lanyard", "stethoscope", "watch", "headlamp"]] = Field(
+        default_factory=list, description="0-3 things that make them recognisable at a glance (a miner: satchel, headlamp).")
+    extra_colour: Colour = Field(default="tan", description="The tie, scarf, bag or apron's colour.")
+
+
+DESIGN_RULES = ("Design every character's look for this story ('design'): what this person would really wear here "
+                "(job, age, era, weather, place): a miner in navy coveralls with a hard hat, a headlamp, a satchel and "
+                "boots; a teacher in a sweater with glasses; a chef in a chef hat and an apron. Muted colours only, every "
+                "character's top a different colour so they're told apart at a glance, and one or two details that make "
+                "each recognisable. A character listed with a fixed look keeps it exactly (copy it); a description the "
+                "user gave is followed.")
+
+
 class SCast(BaseModel):
     id: str = Field(description="Short lowercase id, e.g. 'raju'.")
     name: str
     look: Look
+    design: SDesign | None = Field(default=None, description="How they look (always give it).")
 
 
 class SActor(BaseModel):
@@ -270,7 +311,7 @@ until they stand up, on a spot covered by a seat (or a stool is drawn under them
 
 Show the real object, never a paper with its name: a science project is a 'volcano' thing (effect 'erupt' when it \
 goes off), a birthday has a cake, a prize a trophy. Use things for objects in the scene and prop 'thing' with \
-prop_thing for something held. Paper is only for a test, a note or a report card. Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
+prop_thing for something held. Paper is only for a test, a note or a report card. {DESIGN_RULES} Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
 setting for a new scene."""
 
 
@@ -343,8 +384,74 @@ def _rate(speed: float, extra: int = 0) -> str:
     return f"{round((min(2.0, max(0.8, speed)) - 1) * 100) + extra:+d}%"
 
 
+# Each character's design is kept by name (<output>/stick_cast.json), so a recurring character looks the
+# same in every episode; a new description typed in the tab gives them a new look.
+def _cast_file(cfg: Config) -> Path:
+    return cfg.output_dir / "stick_cast.json"
+
+
+def _saved_cast(cfg: Config) -> dict:
+    try:
+        return json.loads(_cast_file(cfg).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+def kept_designs(cfg: Config, cast: list[dict]) -> dict[str, SDesign]:
+    """The saved design of every cast member whose description hasn't changed since it was made."""
+    saved, out = _saved_cast(cfg), {}
+    for c in cast:
+        row = saved.get(_key(c["name"]))
+        if row and row.get("look") == c["look"] and row.get("about", "") == c.get("about", ""):
+            try:
+                out[c["id"]] = SDesign(**row["design"])
+            except Exception:  # a design from an older schema: made again
+                pass
+    return out
+
+
+def lock_designs(cfg: Config, ep: "Episode", cast: list[dict]) -> None:
+    """Fixed looks win over what Claude wrote; new ones are saved for the next episodes."""
+    kept = kept_designs(cfg, cast)
+    about = {c["id"]: c.get("about", "") for c in cast}
+    with _history_lock:
+        saved = _saved_cast(cfg)
+        for c in ep.cast:
+            if c.id in kept:
+                c.design = kept[c.id]
+                continue
+            row = saved.get(_key(c.name))
+            if c.id not in about and row and row.get("look") == c.look:  # a minor character met before
+                try:
+                    c.design = SDesign(**row["design"])
+                    continue
+                except Exception:
+                    pass
+            if c.design is not None:
+                saved[_key(c.name)] = {"name": c.name, "look": c.look, "about": about.get(c.id, ""),
+                                       "design": c.design.model_dump()}
+        _cast_file(cfg).write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def ink_design(d: "SDesign | None", look: str, i: int) -> dict | None:
+    """The editor's design (types.ts Design): colours as hex. None = the editor's default for the look."""
+    if d is None:
+        return None
+    c = INK_COLOURS
+    return {"hair": d.hair, "hairColour": HAIR_COLOURS.get(d.hair_colour, "#1E1B18"), "top": d.top,
+            "topColour": c[d.top_colour], "bottom": "none" if d.top == "dress" else d.bottom,
+            "bottomColour": c[d.bottom_colour], "shoes": d.shoes, "shoesColour": c[d.shoes_colour],
+            "headwear": d.headwear, "headwearColour": c[d.headwear_colour], "extras": list(dict.fromkeys(d.extras)),
+            "extraColour": c[d.extra_colour]}
+
+
 def parse_cast(text: str) -> list[dict]:
-    """'Name - look' or 'Name - look - voice' per line (a voice id from VOICE_NAMES; empty = automatic)."""
+    """'Name - look', then optionally a voice id (from VOICE_NAMES; empty = automatic) and how they look in
+    words ('Ben - boy - navy hoodie, messy hair'), one character per line."""
     out = []
     for row in (text or DEFAULT_CAST).splitlines():
         if not row.strip():
@@ -353,9 +460,10 @@ def parse_cast(text: str) -> list[dict]:
         if len(parts) == 1 and "-" in row:  # 'Ben-boy' written without spaces
             parts = [p.strip() for p in row.split("-", 1)]
         name, look = parts[0], (parts[1].lower() if len(parts) > 1 else "boy")
-        voice = parts[2] if len(parts) > 2 and parts[2] in VOICE_NAMES else ""
+        voice = next((x for x in parts[2:] if x in VOICE_NAMES), "")
+        about = ", ".join(x for x in parts[2:] if x and x not in VOICE_NAMES)  # how they look, in the user's words
         out.append({"id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or f"c{len(out)}",
-                    "name": name, "look": look if look in get_args(Look) else "boy", "voice": voice})
+                    "name": name, "look": look if look in get_args(Look) else "boy", "voice": voice, "about": about})
     return out
 
 
@@ -447,7 +555,11 @@ def remember(cfg: Config, entry: dict) -> None:
 def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "") -> Episode:
     short = req.format == "short"
     cast = parse_cast(req.cast)
-    prompt = ("The cast (use these ids and looks):\n" + "\n".join(f"- {c['id']}: {c['name']} ({c['look']})" for c in cast)
+    kept = kept_designs(cfg, cast)
+    prompt = ("The cast (use these ids and looks):\n" + "\n".join(
+                  f"- {c['id']}: {c['name']} ({c['look']})"
+                  + (f", fixed look: {kept[c['id']].model_dump_json()}" if c["id"] in kept
+                     else f", looks like: {c['about']}" if c.get("about") else "") for c in cast)
               + (f"\n\nThe idea: {req.idea}" if req.idea.strip() else "\n\nPick a fresh, relatable situation yourself.")
               + ("\n\nAlready made (never repeat one of these stories, not even with a new title or another "
                  "character; also avoid their opening place and music mood):\n"
@@ -629,7 +741,9 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         choice = f"composed ({ep.mood})"
     props = {
         "fps": cfg.fps, "duration": round(t, 3), "title": ep.title, "vertical": short,
-        "cast": [{"id": c.id, "name": c.name, "look": c.look, "outfit": _outfits(ep.cast)[c.id]} for c in ep.cast],
+        "art": "ink",
+        "cast": [{"id": c.id, "name": c.name, "look": c.look, "outfit": _outfits(ep.cast)[c.id],
+                  "design": ink_design(c.design, c.look, i)} for i, c in enumerate(ep.cast)],
         "shots": shots, "music": rel(track) if track else None, "musicChoice": choice, "cues": cues,
         "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()},
     }
@@ -664,6 +778,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         if twin:
             progress(f"That story was already made (\"{twin.get('title')}\"); Claude is writing a different one")
             ep = write_episode(cfg, req, recent, avoid=f"\"{twin.get('title')}\": {twin.get('logline', '')}")
+        lock_designs(cfg, ep, parse_cast(req.cast))  # a recurring character keeps their look
         from .hooks import sharpen
         sharpen(cfg, [next((ln for s in ep.scenes for ln in s.lines if ln.line.strip()), None)], ep.logline, progress)
         # Remembered now, before voices and render: a video made at the same time sees it.
