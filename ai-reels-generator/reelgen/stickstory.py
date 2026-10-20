@@ -1057,17 +1057,43 @@ def _history(cfg: Config) -> Path:
     return cfg.output_dir / "stick_history.json"
 
 
-def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> dict:
+CHECKPOINT = "stick-checkpoint.json"  # its own name: the Shorts/long resume never picks a Stick video up
+
+
+def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info, resume: str | None = None) -> dict:
+    """One Stick video. Progress is saved after every step (`CHECKPOINT`: written, checked, boarded, built,
+    rendered), so a closed app, a Pause or a failure continues from the last step on Resume: the writing and
+    fact-check (the Claude tokens) are never paid twice."""
     from .fsutil import move
-    from .llm import meter_records, summarize_usage
-    from .pipeline import _render_slot, slugify
+    from .llm import meter_add_earlier, meter_records, summarize_usage
+    from .pipeline import _render_slot, pause_point, slugify
 
     short = req.format == "short"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    work = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-stick-working"
+    work = cfg.output_dir / resume if resume else cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-stick-working"
     work.mkdir(parents=True, exist_ok=True)
     progress(f"Saving progress in {work.name}")
-    try:
+    state = json.loads((work / CHECKPOINT).read_text(encoding="utf-8")) if (work / CHECKPOINT).exists() else {}
+    stamp = state.get("stamp", stamp)
+    if state.get("usage"):
+        meter_add_earlier(state["usage"])  # the tokens spent before the stop still count for this video
+
+    def save(stage: str, **changes) -> None:
+        state.update(changes, stage=stage, stamp=stamp, request=asdict(req), usage=meter_records())
+        if "ep" in changes:
+            state["ep"] = changes["ep"].model_dump()
+        (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        pause_point()
+
+    stage = state.get("stage", "")
+    order = ["written", "checked", "boarded", "built", "rendered"]
+    done = lambda st: stage in order and order.index(stage) >= order.index(st)  # noqa: E731
+    if stage:
+        progress(f"Resuming after: {stage}")
+    ep = Episode.model_validate(state["ep"]) if state.get("ep") else None
+    from . import stickboard
+
+    if not done("written"):
         recent = made_before(cfg)
         progress(("Claude is researching and writing" if req.style in TRUE_STYLES else "Claude is writing")
                  + (" the Short" if short else " the episode"))
@@ -1084,6 +1110,8 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         # Remembered now, before voices and render: a video made at the same time sees it.
         remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
                        "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": ep.mood})
+        save("written", ep=ep)
+    if not done("checked"):
         fact_issues, findings, sources, dropped = [], [], [], []
         if req.style in TRUE_STYLES:
             hook_at = next(((si, li) for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines) if ln.line.strip()), None)
@@ -1091,14 +1119,17 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
             if req.style == "documentary":
                 ep = close_gaps(cfg, ep, hook_at, progress, fact_issues)
             sources, dropped = verify_sources(ep.sources)
-        board_note = None
+        save("checked", ep=ep, fact_issues=fact_issues, findings=findings, sources=sources, dropped=dropped)
+    fact_issues, findings = state.get("fact_issues", []), state.get("findings", [])
+    sources, dropped = state.get("sources", []), state.get("dropped", [])
+    if not done("boarded"):
         # Every line gets a picture of what it says, for every type (stickboard.py; the user: "not only changes for
         # documentry do it for all stick video generation").
-        from . import stickboard
-
         progress("Storyboarding: a picture of what every line says")
         ep = stickboard.storyboard(cfg, ep, board_rules(short, req.style), progress, narrated=req.style == "documentary")
         (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
+        save("boarded", ep=ep)
+    if not done("built"):
         props = build(ep, req, cfg, work, progress)
         bad = stickboard.check(cfg, props, ep, work, short, progress)  # every type: pictures checked against their lines
         board_note = {"flagged": len(bad), "beats": {str(k): v for k, v in bad.items()}}
@@ -1108,57 +1139,61 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
                                        narrated=req.style == "documentary")
             (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
             props = build(ep, req, cfg, work, progress)
+        (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+        save("built", ep=ep, board_note=board_note)
+    props = json.loads((work / "props.json").read_text(encoding="utf-8"))
+    board_note = state.get("board_note")
+    out = work / "reel.mp4"
+    if not done("rendered") or not out.exists():
         progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
         cli = _remotion_cli()
         if cli is None:
             raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
-        out = work / "reel.mp4"
         with _render_slot(cfg):
             _render_remotion(cli, props, out, composition="StickStory", crf=18, progress=progress)
         subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "2", "-i", str(out), "-frames:v", "1", "-q:v", "3",
                         str(work / "thumbnail.jpg")], check=False)
-        progress("Verifying video quality")
-        info = probe(out)
-        want = (1080, 1920) if short else (1920, 1080)
-        issues = list(fact_issues)
-        if req.style in TRUE_STYLES and not sources:
-            issues.append("No source link could be opened; check the facts before posting.")
-        if (info.get("width"), info.get("height")) != want:
-            issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
-        if not info.get("has_audio"):
-            issues.append("No audio track.")
-        final = cfg.output_dir / f"{stamp}-{slugify(ep.title)}-stick"
-        move(work, final)
-        report = {
-            "id": final.name, "format": "short" if short else "long", "length": "short" if short else "stick",
-            "source": "stick", "topic": ep.title, "topic_source": "stick story",
-            "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.style, "comedy"),
-            "stick_type": req.style,
-            **({"picture_check": board_note} if board_note is not None else {}),
-            "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
-            else {"fiction": "Stories", "facts": "Science & Space", "documentary": "History"}.get(req.style, "Comedy"),
-            "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
-            "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
-            "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
-            "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)",
-            "captions": props.get("dialogue") != "none", "stick_request": asdict(req),  # for a re-make (remake)
-            "music": props.get("musicChoice", ""),
-            "voice": req.language, "youtube_title": ep.title[:100],
-            "youtube_description": with_sources(ep.youtube_description.strip(), sources, props.get("credits") or []), "youtube_hashtags": ep.hashtags[:3],
-            "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
-        }
-        if req.style in TRUE_STYLES:
-            report.update({"fact_check": findings, "sources": sources, "sources_unreachable": dropped})
-        (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-        report["usage"] = summarize_usage(meter_records())
-        (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
-                       "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": props.get("musicChoice", "")})
-        progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
-        return report
-    except Exception:
-        shutil.rmtree(work, ignore_errors=True)
-        raise
+        save("rendered")
+    progress("Verifying video quality")
+    info = probe(out)
+    want = (1080, 1920) if short else (1920, 1080)
+    issues = list(fact_issues)
+    if req.style in TRUE_STYLES and not sources:
+        issues.append("No source link could be opened; check the facts before posting.")
+    if (info.get("width"), info.get("height")) != want:
+        issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
+    if not info.get("has_audio"):
+        issues.append("No audio track.")
+    (work / CHECKPOINT).unlink(missing_ok=True)
+    final = cfg.output_dir / f"{stamp}-{slugify(ep.title)}-stick"
+    move(work, final)
+    report = {
+        "id": final.name, "format": "short" if short else "long", "length": "short" if short else "stick",
+        "source": "stick", "topic": ep.title, "topic_source": "stick story",
+        "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.style, "comedy"),
+        "stick_type": req.style,
+        **({"picture_check": board_note} if board_note is not None else {}),
+        "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
+        else {"fiction": "Stories", "facts": "Science & Space", "documentary": "History"}.get(req.style, "Comedy"),
+        "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
+        "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
+        "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
+        "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)",
+        "captions": props.get("dialogue") != "none", "stick_request": asdict(req),  # for a re-make (remake)
+        "music": props.get("musicChoice", ""),
+        "voice": req.language, "youtube_title": ep.title[:100],
+        "youtube_description": with_sources(ep.youtube_description.strip(), sources, props.get("credits") or []), "youtube_hashtags": ep.hashtags[:3],
+        "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
+    }
+    if req.style in TRUE_STYLES:
+        report.update({"fact_check": findings, "sources": sources, "sources_unreachable": dropped})
+    (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+    report["usage"] = summarize_usage(meter_records())
+    (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
+                   "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": props.get("musicChoice", "")})
+    progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
+    return report
 
 
 def remake(cfg: Config, folder: Path, speed: float | None, subtitles: str | None, progress: Progress = log.info) -> dict:
@@ -1223,14 +1258,16 @@ def remake(cfg: Config, folder: Path, speed: float | None, subtitles: str | None
         shutil.rmtree(work, ignore_errors=True)
 
 
-def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress) -> list[dict]:
-    """The app's job: `count` episodes or Shorts, one after another, in the shared video slot."""
+def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress, resume: list[str] | None = None) -> list[dict]:
+    """The app's job: `count` episodes or Shorts, one after another, in the shared video slot (or resume saved ones)."""
     from .llm import set_limit_reporter, start_meter, usage_line
     from .pipeline import Paused, _video_slot, done_line, set_pause_check
 
     reports = []
     should_pause = getattr(progress, "should_pause", None)
-    for i in range(count):
+    todo = list(resume or []) or [None] * count
+    count = len(todo)
+    for i, folder in enumerate(todo):
         vp = (lambda m, n=i + 1: progress(f"[V{n}] {m}")) if count > 1 else progress
         with _video_slot(cfg):
             if should_pause and should_pause():
@@ -1241,14 +1278,40 @@ def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress
             start_meter(lambda r, vp=vp: vp(usage_line(r)))
             vp(f"=== Video {i + 1}/{count} ===")
             try:
-                reports.append(run_stick(cfg, req, vp))
+                saved = folder and cfg.output_dir / folder / CHECKPOINT
+                mine = StickRequest(**(json.loads(saved.read_text(encoding="utf-8")).get("request") or asdict(req))) \
+                    if saved and saved.exists() else req
+                reports.append(run_stick(cfg, mine, vp, folder))
                 vp(done_line(reports[-1]))
             except Paused:
-                vp("Paused.")
+                vp("Paused: progress saved. Press Resume to carry on from here.")
             except Exception as exc:
                 log.exception("Stick video %d failed", i + 1)
                 vp(f"Video {i + 1} failed: {exc}")
     return reports
+
+
+def unfinished_sticks(cfg: Config) -> list[str]:
+    return sorted(p.parent.name for p in cfg.output_dir.glob(f"*-stick-working/{CHECKPOINT}"))
+
+
+def stick_unfinished(cfg: Config) -> list[dict]:
+    """Unfinished Stick videos for the app's "Unfinished videos" list (same shape as pipeline.unfinished)."""
+    done = {"written": "the script", "checked": "script and fact-check", "boarded": "script, fact-check and storyboard",
+            "built": "everything but the edit", "rendered": "everything but the checks"}
+    out = []
+    for folder in unfinished_sticks(cfg):
+        path = cfg.output_dir / folder / CHECKPOINT
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        req, ep = state.get("request") or {}, state.get("ep") or {}
+        out.append({"id": folder, "topic": ep.get("title") or req.get("idea") or "Stick video", "title": ep.get("title", ""),
+                    "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.get("style"), "comedy"),
+                    "length": "stick-short" if req.get("format") == "short" else "stick", "attempt": 1,
+                    "done": done.get(state.get("stage") or "", "nothing yet"), "updated": path.stat().st_mtime})
+    return out
 
 
 def voice_preview(cfg: Config, voice: str, speed: float, name: str = "") -> Path:

@@ -2142,7 +2142,7 @@ const STORY_STEPS = [["Script", /writing the story|storyboarding|Your story/], [
   ["Pictures", /Drawing the pictures|Checking the|Redrawing|stock footage|background photos/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(|Composing the music/],
   ["Editing", /Editing part/], ["Checks", /Verifying part/]];
 const stepsOf = (j) => j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : j.length === "shoot" ? SHOOT_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
-const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused" };
+const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused", stopped: "⏹ Stopped: app closed" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
 function sumUsage(records) {
@@ -2330,7 +2330,7 @@ function jobCard(j) {
   // nothing free to resume and say "Nothing saved").
   const mine = new Set(j.folders || []);
   const takenOver = mine.size && (JOBS || []).some((o) => o.id !== j.id && ["queued", "running"].includes(o.status)
-    && [...(o.folders || []), ...(o.resume || []), ...(o.anim_resume || []), ...(o.toon_resume || []), ...(o.story_resume || [])].some((f) => mine.has(f)));
+    && [...(o.folders || []), ...(o.resume || []), ...(o.anim_resume || []), ...(o.toon_resume || []), ...(o.story_resume || []), ...(o.stick_resume || [])].some((f) => mine.has(f)));
   const resumeBtn = canResume && takenOver ? `<div class="hint" style="margin-top:8px">↻ Resumed: it's continuing in the job above.</div>`
     : canResume ? `<button class="primary resume" data-job="${esc(j.id)}" style="width:100%;margin-top:8px">
       ↻ Resume from where it stopped</button>` : "";

@@ -82,10 +82,44 @@ class JobManager:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.jobs: deque[dict] = deque(maxlen=20)
+        self.jobs: deque[dict] = deque(self._load(), maxlen=20)
         self.lock = threading.Lock()
         self.wake = threading.Event()
         threading.Thread(target=self._worker, daemon=True).start()
+        threading.Thread(target=self._keep, daemon=True).start()
+
+    # The list survives a restart (the user: "i close and restart, why already running stick not visible on create
+    # tab?"): saved to <output>/jobs.json every few seconds; a job that was running when the app closed comes back
+    # as stopped, with Resume when its videos saved their progress.
+    def _file(self) -> Path:
+        return self.cfg.output_dir / "jobs.json"
+
+    def _load(self) -> list[dict]:
+        try:
+            saved = json.loads(self._file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        for j in saved:
+            if j.get("status") in ("queued", "running"):
+                j["log"] = (j.get("log") or []) + [{"t": time.time(), "msg": "Stopped: the app was closed while this was running."}]
+                j.update(status="stopped", finished=time.time(), started=True)
+            j.pop("pause", None), j.pop("cancel", None), j.pop("live", None)
+        return saved
+
+    def _keep(self) -> None:
+        last = ""
+        while True:
+            time.sleep(3)
+            try:
+                with self.lock:
+                    text = json.dumps(list(self.jobs), ensure_ascii=False, default=str)
+                if text != last:
+                    tmp = self._file().with_suffix(".tmp")
+                    tmp.write_text(text, encoding="utf-8")
+                    tmp.replace(self._file())
+                    last = text
+            except (OSError, RuntimeError, ValueError) as exc:  # a list changed mid-save: next round
+                log.debug("Couldn't save the job list: %s", exc)
 
     def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None,
                length: str = "short", resume: list[str] | None = None, **extra) -> dict:
@@ -229,9 +263,9 @@ class JobManager:
                         reports += run_long_batch(_long_cfg(cfg, job), fresh, job["topic"], progress)
                     else:
                         reports += run(cfg, fresh, job["topic"], progress)
-            elif job.get("stick_input"):  # Stick Stories: stick-figure comedy episodes and Shorts
+            elif job.get("stick_input"):  # Stick Stories: stick-figure episodes and Shorts, new or resumed
                 from .stickstory import StickRequest, run_stick_job
-                reports = run_stick_job(cfg, StickRequest(**job["stick_input"]), job["count"], progress)
+                reports = run_stick_job(cfg, StickRequest(**job["stick_input"]), job["count"], progress, job.get("stick_resume"))
             elif job.get("script_input"):  # Script Video: the user's own script through the long pipeline
                 from .scriptvideo import ScriptInput, run_script_job
                 reports = run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
@@ -1747,7 +1781,8 @@ def create_app(cfg: Config) -> FastAPI:
         raise HTTPException(404, "No script yet: Claude is still writing it.")
 
     def busy_folders() -> set[str]:
-        return {f for j in jobs.jobs if j["status"] in ("queued", "running") for f in j.get("folders", []) + j.get("resume", [])}
+        return {f for j in jobs.jobs if j["status"] in ("queued", "running")
+                for f in j.get("folders", []) + j.get("resume", []) + (j.get("stick_resume") or [])}
 
     @app.delete("/api/jobs/{job_id}")
     def remove_job(job_id: str, discard: bool = False):
@@ -1804,9 +1839,10 @@ def create_app(cfg: Config) -> FastAPI:
         from .pipeline import CHECKPOINT
         from .animated import CHECKPOINT as ANIM_CHECKPOINT
         from .storyshorts import CHECKPOINT as STORY_CHECKPOINT
+        from .stickstory import CHECKPOINT as STICK_CHECKPOINT
         from .toon import CHECKPOINT as TOON_CHECKPOINT
         path = (cfg.output_dir / folder_id).resolve()
-        if path.parent != cfg.output_dir.resolve() or not any((path / c).exists() for c in (CHECKPOINT, TOON_CHECKPOINT, ANIM_CHECKPOINT, STORY_CHECKPOINT)):
+        if path.parent != cfg.output_dir.resolve() or not any((path / c).exists() for c in (CHECKPOINT, TOON_CHECKPOINT, ANIM_CHECKPOINT, STORY_CHECKPOINT, STICK_CHECKPOINT)):
             raise HTTPException(404, "Not an unfinished video")
         if folder_id in busy_folders():
             raise HTTPException(409, "It's being made right now")
@@ -1820,10 +1856,12 @@ def create_app(cfg: Config) -> FastAPI:
 
         from .animated import anim_unfinished
         from .storyshorts import story_unfinished
+        from .stickstory import stick_unfinished
         from .toon import toon_unfinished
 
         busy = busy_folders()
-        return [u for u in unfinished(cfg) + toon_unfinished(cfg) + anim_unfinished(cfg) + story_unfinished(cfg) if u["id"] not in busy]
+        return [u for u in unfinished(cfg) + toon_unfinished(cfg) + anim_unfinished(cfg) + story_unfinished(cfg) + stick_unfinished(cfg)
+                if u["id"] not in busy]
 
     @app.post("/api/resume")
     def resume(body: dict):
@@ -1856,6 +1894,16 @@ def create_app(cfg: Config) -> FastAPI:
                 given = {**given, "motion": body["motion"]}
             return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(anims), "resume",
                                "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"), ai=body.get("ai"))
+        from .stickstory import CHECKPOINT as STICK_CHECKPOINT, unfinished_sticks
+
+        sticks = [f for f in body.get("folders", []) if f in unfinished_sticks(cfg) and f not in busy_folders()]
+        if sticks:  # Stick videos resume through their own pipeline (stick-checkpoint.json)
+            saved = json.loads((cfg.output_dir / sticks[0] / STICK_CHECKPOINT).read_text(encoding="utf-8"))
+            given = saved.get("request") or {}
+            return jobs.submit((saved.get("ep") or {}).get("title") or given.get("idea", "")[:80] or None, len(sticks), "resume",
+                               {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given.get("style"), "comedy"),
+                               "stick-short" if given.get("format") == "short" else "stick", stick_input=given,
+                               stick_resume=sticks, captions=False, ai=body.get("ai"))
         toons = [f for f in body.get("folders", []) if f in unfinished_toons(cfg) and f not in busy_folders()]
         if toons:  # Toon videos resume through their own pipeline, never the Shorts/long one
             saved = json.loads((cfg.output_dir / toons[0] / TOON_CHECKPOINT).read_text(encoding="utf-8"))
@@ -1905,6 +1953,14 @@ def create_app(cfg: Config) -> FastAPI:
                 raise HTTPException(400, "Nothing saved to resume for this story; make it again.")
             return jobs.submit(job["topic"], job["count"], "resume", job.get("style"), "storyshorts",
                                story_input=job["story_input"], story_resume=saved[:1], captions=job.get("captions"), ai=job.get("ai"))
+        if job.get("stick_input"):  # a Stick job resumes its own saved videos (stick-checkpoint.json)
+            from .stickstory import unfinished_sticks
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_sticks(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these videos; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", job.get("style"), job.get("length", "stick"),
+                               stick_input=job["stick_input"], stick_resume=saved or None, captions=False, ai=job.get("ai"))
         if job.get("toon_input"):  # a Toon job resumes its own saved videos (toon-checkpoint.json)
             from .toon import unfinished_toons
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_toons(cfg) and f not in busy_folders()]
