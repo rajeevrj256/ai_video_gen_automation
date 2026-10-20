@@ -64,7 +64,7 @@ def job_label(job: dict) -> str:
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
-            else "New hook" if job.get("rehook") else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
+            else "New hook" if job.get("rehook") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
 
 
@@ -178,6 +178,11 @@ class JobManager:
             elif job.get("anim_music"):  # a finished animated video, its music made by ACE-Step again
                 from .animated import redo_music
                 reports = [redo_music(cfg, video_dir(cfg, job["anim_music"]["id"]), progress)]
+            elif job.get("clip_short"):  # a Short from part of a finished video, ending on it (reelgen/clipshort.py)
+                from .clipshort import make
+                r = job["clip_short"]
+                reports = [make(cfg, video_dir(cfg, r["id"]), r["first"], r["last"], r["mode"], r["seconds"],
+                                r["hook"], r["link"], progress)]
             elif job.get("rehook"):  # a finished video copied to a new one with a new hook (reelgen/rehook.py)
                 from .rehook import save_as_new
                 reports = [save_as_new(cfg, video_dir(cfg, job["rehook"]["id"]), job["rehook"]["key"], progress)]
@@ -950,6 +955,46 @@ def create_app(cfg: Config) -> FastAPI:
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         return jobs.submit(f"New hook: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
                            report.get("format", "long"), rehook={"id": video_id, "key": key})
+
+    @app.get("/api/videos/{video_id}/short-lines")
+    def short_lines(video_id: str):
+        """The script's lines for making a Short from part of this video (reelgen/clipshort.py)."""
+        from . import clipshort
+
+        folder = video_dir(cfg, video_id)
+        try:
+            out = clipshort.lines(folder)
+        except (OSError, ValueError) as exc:
+            out = {"why_not": str(exc), "lines": []}
+        out["making"] = [j["id"] for j in jobs.jobs if j.get("clip_short", {}).get("id") == video_id
+                         and j["status"] in ("queued", "running")]
+        return out
+
+    @app.post("/api/videos/{video_id}/short")
+    def make_short(video_id: str, body: dict):
+        """A new Short from lines first..last of this video (explained or as they are), ending on the full video."""
+        from . import clipshort
+
+        folder = video_dir(cfg, video_id)
+        reason = clipshort.why_not(folder)
+        if reason:
+            raise HTTPException(400, reason)
+        try:
+            first, last = int(body.get("first", -1)), int(body.get("last", -1))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Pick the first and the last line")
+        if first < 0 or last < first:
+            raise HTTPException(400, "Pick the first and the last line")
+        mode = body.get("mode") if body.get("mode") in ("explain", "exact") else "explain"
+        seconds = int(body.get("seconds") or 45)
+        link = str(body.get("link") or "").strip()[:300]
+        if link and not re.match(r"https?://", link):
+            raise HTTPException(400, "The link should start with https://")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"Short: {report.get('title', video_id)}", 1, "rerender", report.get("style"), "short",
+                           clip_short={"id": video_id, "first": first, "last": last, "mode": mode,
+                                       "seconds": seconds if seconds in clipshort.LENGTHS else 45,
+                                       "hook": body.get("hook", True) is not False, "link": link})
 
     sample_state: dict[str, dict] = {}  # template -> {state, line, error}
 

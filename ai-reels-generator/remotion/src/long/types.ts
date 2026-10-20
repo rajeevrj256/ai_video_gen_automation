@@ -154,4 +154,6 @@ export type LongProps = {
   vertical?: boolean;
   partLabel?: string | null;
   nextLabel?: string | null;
+  // A Short made from a long video (reelgen/clipshort.py): the full video's card over the outro (long/EndCard.tsx).
+  endCard?: {from: number; title: string; length: string; thumb: string | null} | null;
 };

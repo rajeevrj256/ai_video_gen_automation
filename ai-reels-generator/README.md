@@ -107,6 +107,13 @@ Each video gets a folder in `output/` containing `reel.mp4`, `thumbnail.jpg`, `r
   slower documentary look below). Auto rotates the energetic ones, never one of the last three videos'. Every hook
   confirms the title's promise within about 10 seconds, and with memes on, every style gets its meme. The spoken
   words only appear on screen with subtitles on.
+- **Shorts from your long videos**: on a long, medium or Script video's page, **✂️ Short from this video** lists the
+  script by chapter. Tap the first and last line of a part, then choose **Explain this part** (Claude retells it as a
+  Short that stands on its own, only with facts those lines state, reusing the video's own graphics; 30-90 s) or
+  **Use these lines as they are**. The Short opens on a hook line and ends on a line sending viewers to the full
+  video, with an end card showing its thumbnail, title and an arrow to the link. Paste the long video's YouTube link
+  and it goes in the description; in YouTube Studio set the long video as the Short's *Related video*. The Short is a
+  new video in your library; the long one stays as it is.
 - **Re-create only the hook**: on a finished video's page, **🪝 Hook** makes a new hook in another style (Claude
   rewrites it from the video's own facts; a Script Video keeps your words) and plays it next to the current one.
   **Save as a new video** copies the video, puts the new hook first and joins the rest after it in a few minutes, with

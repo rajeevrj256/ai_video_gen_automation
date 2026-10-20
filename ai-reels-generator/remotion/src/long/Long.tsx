@@ -15,6 +15,7 @@ import {ChapterBreak} from './Breaks';
 import type {Chapter, Look, LongProps, Visual} from './types';
 import {BOX, setBox} from './box';
 import {NextTag, PartTag} from '../anim/Tags';
+import {EndCard} from './EndCard';
 import type {Face} from '../anim/type';
 import {useCineFonts} from '../cine/Cine';
 
@@ -56,7 +57,7 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   );
 };
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false, vertical, partLabel, nextLabel, title, duration}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false, vertical, partLabel, nextLabel, endCard, title, duration}) => {
   useFonts();
   useCineFonts();
   setCurrency(currency);
@@ -117,6 +118,11 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
       {partLabel ? (
         <Sequence name="part label" durationInFrames={f(2.7)}>
           <PartTag label={partLabel} title={title} accent={look.accents[0]} face={LONG_FACE} />
+        </Sequence>
+      ) : null}
+      {endCard ? (
+        <Sequence name="end card: the full video" from={f(endCard.from)}>
+          <EndCard card={endCard} accent={look.accents[0]} />
         </Sequence>
       ) : null}
       {nextLabel ? (

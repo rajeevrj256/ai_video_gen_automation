@@ -338,6 +338,12 @@
   #prFoot { padding: 8px 14px; color: #77777f; font-size: 12px; background: #111; display: flex; gap: 14px; flex-wrap: wrap; }
   #prHeard { color: #9a9aa6; }
   @media (max-width: 400px) { nav button { font-size: 9px; } nav button svg { width: 19px; height: 19px; } }
+  .cs-lines { max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; margin-top: 6px; }
+  .cs-ch { font-size: 12px; font-weight: 700; padding: 6px 10px; background: var(--panel-2); position: sticky; top: 0; }
+  .cs-line { display: flex; gap: 8px; padding: 7px 10px; font-size: 13px; line-height: 1.35; cursor: pointer; border-top: 1px solid var(--line); }
+  .cs-line .t { flex: 0 0 auto; opacity: .6; font-variant-numeric: tabular-nums; text-decoration: underline dotted; }
+  .cs-line.in { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .cs-line.end { box-shadow: inset 3px 0 0 var(--accent); }
 </style>
 </head>
 <body>
@@ -365,7 +371,7 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
-        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button><button class="chip" data-type="shoot">🎥 Filmed by you</button>
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button><button class="chip" data-type="shoot">🎥 Filmed by you</button><button class="chip" data-type="clip">✂️ Shorts from your videos</button>
       </div></details>
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
@@ -1167,7 +1173,7 @@ function renderLibrary() {
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : String(+!!v.verified) === libOk))
-    && (!libType || (libType === "ai" ? !["stick", "script", "toon", "anim", "storyshorts", "shoot"].includes(v.source) : v.source === libType));
+    && (!libType || (libType === "ai" ? !["stick", "script", "toon", "anim", "storyshorts", "shoot", "clip"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
@@ -1509,6 +1515,61 @@ function hookPicker(sel) {
 
 // ---- Re-create only the hook, as a new separate video (reelgen/rehook.py) ----
 let hookTimer = null;
+// ---- A Short from part of this video, ending on it (reelgen/clipshort.py) ----
+function wireShort(id, v) {
+  const box = $("#csBox");
+  let data = null, first = -1, last = -1;
+  const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  const sync = () => {
+    box.querySelectorAll(".cs-line").forEach((el) => {
+      const n = +el.dataset.n;
+      el.classList.toggle("in", first >= 0 && n >= first && n <= (last >= 0 ? last : first));
+      el.classList.toggle("end", n === first || n === last);
+    });
+    const exact = $("#csMode").value === "exact";
+    $("#csLenRow").style.display = exact ? "none" : "";
+    $("#csLen").style.display = exact ? "none" : "";
+    $("#csHookRow").style.display = exact ? "flex" : "none";
+    if (first < 0) { $("#csSel").textContent = "Tap the part's first line, then its last."; $("#csGo").disabled = true; return; }
+    const to = last >= 0 ? last : first;
+    const secs = data.lines.slice(first, to + 1).reduce((a, l) => a + l.seconds, 0);
+    const est = exact ? secs + ($("#csHook").checked ? 3 : 0) + 4 : +$("#csLen").value;
+    $("#csSel").textContent = `Lines ${first + 1}–${to + 1} (${Math.round(secs)} s in the video). The Short: about ${Math.round(est)} s`
+      + (est > 175 ? " — too long for a Short, pick fewer lines" : exact && est > 62 ? " (over a minute)" : "") + ".";
+    $("#csGo").disabled = est > 175 && exact;
+  };
+  const load = async () => {
+    try { data = await api(`/api/videos/${encodeURIComponent(id)}/short-lines`); } catch (e) { box.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
+    if (data.why_not) { box.querySelector(".cs-body").innerHTML = `<p class="hint">${esc(data.why_not)}</p>`; return; }
+    let ch = -1;
+    $("#csLines").innerHTML = data.lines.map((l) => {
+      const head = l.chapter !== ch ? `<div class="cs-ch">${esc(l.chapter_title)}</div>` : "";
+      ch = l.chapter;
+      return `${head}<div class="cs-line" data-n="${l.n}"><span class="t" data-at="${l.start}">${clock(l.start)}</span><span>${esc(l.text)}</span></div>`;
+    }).join("");
+    $("#csHook").checked = data.source !== "script";  // a Script Video's words are yours: no added hook unless asked
+    box.querySelectorAll(".cs-line").forEach((el) => el.onclick = (e) => {
+      if (e.target.dataset.at) { const p = $("#video"); p.currentTime = +e.target.dataset.at; p.play().catch(() => {}); return; }
+      const n = +el.dataset.n;
+      if (first < 0 || last >= 0) { first = n; last = -1; } else if (n < first) { last = first; first = n; } else last = n;
+      sync();
+    });
+    $("#csLine").textContent = data.making.length ? "✂️ A Short from this video is being made (Create page)." : "";
+    sync();
+  };
+  $("#csMode").onchange = sync; $("#csLen").onchange = sync; $("#csHook").onchange = sync;
+  $("#csGo").onclick = async () => {
+    $("#csGo").disabled = true;
+    try {
+      await api(`/api/videos/${encodeURIComponent(id)}/short`, { method: "POST", body: JSON.stringify({
+        first, last: last >= 0 ? last : first, mode: $("#csMode").value, seconds: +$("#csLen").value,
+        hook: $("#csHook").checked, link: $("#csLink").value.trim() }) });
+      toast("Making the Short — follow it on the Create page; it appears in Videos when done");
+      $("#csLine").textContent = "✂️ A Short from this video is being made (Create page).";
+    } catch (e) { toast(e.message); $("#csGo").disabled = false; }
+  };
+  load();
+}
 function wireHooks(id, v) {
   const box = $("#hkBox"), player = $("#hkVideo");
   let pick = "", data = null, playing = "";
@@ -1585,7 +1646,7 @@ async function openVideo(id) {
     ${verdict}
     ${v.usage ? usageHtml({ steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd }, "Claude tokens used for this video") : ""}
-    <div ${["stick", "anim", "storyshorts", "shoot"].includes(v.source) ? "hidden" : ""}>
+    <div ${["stick", "anim", "storyshorts", "shoot", "clip"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice, speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: another voice, another speaking speed, or subtitles on/off. Only the voice is recorded again and the same slides, memes, pictures and music are re-timed to it: nothing is generated again, no Claude tokens. Recording again also reads numbers in English words (“one lakh”, not “ek lakh”).</p>
     <div class="row">
@@ -1614,6 +1675,24 @@ async function openVideo(id) {
       <div id="hkMade" class="chips"></div>
       <video id="hkVideo" controls playsinline preload="metadata" hidden style="width:100%;max-height:none;aspect-ratio:16/9;border-radius:10px;margin-top:8px;background:#000"></video>
       <div id="hkSave"></div>
+    </div>` : ""}
+    ${v.format === "long" && !["shoot", "stick", "anim", "toon", "storyshorts", "clip"].includes(v.source) ? `<div id="csBox">
+      <h4 class="section">✂️ Short from this video</h4>
+      <div class="cs-body">
+      <p class="hint">Pick a part of the script: tap its first line, then its last (tap a time to watch it). The Short explains that part on its own and ends by sending viewers to this video. It's made as a <b>new Short</b> in your library; this video stays as it is.</p>
+      <div id="csLines" class="cs-lines"></div>
+      <p class="hint" id="csSel"></p>
+      <label for="csMode">How it's told</label>
+      <select id="csMode"><option value="explain">Explain this part for a Short (Claude retells it, only facts these lines state)</option>
+        <option value="exact">Use these lines as they are</option></select>
+      <label for="csLen" id="csLenRow">Length</label>
+      <select id="csLen"><option value="30">About 30 s</option><option value="45" selected>About 45 s</option><option value="60">About 60 s</option><option value="90">About 90 s</option></select>
+      <label id="csHookRow" style="display:none;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="csHook" checked style="width:auto"> Start with a hook line Claude writes from these lines</label>
+      <label for="csLink">Link to this video on YouTube (optional: it goes in the Short's description)</label>
+      <input id="csLink" placeholder="https://youtu.be/...">
+      <button id="csGo" style="width:100%;margin-top:8px" disabled>✂️ Make the Short (about 3–6 min)</button>
+      <div id="csLine" class="hint"></div>
+      </div>
     </div>` : ""}
     <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
@@ -1646,7 +1725,7 @@ async function openVideo(id) {
       <button class="ok" id="acceptVideo">✓ Accept</button><button class="no" id="rejectVideo">✕ Reject (delete)</button></div>`}
     ${v.post_text_error ? `<div class="errbox">⚠️ Writing the post text failed, so this is only the rough draft: ${esc(v.post_text_error)}</div>`
       : v.youtube_description ? "" : `<div class="errbox" style="color:var(--text)">This video was made before titles, descriptions and trending hashtags were added.</div>`}
-    <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px">
+    <button class="${v.youtube_description ? "" : "primary"}" id="postText" style="width:100%;margin-top:8px" ${v.source === "clip" ? "hidden" : ""}>
       ${v.youtube_description ? "↻ Rewrite title, description &amp; hashtags" : "✍️ Write title, description &amp; hashtags"}</button>
     <div ${v.format === "long" ? "hidden" : ""}>
     <h4 class="section">Instagram Reels</h4>
@@ -1656,6 +1735,7 @@ async function openVideo(id) {
     <textarea class="edit" id="f-hashtags" rows="3">${esc(tags)}</textarea>
     </div>
     <h4 class="section">${v.format === "long" ? "YouTube" : "YouTube Shorts"}</h4>
+    ${v.source === "clip" ? `<p class="hint">✂️ Made from <a href="#" id="clipFrom">${esc(v.from_title || v.from_video)}</a>. ${esc(v.related_video_tip || "")}</p>` : ""}
     <div class="copyhead"><label for="f-yttitle">Title</label><button class="mini" data-copy="ytTitle">Copy</button></div>
     <input class="edit" id="f-yttitle" maxlength="100" value="${esc(v.youtube_title)}">
     <div class="copyhead"><label for="f-ytdesc">Description</label><button class="mini" data-copy="ytDesc">Copy description + hashtags</button></div>
@@ -1728,6 +1808,7 @@ async function openVideo(id) {
   wireThumb(id);
   $("#usedBox").ontoggle = () => { if ($("#usedBox").open && !$("#usedBox").dataset.loaded) loadUsed(id); };
   $("#myVoice").onclick = () => { $("#video").pause(); openVoiceStudio(id, v.title); };
+  if ($("#clipFrom")) $("#clipFrom").onclick = (e) => { e.preventDefault(); openVideo(v.from_video); };
   if ($("#playMine")) $("#playMine").onclick = (e) => { e.preventDefault(); $("#video").src = "/media/" + encodeURIComponent(id) + "/reel-myvoice.mp4?" + v.my_voice.made; $("#video").play(); };
   if ($("#musicGo")) $("#musicGo").onclick = async () => {
     $("#musicGo").disabled = true;
@@ -1751,6 +1832,7 @@ async function openVideo(id) {
     paceSlider($("#hkPace"), { blank: "Same as the video", base: madePace });  // the hook's own speed
     wireHooks(id, v);
   }
+  if ($("#csBox")) wireShort(id, v);
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {
