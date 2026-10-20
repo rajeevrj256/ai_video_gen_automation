@@ -752,6 +752,56 @@ def check_facts(cfg: Config, ep: Episode, progress: Progress) -> tuple[Episode, 
     return ep, issues, findings
 
 
+def close_gaps(cfg: Config, ep: "Episode", hook_at: tuple[int, int] | None, progress: Progress, issues: list[str]) -> "Episode":
+    """A documentary is narrated beat by beat, so a line the fact-check cut leaves a dead, silent shot: those are
+    dropped (and a scene left empty with them). When the cut line was the hook, the new first line is rewritten as
+    a hook from the facts that passed (one small call, no new facts) and checked once more; if that new hook can't
+    be confirmed, the first line stays as it was. (The Amazon test opened on a silent shot after its hook was cut.)"""
+    hook_cut = hook_at is not None and not ep.scenes[hook_at[0]].lines[hook_at[1]].line.strip()
+    for sc in ep.scenes:
+        sc.lines = [ln for ln in sc.lines if ln.line.strip()]
+    ep.scenes = [sc for sc in ep.scenes if sc.lines]
+    if not hook_cut or not ep.scenes:
+        return ep
+    first = ep.scenes[0].lines[0]
+    beats = [(si, ln) for si, sc in enumerate(ep.scenes) for ln in sc.lines]
+    numbered = "\n".join(f"{k}. {ln.line}" for k, (_, ln) in enumerate(beats))
+    from .hooks import RULES
+
+    class NewHook(BaseModel):
+        line: str = Field(description="The new first line.")
+        picture: int = Field(description="The number of the beat whose picture best shows what the hook says.")
+
+    system = ("You write the first narration beat of a short narrated documentary so it hooks in under 3 seconds. " + RULES
+              + "\nUse ONLY facts stated in the numbered narration you are given (they are checked); add nothing. About "
+              "9-12 words. Also pick the beat whose picture shows what your hook is about.")
+    try:
+        got = ask(cfg.ai_backend, cfg.claude_model, system, f"Title: {ep.title}\nThe narration:\n{numbered[:3000]}\n"
+                  f"Write a hook line to open it, placed before beat 0.", NewHook, effort="low", timeout=300)
+        new = got.line.strip()
+    except Exception as exc:  # noqa: BLE001 - the video still opens on its first confirmed line
+        from .stopper import Paused
+        if isinstance(exc, Paused):
+            raise
+        log.warning("Couldn't write a new hook: %s", exc)
+        return ep
+    if not new:
+        return ep
+    # The hook opens on the picture of the beat it's about, in that beat's place, held still (no walk that starts
+    # off screen: the first Amazon fix opened on an empty office).
+    si, like = beats[got.picture] if 0 <= got.picture < len(beats) else (0, first)
+    still = [a.model_copy(update={"action": "none" if a.action.startswith("walk") else a.action}) for a in like.actors]
+    hook = like.model_copy(update={"line": new, "actors": still, "pause_before": 0.1, "sounds": []})
+    ep.scenes.insert(0, ep.scenes[si].model_copy(update={"lines": [hook]}))
+    check = fact_check_episode(cfg, ep, only={"S1L1"})
+    if any(c.ref == "S1L1" and c.verdict != "confirmed" for c in check.lines):
+        ep.scenes.pop(0)
+        issues.append("The hook was cut by the fact-check and a new one couldn't be confirmed: the video opens on its first confirmed line.")
+    else:
+        progress(f"The hook was cut by the fact-check; new hook from the confirmed facts: \"{new}\"")
+    return ep
+
+
 # ---------- from the episode to the editor's props ----------
 
 def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress) -> dict:
@@ -941,7 +991,10 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
                        "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": ep.mood})
         fact_issues, findings, sources, dropped = [], [], [], []
         if req.style in TRUE_STYLES:
+            hook_at = next(((si, li) for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines) if ln.line.strip()), None)
             ep, fact_issues, findings = check_facts(cfg, ep, progress)
+            if req.style == "documentary":
+                ep = close_gaps(cfg, ep, hook_at, progress, fact_issues)
             sources, dropped = verify_sources(ep.sources)
         (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
         props = build(ep, req, cfg, work, progress)

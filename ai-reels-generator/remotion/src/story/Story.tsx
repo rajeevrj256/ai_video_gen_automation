@@ -207,7 +207,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
 
 // ---------- a character ----------
 
-const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => {
+const actionOffset = (a: ActorState, t: number, frames: number, fps: number, vertical = false) => {
   const d = frames / fps;
   let dx = 0;
   let dy = 0;
@@ -249,7 +249,8 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
     if (t > 0.8 && t < 1.8) stepT = ((t - 0.8) / 1) * (Math.PI / 9);
   }
   // Across the frame the way they face, walking the whole shot.
-  if (a.action === 'walk-across') dx = interpolate(t, [0, d], [-520, 520], clamp) * a.facing;
+  // (within the frame: a 9:16 Short shows ~600 px of the set, and a walk that starts off screen opened on an empty room)
+  if (a.action === 'walk-across') dx = interpolate(t, [0, d], [-1, 1], clamp) * (vertical ? 150 : 360) * a.facing;
   // A head turn: they face the other way from halfway through.
   const facing = a.action === 'turn' && t > d / 2 ? -a.facing : a.facing;
   // Looking up: the head tips back and stays there (one movement, no wobble).
@@ -323,8 +324,8 @@ const Sleeves: React.FC<{r: Rig; colour?: string}> = ({r, colour}) => (
 );
 
 const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]; far?: {lift: number; size: number}}> = ({a, seat, look, outfit, design, t, frame, frames, talking, far}) => {
-  const {fps} = useVideoConfig();
-  const {dx, dy, rot, walking, k, stepT, facing, headUp} = actionOffset(a, t, frames, fps);
+  const {fps, width, height} = useVideoConfig();
+  const {dx, dy, rot, walking, k, stepT, facing, headUp} = actionOffset(a, t, frames, fps, height > width);
   const pose: Pose = walking ? 'walk' : a.pose;
   const small = (look === 'kid' ? 0.78 : 1) * k * (a.far && far ? far.size : 1);
   const lift = a.far && far ? far.lift : 0;
