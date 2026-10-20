@@ -266,7 +266,13 @@ export const InkHairBack: React.FC<{d: Design}> = ({d}) => {
   const edge = {stroke: INK, strokeWidth: 4};
   switch (d.hair) {
     case 'long':
-      return <path d={`M ${-R + 2} -10 Q ${-R - 12} 70 -48 104 L 48 104 Q ${R + 12} 70 ${R - 2} -10 Z`} fill={c} {...edge} />;
+      // Two locks falling beside the face onto the shoulders, open under the chin: one solid shape there read as a beard.
+      return (
+        <g fill={c} {...edge}>
+          <path d={`M ${-R + 2} -10 Q ${-R - 14} 60 -60 108 L -30 108 Q -38 74 -38 30 Z`} />
+          <path d={`M ${R - 2} -10 Q ${R + 14} 60 60 108 L 30 108 Q 38 74 38 30 Z`} />
+        </g>
+      );
     case 'ponytail':
       return <path d={`M ${-R + 10} -40 Q ${-R - 40} -30 ${-R - 30} 40 Q ${-R - 14} 10 ${-R + 6} -14 Z`} fill={c} {...edge} />;
     case 'bun':

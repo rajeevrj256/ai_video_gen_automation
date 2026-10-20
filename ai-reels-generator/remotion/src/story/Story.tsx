@@ -80,7 +80,7 @@ const rig = (pose: Pose, t: number, SEAT: number): Rig => {
     case 'cry':
       return {...s, tilt: 12, lE: [-50, -300], lH: [-16, -366], rE: [50, -300], rH: [16, -366]};
     case 'wave':
-      return {...s, rE: [62, -330], rH: [92 + 18 * Math.sin(t * 14), -420]};
+      return {...s, rE: [62, -330], rH: [92 + 16 * Math.sin(t * 6), -420]}; // a calm wave, not a buzz
     case 'hold':
       return {...s, rE: [52, -262], rH: [70, -270], lE: [-26, -250], lH: [44, -262]};
     default:
@@ -135,8 +135,9 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   // A Short is already framed close: its close-up and punch-in are gentler.
   const zoomMax = vertical ? 1.22 : 1.5;
   if (shot.camera === 'close') scale = interpolate(frame, [0, 10], [1 + (zoomMax - 1) * 0.5, zoomMax], {...clamp, easing: Easing.out(Easing.cubic)});
-  if (shot.camera === 'punch') scale = 1 + (vertical ? 0.1 : 0.2) * spring({frame: frame - Math.round(shot.lead * fps), fps, config: {damping: 14}});
-  const shake = shot.camera === 'shake' && frame < 16 ? Math.sin(frame * 2.7) * (16 - frame) * 1.6 : 0;
+  // A 'shake' camera (older props) is a punch-in now: the user wants no vibration at all.
+  if (shot.camera === 'punch' || shot.camera === 'shake') scale = 1 + (vertical ? 0.1 : 0.2) * spring({frame: frame - Math.round(shot.lead * fps), fps, config: {damping: 14}});
+  const shake = 0;
   const fx = focus ? focus.x : W / 2;
   const fy = FLOOR - 300;
   const group = xsOnScreen.length ? (Math.max(...xsOnScreen) + Math.min(...xsOnScreen)) / 2 : W / 2;
@@ -202,9 +203,7 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
     case 'jump':
       dy = -Math.max(0, Math.sin(Math.min(1, t / 0.6) * Math.PI)) * 120;
       break;
-    case 'shake':
-      dx = t < 0.7 ? Math.sin(t * 60) * 10 : 0;
-      break;
+    // 'shake' (older props) no longer moves anyone: the user asked for no character vibration.
     case 'fall':
       rot = interpolate(t, [0.1, 0.5], [0, 82], {...clamp, easing: Easing.in(Easing.quad)});
       break;
@@ -229,13 +228,13 @@ const actionOffset = (a: ActorState, t: number, frames: number, fps: number) => 
 };
 
 // Small body movements that carry an emotion (pixels and degrees; lean is toward where they look).
-// No trembling or shaking: a figure that jitters for a whole line looked like a glitch. A shake is
-// only ever the line's own 'shake' action or the camera's.
+// Held poses only, never a repeating bounce, wobble or tremble: the user saw those as the characters
+// vibrating ("remove character vibration effect"). Shock gets one hop at the start, nothing else moves.
 const acting = (face: Face, talking: boolean, t: number) => {
   const none = {dx: 0, dy: 0, lean: 0, head: 0};
   switch (face) {
     case 'laugh':
-      return {...none, dy: -Math.abs(Math.sin(t * 13)) * 12, head: -8 + Math.sin(t * 13) * 3};
+      return {...none, head: -8, lean: -3};
     case 'cry':
     case 'sad':
       return {...none, head: 9, lean: talking ? 3 : 2};
@@ -245,9 +244,9 @@ const acting = (face: Face, talking: boolean, t: number) => {
       return {...none, lean: talking ? 7 : 3};
     case 'happy':
     case 'love':
-      return talking ? {...none, dy: -Math.abs(Math.sin(t * 8)) * 6, head: Math.sin(t * 4) * 3} : none;
+      return talking ? {...none, head: -4} : none;
     default:
-      return talking ? {...none, head: Math.sin(t * 3) * 2} : none;
+      return none;
   }
 };
 
@@ -297,7 +296,7 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
   const pose: Pose = walking ? 'walk' : a.pose;
   const small = look === 'kid' ? 0.78 : 1;
   const r = rig(pose, t, seat);
-  const breathe = pose === 'lie' || pose === 'sit' ? 0 : Math.sin(t * 2.4 + a.x) * 3; // seated figures stay on the seat
+  const breathe = 0; // no breathing bob: it read as the figures vibrating
   const speakingNow = talking.some((w) => t >= w.start && t <= w.end);
   const mouthOpen = speakingNow && frame % 6 < 3;
   const lying = pose === 'lie' || a.action === 'fall';

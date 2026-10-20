@@ -44,8 +44,8 @@ Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "spar
 Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
                   "exam-hall", "blank"]
-Camera = Literal["wide", "close", "punch", "shake"]
-Action = Literal["none", "jump", "shake", "fall", "spin", "walk-in-left", "walk-in-right", "walk-out-left",
+Camera = Literal["wide", "close", "punch"]  # no "shake": the user wants no vibration
+Action = Literal["none", "jump", "fall", "spin", "walk-in-left", "walk-in-right", "walk-out-left",
                  "walk-out-right"]
 # The sets' furniture and the spots, shared with the editor (remotion/src/story/sets.json): a new kind of
 # furniture goes there (and gets a drawing in furniture.tsx); the writer's schema and prompt follow it.
@@ -190,7 +190,7 @@ class SActor(BaseModel):
     prop: Prop = "none"
     prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
     prop_thing: str = Field(default="", description="With prop 'thing': what they hold, " + THING_HELP)
-    action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, shake, fall, spin.")
+    action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, fall, spin.")
 
 
 class SLine(BaseModel):
@@ -200,7 +200,7 @@ class SLine(BaseModel):
     emotion: Emotion = Field(default="neutral", description="How it's said (the voice changes pace, pitch and loudness); "
                              "match the speaker's face.")
     pause_before: float = Field(default=0.2, ge=0, le=1.5, description="Seconds of silence before it: 0.6-1.2 before a punchline or a reaction.")
-    camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a punchline, 'shake' on a shock.")
+    camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a punchline or a shock.")
     focus: str = Field(default="", description="Cast id the camera frames on 'close' (default: the speaker).")
     caption: str = Field(default="", description="A meme caption at the top ('POV: ...', 'Meanwhile...', '5 minutes later'), usually empty.")
     actors: list[SActor] = Field(description="Everyone on screen during this line, with their pose, face and position now.")
