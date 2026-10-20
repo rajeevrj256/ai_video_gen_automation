@@ -502,6 +502,9 @@ const ROOMS: Record<Setting, Room> = {
   shop: {wall: '#D2C29C', trim: '#9A8660', floor: '#9A8F7A', boards: '#7F7663', pal: {...BASE, wood: '#8C6C4C'}},
   blank: {wall: '#D8CDB4', trim: '#9A8E70', floor: '#A8987A', boards: '#8E7F64', pal: BASE},
   mine: {wall: '#E6DCC2', trim: '#8E7656', floor: '#B39470', boards: '#9A7E5C', pal: {...BASE, wood: '#7E5E3E'}},
+  garage: {wall: '#B9B5AA', trim: '#86827A', floor: '#9A968C', boards: '#86827A', pal: {...BASE, wood: '#8E7656'}},
+  warehouse: {wall: '#C4BDAE', trim: '#8E8676', floor: '#A39E92', boards: '#8E897D', pal: {...BASE, wood: '#9A7E5C'}},
+  tunnel: {wall: '#5E554A', trim: '#4A4238', floor: '#6E6456', boards: '#5A5146', pal: {...BASE, wood: '#7E5E3E', fabric: '#6E6F45', soft: '#C9B48E'}},
 };
 
 // Where a far-away figure stands (actor.far): its ground above the floor line and its scale. Only sets with a
@@ -714,6 +717,12 @@ export const InkSet: React.FC<{setting: Setting; sign?: string; floor: number; h
       );
     case 'mine':
       return <MineSet floor={floor} t={t} />;
+    case 'tunnel':
+      return <TunnelSet floor={floor} />;
+    case 'garage':
+      return <GarageSet floor={floor} sign={sign} hand={hand} />;
+    case 'warehouse':
+      return <WarehouseSet floor={floor} t={t} />;
     default:
       return (
         <g>
@@ -722,6 +731,114 @@ export const InkSet: React.FC<{setting: Setting; sign?: string; floor: number; h
         </g>
       );
   }
+};
+
+// Cardboard boxes in muted browns, stacked from the floor: `rows` of `n` from x, each box w x h.
+const Boxes: React.FC<{x: number; y: number; n: number; rows: number; w?: number; h?: number}> = ({x, y, n, rows, w = 70, h = 56}) => (
+  <g>
+    {Array.from({length: rows}, (_, r) => Array.from({length: n - (r % 2)}, (_, i) => {
+      const bx = x + i * w + (r % 2) * (w / 2);
+      const by = y - (r + 1) * h;
+      return (
+        <g key={`${r}-${i}`}>
+          <rect x={bx} y={by} width={w - 4} height={h - 2} fill={(r + i) % 3 ? '#B08A5E' : '#9C784E'} {...ink} strokeWidth={3} />
+          <line x1={bx + (w - 4) / 2} y1={by} x2={bx + (w - 4) / 2} y2={by + 14} stroke="#E6D8B6" strokeWidth={5} />
+        </g>
+      );
+    }))}
+  </g>
+);
+
+// A suburban garage where a business starts: a roll-up door, shelves of boxes, a workbench, a bare bulb.
+const GarageSet: React.FC<{floor: number; sign?: string; hand: string}> = ({floor, sign, hand}) => (
+  <g>
+    <rect x={-400} y={-400} width={W + 800} height={H + 800} fill="#B9B5AA" />
+    {Array.from({length: 11}, (_, i) => <line key={i} x1={-400} y1={40 + i * 80} x2={W + 400} y2={40 + i * 80} stroke="#A9A598" strokeWidth={3} />)}
+    <rect x={1240} y={170} width={560} height={floor - 170} fill="#C9C3B4" {...ink} />
+    {Array.from({length: 9}, (_, i) => <line key={i} x1={1240} y1={230 + i * 74} x2={1800} y2={230 + i * 74} stroke={INK} strokeWidth={3} />)}
+    <rect x={1260} y={170} width={520} height={60} fill="#8E8A80" {...ink} strokeWidth={3} />
+    <rect x={120} y={260} width={460} height={18} fill="#7E6448" {...ink} />
+    <rect x={120} y={480} width={460} height={18} fill="#7E6448" {...ink} />
+    <line x1={140} y1={260} x2={140} y2={floor} {...ink} />
+    <line x1={560} y1={260} x2={560} y2={floor} {...ink} />
+    <Boxes x={146} y={260} n={6} rows={2} />
+    <Boxes x={146} y={480} n={6} rows={2} />
+    <Boxes x={146} y={floor} n={6} rows={2} />
+    <line x1={900} y1={-40} x2={900} y2={140} {...ink} strokeWidth={3} />
+    <circle cx={900} cy={160} r={22} fill="#F2DDA0" {...ink} strokeWidth={3.5} />
+    <ellipse cx={900} cy={200} rx={260} ry={160} fill="#F2DDA0" opacity={0.12} />
+    {sign ? <text x={1510} y={212} fontSize={40} textAnchor="middle" fill="#F0E8D0" fontFamily={hand}>{sign.toUpperCase()}</text> : null}
+    <rect x={-400} y={floor} width={W + 800} height={H + 400 - floor} fill="#9A968C" />
+    <line x1={-400} y1={floor} x2={W + 400} y2={floor} {...ink} />
+    <path d={`M 300 ${floor + 60} q 120 20 260 -4`} stroke="#86827A" strokeWidth={4} fill="none" />
+  </g>
+);
+
+// A fulfilment warehouse at scale: tall racks of boxes into the distance, a moving conveyor, high windows.
+const WarehouseSet: React.FC<{floor: number; t: number}> = ({floor, t}) => {
+  const belt = floor - 120;
+  return (
+    <g>
+      <rect x={-400} y={-400} width={W + 800} height={H + 800} fill="#C4BDAE" />
+      {[-200, 300, 800, 1300, 1800].map((x) => <rect key={x} x={x} y={40} width={300} height={90} fill="#E2D8BE" {...ink} strokeWidth={3.5} />)}
+      {[-260, 260, 780, 1300, 1820].map((x) => (
+        <g key={x}>
+          {[260, 430, 600].map((y) => <rect key={y} x={x} y={y} width={420} height={14} fill="#5B6670" {...ink} strokeWidth={3} />)}
+          <line x1={x + 6} y1={200} x2={x + 6} y2={floor} stroke="#5B6670" strokeWidth={12} />
+          <line x1={x + 414} y1={200} x2={x + 414} y2={floor} stroke="#5B6670" strokeWidth={12} />
+          <Boxes x={x + 16} y={260} n={6} rows={1} w={66} h={52} />
+          <Boxes x={x + 16} y={430} n={6} rows={2} w={66} h={52} />
+          <Boxes x={x + 16} y={600} n={6} rows={2} w={66} h={52} />
+        </g>
+      ))}
+      <rect x={-400} y={floor} width={W + 800} height={H + 400 - floor} fill="#A39E92" />
+      <line x1={-400} y1={floor} x2={W + 400} y2={floor} {...ink} />
+      {/* the conveyor in front: rollers, a belt, boxes riding along slowly */}
+      <rect x={-400} y={belt} width={W + 800} height={34} fill="#3A3A3D" {...ink} />
+      {Array.from({length: 30}, (_, i) => <line key={i} x1={-300 + i * 90} y1={belt + 34} x2={-300 + i * 90} y2={floor} stroke="#5B6670" strokeWidth={8} />)}
+      {Array.from({length: 7}, (_, i) => {
+        const x = ((t * 140 + i * 360) % 2600) - 300;
+        return <rect key={i} x={x} y={belt - 60} width={86} height={60} fill={i % 2 ? '#B08A5E' : '#9C784E'} {...ink} strokeWidth={3.5} />;
+      })}
+    </g>
+  );
+};
+
+// Underground: a mine tunnel or shelter, rough rock, timber supports, rails and warm hanging lamps.
+const TunnelSet: React.FC<{floor: number}> = ({floor}) => {
+  const rocks = Array.from({length: 26}, (_, i) => {
+    const x = ((i * 397) % 2400) - 240;
+    const y = 60 + ((i * 251) % (floor - 160));
+    const r = 40 + ((i * 53) % 70);
+    return <path key={i} d={`M ${x - r} ${y} L ${x - r * 0.3} ${y - r * 0.6} L ${x + r * 0.6} ${y - r * 0.4} L ${x + r} ${y + r * 0.2} L ${x + r * 0.2} ${y + r * 0.6} Z`}
+      fill={i % 3 ? '#665C50' : '#564D43'} {...ink} strokeWidth={3} />;
+  });
+  return (
+    <g>
+      <rect x={-400} y={-400} width={W + 800} height={H + 800} fill="#5E554A" />
+      {rocks}
+      {[-120, 520, 1160, 1800].map((x) => (
+        <g key={x}>
+          <rect x={x - 22} y={40} width={44} height={floor - 40} fill="#7E5E3E" {...ink} />
+          <rect x={x + 380} y={40} width={44} height={floor - 40} fill="#7E5E3E" {...ink} />
+          <rect x={x - 40} y={20} width={484} height={40} fill="#6E5236" {...ink} />
+          <path d={`M ${x + 22} ${floor - 60} L ${x + 120} ${floor - 240}`} stroke={INK} strokeWidth={14} />
+          <path d={`M ${x + 22} ${floor - 60} L ${x + 120} ${floor - 240}`} stroke="#7E5E3E" strokeWidth={8} />
+        </g>
+      ))}
+      {[300, 1340].map((x) => (
+        <g key={x}>
+          <ellipse cx={x} cy={250} rx={170} ry={140} fill="#E8C98A" opacity={0.16} />
+          <line x1={x} y1={60} x2={x} y2={200} {...ink} strokeWidth={3} />
+          <path d={`M ${x - 22} 200 h 44 l -8 42 h -28 Z`} fill="#F2DDA0" {...ink} strokeWidth={3.5} />
+        </g>
+      ))}
+      <rect x={-400} y={floor} width={W + 800} height={H + 400 - floor} fill="#6E6456" />
+      <line x1={-400} y1={floor} x2={W + 400} y2={floor} {...ink} />
+      {[floor + 60, floor + 130].map((y) => <line key={y} x1={-400} y1={y} x2={W + 400} y2={y} stroke="#3E3830" strokeWidth={8} />)}
+      {Array.from({length: 16}, (_, i) => <rect key={i} x={-300 + i * 160} y={floor + 48} width={28} height={96} fill="#5A4632" opacity={0.8} />)}
+    </g>
+  );
 };
 
 // A barren desert mountainside at first light: a far ridge, tan slopes, a terrace with a timbered mine entrance
@@ -1005,6 +1122,17 @@ export const Weather: React.FC<{kind: 'rain' | 'snow' | 'dust' | 'smoke'; t: num
 
 // The time of day as a colour wash multiplied over the scene (dawn warm and pale, dusk amber, night blue and dark).
 export const Light: React.FC<{kind: 'dawn' | 'dusk' | 'night'}> = ({kind}) => {
-  const wash = {dawn: ['#F2D9B6', 0.45], dusk: ['#C98A5C', 0.5], night: ['#36425E', 0.72]}[kind] as [string, number];
+  const wash = {dawn: ['#F2D9B6', 0.45], dusk: ['#C98A5C', 0.5], night: ['#46526E', 0.55]}[kind] as [string, number];
   return <div style={{position: 'absolute', inset: 0, background: wash[0], opacity: wash[1], mixBlendMode: 'multiply', pointerEvents: 'none'}} />;
 };
+
+// A place no built-in setting shows, drawn by Claude at runtime (stickstory DRAWINGS; cleaned by toon.clean_svg):
+// its 1920x900 drawing above the floor line, a plain floor under the people, the same ink finish as every set.
+export const CustomSet: React.FC<{svg: string; floor: number}> = ({svg, floor}) => (
+  <g>
+    <rect x={-400} y={-400} width={W + 800} height={H + 800} fill="#D8CDB4" />
+    <g transform={`translate(0 ${floor - 900})`} dangerouslySetInnerHTML={{__html: svg}} />
+    <rect x={-400} y={floor} width={W + 800} height={H + 400 - floor} fill="#A8987A" />
+    <line x1={-400} y1={floor} x2={W + 400} y2={floor} {...ink} />
+  </g>
+);

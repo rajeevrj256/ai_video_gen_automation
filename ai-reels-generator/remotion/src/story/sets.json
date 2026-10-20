@@ -30,6 +30,9 @@
     "shop": [{"kind": "shop-counter", "spot": "center", "seats": 2}],
     "street": [],
     "blank": [],
-    "mine": []
+    "mine": [],
+    "tunnel": [],
+    "garage": [{"kind": "table", "spot": "center", "seats": 1}],
+    "warehouse": []
   }
 }

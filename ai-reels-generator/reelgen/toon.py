@@ -755,14 +755,14 @@ SVG_ATTRS = {"d", "cx", "cy", "r", "rx", "ry", "x", "y", "width", "height", "x1"
 _SAFE_VALUE = re.compile(r"^[#\w\s.,()%:+-]*$")
 
 
-def clean_svg(fragment: str, uid: str) -> str:
+def clean_svg(fragment: str, uid: str, limit: int = 6000, shapes: int = 160) -> str:
     """A drawing Claude wrote, reduced to plain vector shapes: only whitelisted elements and attributes,
     no scripts, links, images, events or styles; ids made unique per drawing; empty if it isn't valid."""
     import xml.etree.ElementTree as ET
 
     text = re.sub(r"</?svg[^>]*>", "", (fragment or "").strip(), flags=re.I)
     text = re.sub(r"\sxmlns(:\w+)?=\"[^\"]*\"", "", text)
-    if not text or len(text) > 6000:
+    if not text or len(text) > limit:
         return ""
     try:
         root = ET.fromstring(f"<g>{text}</g>")
@@ -774,7 +774,7 @@ def clean_svg(fragment: str, uid: str) -> str:
         nonlocal count
         count += 1
         tag = el.tag.split("}")[-1]
-        if tag not in SVG_TAGS or count > 160:
+        if tag not in SVG_TAGS or count > shapes:
             return False
         for k in list(el.attrib):
             v = el.attrib[k]
@@ -795,7 +795,7 @@ def clean_svg(fragment: str, uid: str) -> str:
     if count < 2 or not len(root):
         return ""
     out = "".join(ET.tostring(child, encoding="unicode") for child in root)
-    return re.sub(r"\sxmlns(:\w+)?=\"[^\"]*\"", "", out)[:8000]
+    return re.sub(r"\sxmlns(:\w+)?=\"[^\"]*\"", "", out)[:limit + 2000]
 
 
 # ---------- the run ----------

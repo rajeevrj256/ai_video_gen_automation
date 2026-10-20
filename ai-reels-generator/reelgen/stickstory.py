@@ -44,7 +44,7 @@ Face = Literal["neutral", "happy", "laugh", "shock", "angry", "sad", "smirk", "c
 Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "sparkle", "lines"]
 Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
-                  "exam-hall", "blank", "mine"]
+                  "exam-hall", "blank", "mine", "tunnel", "garage", "warehouse"]
 Camera = Literal["wide", "close", "punch", "push"]  # no "shake": the user wants no vibration; push = a very slow push-in
 Action = Literal["none", "jump", "fall", "spin", "step", "walk-across", "turn", "look-up", "walk-in-left", "walk-in-right", "walk-out-left",
                  "walk-out-right"]
@@ -75,6 +75,7 @@ class SThing(BaseModel):
     on_table: bool = Field(default=True, description="On a small table (true) or on the floor (false).")
     big: bool = False
     effect: Effect = Field(default="none", description="What it does during this line: erupt (a volcano's lava), smoke, fire, sparkle, shake.")
+    svg: str = Field(default="", description="Only when nothing built in shows it: your own drawing of it (see Drawings).")
 
 class SPiece(BaseModel):
     kind: FurnitureKind
@@ -123,6 +124,7 @@ TRUE_STYLES = ("facts", "documentary")
 # The documentary type follows the user's "Stickman Explainer Engine" prompt: a narration beat of about 9-10 words
 # for every ~4-second shot, so the number of shots follows the length (15 s = 4, 30 s = 8, 60 s = 15).
 BEAT_SECONDS = 4
+DOC_LEAD, DOC_TAIL = 0.15, 0.2  # a documentary beat's pause before and after its line (seconds)
 
 
 def beats_for(seconds: float) -> int:
@@ -137,6 +139,20 @@ VISUAL_SAFETY = ("What is drawn (signs, captions, objects, props) never names a 
                  "show the moment before, the aftermath far away, or an object standing in for it (an empty chair, a "
                  "closed door, a stopped clock, smoke on the horizon). Disaster only as a distant silhouette or "
                  "aftermath. Keep it restrained: understatement carries more weight than spectacle.")
+
+# Places and objects the app has no drawing for are drawn by Claude at runtime (like Toon's custom drawings), as SVG
+# that toon.clean_svg reduces to plain shapes before it reaches the editor.
+DRAWINGS = ("Drawings: the settings, furniture and drawn objects above are the app's own and look best; use them "
+            "whenever they fit. When the story needs a place none of them shows (a courtroom, a ship's deck, a rocket "
+            "factory, a 1990s office, a castle hall), set the scene's setting to 'blank' and draw its background in "
+            "'backdrop_svg': an SVG fragment (no <svg> wrapper) for a 1920x900 box whose floor line is y=900, people "
+            "stand in front of it, so keep the lower 300 px plain (wall or ground) and put the detail higher up. For an "
+            "object nothing shows, draw it in the thing's 'svg': a 200x200 box, standing on its bottom edge. Style: "
+            "hand-inked and flat, thick dark outlines (stroke #1E1B18, width 4-6), solid fills in muted earthy colours "
+            "(tan #C8B893, sage #A9AE8A, dusty grey #B9B5AA, cream #E6DCC2, brick #9C4A3C, navy #34435E, olive "
+            "#6E6F45, brown #7E5E3E), simple geometric shapes, sparse detail; only path, circle, ellipse, rect, "
+            "polygon, polyline, line and g; no text, logos, images or gradients; a background under 5000 characters, "
+            "an object under 1500. Never draw a real person, brand or logo.")
 
 DOC_SHOTS = ("Every beat is one shot with ONE clear, plain action, never several: a character's step forward ('step'), "
              "walking across the frame ('walk-across'), a head turn ('turn'), looking up ('look-up'), sitting down, "
@@ -256,6 +272,8 @@ class SScene(BaseModel):
                           "dishes at the sink (draws running water and soap foam in front of them). Otherwise false.")
     intensity: float = Field(default=0.5, ge=0, le=1, description="How full the music is in this scene: 0.2 quiet, "
                              "0.5 normal, 0.9 chaos or the climax.")
+    backdrop_svg: str = Field(default="", description="Only when no setting shows the place: setting 'blank' and your own "
+                              "drawing of its background (see Drawings).")
     weather: Literal["none", "rain", "snow", "dust", "smoke"] = Field(default="none", description="What drifts through "
                                                                        "the scene (outdoors, or smoke anywhere).")
     light: Literal["day", "dawn", "dusk", "night"] = "day"
@@ -366,10 +384,12 @@ No politics, religion, rumours or insults. Real people can be named in the narra
 drawings stay generic. {VISUAL_SAFETY} Never use these phrases: {", ".join(AI_CLICHES)}.
 
 Pick the setting each shot needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
-bathroom, kitchen, or 'mine': a desert mountainside with a mine entrance) and its furniture. {_furniture_help()} \
+bathroom, kitchen, 'mine': a desert mountainside with a mine entrance, 'tunnel': underground, a mine tunnel or shelter with timber supports and lamps, 'garage': a suburban garage with shelves of boxes (where a business starts), 'warehouse': tall racks of boxes and a moving conveyor (a business at scale); 'blank' only when no place fits) and its furniture. {_furniture_help()} \
 Keep spots steady within a scene; use walk-in/walk-out for entrances and exits and change the setting for a new \
 place. Show the real object, never a paper with its name; things stand on a table or the floor, held ones as prop \
-'thing' with prop_thing. {DESIGN_RULES}"""
+'thing' with prop_thing. {DESIGN_RULES}
+
+{DRAWINGS}"""
     return f"""{brief}
 
 The dialogue is in {lang}. The cast talks fast (about 1.5x normal speed), so write snappy lines; let silence and reactions do work (silent beats with \
@@ -394,7 +414,9 @@ until they stand up, on a spot covered by a seat (or a stool is drawn under them
 Show the real object, never a paper with its name: a science project is a 'volcano' thing (effect 'erupt' when it \
 goes off), a birthday has a cake, a prize a trophy. Use things for objects in the scene and prop 'thing' with \
 prop_thing for something held. Paper is only for a test, a note or a report card. {DESIGN_RULES} Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
-setting for a new scene."""
+setting for a new scene.
+
+{DRAWINGS}"""
 
 
 def _furniture_help() -> str:
@@ -748,16 +770,31 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     voice_of["narrator"] = next((v for v in NARRATORS.get(req.language, NARRATORS["english"]) if v not in voice_of.values()),
                                 NARRATORS.get(req.language, NARRATORS["english"])[0])
     speakers = set(looks) | {"narrator"}
-    # One take per character and emotion, cut per line: a character keeps one voice, and an angry line
-    # is louder and lower while a sad one is slower and quieter.
-    for cid, emo in sorted({(ln.speaker, ln.emotion) for _, _, ln in lines if ln.speaker in speakers and ln.line.strip()}):
-        mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.emotion == emo and ln.line.strip()]
-        pace, pitch, loud = EMOTIONS.get(emo, (0, 0, 0))
-        takes = synthesize_scenes([ln.line for _, _, ln in mine], voice_of.get(cid, voices["man"]),
-                                  work / "audio" / cid / emo, cfg.tts_engine, cfg.kokoro_voice,
-                                  _rate(req.speed, pace), f"{pitch:+d}Hz", f"{loud:+d}%")
-        for (si, li, _), sa in zip(mine, takes):
-            audio[(si, li)] = sa
+    doc = req.style == "documentary"
+
+    def record(speed: float, folder: str) -> None:
+        # One take per character and emotion, cut per line: a character keeps one voice, and an angry line
+        # is louder and lower while a sad one is slower and quieter.
+        for cid, emo in sorted({(ln.speaker, ln.emotion) for _, _, ln in lines if ln.speaker in speakers and ln.line.strip()}):
+            mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.emotion == emo and ln.line.strip()]
+            pace, pitch, loud = EMOTIONS.get(emo, (0, 0, 0))
+            takes = synthesize_scenes([ln.line for _, _, ln in mine], voice_of.get(cid, voices["man"]),
+                                      work / folder / cid / emo, cfg.tts_engine, cfg.kokoro_voice,
+                                      _rate(speed, pace), f"{pitch:+d}Hz", f"{loud:+d}%")
+            for (si, li, _), sa in zip(mine, takes):
+                audio[(si, li)] = sa
+
+    record(req.speed, "audio")
+    # A documentary Short keeps to its length (the engine's 4-second beats): narration that runs over by more than
+    # 8% is recorded once more, faster by the overshoot (at most 1.3x), with the shots' pauses trimmed below.
+    if doc and short:
+        target = req.seconds or 45
+        spoken_s = sum(min(ln.pause_before, DOC_LEAD) + media_seconds(audio[(si, li)].path) + DOC_TAIL
+                       for si, li, ln in lines if (si, li) in audio)
+        if spoken_s > target * 1.08:
+            faster = min(req.speed * 1.3, req.speed * spoken_s / target)
+            progress(f"The narration ran {spoken_s:.0f} s for a {target} s Short: recording it again at {faster:.2f}x")
+            record(faster, "audio-fit")
 
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))
@@ -768,17 +805,25 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     spacing = SHORT_GAP if short else SETS["spacing"]
     furniture = [[{"kind": p.kind, "x": round(place[si][p.spot]), "width": _piece_width(p.kind, p.seats, spacing)}
                   for p in (sc.furniture or _default_pieces(sc.setting))] for si, sc in enumerate(ep.scenes)]
+    # Claude's own drawings, reduced to plain shapes (no scripts, links, images, styles or text).
+    from .toon import clean_svg
+
+    def art(svg: str, uid: str, limit: int, shapes: int) -> str | None:
+        return clean_svg(svg, uid, limit, shapes) or None if (svg or "").strip() else None
+
+    backdrops = [art(sc.backdrop_svg, f"b{si}", 6000, 260) for si, sc in enumerate(ep.scenes)]
     t = 0.0
     for si, li, ln in lines:
         scene = ep.scenes[si]
         sa = audio.get((si, li))
-        lead = round(ln.pause_before, 2)
+        lead = round(min(ln.pause_before, DOC_LEAD) if doc else ln.pause_before, 2)
         talk = media_seconds(sa.path) if sa else 0.0
-        duration = round(lead + (talk + 0.3 if sa else max(1.1, 0.9)), 3)
+        duration = round(lead + (talk + (DOC_TAIL if doc else 0.3) if sa else max(1.1, 0.9)), 3)
         words = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in (sa.words if sa else [])]
         xs = place[si]
         things = [{"name": th.name.strip().lower()[:40] or "box", "x": round(xs[th.spot]), "table": th.on_table,
-                   "big": th.big, "effect": th.effect} for th in ln.things]
+                   "big": th.big, "effect": th.effect, "svg": art(th.svg, f"t{si}-{k}", 1500, 80)}
+                  for k, th in enumerate(ln.things)]
         actors = [{"id": a.id, "x": round(xs[a.spot]), "pose": a.pose, "face": a.face,
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
                    "propText": a.prop_text[:6],
@@ -788,6 +833,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
                       "sign": scene.sign or None,
                       "washing": scene.setting == "kitchen" and scene.washing, "furniture": furniture[si], "things": things, "caption": ln.caption or None, "camera": ln.camera,
                       "focus": ln.focus or None, "actors": actors, "weather": scene.weather, "light": scene.light,
+                      "backdropSvg": backdrops[si],
                       "speaker": ln.speaker if sa else None, "emotion": ln.emotion, "text": ln.line if sa else None, "words": words,
                       "audio": rel(sa.path) if sa else None, "lead": lead})
         if sa:

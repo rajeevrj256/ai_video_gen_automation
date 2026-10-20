@@ -7,7 +7,7 @@ import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
 import {iconFor} from '../long/icon';
 import {PieceView, STOOL_SEAT, Stool, TABLE_TOP, TableUnder, defaultFurniture, seatAt, surfaceAt} from './furniture';
-import {HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHairBackView, InkHeadwear, InkSet, InkThing, Light, VEHICLES, Weather, defaultDesign, drawnKind, farOf, inkPalette, type SetPal, GREY_PAL} from './ink';
+import {CustomSet, HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHairBackView, InkHeadwear, InkSet, InkThing, Light, VEHICLES, Weather, defaultDesign, drawnKind, farOf, inkPalette, type SetPal, GREY_PAL} from './ink';
 import type {ActorState, CastMember, Design, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
 
 // A stick-figure comedy episode in the channel's style: light grey sets drawn in grey tones with
@@ -174,7 +174,7 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
         {ink ? <InkDefs /> : null}
         <g transform={`translate(${OW / 2 + shake} ${OH / 2}) scale(${total}) translate(${-cx} ${-cy})`}>
           <g filter={ink ? 'url(#inkRough)' : undefined}>
-          {ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} t={t} /> : <SetView setting={shot.setting} sign={shot.sign} />}
+          {shot.backdropSvg ? <CustomSet svg={shot.backdropSvg} floor={FLOOR} /> : ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} t={t} /> : <SetView setting={shot.setting} sign={shot.sign} />}
           {furniture.map((p, i) => <PieceView key={`f${i}`} p={p} floor={FLOOR} pal={pal} />)}
           {shot.actors.filter((a) => a.pose === 'sit' && !a.action.startsWith('walk') && seatAt(furniture, a.x) === null).map((a) => (
             <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} pal={pal} />
@@ -646,8 +646,10 @@ const Puffs: React.FC<{y: number; t: number}> = ({y, t}) => (
   </g>
 );
 
-const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect}> = ({name, size, t, effect}) => {
+const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect; svg?: string | null}> = ({name, size, t, effect, svg}) => {
   const wiggle = effect === 'shake' ? Math.sin(t * 40) * 5 : 0;
+  // Claude's own drawing of something nothing built in shows (200x200, standing on its bottom edge).
+  if (svg) return <g transform={`rotate(${wiggle}) translate(${-size / 2} ${-size}) scale(${size / 200})`} dangerouslySetInnerHTML={{__html: svg}} />;
   if (/volcano|lava/.test(name)) {
     return <g transform={`rotate(${wiggle})`}><Volcano size={size * 1.5} t={t} erupt={effect === 'erupt'} /></g>;
   }
@@ -697,7 +699,7 @@ const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: numb
   return (
     <g>
       {onTable && desk === null ? <TableUnder x={th.x} floor={FLOOR} pal={pal} /> : null}
-      <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} /></g>
+      <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} svg={th.svg} /></g>
     </g>
   );
 };

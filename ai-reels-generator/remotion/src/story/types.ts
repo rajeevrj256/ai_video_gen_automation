@@ -15,10 +15,10 @@ export type Emote = 'none' | '!' | '?' | '!?' | 'sweat' | 'anger' | 'hearts' | '
 export type Prop = 'none' | 'phone' | 'book' | 'paper' | 'cup' | 'bag' | 'laptop' | 'ball' | 'plate' | 'remote' | 'thing';
 export type Effect = 'none' | 'erupt' | 'smoke' | 'fire' | 'sparkle' | 'shake';
 // An object in the scene: 'volcano' (drawn by hand) or a lucide icon name; on a small table or the floor.
-export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect};
+export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect; svg?: string | null}; // svg: Claude's own drawing (200x200)
 export type Setting =
   | 'living-room' | 'classroom' | 'kitchen' | 'bedroom' | 'street' | 'office' | 'bathroom'
-  | 'park' | 'shop' | 'exam-hall' | 'blank' | 'mine';
+  | 'park' | 'shop' | 'exam-hall' | 'blank' | 'mine' | 'tunnel' | 'garage' | 'warehouse';
 export type Camera = 'wide' | 'close' | 'punch' | 'shake' | 'push';
 export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right' | 'step' | 'walk-across' | 'turn' | 'look-up';
 
@@ -82,6 +82,7 @@ export type Shot = {
   lead: number; // seconds of silence before the line starts (comic timing)
   weather?: 'none' | 'rain' | 'snow' | 'dust' | 'smoke'; // what drifts through the scene
   light?: 'day' | 'dawn' | 'dusk' | 'night';
+  backdropSvg?: string | null; // Claude's own drawing of a place no setting shows (1920x900, floor at y=900)
 };
 
 
