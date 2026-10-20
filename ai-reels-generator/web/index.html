@@ -1533,7 +1533,7 @@ function wireShort(id, v) {
     if (first < 0) { $("#csSel").textContent = "Tap the part's first line, then its last."; $("#csGo").disabled = true; return; }
     const to = last >= 0 ? last : first;
     const secs = data.lines.slice(first, to + 1).reduce((a, l) => a + l.seconds, 0);
-    const est = exact ? secs + ($("#csHook").checked ? 3 : 0) + 4 : +$("#csLen").value;
+    const est = exact ? secs + ($("#csHook").checked ? 14 : 0) + 4 : +$("#csLen").value;
     $("#csSel").textContent = `Lines ${first + 1}–${to + 1} (${Math.round(secs)} s in the video). The Short: about ${Math.round(est)} s`
       + (est > 175 ? " — too long for a Short, pick fewer lines" : exact && est > 62 ? " (over a minute)" : "") + ".";
     $("#csGo").disabled = est > 175 && exact;
@@ -1547,7 +1547,7 @@ function wireShort(id, v) {
       ch = l.chapter;
       return `${head}<div class="cs-line" data-n="${l.n}"><span class="t" data-at="${l.start}">${clock(l.start)}</span><span>${esc(l.text)}</span></div>`;
     }).join("");
-    $("#csHook").checked = data.source !== "script";  // a Script Video's words are yours: no added hook unless asked
+    $("#csHook").checked = true;
     box.querySelectorAll(".cs-line").forEach((el) => el.onclick = (e) => {
       if (e.target.dataset.at) { const p = $("#video"); p.currentTime = +e.target.dataset.at; p.play().catch(() => {}); return; }
       const n = +el.dataset.n;
@@ -1679,15 +1679,15 @@ async function openVideo(id) {
     ${v.format === "long" && !["shoot", "stick", "anim", "toon", "storyshorts", "clip"].includes(v.source) ? `<div id="csBox">
       <h4 class="section">✂️ Short from this video</h4>
       <div class="cs-body">
-      <p class="hint">Pick a part of the script: tap its first line, then its last (tap a time to watch it). The Short explains that part on its own and ends by sending viewers to this video. It's made as a <b>new Short</b> in your library; this video stays as it is.</p>
+      <p class="hint">Pick a part of the script: tap its first line, then its last (tap a time to watch it). Claude writes a new script for the Short: a hook, that part explained in new words, and an ending that sends viewers to this video. It's made as a <b>new Short</b> in your library; this video stays as it is.</p>
       <div id="csLines" class="cs-lines"></div>
       <p class="hint" id="csSel"></p>
       <label for="csMode">How it's told</label>
-      <select id="csMode"><option value="explain">Explain this part for a Short (Claude retells it, only facts these lines state)</option>
-        <option value="exact">Use these lines as they are</option></select>
+      <select id="csMode"><option value="new">A new script: a 10–18 s hook, the part explained in new words, then the link (only facts these lines state)</option>
+        <option value="exact">Use these lines as they are (with a hook before them)</option></select>
       <label for="csLen" id="csLenRow">Length</label>
-      <select id="csLen"><option value="30">About 30 s</option><option value="45" selected>About 45 s</option><option value="60">About 60 s</option><option value="90">About 90 s</option></select>
-      <label id="csHookRow" style="display:none;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="csHook" checked style="width:auto"> Start with a hook line Claude writes from these lines</label>
+      <select id="csLen"><option value="45">About 45 s</option><option value="60" selected>About 60 s</option><option value="90">About 90 s</option></select>
+      <label id="csHookRow" style="display:none;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="csHook" checked style="width:auto"> Start with a 10–18 s hook Claude writes from these lines</label>
       <label for="csLink">Link to this video on YouTube (optional: it goes in the Short's description)</label>
       <input id="csLink" placeholder="https://youtu.be/...">
       <button id="csGo" style="width:100%;margin-top:8px" disabled>✂️ Make the Short (about 3–6 min)</button>

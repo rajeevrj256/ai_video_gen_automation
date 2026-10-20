@@ -5,14 +5,18 @@ can upload on youtube and at end of short tell to know more visit this video", t
 on shorts and linking with main video by the end".
 
 On the video page (`✂️ Short from this video`) the user picks a run of the script's lines (`lines`) and how it is told:
-- `explain` (default): Claude retells that part as a Short that stands on its own (`write_plan`: one call, no web,
-  only the facts, numbers and names those lines state, `_new_numbers` checks it in code), each new line showing one of
-  the chosen lines' own visuals (`visual_from`), so the Short looks like the video it points to;
-- `exact`: the chosen lines word for word with their visuals (a Script Video's words stay the user's), with a hook
-  line before them unless it's turned off.
-Both start on a hook line over a keyword slide and end on an outro line ("the full story is in the video linked
-below") over an end card (`endCard`: the long video's thumbnail with a play button, its title and length, an arrow
-down to YouTube's related-video link; remotion/src/long/EndCard.tsx).
+- `new` (default): Claude writes a NEW script for the Short from those lines (`write_plan`: one call, no web): a hook of
+  10-18 s in 2-4 sentences (a provocative claim the part supports, the everyday picture that makes it real, an open
+  loop: the user's example "Looking rich could actually be keeping you poor. Designer clothes, expensive cars, and the
+  latest iPhone can fool everyone, even you. But there's one number that reveals your real financial position."), a
+  middle that explains the part in new words, and an outro to the full video. The user's first Short read the chosen
+  lines out ("they not retell just read script of choose"), so `_copied` flags any run of `COPY_RUN` words taken from
+  them and `_new_numbers` any number they don't say: one retry with the reasons. Each sentence shows one of the chosen
+  lines' own visuals (`visual_from`) or its keyword huge, so the Short looks like the video it points to;
+- `exact`: the chosen lines word for word with their visuals (a Script Video's words stay the user's), the hook before
+  them unless it's turned off.
+The outro is spoken over an end card (`endCard`: the long video's thumbnail with a play button, its title and length,
+an arrow down to YouTube's related-video link; remotion/src/long/EndCard.tsx).
 
 It is edited like a re-make (`build_long(remake=True)`): the same voice and pace, the video's own look, background
 photo, footage, memes and AI music copied in under the Short's numbering (`_copy_files`), nothing drawn, searched or
@@ -41,7 +45,7 @@ log = logging.getLogger(__name__)
 Progress = Callable[[str], None]
 
 NOT_FOR = ("shoot", "stick", "anim", "toon", "storyshorts", "clip")  # not long-pipeline videos (a Shoot is your voice)
-LENGTHS = (30, 45, 60, 90)  # seconds the user can ask an explained Short to run
+LENGTHS = (45, 60, 90)  # seconds a new-script Short runs (its hook alone is 10-18 s)
 MAX_SECONDS = 180  # YouTube's longest Short
 TAIL = 0.6  # seconds the end card stays after the outro's last word
 
@@ -88,18 +92,18 @@ def lines(folder: Path) -> dict:
 
 
 class ClipLine(BaseModel):
-    text: str = Field(description="One line the narrator says, 8-24 words.")
-    visual_from: int = Field(description="The number of the chosen line whose visual this line shows: the one that "
-                                         "pictures it best. Use each at most twice.")
+    text: str = Field(description="One sentence the narrator says, 6-22 words, in your own words.")
+    visual_from: int = Field(description="The number of the chosen line whose visual this sentence shows (the one that "
+                                         "pictures it best), or -1 for its keyword shown huge on screen.")
+    keyword: str = Field(default="", description="1-3 words of this sentence shown huge when visual_from is -1.")
 
 
 class ClipPlan(BaseModel):
-    hook: str = Field(description="The Short's first line, at most 12 words: the most surprising concrete thing in this "
-                                  "part. Never a greeting, 'Did you know', 'In this video', 'Imagine' or a setup.")
-    hook_keyword: str = Field(description="1-3 words of the hook, shown huge while it's said.")
-    lines: list[ClipLine] = Field(default_factory=list, description="The Short's body (explain mode only; empty otherwise).")
-    outro: str = Field(description="The last line, at most 16 words: leaves the bigger question open and says the full "
-                                   "story is in the video linked below.")
+    hook: list[ClipLine] = Field(description="The hook: 2-4 sentences, the first works in the first second.")
+    lines: list[ClipLine] = Field(default_factory=list, description="The middle: the part explained in new words "
+                                                                    "(empty when the lines are kept as they are).")
+    outro: str = Field(description="The last sentence, at most 16 words: leaves the bigger question open and says the "
+                                   "full story is in the video linked below.")
     youtube_title: str = Field(description="The Short's YouTube title, at most 70 characters, the subject's search "
                                            "words first, no clickbait the Short doesn't deliver.")
     description: str = Field(description="1-2 sentences for the Short's description (no links: they are added).")
@@ -107,53 +111,98 @@ class ClipPlan(BaseModel):
 
 
 _NUM = re.compile(r"\d+(?:[.,]\d+)*")
+COPY_RUN = 6  # this many words in a row taken from the script = read out, not retold
 
 
 def _numbers(text: str) -> set[str]:
     return {n.replace(",", "") for n in _NUM.findall(text)}
 
 
+def _said(plan: ClipPlan) -> list[str]:
+    return [x.text for x in plan.hook] + [x.keyword for x in plan.hook] + [x.text for x in plan.lines] + [plan.outro]
+
+
 def _new_numbers(plan: ClipPlan, source: str) -> list[str]:
     """Numbers the Short says that the chosen lines don't: none is allowed (never a figure of our own)."""
-    said = " ".join([plan.hook, plan.hook_keyword, plan.outro] + [x.text for x in plan.lines])
-    return sorted(_numbers(said) - _numbers(source))
+    return sorted(_numbers(" ".join(_said(plan))) - _numbers(source))
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[\w']+", text.lower())
+
+
+def _copied(plan: ClipPlan, source: str) -> list[str]:
+    """Runs of COPY_RUN or more words the new script takes from the chosen lines word for word (the user: "they not
+    retell just read script of choose")."""
+    src = _words(source)
+    runs = {" ".join(src[i:i + COPY_RUN]) for i in range(len(src) - COPY_RUN + 1)}
+    out = []
+    for line in [x.text for x in plan.hook] + [x.text for x in plan.lines]:
+        w = _words(line)
+        hit = next((" ".join(w[i:i + COPY_RUN]) for i in range(len(w) - COPY_RUN + 1)
+                    if " ".join(w[i:i + COPY_RUN]) in runs), "")
+        if hit:
+            out.append(hit)
+    return out
+
+
+HOOK_SECONDS = (10, 18)  # the hook's length (the user: "hooks 15-20 sec", "10-15 sec hook")
 
 
 def write_plan(cfg: Config, script, chosen: list, mode: str, seconds: int, wps: float, title: str,
                progress: Progress = log.info) -> ClipPlan:
-    """Claude's hook, outro, title and (explain) the retold lines, from the chosen lines only."""
+    """Claude's new script for the Short (hook, middle, outro) from the chosen lines only; with `mode` exact only the
+    hook and outro, the lines kept as they are."""
     from .llm import ask
 
     numbered = "\n".join(f"{k} {b.narration}" for k, (_, _, b) in enumerate(chosen))
     source = " ".join(b.narration for _, _, b in chosen)
-    budget = max(25, int(seconds * wps))
-    if mode == "explain":
-        body = (f"Retell the chosen lines below as a Short that a viewer who never saw the video understands on its "
-                f"own: about {budget} words in all, hook and outro included ({seconds} seconds at this narrator's "
-                f"pace). Explain, don't summarise: one idea per line, linked by 'but', 'so', 'that's why', a concrete "
-                f"example where the lines give one. Use only the facts, numbers and names the chosen lines state; the "
-                f"rest of the script is context for what a word means, never a source of new figures. Give every line "
-                f"the chosen line whose visual fits it (visual_from).")
+    lo, hi = (int(t * wps) for t in HOOK_SECONDS)
+    budget = max(lo + 30, int(seconds * wps))
+    hook = f"""THE HOOK ({HOOK_SECONDS[0]}-{HOOK_SECONDS[1]} seconds: {lo}-{hi} words in 2-4 sentences). It stops the \
+scroll: the first sentence is the most surprising, slightly provocative claim this part supports, said to the viewer \
+("Looking rich could actually be keeping you poor."); then the concrete, everyday picture that makes it real (things \
+the viewer sees or owns: "Designer clothes, expensive cars and the latest phone can fool everyone, even you."); the \
+last hook sentence opens the loop the rest answers ("But there's one number that shows where you really stand."). \
+Never a greeting, 'Did you know', 'In this video', 'Imagine', a question about what they know, or the answer itself."""
+    if mode == "exact":
+        body = f"{hook}\nAfter the hook the chosen lines are spoken exactly as they are; then your outro."
     else:
-        body = "The chosen lines are spoken as they are; write only the hook, outro, title, description and hashtags."
+        body = f"""Write a NEW script for this Short, about {budget} words in all ({seconds} seconds at this narrator's \
+pace): hook, middle, outro. Never read the chosen lines out: say every idea in your own words, never {COPY_RUN} or \
+more words in a row from them.
+{hook}
+THE MIDDLE explains the part so a viewer who never saw the video gets it: one idea per sentence, linked by 'but', \
+'so', 'that's why', 'here's the thing', the concrete example where it helps, ending on the key idea of the part \
+(here: what you own vs what you owe), with the deeper 'how' left for the full video.
+THE OUTRO (one sentence) sends them to the full video for the rest."""
     system = f"""You turn one part of a finished YouTube video into a YouTube Short that ends by sending viewers to \
 the full video.
 {body}
-Write in the narrator's language and style exactly as the lines are written (Hinglish in Roman letters stays \
-Hinglish in Roman letters, Indian English stays Indian English). The hook comes first and must work in the first \
-second; the outro is the last line, invites the viewer to the full video below (YouTube shows it as a link under the \
-Short) and promises nothing the full video doesn't have. No new facts anywhere, no number the chosen lines don't say."""
+Facts: only what the chosen lines state (the rest of the script is context for what a word means). An everyday \
+example that only illustrates an idea is fine; a new figure, date, name, statistic or claim is not, and no number \
+the chosen lines don't say. Write in the narrator's language and style exactly as the lines are written (Hinglish in \
+Roman letters stays Hinglish in Roman letters, Indian English stays Indian English). Every hook and middle sentence \
+gets a visual: the chosen line whose visual pictures it (visual_from), or -1 with 1-3 words of it shown huge \
+(keyword); start the hook on a keyword. The outro promises nothing the full video doesn't have; YouTube shows the \
+full video as a link under the Short."""
     story = "\n".join(f"{c.title}: " + " ".join(b.narration for b in c.beats) for c in script.chapters)
     prompt = (f"The full video: {title}\n\nThe chosen lines (numbered):\n{numbered}\n\n"
               f"The full script, for context only:\n{story}")
-    progress("Claude is writing the Short" + (" (explaining the part)" if mode == "explain" else " (hook and outro)"))
+    progress("Claude is writing the Short" + (" (a new script: hook, middle, link)" if mode != "exact" else " (hook and outro)"))
     plan = ask(cfg.ai_backend, cfg.claude_model, system, prompt, ClipPlan, allow_web=False, effort="medium", timeout=600)
     extra = _new_numbers(plan, source)
-    if extra:  # once more with the reason, then whatever is still wrong is dropped
-        progress(f"The Short said {', '.join(extra)}, which the chosen lines don't: writing it again")
-        plan = ask(cfg.ai_backend, cfg.claude_model, system,
-                   prompt + f"\n\nYour last try used the numbers {', '.join(extra)}, which the chosen lines don't state. "
-                            "Use none of them.", ClipPlan, allow_web=False, effort="medium", timeout=600)
+    copied = _copied(plan, source) if mode != "exact" else []
+    if extra or copied:  # once more with the reasons, then whatever is still wrong is dropped or kept as it is
+        why = []
+        if extra:
+            why.append(f"used the numbers {', '.join(extra)}, which the chosen lines don't state: use none of them")
+        if copied:
+            why.append("read the chosen lines out instead of retelling them (" + "; ".join(f"'{c}'" for c in copied[:4])
+                       + "): say every idea in your own words")
+        progress("Writing it again: the first try " + " and ".join(w.split(":")[0] for w in why))
+        plan = ask(cfg.ai_backend, cfg.claude_model, system, prompt + "\n\nYour last try " + "; and ".join(why) + ".",
+                   ClipPlan, allow_web=False, effort="medium", timeout=600)
     return plan
 
 
@@ -199,8 +248,8 @@ def _clock(seconds: float) -> str:
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
 
 
-def make(cfg: Config, folder: Path, first: int, last: int, mode: Literal["explain", "exact"] = "explain",
-         seconds: int = 45, hook: bool = True, link: str = "", progress: Progress = log.info) -> dict:
+def make(cfg: Config, folder: Path, first: int, last: int, mode: Literal["new", "explain", "exact"] = "new",
+         seconds: int = 60, hook: bool = True, link: str = "", progress: Progress = log.info) -> dict:
     """The Short (see the module's notes): its report, the new video in the library."""
     from .longform import LBeat, LVisual
     from .longform import build_long
@@ -220,7 +269,8 @@ def make(cfg: Config, folder: Path, first: int, last: int, mode: Literal["explai
     span = sum(float(old["beats"][k]["duration"]) for k in range(first, last + 1))
     if mode == "exact" and span > MAX_SECONDS - 10:
         raise ValueError(f"Those lines run {span:.0f} s; a Short can be at most {MAX_SECONDS} s. Pick fewer lines.")
-    seconds = seconds if seconds in LENGTHS else 45
+    mode = "exact" if mode == "exact" else "new"  # 'explain' was the first name of the new script
+    seconds = seconds if seconds in LENGTHS else 60
     cfg, pace, _, _ = _settings(cfg, report, None, None, None)
     cfg, look = _remake_look(cfg, old)
     look = dict(look or {})
@@ -237,21 +287,40 @@ def make(cfg: Config, folder: Path, first: int, last: int, mode: Literal["explai
         return not (_numbers(text) & bad)
 
     beats, picks = [], []  # the Short's lines, and which chosen line's files each one shows (global index)
-    if (hook or mode == "explain") and plan.hook.strip() and clean(plan.hook):
-        kw = plan.hook_keyword.strip() if clean(plan.hook_keyword) else ""
-        beats.append(LBeat(narration=plan.hook.strip(), visual=LVisual(
-            type="keyword", headline=" ".join((kw or plan.hook).split()[:3]), sub="", items=[], icons=[], camera="push",
-            impact=True)))
-        picks.append(None)
-    body = [x for x in plan.lines if x.text.strip()] if mode == "explain" else []
-    if mode == "explain" and (not body or any(not clean(x.text) for x in body)):
-        issues.append("Claude's retelling used a figure the chosen lines don't state; the lines are used as they are.")
-        body = []
-    if body:
-        for x in body:
-            k = min(max(0, x.visual_from), len(chosen) - 1)
+
+    uses: dict[int, int] = {}
+
+    def free(k: int) -> bool:  # a visual never twice in a row, a meme once, any other at most twice
+        meme = chosen[k][2].visual.type == "meme"
+        return (not picks or picks[-1] != first + k) and uses.get(k, 0) < (1 if meme else 2)
+
+    def add(x: ClipLine, punch: bool = False) -> None:
+        k = x.visual_from
+        if 0 <= k < len(chosen) and not free(k):  # Claude's pick is used up: the next unused visual of the part
+            k = next((j for j in list(range(k + 1, len(chosen))) + list(range(k)) if not uses.get(j) and free(j)), -1)
+        if 0 <= k < len(chosen):
             beats.append(LBeat(narration=x.text.strip(), visual=chosen[k][2].visual.model_copy(deep=True)))
             picks.append(first + k)
+            uses[k] = uses.get(k, 0) + 1
+            return
+        kw = x.keyword.strip() if x.keyword.strip() and clean(x.keyword) else " ".join(x.text.split()[:3])
+        beats.append(LBeat(narration=x.text.strip(), visual=LVisual(
+            type="keyword", headline=" ".join(kw.split()[:3]), sub="", items=[], icons=[], camera="push", impact=punch)))
+        picks.append(None)
+
+    hook_lines = [x for x in plan.hook if x.text.strip() and clean(x.text)]
+    if mode != "exact" or hook:
+        for i, x in enumerate(hook_lines):
+            add(x, punch=i == 0)
+    body = [x for x in plan.lines if x.text.strip()] if mode != "exact" else []
+    if mode != "exact" and (not body or any(not clean(x.text) for x in body)):
+        issues.append("Claude's new script used a figure the chosen lines don't state; the lines are used as they are.")
+        body = []
+    if mode != "exact" and body and _copied(plan, source):
+        issues.append("A few of the new script's sentences still follow the video's words closely.")
+    if body:
+        for x in body:
+            add(x)
     else:
         for k, (_, _, b) in enumerate(chosen):
             beats.append(b.model_copy(deep=True))
@@ -314,7 +383,9 @@ def make(cfg: Config, folder: Path, first: int, last: int, mode: Literal["explai
     new = {
         "id": final.name, "format": "short", "length": "short", "source": "clip", "from_video": folder.name,
         "from_title": title, "clip": {"first": first, "last": last, "mode": mode if body or mode == "exact" else "exact",
-                                      "seconds": seconds if mode == "explain" else None},
+                                      "seconds": seconds if mode == "new" else None, "hook_seconds": round(sum(
+                                          float(b["duration"]) for b in props["beats"][:len(hook_lines)]), 1)
+                                      if hook_lines and (mode != "exact" or hook) else 0},
         "topic": report.get("topic", ""), "subject": report.get("subject", ""), "category": report.get("category", ""),
         "style": report.get("style", ""), "title": plan.youtube_title or title,
         "narration": " ".join(b.narration for b in beats), "created_at": stamp, "verified": not issues, "score": None,

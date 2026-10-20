@@ -972,7 +972,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/videos/{video_id}/short")
     def make_short(video_id: str, body: dict):
-        """A new Short from lines first..last of this video (explained or as they are), ending on the full video."""
+        """A new Short from lines first..last of this video (a new script, or the lines as they are), ending on it."""
         from . import clipshort
 
         folder = video_dir(cfg, video_id)
@@ -985,15 +985,15 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Pick the first and the last line")
         if first < 0 or last < first:
             raise HTTPException(400, "Pick the first and the last line")
-        mode = body.get("mode") if body.get("mode") in ("explain", "exact") else "explain"
-        seconds = int(body.get("seconds") or 45)
+        mode = "exact" if body.get("mode") == "exact" else "new"
+        seconds = int(body.get("seconds") or 60)
         link = str(body.get("link") or "").strip()[:300]
         if link and not re.match(r"https?://", link):
             raise HTTPException(400, "The link should start with https://")
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         return jobs.submit(f"Short: {report.get('title', video_id)}", 1, "rerender", report.get("style"), "short",
                            clip_short={"id": video_id, "first": first, "last": last, "mode": mode,
-                                       "seconds": seconds if seconds in clipshort.LENGTHS else 45,
+                                       "seconds": seconds if seconds in clipshort.LENGTHS else 60,
                                        "hook": body.get("hook", True) is not False, "link": link})
 
     sample_state: dict[str, dict] = {}  # template -> {state, line, error}
