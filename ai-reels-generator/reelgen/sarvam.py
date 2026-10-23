@@ -192,10 +192,15 @@ def _pause_near(samples: np.ndarray, rate: int, t: float, reach: float = 1.2) ->
     quiet = env < max(float(env.max()) * 0.05, 1e-4)
     edges = np.diff(np.concatenate([[0], quiet.astype(np.int8), [0]]))
     starts, ends = np.nonzero(edges == 1)[0], np.nonzero(edges == -1)[0]
-    runs = [(a, b) for a, b in zip(starts, ends) if (b - a) * step >= 0.12]
-    if runs:
-        mids = [lo / rate + (a + b) / 2 * step for a, b in runs]
-        return min(mids, key=lambda m: abs(m - t))
+    # A real pause first (>=120 ms); else a shorter gap between words (>=50 ms: two lines read together still
+    # leave one); only then the quietest spot, which can fall inside a word.
+    for least in (0.12, 0.05):
+        runs = [(a, b) for a, b in zip(starts, ends) if (b - a) * step >= least]
+        if runs:
+            mids = [lo / rate + (a + b) / 2 * step for a, b in runs]
+            return min(mids, key=lambda m: abs(m - t))
+    if reach < 2.4:  # nothing near the estimate: look further before cutting into sound
+        return _pause_near(samples, rate, t, reach * 2)
     return lo / rate + int(np.argmin(env)) * step
 
 

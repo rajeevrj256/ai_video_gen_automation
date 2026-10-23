@@ -706,7 +706,7 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
     else:
         takes = iter(synthesize_scenes([x for x in said if x], cfg.long_voice, work / "audio" / "hook", cfg.tts_engine,
                                        cfg.kokoro_voice, f"{pct:+d}%", delivery="hook",
-                                       sarvam_speed=sarvam_speed) if any(said) else [])
+                                       sarvam_speed=sarvam_speed, separate=True) if any(said) else [])
         audios = [next(takes) if x else None for x in said]
     drop = cinehook.drop_for(template)
     if hype and hook_seconds != SCRIPT_HOOK_SECONDS:
