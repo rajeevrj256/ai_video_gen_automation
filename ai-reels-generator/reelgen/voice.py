@@ -261,18 +261,48 @@ async def _edge_synthesize(text: str, voice: str, rate: str, pitch: str, out_pat
 def _edge_scenes(narrations: list[str], voice: str, out_dir: Path, rate: str, pitch: str = "+0Hz",
                  volume: str = "+0%") -> list[SceneAudio]:
     full = out_dir / "narration.mp3"
-    words = asyncio.run(_edge_synthesize(" ".join(t.strip() for t in narrations), voice, rate, pitch, full, volume))
+    # Every line ends a sentence in the take (a Stick character's lines from different scenes are read together), so
+    # the voice pauses between them and each cut has silence to land in. Punctuation doesn't change the words matched.
+    ended = [t.strip() if re.search(r"[.!?…,;:।]['\")]*$", t.strip()) else t.strip() + "." for t in narrations]
+    words = asyncio.run(_edge_synthesize(" ".join(ended), voice, rate, pitch, full, volume))
     scene_of = _scene_of_words(narrations, words)
     if sorted(set(scene_of)) != list(range(len(narrations))):
         raise RuntimeError("could not match the spoken words to the scenes")
-    # Cut halfway through the pause between one scene's last word and the next one's first.
-    cuts = []
+    samples, sr = _decode(full)
+    # Cut in the real silence between one scene's last word and the next one's first. The reported word times can
+    # drift on a long take (older edge-tts did; a Stick video records each character's lines as one take), and a cut
+    # at the times alone fell inside words all through the user's Stick videos. So every cut snaps to the nearest real
+    # gap, and the drift found there carries on to the next cut and to the words' times.
+    cuts, shift, shifts = [], 0.0, [0.0]
     for i in range(1, len(narrations)):
         last = max(w.end for w, s in zip(words, scene_of) if s == i - 1)
         first = min(w.start for w, s in zip(words, scene_of) if s == i)
-        cuts.append((last + first) / 2)
-    samples, sr = _decode(full)
+        want = (last + first) / 2 + shift
+        got = snap_to_gap(samples, sr, want)
+        if abs(got - want) <= 0.6:  # a gap found far away is used for this cut only, never as the take's drift
+            shift += got - want
+        cuts.append(got)
+        shifts.append(shift)
+    words = [Word(w.text, w.start + shifts[s], w.end + shifts[s]) for w, s in zip(words, scene_of)]  # mouths and captions too
     return _cut_scenes(samples, sr, words, scene_of, len(narrations), cuts, out_dir)
+
+
+def snap_to_gap(samples: np.ndarray, rate: int, t: float, reach: float = 0.6) -> float:
+    """The middle of the silent gap (>=50 ms below 4% of the take's speech level) nearest to t, looked for up to
+    `reach` s away, then twice as far; t itself when the take has no gap there."""
+    win = max(1, int(0.01 * rate))
+    env = np.sqrt(np.convolve(samples.astype(np.float64) ** 2, np.ones(win) / win, "same"))[::win]
+    if not len(env):
+        return t
+    level = float(np.percentile(env, 90)) or 1e-4
+    quiet = env < level * 0.04
+    edges = np.diff(np.concatenate([[0], quiet.astype(np.int8), [0]]))
+    runs = [((a + b) / 2 * win / rate, (b - a) * win / rate) for a, b in zip(np.nonzero(edges == 1)[0], np.nonzero(edges == -1)[0])]
+    for r in (reach, reach * 2):
+        near = [m for m, d in runs if d >= 0.05 and abs(m - t) <= r]
+        if near:
+            return float(min(near, key=lambda m: abs(m - t)))
+    return float(t)
 
 
 def _decode(path: Path, rate: int = 24000) -> tuple[np.ndarray, int]:

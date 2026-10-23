@@ -22,7 +22,7 @@ from typing import Callable, Literal, get_args
 
 from pydantic import BaseModel, Field
 
-from . import aimusic, media, music
+from . import aimusic, media, music, stopper
 from .config import Config
 from .llm import ask
 from .categories import CATEGORIES
@@ -858,6 +858,61 @@ def board_rules(short: bool, style: str = "documentary") -> str:
             + f"{VISUAL_SAFETY}\n{DRAWINGS}\n{PROOF}")
 
 
+def ensure_hook(cfg: Config, ep: "Episode", req: StickRequest, progress: Progress) -> "Episode":
+    """Every Stick video opens with its hook (the user: "still there is no hook i see"). A Short: its first scene is
+    the hook. An episode or documentary whose writer left the cold open out, or made it under 20 s, gets one: a
+    single call (writer model, no web) writes 30-40 s of cold-open lines from the episode's own facts and they go in
+    front as hook scenes; the storyboard stages them like every line and a true story's fact-check checks them."""
+    if req.format == "short":
+        if ep.scenes and not any(sc.hook for sc in ep.scenes):
+            ep.scenes[0].hook = True
+        return ep
+    wps = 2.5 * max(0.8, req.speed)
+    said = sum(len(ln.line.split()) for sc in ep.scenes if sc.hook for ln in sc.lines)
+    if said >= 20 * wps:
+        return ep
+    ids = [c.id for c in ep.cast]
+    narrated = req.style in ("documentary", "facts")
+
+    class OpenLine(BaseModel):
+        speaker: str = Field(description="'narrator'" + ("" if narrated else " or a cast id: " + ", ".join(ids)))
+        line: str = Field(description="One short spoken line.")
+        emotion: Emotion = "neutral"
+        shows: str = Field(description="What the picture shows on this line: the moment of the story it teases.")
+
+    class ColdOpen(BaseModel):
+        lines: list[OpenLine]
+
+    story = "\n".join(f"[{ln.speaker}] {ln.line}" for sc in ep.scenes for ln in sc.lines if ln.line.strip())
+    progress("Writing the cold open (the writer left it out)")
+    try:
+        got = ask(cfg.ai_backend, cfg.claude_model,
+                  hook_rules(False, req.minutes, req.style, req.speed) + "\nUse ONLY what the story below says: no new "
+                  "fact, figure or name. The story itself is not changed; these lines go in front of it.",
+                  f"Title: {ep.title}\nThe story:\n{story[:12000]}\n\nWrite the cold open: about {round(30 * wps)}-"
+                  f"{round(40 * wps)} spoken words in 5-9 short lines, the central question last.", ColdOpen,
+                  effort="medium", timeout=600)
+    except Exception as exc:  # noqa: BLE001 - the video still opens on its first line
+        if isinstance(exc, stopper.Paused):
+            raise
+        log.warning("Couldn't write the cold open: %s", exc)
+        return ep
+    lead = ep.cast[0].id if ep.cast else ""
+    lines = [SLine(speaker=o.speaker if o.speaker in ids or o.speaker == "narrator" else "narrator", line=o.line.strip(),
+                   emotion=o.emotion, camera="punch" if k == 0 else "wide",
+                   actors=[SActor(id=lead, spot="center", pose="stand", face="shock" if k == 0 else "neutral", facing="right")] if lead else [])
+             for k, o in enumerate(got.lines) if o.line.strip()]
+    if not lines:
+        return ep
+    first = ep.scenes[0]
+    opener = SScene(setting=first.setting, backdrop_svg=first.backdrop_svg, sign=first.sign, weather=first.weather,
+                    light=first.light, intensity=0.8, hook=True, lines=lines)
+    for sc in ep.scenes:
+        sc.hook = False
+    progress(f"Cold open: {len(lines)} lines, about {sum(len(ln.line.split()) for ln in lines) / wps:.0f} s")
+    return ep.model_copy(update={"scenes": [opener, *ep.scenes]})
+
+
 def close_gaps(cfg: Config, ep: "Episode", hook_at: tuple[int, int] | None, progress: Progress, issues: list[str]) -> "Episode":
     """A documentary is narrated beat by beat, so a line the fact-check cut leaves a dead, silent shot: those are
     dropped (and a scene left empty with them). When the cut line was the hook, the new first line is rewritten as
@@ -1189,6 +1244,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info, res
             ep = write_episode(cfg, req, recent, avoid=f"\"{twin.get('title')}\": {twin.get('logline', '')}")
         if req.style != "documentary":  # a documentary's people are dressed for their own story, never kept
             lock_designs(cfg, ep, parse_cast(req.cast))  # a recurring character keeps their look
+        ep = ensure_hook(cfg, ep, req, progress)  # the cold open, written by code's request when the writer left it out
         from .hooks import sharpen
         sharpen(cfg, [next((ln for s in ep.scenes for ln in s.lines if ln.line.strip()), None)], ep.logline, progress)
         # Remembered now, before voices and render: a video made at the same time sees it.
