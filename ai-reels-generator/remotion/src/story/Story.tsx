@@ -6,6 +6,7 @@ import {FONT, clamp, useFonts} from '../theme';
 import {Layer} from '../Layer';
 import {Cues, Music} from '../Sound';
 import {iconFor} from '../long/icon';
+import {ActFx, FLOOR_KINDS, GOAL, PlaceTag, Rewind, StageThing, actLift, actRig, stageKind} from './acts';
 import {PieceView, STOOL_SEAT, Stool, TABLE_TOP, TableUnder, defaultFurniture, seatAt, surfaceAt} from './furniture';
 import {CustomSet, HEAD_FILL, INK_GRADE, InkBody, InkDefs, InkFaceExtras, InkFinish, InkHair, InkHairBack, InkHairBackView, InkHeadwear, InkSet, InkThing, Light, VEHICLES, Weather, defaultDesign, drawnKind, farOf, inkPalette, type SetPal, GREY_PAL} from './ink';
 import type {ActorState, CastMember, Design, Effect, Emote, Face, Look, Piece, Pose, Prop, Setting, Shot, StoryProps, Thing, Word} from './types';
@@ -133,23 +134,33 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   // close as possible (1.9x, ~570 px) but always wide enough for everyone and every object on screen.
   // A proof picture is wide: both its edges must be in the frame, not only its centre.
   const photos = placePhotos(shot.things ?? [], vertical);
-  const xsOnScreen = [...shot.actors.map((a) => a.x), ...(shot.things ?? []).filter((th) => !th.photo).map((th) => th.x), ...photos.flatMap((ph) => [ph.x - ph.box / 2 - 30, ph.x + ph.box / 2 + 30])];
+  const xsOnScreen = [...shot.actors.map((a) => a.x), ...(shot.things ?? []).filter((th) => !th.photo).flatMap((th) => (stageKind(th.name) === 'goal' ? [th.x - GOAL.half, th.x + GOAL.half] : [th.x])), ...photos.flatMap((ph) => [ph.x - ph.box / 2 - 30, ph.x + ph.box / 2 + 30])];
   const spread = xsOnScreen.length ? Math.max(...xsOnScreen) - Math.min(...xsOnScreen) : 0;
   const base = vertical ? Math.min(1.9, Math.max(1.1, OW / (spread + 300))) : 1;
   const t = frame / fps;
   const frames = Math.max(1, Math.round(shot.duration * fps));
   const speaking = (id: string) => shot.speaker === id;
-  const focus = shot.actors.find((a) => a.id === (shot.focus || shot.speaker)) ?? shot.actors[0];
+  // A long line gets a second framing part-way (`cut2`, stickstory.build: a 2-3 s rhythm instead of one 5 s hold):
+  // a hard cut to a close-up of the speaker or of the object the line names, or back to wide.
+  const cut = shot.cut2 && t >= shot.cut2.at ? shot.cut2 : null;
+  const cam = cut ? cut.camera : shot.camera;
+  const camFrame = cut ? frame - Math.round(cut.at * fps) : frame;
+  const camFrames = Math.max(1, cut ? frames - Math.round(cut.at * fps) : frames);
+  const focusId = (cut && cut.focus) || shot.focus || shot.speaker;
+  const focus = shot.actors.find((a) => a.id === focusId) ?? shot.actors[0];
   let scale = 1;
   // A Short is already framed close: its close-up and punch-in are gentler.
   const zoomMax = vertical ? 1.22 : 1.5;
   // A very slow push-in over the whole shot (documentaries: the camera stays locked or creeps in).
-  if (shot.camera === 'push') scale = interpolate(frame, [0, frames], [1, vertical ? 1.06 : 1.1], {...clamp, easing: Easing.inOut(Easing.sin)});
-  if (shot.camera === 'close') scale = interpolate(frame, [0, 10], [1 + (zoomMax - 1) * 0.5, zoomMax], {...clamp, easing: Easing.out(Easing.cubic)});
+  if (cam === 'push') scale = interpolate(camFrame, [0, camFrames], [1, vertical ? 1.06 : 1.1], {...clamp, easing: Easing.inOut(Easing.sin)});
+  if (cam === 'close') scale = interpolate(camFrame, [0, 10], [1 + (zoomMax - 1) * 0.5, zoomMax], {...clamp, easing: Easing.out(Easing.cubic)});
   // A 'shake' camera (older props) is a punch-in now: the user wants no vibration at all.
-  if (shot.camera === 'punch' || shot.camera === 'shake') scale = 1 + (vertical ? 0.1 : 0.2) * spring({frame: frame - Math.round(shot.lead * fps), fps, config: {damping: 14}});
+  if (cam === 'punch' || cam === 'shake') scale = 1 + (vertical ? 0.1 : 0.2) * spring({frame: camFrame - (cut ? 0 : Math.round(shot.lead * fps)), fps, config: {damping: 14}});
+  // A slow sideways drift across the place (an establishing shot that looks around).
+  const pan = cam === 'pan' ? interpolate(camFrame, [0, camFrames], [-80, 80], {...clamp, easing: Easing.inOut(Easing.sin)}) : 0;
+  if (cam === 'pan') scale = vertical ? 1.04 : 1.1;
   const shake = 0;
-  const fx = focus ? focus.x : W / 2;
+  const fx = cut && cut.x !== undefined ? cut.x : focus ? focus.x : W / 2;
   // A far-away figure (actor.far) stands on the set's distant ground: the camera centres on it there.
   const farInfo = farOf(shot.setting);
   const fy = focus?.far ? FLOOR - farInfo.lift - 260 * farInfo.size : FLOOR - 300;
@@ -157,14 +168,16 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
   const total = base * scale;
   const halfW = OW / (2 * total);
   const halfH = OH / (2 * total);
-  const wantX = vertical ? (scale > 1 ? fx : group) : scale > 1 ? fx : W / 2;
+  const wantX = (vertical ? (scale > 1 && cam !== 'pan' ? fx : group) : scale > 1 && cam !== 'pan' ? fx : W / 2) + pan;
   const cx = Math.min(W - Math.min(halfW, W / 2), Math.max(Math.min(halfW, W / 2), wantX));
   const cy = scale > 1 ? Math.min(H - halfH, Math.max(halfH, fy)) : vertical ? FLOOR - 250 : H / 2;
   const front = frontHeight(shot.setting);
   const floorY = (FLOOR - front - cy) * total + OH / 2;
   const flash = newScene ? interpolate(frame, [0, 5], [0.9, 0], clamp) : 0;
   const speaker = shot.actors.find((a) => a.id === shot.speaker);
-  const furniture = shot.furniture ?? defaultFurniture(shot.setting);
+  // A goal stands on open ground: the setting's usual bench or table is taken away from under it.
+  const goals = (shot.things ?? []).filter((th) => stageKind(th.name) === 'goal').map((th) => th.x);
+  const furniture = (shot.furniture ?? defaultFurniture(shot.setting)).filter((p) => !goals.some((g) => Math.abs(p.x - g) < GOAL.half + p.width / 2));
   const outfits: Record<string, string | undefined> = Object.fromEntries(cast.map((c) => [c.id, c.outfit]));
   const seat = (a: ActorState) => seatAt(furniture, a.x) ?? STOOL_SEAT;
   // The ink look: each character's own design (a default from their look for older props).
@@ -176,13 +189,13 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
         {ink ? <InkDefs /> : null}
         <g transform={`translate(${OW / 2 + shake} ${OH / 2}) scale(${total}) translate(${-cx} ${-cy})`}>
           <g filter={ink ? 'url(#inkRough)' : undefined}>
-          {shot.backdropSvg ? <CustomSet svg={shot.backdropSvg} floor={FLOOR} /> : ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} t={t} /> : <SetView setting={shot.setting} sign={shot.sign} />}
+          {shot.backdropSvg ? <><CustomSet svg={shot.backdropSvg} floor={FLOOR} />{shot.sign ? <SignBoard text={shot.sign} /> : null}</> : ink ? <InkSet setting={shot.setting} sign={shot.sign} floor={FLOOR} hand={HAND} font={FONT} t={t} /> : <SetView setting={shot.setting} sign={shot.sign} />}
           {furniture.map((p, i) => <PieceView key={`f${i}`} p={p} floor={FLOOR} pal={pal} />)}
           {shot.actors.filter((a) => a.pose === 'sit' && !a.action.startsWith('walk') && seatAt(furniture, a.x) === null).map((a) => (
             <Stool key={`stool-${a.id}`} x={a.x} floor={FLOOR} pal={pal} />
           ))}
           {shot.actors.map((a) => (
-            <Figure key={a.id} a={a} seat={seat(a)} outfit={outfits[a.id]} design={designs[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames} far={farOf(shot.setting)}
+            <Figure key={a.id} a={a} target={targetFor(a, shot)} seat={seat(a)} outfit={outfits[a.id]} design={designs[a.id]} look={looks[a.id] ?? 'boy'} t={t} frame={frame} frames={frames} far={farOf(shot.setting)}
               talking={speaking(a.id) ? shot.words.map((w) => ({...w, start: w.start + shot.lead, end: w.end + shot.lead})) : []} />
           ))}
           <SetFront setting={shot.setting} washing={!!shot.washing} xs={shot.actors.map((a) => a.x)} t={t} pal={ink ? pal : undefined} />
@@ -204,6 +217,8 @@ const ShotView: React.FC<{shot: Shot; looks: Record<string, Look>; cast: CastMem
       ) : null}
       {!speaker && shot.text && dialogue !== 'none' ? <Narration text={shot.text} top={vertical ? floorY + 40 : undefined} big={vertical} /> : null}
       {shot.caption ? <Caption text={shot.caption} top={vertical ? 230 : 36} ink={ink} /> : null}
+      {shot.placeLabel ? <PlaceTag text={shot.placeLabel} t={t} vertical={vertical} hand={HAND} /> : null}
+      {shot.rewind ? <Rewind t={t} vertical={vertical} /> : null}
       {flash > 0 ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: flash}} /> : null}
     </Layer>
   );
@@ -327,13 +342,17 @@ const Sleeves: React.FC<{r: Rig; colour?: string}> = ({r, colour}) => (
   </>
 );
 
-const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]; far?: {lift: number; size: number}}> = ({a, seat, look, outfit, design, t, frame, frames, talking, far}) => {
+const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string; design?: Design; t: number; frame: number; frames: number; talking: Word[]; far?: {lift: number; size: number}; target?: [number, number] | null}> = ({a, seat, look, outfit, design, t, frame, frames, talking, far, target = null}) => {
   const {fps, width, height} = useVideoConfig();
-  const {dx, dy, rot, walking, k, stepT, facing, headUp} = actionOffset(a, t, frames, fps, height > width);
+  const off = actionOffset(a, t, frames, fps, height > width);
+  const {dy, rot, walking, k, stepT, facing, headUp} = off;
+  // Two people shaking hands step toward each other until their hands meet (target = the partner, ahead).
+  const meet = a.action === 'handshake' && target ? Math.max(0, (target[0] - 236) / 2) * interpolate(t, [0, 0.5], [0, 1], {...clamp, easing: Easing.out(Easing.quad)}) : 0;
+  const dx = off.dx + meet * a.facing;
   const pose: Pose = walking ? 'walk' : a.pose;
   const small = (look === 'kid' ? 0.78 : 1) * k * (a.far && far ? far.size : 1);
   const lift = a.far && far ? far.lift : 0;
-  const r = rig(pose, stepT ?? t, seat);
+  const r = walking ? rig(pose, stepT ?? t, seat) : actRig(rig(pose, stepT ?? t, seat), a.action, t);
   const breathe = 0; // no breathing bob: it read as the figures vibrating
   const speakingNow = talking.some((w) => t >= w.start && t <= w.end);
   const mouthOpen = speakingNow && frame % 6 < 3;
@@ -344,13 +363,14 @@ const Figure: React.FC<{a: ActorState; seat: number; look: Look; outfit?: string
   // A sitting leg bends at the knee instead of curving.
   const leg = (p: Pt, k: Pt, e: Pt) => (pose === 'sit' ? `M ${p[0]} ${p[1]} L ${k[0]} ${k[1]} L ${e[0]} ${e[1]}` : limb(p, k, e));
   return (
-    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR - lift + dy + act.dy}) rotate(${pose === 'lie' ? 0 : rot + act.lean * facing}) scale(${facing * small} ${small})`}>
+    <g transform={`translate(${a.x + dx + act.dx} ${FLOOR - lift + dy + act.dy - actLift(a.action, t)}) rotate(${pose === 'lie' ? 0 : rot + act.lean * facing}) scale(${facing * small} ${small})`}>
       <g transform={pose === 'lie' ? 'translate(-150 -40) rotate(-90 0 0)' : `translate(0 ${breathe})`}>
         <ellipse cx={0} cy={4} rx={60} ry={9} fill="rgba(0,0,0,0.18)" stroke="none" />
         {design ? (
           <g stroke={INK} strokeWidth={LINE} fill="none" strokeLinecap="round" strokeLinejoin="round">
             <InkBody r={r} d={design} sitting={pose === 'sit'} back={!!a.back} />
             {a.back ? null : <PropView prop={a.prop} text={a.propText} thing={a.propThing} t={t} at={r.rH} />}
+            <ActFx action={a.action} t={t} d={frames / fps} target={target} hand={r.rH} foot={r.rF} />
             <g transform={`translate(${r.head[0]} ${r.head[1]}) rotate(${r.tilt + act.head + headUp})`}>
               {a.back ? null : <g transform={`scale(${FACE})`}><InkHairBack d={design} /></g>}
               <circle r={HEAD} fill={HEAD_FILL} strokeWidth={6} />
@@ -651,8 +671,11 @@ const Puffs: React.FC<{y: number; t: number}> = ({y, t}) => (
   </g>
 );
 
-const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect; svg?: string | null}> = ({name, size, t, effect, svg}) => {
+const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect; svg?: string | null; label?: string}> = ({name, size, t, effect, svg, label}) => {
   const wiggle = effect === 'shake' ? Math.sin(t * 40) * 5 : 0;
+  // The objects that carry a story (a goal, a screen with its counter, a board, money...), with their own words.
+  const stage = svg ? null : stageKind(name);
+  if (stage) return <StageThing kind={stage} label={label} size={size} t={t} hand={HAND} />;
   // Claude's own drawing of something nothing built in shows (200x200, standing on its bottom edge).
   if (svg) return <g transform={`rotate(${wiggle}) translate(${-size / 2} ${-size}) scale(${size / 200})`} dangerouslySetInnerHTML={{__html: svg}} />;
   if (/volcano|lava/.test(name)) {
@@ -692,19 +715,40 @@ const ThingArt: React.FC<{name: string; size: number; t: number; effect: Effect;
   );
 };
 
+// Where a kicked or thrown ball goes, in the figure's own frame: the nearest object (or person) ahead of them;
+// a goal's crossbar is hit at its height. Nothing ahead: null (the ball flies off).
+const targetFor = (a: ActorState, shot: Shot): [number, number] | null => {
+  if (!['kick', 'throw', 'handshake'].includes(a.action)) return null;
+  if (a.action === 'handshake') {
+    const partner = shot.actors.filter((o) => o.id !== a.id && (o.x - a.x) * a.facing > 0).sort((p, q) => Math.abs(p.x - a.x) - Math.abs(q.x - a.x))[0];
+    return partner ? [Math.abs(partner.x - a.x), 0] : null;
+  }
+  const ahead = (x: number) => (x - a.x) * a.facing;
+  const things = (shot.things ?? []).filter((th) => !th.photo && ahead(th.x) > 120).sort((p, q) => ahead(p.x) - ahead(q.x));
+  if (things.length) {
+    const th = things[0];
+    const goal = stageKind(th.name) === 'goal';
+    return [ahead(th.x) - (goal ? GOAL.half * 0.4 : 0), goal ? -GOAL.bar : -(th.big ? 190 : 120) - (th.table ? TABLE_TOP : 0)];
+  }
+  const people = shot.actors.filter((o) => o.id !== a.id && ahead(o.x) > 120).sort((p, q) => ahead(p.x) - ahead(q.x));
+  return people.length ? [ahead(people[0].x) - 60, -250] : null;
+};
+
 const ThingView: React.FC<{th: Thing; furniture: Piece[]; front: number; t: number; pal: SetPal}> = ({th, furniture, front, t, pal}) => {
   const ink = {stroke: INK, strokeWidth: SET_LINE, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const};
   const size = th.big ? 190 : 120;
   // On the table or desk at its spot; on a table brought in when there's none.
   // A set with a counter in front of the cast (the kitchen) puts things on that counter.
   const kind = drawnKind(th.name);
-  const onTable = th.table && !(kind && VEHICLES.has(kind)); // a vehicle always stands on the ground
+  const stage = th.svg ? null : stageKind(th.name);
+  // A vehicle, a goal, a board, a crowd or a film camera always stands on the ground.
+  const onTable = th.table && !(kind && VEHICLES.has(kind)) && !(stage && FLOOR_KINDS.has(stage));
   const desk = onTable ? (front || surfaceAt(furniture, th.x)) : null;
   const top = FLOOR - (desk ?? (onTable ? TABLE_TOP : 0));
   return (
     <g>
       {onTable && desk === null ? <TableUnder x={th.x} floor={FLOOR} pal={pal} /> : null}
-      <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} svg={th.svg} /></g>
+      <g transform={`translate(${th.x} ${top - 4})`}><ThingArt name={th.name} size={size} t={t} effect={th.effect} svg={th.svg} label={th.label} /></g>
     </g>
   );
 };
@@ -754,6 +798,19 @@ const PhotoCard: React.FC<{th: Thing; x: number; frame: number; fps: number; til
       <image href={staticFile(photo.src)} x={-iw / 2} y={-ch / 2 + pad} width={iw} height={ih} preserveAspectRatio="xMidYMid meet" />
       <rect x={-iw / 2} y={-ch / 2 + pad} width={iw} height={ih} fill="none" stroke={INK} strokeWidth={2} opacity={0.5} />
       <rect x={-70} y={-ch / 2 - 18} width={140} height={38} fill="#E9DDB8" opacity={0.85} transform="rotate(-4)" />
+    </g>
+  );
+};
+
+// A drawn place's own sign (its drawing has no text): a board hung high in the middle, words in marker.
+const SignBoard: React.FC<{text: string}> = ({text}) => {
+  const w = Math.min(760, 120 + text.length * 34);
+  return (
+    <g transform="translate(960 120)" stroke={INK} strokeWidth={5} strokeLinejoin="round">
+      <line x1={-w / 2 + 40} y1={-120} x2={-w / 2 + 40} y2={-30} />
+      <line x1={w / 2 - 40} y1={-120} x2={w / 2 - 40} y2={-30} />
+      <rect x={-w / 2} y={-34} width={w} height={86} rx={8} fill="#E6DCC2" />
+      <text x={0} y={26} fontSize={56} textAnchor="middle" fill="#9C4A3C" stroke="none" fontFamily={HAND}>{text.toUpperCase()}</text>
     </g>
   );
 };

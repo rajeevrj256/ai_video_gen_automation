@@ -45,9 +45,10 @@ Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "spar
 Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
                   "exam-hall", "blank", "mine", "tunnel", "garage", "warehouse"]
-Camera = Literal["wide", "close", "punch", "push"]  # no "shake": the user wants no vibration; push = a very slow push-in
+Camera = Literal["wide", "close", "punch", "push", "pan"]  # no "shake": the user wants no vibration; push = a very slow push-in
 Action = Literal["none", "jump", "fall", "spin", "step", "walk-across", "turn", "look-up", "walk-in-left", "walk-in-right", "walk-out-left",
-                 "walk-out-right"]
+                 "walk-out-right", "kick", "juggle", "throw", "type", "write", "handshake", "count-money", "film", "phone-call",
+                 "carry", "cheer", "nod", "watch"]  # the line acted out (remotion/src/story/acts.tsx)
 # The sets' furniture and the spots, shared with the editor (remotion/src/story/sets.json): a new kind of
 # furniture goes there (and gets a drawing in furniture.tsx); the writer's schema and prompt follow it.
 SETS = json.loads((REMOTION_DIR / "src" / "story" / "sets.json").read_text(encoding="utf-8"))
@@ -64,8 +65,12 @@ EMOTIONS = {
 Emotion = Literal[tuple(EMOTIONS)]
 StickMood = Literal["playful", "quirky", "curious", "uplifting", "emotional", "mystery", "suspense", "energetic", "calm"]
 Effect = Literal["none", "erupt", "smoke", "fire", "sparkle", "shake"]
-THING_HELP = ("drawn by hand: 'volcano' (a science-project volcano), 'dog', 'cat', 'bird', 'car', 'bus', 'bike', 'truck' "
-              "(vehicles stand on the ground); or a lucide icon name in kebab-case for anything else: trophy, cake, pizza, "
+THING_HELP = ("drawn by hand: 'goal' (a football goal; a kicked ball hits its crossbar), 'football', 'screen' (a "
+              "monitor showing its label, e.g. '1,000,000 views', or a play button), 'board' (a whiteboard on a stand "
+              "with its label written on it), 'calendar' (a page: label 'FEB 14'), 'money' (stacked bills with a "
+              "label like '$3.5 million'), 'camera' (a film camera on a tripod), 'crowd' (rows of people), 'volcano' "
+              "(a science-project volcano), 'dog', 'cat', 'bird', 'car', 'bus', 'bike', 'truck' (vehicles stand on the "
+              "ground); or a lucide icon name in kebab-case for anything else: trophy, cake, pizza, "
               "tv, gift, rocket, guitar, gamepad-2, lamp, plant, alarm-clock, microscope, flask-conical, crown, briefcase...")
 
 
@@ -78,6 +83,8 @@ class SThing(BaseModel):
     svg: str = Field(default="", description="Only when nothing built in shows it: your own drawing of it (see Drawings).")
     photo: str = Field(default="", description="A real picture as proof (see Proof pictures): Wikimedia Commons search "
                        "words, e.g. 'Google logo 2010', 'YouTube logo 2005', 'San Diego Zoo elephants'.")
+    label: str = Field(default="", description="Words written on it, 1-5 (a screen, board, calendar, money, sign): the "
+                       "line's own number, date or name, exactly as the narration says it; a number counts up.")
 
 class SPiece(BaseModel):
     kind: FurnitureKind
@@ -144,17 +151,21 @@ VISUAL_SAFETY = ("What is drawn (signs, captions, objects, props) never names a 
 
 # Places and objects the app has no drawing for are drawn by Claude at runtime (like Toon's custom drawings), as SVG
 # that toon.clean_svg reduces to plain shapes before it reaches the editor.
-DRAWINGS = ("Drawings: the settings, furniture and drawn objects above are the app's own and look best; use them "
-            "whenever they fit. When the story needs a place none of them shows (a courtroom, a ship's deck, a rocket "
-            "factory, a 1990s office, a castle hall), set the scene's setting to 'blank' and draw its background in "
-            "'backdrop_svg': an SVG fragment (no <svg> wrapper) for a 1920x900 box whose floor line is y=900, people "
-            "stand in front of it, so keep the lower 300 px plain (wall or ground) and put the detail higher up. For an "
-            "object nothing shows, draw it in the thing's 'svg': a 200x200 box, standing on its bottom edge. Style: "
-            "hand-inked and flat, thick dark outlines (stroke #1E1B18, width 4-6), solid fills in muted earthy colours "
-            "(tan #C8B893, sage #A9AE8A, dusty grey #B9B5AA, cream #E6DCC2, brick #9C4A3C, navy #34435E, olive "
-            "#6E6F45, brown #7E5E3E), simple geometric shapes, sparse detail; only path, circle, ellipse, rect, "
-            "polygon, polyline, line and g; no text, logos, images or gradients; a background under 5000 characters, "
-            "an object under 1500. Never draw a real person, brand or logo.")
+DRAWINGS = ("Drawings: use a built-in setting only when it IS the place the line is in. When the story is somewhere "
+            "none of them is (a pizzeria with an office above it, a football stadium, a courtroom, a ship's deck, a "
+            "2005 bedroom office, an investor's boardroom), set the scene's setting to 'blank' and draw that place in "
+            "'backdrop_svg' so a viewer knows where they are at a glance: an SVG fragment (no <svg> wrapper) for a "
+            "1920x900 box whose floor line is y=900. Layers: a far background (sky, skyline, hills or the back wall), "
+            "the place's identifying landmarks in the middle (a pizzeria's striped awning and oven, a stadium's stands "
+            "and floodlights, a boardroom's long window and table, the era's computers), and its sign as the scene's "
+            "`sign` (drawn by the app in marker; your drawing has no text). People stand in front of it, so keep the "
+            "lower 300 px plain (wall or ground) and put the detail higher up. When the story returns to a place, give "
+            "the same drawing again. For an object nothing shows, draw it in the thing's 'svg': a 200x200 box, standing "
+            "on its bottom edge. Style: hand-inked and flat, thick dark outlines (stroke #1E1B18, width 4-6), solid fills "
+            "in muted earthy colours (tan #C8B893, sage #A9AE8A, dusty grey #B9B5AA, cream #E6DCC2, brick #9C4A3C, navy "
+            "#34435E, olive #6E6F45, brown #7E5E3E), simple geometric shapes; only path, circle, ellipse, rect, polygon, "
+            "polyline, line and g; no text, logos, images or gradients; a background under 10000 characters, an object "
+            "under 1500. Never draw a real person, brand or logo.")
 
 # Real pictures as proof (evidence.py): Wikimedia Commons files with a free licence, credited in the description.
 PROOF = ("Proof pictures: when a real image proves or names what the line says better than a drawing (a company buying "
@@ -262,9 +273,13 @@ class SActor(BaseModel):
     prop: Prop = "none"
     prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
     prop_thing: str = Field(default="", description="With prop 'thing': what they hold, " + THING_HELP)
-    action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, fall, spin, "
-                           "'step' (one step forward: into the picture when seen from behind), 'walk-across' (across the "
-                           "frame the way they face), 'turn' (turns to face the other way halfway), 'look-up'.")
+    action: Action = Field(default="none", description="What they do during this line (act the line out): enter or leave "
+                           "the scene, jump, fall, spin, 'step' (one step forward: into the picture when seen from behind), "
+                           "'walk-across' (across the frame the way they face), 'turn', 'look-up', 'kick' (kicks a ball at "
+                           "the first object ahead: a goal's crossbar, then keeps it up), 'juggle' (keeps a ball up), "
+                           "'throw' (at the object or person ahead), 'type' (at a computer), 'write', 'handshake' (two "
+                           "people facing each other), 'count-money', 'film' (holds a camera up), 'phone-call', 'carry' "
+                           "(a box), 'cheer', 'nod', 'watch' (a screen or something happening).")
     from_behind: bool = Field(default=False, description="Seen from behind (no face): someone facing a place or walking into it.")
     far: bool = Field(default=False, description="Small and far away, for a very wide establishing shot (the 'mine' setting puts "
                       "them at the mine's mouth).")
@@ -304,6 +319,10 @@ class SScene(BaseModel):
     light: Literal["day", "dawn", "dusk", "night"] = "day"
     ambience: Literal[tuple(music.AMBIENCES)] = Field(default="none", description="A quiet background sound for the "
                                                        "place: wind outdoors, rain, room tone, city, night, crowd...")
+    hook: bool = Field(default=False, description="Part of the cold open (see The hook): the first scenes only.")
+    place: str = Field(default="", description="Where this is, when the story names it: 'San Mateo, California · 2005', "
+                       "'Barcelona training ground'; shown as a small tag when the place first appears. Empty for an "
+                       "unnamed everyday place.")
     lines: list[SLine]
 
 
@@ -324,7 +343,39 @@ class Episode(BaseModel):
     scenes: list[SScene]
 
 
-def _system(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0) -> str:
+def hook_rules(short: bool, minutes: float, style: str, speed: float, seconds: int = 0) -> str:
+    """The cold open (the user: "there is no hooks to tell the video in 30-40 sec about what i can tell entire video
+    with suspense/questions"): a Short hooks in its first lines; an episode or documentary opens with 30-40 s that
+    sell the whole video before the story starts from the beginning."""
+    if short:
+        n = 2 if (seconds or 40) <= 30 else 3
+        return (f"The hook (scenes marked hook=true): the first {n} lines, under 6 seconds together: the most striking "
+                "moment of the story already happening, then the question the Short answers at its end. Mark those "
+                "scenes hook=true.")
+    wps = 2.5 * max(0.8, speed)
+    lo, hi = round(30 * wps), round(40 * wps)
+    turn = {"comedy": "the funniest, most chaotic moment of the episode (shown, mid-disaster), then 'how did we get here?'",
+            "fiction": "the most dangerous or emotional moment of the story, cut before it resolves",
+            "facts": "the most surprising thing the video proves, shown happening",
+            "documentary": "the most dramatic true moment, shown happening (in the past tense or present, as it fits)"}.get(style, "")
+    return f"""The hook: the episode opens with a COLD OPEN of 30-40 seconds (about {lo}-{hi} spoken words), in its own scenes marked hook=true, before the story starts from its beginning. It sells the whole video and leaves the viewer unable to leave:
+1. First line: {turn}. No setup, no 'In 2005...', no greeting.
+2. The stakes: why this matters, what was at risk, what nobody expected (a number, a contradiction).
+3. Two or three quick teases of what's coming, each raising a question and never answering it ('But one detail didn't add up.', 'And the people who paid for it...'). Each in a different place, short lines, the picture acting it out.
+4. The last hook line asks the video's central question; only the ending answers it.
+Then the story begins (hook=false) from the start, and the ending answers the question and calls back to the first hook picture. The cold open counts toward the total length."""
+
+
+def _system(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0, speed: float = 1.5) -> str:
+    return _system_body(short, minutes, language, style, seconds) + "\n\n" + hook_rules(short, minutes, style, speed, seconds) \
+        + "\n\n" + ACTING
+
+
+# Every line is acted out: the people DO the thing the line says, with the objects it names (acts.tsx).
+ACTING = """Act every line out: the people do what the line says (kick the ball at the goal, type at the computer, film with a camera, shake hands on the deal, count the money, write on the board, watch the screen, carry the boxes) with the objects it names right there, never standing still beside an icon. Put the line's own number, date or name on an object as its label (a screen '1,000,000 views', money '$3.5 million', a calendar 'FEB 14', a board '20,000 videos a day'), exactly as the narration says it. Name a real place in the scene's 'place' when the story names it."""
+
+
+def _system_body(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0) -> str:
     lang = ("natural, casual American English, the way kids, teens and parents really talk (no Indian or British "
             "words, no rupees: dollars, US schools, US homes)" if language == "english"
             else "everyday Hindi in Devanagari script, as families really talk")
@@ -409,7 +460,7 @@ No politics, religion, rumours or insults. Real people can be named in the narra
 drawings stay generic. {VISUAL_SAFETY} Never use these phrases: {", ".join(AI_CLICHES)}.
 
 Pick the setting each shot needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
-bathroom, kitchen, 'mine': a desert mountainside with a mine entrance, 'tunnel': underground, a mine tunnel or shelter with timber supports and lamps, 'garage': a suburban garage with shelves of boxes (where a business starts), 'warehouse': tall racks of boxes and a moving conveyor (a business at scale); 'blank' only when no place fits) and its furniture. {_furniture_help()} \
+bathroom, kitchen, 'mine': a desert mountainside with a mine entrance, 'tunnel': underground, a mine tunnel or shelter with timber supports and lamps, 'garage': a suburban garage with shelves of boxes (where a business starts), 'warehouse': tall racks of boxes and a moving conveyor (a business at scale)) only when it IS the place; any other place (a pizzeria, a stadium, an investor's office, a 2005 bedroom office) is 'blank' with your own backdrop drawing of it, see Drawings) and its furniture. {_furniture_help()} \
 Keep spots steady within a scene; use walk-in/walk-out for entrances and exits and change the setting for a new \
 place. Show the real object, never a paper with its name; things stand on a table or the floor, held ones as prop \
 'thing' with prop_thing. {DESIGN_RULES}
@@ -715,7 +766,7 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
                    "once cost 1.2M tokens with open-ended research).")
     if req.opening in OPENINGS:  # chosen on the Stick tab: this kind of opening, whatever the last videos used
         prompt += f"\n\nOpen with this kind of hook: {OPENINGS[req.opening]}. Only facts the video states."
-    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
+    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds, req.speed), prompt, Episode,
                allow_web=req.style in TRUE_STYLES, effort=cfg.claude_effort, timeout=1800)
 
 
@@ -859,6 +910,27 @@ def close_gaps(cfg: Config, ep: "Episode", hook_at: tuple[int, int] | None, prog
 
 # ---------- from the episode to the editor's props ----------
 
+def _second_framing(ln: "SLine", words: list[dict], lead: float, duration: float, actors: list[dict],
+                    things: list[dict]) -> dict | None:
+    """A line longer than ~3.4 s gets a second framing at a word break near its middle (the user: shots held 4-6 s
+    with nothing moving): from a wide shot to a close-up of the object the line names (else of the speaker), or
+    from a close-up back to wide. Silent beats and walks keep one framing."""
+    if duration < 3.4 or not words or not actors or any(a["action"].startswith("walk") for a in actors):
+        return None
+    mid = duration / 2
+    gaps = [lead + w["start"] for w in words[1:]]
+    at = min(gaps, key=lambda g: abs(g - mid)) if gaps else mid
+    if not (1.4 <= at <= duration - 1.2):
+        return None
+    if ln.camera in ("close", "punch"):
+        return {"at": round(at, 2), "camera": "wide"}
+    shown = [th for th in things if not th.get("photo")]
+    if shown and not any(th["name"] == "goal" for th in shown):
+        return {"at": round(at, 2), "camera": "close", "x": shown[0]["x"]}
+    who = next((a["id"] for a in actors if a["id"] == ln.speaker), actors[0]["id"])
+    return {"at": round(at, 2), "camera": "close", "focus": who}
+
+
 def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress,
           keep_music: tuple[Path, str] | None = None) -> dict:
     """`keep_music` (a re-make): this track and its label instead of a new one (it loops when the video grows)."""
@@ -918,7 +990,7 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     def art(svg: str, uid: str, limit: int, shapes: int) -> str | None:
         return clean_svg(svg, uid, limit, shapes) or None if (svg or "").strip() else None
 
-    backdrops = [art(sc.backdrop_svg, f"b{si}", 6000, 260) for si, sc in enumerate(ep.scenes)]
+    backdrops = [art(sc.backdrop_svg, f"b{si}", 12000, 500) for si, sc in enumerate(ep.scenes)]  # a place that says where it is
     # Proof pictures from Wikimedia Commons, one download per search, credited in the description.
     from . import evidence
 
@@ -962,13 +1034,25 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         xs = place[si]
         things = [{"name": th.name.strip().lower()[:40] or "box", "x": round(xs[th.spot]), "table": th.on_table,
                    "big": th.big, "effect": th.effect, "svg": art(th.svg, f"t{si}-{k}", 1500, 80),
-                   "photo": proof(th.photo)} for k, th in enumerate(ln.things)]
+                   "photo": proof(th.photo), "label": th.label.strip()[:40]} for k, th in enumerate(ln.things)]
         actors = [{"id": a.id, "x": round(xs[a.spot]), "pose": a.pose, "face": a.face,
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
                    "propText": a.prop_text[:6],
                    "propThing": a.prop_thing.strip().lower()[:40], "action": a.action,
                    "back": a.from_behind, "far": a.far} for a in ln.actors if a.id in looks]
+        # The cold open hands over to the story with a tape rewind (and a beat of quiet before the first line).
+        rewind = not scene.hook and bool(shots) and shots[-1].get("hook")
+        if rewind:
+            lead = round(lead + 0.5, 2)
+            duration = round(duration + 0.5, 3)
+            if "glitch" in sfx:
+                cues.append({"src": rel(sfx["glitch"]), "at": round(t + 0.05, 3), "volume": 0.5, "name": "glitch"})
+        # A new place says where it is (its first shot), once per place name.
+        new_place = scene.place.strip() and (not shots or shots[-1].get("placeName") != scene.place.strip())
         shots.append({"start": round(t, 3), "duration": duration, "scene": si, "setting": scene.setting,
+                      "hook": scene.hook, "rewind": rewind, "placeName": scene.place.strip() or None,
+                      "placeLabel": scene.place.strip()[:60] if new_place else None,
+                      "cut2": _second_framing(ln, words, lead, duration, actors, things),
                       "sign": scene.sign or None,
                       "washing": scene.setting == "kitchen" and scene.washing, "furniture": furniture[si], "things": things, "caption": ln.caption or None, "camera": ln.camera,
                       "focus": ln.focus or None, "actors": actors, "weather": scene.weather, "light": scene.light,
@@ -1181,6 +1265,7 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info, res
         "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)",
         "captions": props.get("dialogue") != "none", "stick_request": asdict(req),  # for a re-make (remake)
         "music": props.get("musicChoice", ""),
+        "hook_seconds": round(sum(sh["duration"] for sh in props["shots"] if sh.get("hook")), 1),
         "voice": req.language, "youtube_title": ep.title[:100],
         "youtube_description": with_sources(ep.youtube_description.strip(), sources, props.get("credits") or []), "youtube_hashtags": ep.hashtags[:3],
         "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,

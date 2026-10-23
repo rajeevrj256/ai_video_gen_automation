@@ -49,9 +49,23 @@ bar on the screen). Write it in `shows`, then make the picture show it: the plac
 people doing the action. A person standing in a generic street or office while the line talks about something else \
 is a failed picture. A line that goes back to an earlier moment goes back to that place ("it happened at the zoo... \
 two elephants" = the zoo again with the elephants). Two beats in a row may share a place only when both lines are \
-in it, and then the camera, the action or an object must change. Use the built-in settings and objects when they \
-truly show it; otherwise draw it (`backdrop_svg` for a place with setting 'blank', a thing's `svg` for an object; \
-see Drawings). A real logo, building, document or the real place appears only as a proof picture (a thing with \
+in it, and then the camera, the action or an object must change.
+
+The PLACE is where the line happens, recognisable at a glance: a built-in setting only when it IS that place (an \
+office line in an office); a pizzeria, a training ground, a stadium, an investor's boardroom, a 2005 bedroom office \
+are drawn ('blank' + `backdrop_svg`, see Drawings) with their landmarks and their `sign`. A beat back in a place \
+drawn before sets `same_as` to that beat's number instead of drawing it again. `place` names a real place the \
+line names or is in ('San Mateo, California · 2005'); it shows as a tag the first time.
+
+The ACTION is the line acted out: the people DO it ('kick' at a 'goal' for a shot at the crossbar, 'juggle', \
+'type' at a 'screen', 'film' with a camera, 'handshake' on a deal, 'count-money', 'write' at a 'board', 'watch' a \
+screen, 'carry' boxes, 'cheer', 'walk-in' through a door), facing what they act on. Standing still beside a small \
+icon is a failed picture. A number, date or name the line says goes on an object as its `label`, exactly as said \
+(a screen '1,000,000 views', money '$3.5 million', a calendar 'FEB 14', a board '20,000 videos a day'); a \
+lucide icon alone never carries a number.
+
+Cold-open beats (marked HOOK) are the video's trailer: the most dramatic picture for each line, a different place \
+or framing every beat, camera 'punch' or 'close' on the big moments. A real logo, building, document or the real place appears only as a proof picture (a thing with \
 `photo`, see Proof pictures), never drawn; no drawn real person's likeness."""
 
 # Comedy, stories and the facts type are told in dialogue: a conversation may stay in one place for several lines.
@@ -72,6 +86,8 @@ class BeatPicture(BaseModel):
     weather: Weather = "none"  # type: ignore[valid-type]
     light: Light = "day"  # type: ignore[valid-type]
     ambience: Ambience = "none"  # type: ignore[valid-type]
+    place: str = Field(default="", description="A real place the line names or is in, for its tag ('San Mateo, California · 2005'); empty otherwise.")
+    same_as: int = Field(default=-1, description="The number of an earlier beat whose drawn place this beat returns to (its backdrop is reused); -1 = none.")
     camera: Camera = "wide"
     focus: str = ""
     furniture: list[SPiece] = Field(default_factory=list, description="The place's furniture; empty = the usual.")
@@ -100,7 +116,8 @@ def beats_of(ep) -> list[tuple[int, int]]:
 def _numbered(ep) -> str:
     def say(ln) -> str:
         return f"[{ln.speaker}] {ln.line}" if ln.line.strip() else f"[silent beat: {ln.speaker}]"
-    return "\n".join(f"{k}. {say(ep.scenes[si].lines[li])}" for k, (si, li) in enumerate(beats_of(ep)))
+    return "\n".join(f"{k}.{' HOOK' if ep.scenes[si].hook else ''} {say(ep.scenes[si].lines[li])}"
+                     for k, (si, li) in enumerate(beats_of(ep)))
 
 
 def storyboard(cfg: Config, ep, system_rules: str, progress: Progress, only: dict[int, str] | None = None,
@@ -126,12 +143,15 @@ def storyboard(cfg: Config, ep, system_rules: str, progress: Progress, only: dic
         return ep
     ids = {c.id for c in ep.cast}
     staged: dict[int, dict] = {}
-    for b in board.beats:
+    for b in sorted(board.beats, key=lambda x: x.beat):
         if not (0 <= b.beat < len(pairs)) or (only and b.beat not in only):
             continue
         actors = [a for a in b.actors if a.id in ids]
-        scene_fields = SScene(setting=b.setting, sign=b.sign, furniture=b.furniture, backdrop_svg=b.backdrop_svg,
-                              weather=b.weather, light=b.light, ambience=b.ambience, lines=[])
+        backdrop, setting = b.backdrop_svg, b.setting
+        if b.same_as in staged and staged[b.same_as]["scene"].backdrop_svg:  # back in a place drawn before
+            backdrop, setting = staged[b.same_as]["scene"].backdrop_svg, "blank"
+        scene_fields = SScene(setting=setting, sign=b.sign, furniture=b.furniture, backdrop_svg=backdrop,
+                              weather=b.weather, light=b.light, ambience=b.ambience, place=b.place.strip()[:60], lines=[])
         things = b.things
         staged[b.beat] = {"scene": scene_fields, "camera": b.camera, "focus": b.focus if b.focus in ids else "",
                           "actors": actors, "things": things, "shows": b.shows}
@@ -145,11 +165,11 @@ def storyboard(cfg: Config, ep, system_rules: str, progress: Progress, only: dic
         if s:
             line = line.model_copy(update={"camera": s["camera"], "focus": s["focus"], "actors": s["actors"],
                                            "things": s["things"]})
-            place = s["scene"].model_copy(update={"intensity": old_scene.intensity})
+            place = s["scene"].model_copy(update={"intensity": old_scene.intensity, "hook": old_scene.hook})
         else:
             place = old_scene.model_copy(update={"lines": []})
-        key = (place.setting, place.backdrop_svg, place.sign, place.weather, place.light, place.ambience,
-               json.dumps([p.model_dump() for p in place.furniture]))
+        key = (place.setting, place.backdrop_svg, place.sign, place.weather, place.light, place.ambience, place.hook,
+               place.place, json.dumps([p.model_dump() for p in place.furniture]))
         if scenes and scenes[-1][0] == key:
             scenes[-1][1].lines.append(line)
         else:
@@ -215,12 +235,16 @@ def sheets(props: dict, work: Path, lines: list[str], vertical: bool) -> list[Pa
 
 
 CHECK_SYSTEM = ("You check a stick-figure video before it is posted. Each numbered picture sits over the line spoken "
-                "while it is on screen (narration or a character's dialogue; in dialogue, people talking in the "
-                "scene's place is fine, but what the line mentions must be shown or acted out). A picture matches when it visibly shows what its "
-                "line names: the place, the object, the event or a fair symbol for a number (money for an amount, a "
-                "screen or boxes filling up for a count, a calendar for a date). It fails when people just stand in "
-                "a generic place while the line talks about something else, or when it shows a different place or "
-                "moment than the line. Judge only the picture against its own line; be strict but fair.")
+                "while it is on screen (narration or a character's dialogue). Be strict: a viewer with the sound off must "
+                "be able to tell what each line is about. A picture FAILS when: (1) people stand or sit doing nothing "
+                "while the line describes something happening (a kick, a deal, an upload, a crowd watching): the action "
+                "must be acted out; (2) the line's subject is shown only by a small icon on a table; (3) the line names "
+                "a place (a pizzeria, a stadium, a city, an office of a named company) and the picture shows a generic "
+                "room or street instead; (4) the line says a number, date or amount and nothing in the picture shows it "
+                "(a screen, board, calendar or money with those words); (5) it shows a different place or moment than "
+                "the line. In dialogue, people talking in the scene's place is fine when the line is talk, but whatever "
+                "the line mentions must be shown. For each failure say exactly what is missing (the action, the place, "
+                "the number).")
 
 
 def check(cfg: Config, props: dict, ep, work: Path, vertical: bool, progress: Progress) -> dict[int, str]:

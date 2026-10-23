@@ -15,12 +15,14 @@ export type Emote = 'none' | '!' | '?' | '!?' | 'sweat' | 'anger' | 'hearts' | '
 export type Prop = 'none' | 'phone' | 'book' | 'paper' | 'cup' | 'bag' | 'laptop' | 'ball' | 'plate' | 'remote' | 'thing';
 export type Effect = 'none' | 'erupt' | 'smoke' | 'fire' | 'sparkle' | 'shake';
 // An object in the scene: 'volcano' (drawn by hand) or a lucide icon name; on a small table or the floor.
-export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect; svg?: string | null; photo?: {src: string; w: number; h: number} | null}; // svg: Claude's own drawing (200x200); photo: a real picture as proof (Wikimedia Commons), shown as a pinned print
+export type Thing = {name: string; x: number; table: boolean; big: boolean; effect: Effect; svg?: string | null; photo?: {src: string; w: number; h: number} | null; label?: string}; // svg: Claude's own drawing (200x200); photo: a real picture as proof (Wikimedia Commons), shown as a pinned print
 export type Setting =
   | 'living-room' | 'classroom' | 'kitchen' | 'bedroom' | 'street' | 'office' | 'bathroom'
   | 'park' | 'shop' | 'exam-hall' | 'blank' | 'mine' | 'tunnel' | 'garage' | 'warehouse';
-export type Camera = 'wide' | 'close' | 'punch' | 'shake' | 'push';
-export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right' | 'step' | 'walk-across' | 'turn' | 'look-up';
+export type Camera = 'wide' | 'close' | 'punch' | 'shake' | 'push' | 'pan';
+export type Action = 'none' | 'jump' | 'shake' | 'fall' | 'spin' | 'walk-in-left' | 'walk-in-right' | 'walk-out-left' | 'walk-out-right' | 'step' | 'walk-across' | 'turn' | 'look-up'
+  // acted out with the body and what it brings (acts.tsx): a ball kicked or kept up, a camera, bills...
+  | 'kick' | 'juggle' | 'throw' | 'type' | 'write' | 'handshake' | 'count-money' | 'film' | 'phone-call' | 'carry' | 'cheer' | 'nod' | 'watch';
 
 // A piece of furniture in the scene (kinds in sets.json): centre x and width on the 1920 px set.
 export type Piece = {kind: string; x: number; width: number};
@@ -83,6 +85,10 @@ export type Shot = {
   weather?: 'none' | 'rain' | 'snow' | 'dust' | 'smoke'; // what drifts through the scene
   light?: 'day' | 'dawn' | 'dusk' | 'night';
   backdropSvg?: string | null; // Claude's own drawing of a place no setting shows (1920x900, floor at y=900)
+  placeLabel?: string; // where a new place is ('San Mateo, California · 2005'): a tag for its first 3 s
+  rewind?: boolean; // the first shot after the cold open: a short tape rewind into the story
+  hook?: boolean; // a cold-open shot
+  cut2?: {at: number; camera: Camera; focus?: string; x?: number}; // a second framing from `at` s (x: frame an object there)
 };
 
 
