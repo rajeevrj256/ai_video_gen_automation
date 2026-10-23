@@ -536,8 +536,27 @@
         <label for="stMinutes">Length</label>
         <select id="stMinutes"><option value="3">About 3 min</option><option value="5" selected>About 5 min</option><option value="8">About 8 min</option></select>
       </div>
-      <label for="stIdea">Idea (optional)</label>
-      <textarea class="edit" id="stIdea" rows="3" placeholder="e.g. Ben hides his report card from Mom. Leave empty and Claude picks a fresh situation."></textarea>
+      <label>Story</label>
+      <div class="segmented" id="stSource">
+        <button data-src="ai" class="on">✨ Claude writes it</button><button data-src="script">📜 My script</button>
+      </div>
+      <div id="stIdeaBox">
+        <label for="stIdea">Idea (optional)</label>
+        <textarea class="edit" id="stIdea" rows="3" placeholder="e.g. Ben hides his report card from Mom. Leave empty and Claude picks a fresh situation."></textarea>
+      </div>
+      <div id="stScriptBox" hidden>
+        <label for="stTitle">Title (optional)</label>
+        <input id="stTitle" placeholder="Leave empty and Claude names it">
+        <label for="stScript">Your script</label>
+        <textarea class="edit" id="stScript" rows="10" placeholder="Hook
+In 2005 a ball hit the crossbar and never touched the ground.
+---
+Ben: Mom, look at this video!
+(Mom rolls her eyes)
+Mom: Ben, that's fake.
+Plain paragraphs are read by the narrator."></textarea>
+        <p class="hint">Every word is spoken as you wrote it. <b>Name: line</b> is that character speaking (names from the cast below, or new ones); any other paragraph is the narrator; <b>(…)</b> on its own line is a silent moment acted out; a <b>Hook</b> line starts your cold open and <b>---</b> ends it. Claude only stages it: the places, the actions and the objects for every line. No fact-check: the script is yours.</p>
+      </div>
       <div class="grid2">
         <div><label for="stSpeed">Speaking speed: <output id="stSpeedOut">1.5×</output></label>
           <input type="range" id="stSpeed" min="0.8" max="2" step="0.05" value="1.5" aria-label="Speaking speed">
@@ -2947,7 +2966,9 @@ document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
 });
 $("#stBtn").onclick = async () => {
   const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), seconds: Number($("#stSeconds").value), language: "english", speed: Number($("#stSpeed").value),
-                 style: stStyle, cast: stSerialize(), count: Number($("#stCount").value), opening: $("#stOpening").value, subtitles: $("#stSubs").value };
+                 style: stStyle, cast: stSerialize(), count: Number($("#stCount").value), opening: $("#stOpening").value, subtitles: $("#stSubs").value,
+                 script: stSource === "script" ? $("#stScript").value : "", title: stSource === "script" ? $("#stTitle").value : "" };
+  if (stSource === "script" && !body.script.trim()) return toast("Paste your script first");
   $("#stBtn").disabled = true;
   try {
     body.ai = aiValue("stick");
@@ -3299,6 +3320,13 @@ async function loadShootView() {
   $("#shHome").hidden = false; $("#shNew").hidden = true; $("#shProject").hidden = true;
 }
 
+let stSource = "ai";
+document.querySelectorAll("#stSource button").forEach((b) => b.onclick = () => {
+  stSource = b.dataset.src;
+  document.querySelectorAll("#stSource button").forEach((x) => x.classList.toggle("on", x === b));
+  $("#stIdeaBox").hidden = stSource === "script";
+  $("#stScriptBox").hidden = stSource !== "script";
+});
 $("#stSpeed").oninput = () => { $("#stSpeedOut").textContent = (+$("#stSpeed").value).toFixed(2).replace(/0$/, "") + "×"; };
 $("#shNewBtn").onclick = () => { $("#shHome").hidden = true; $("#shNew").hidden = false; };
 $("#shCancel").onclick = () => { $("#shNew").hidden = true; $("#shHome").hidden = false; };

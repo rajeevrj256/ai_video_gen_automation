@@ -198,6 +198,8 @@ class StickRequest:
     style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked) | documentary (narrated true story)
     cast: str = DEFAULT_CAST
     subtitles: str = "auto"  # auto (on, off for documentaries) | on | off
+    script: str = ""  # your own script: every word spoken as written (`from_script`); empty = Claude writes it
+    title: str = ""  # your script's title (empty: Claude names it)
     opening: str = "auto"  # how the first line hooks: a key of OPENINGS, or auto (the writer picks one the last videos didn't use)
 
 
@@ -300,6 +302,7 @@ class SLine(BaseModel):
     things: list[SThing] = Field(default_factory=list, description="Objects standing in the scene during this line (not "
                                  "held); repeat them on every line of the scene while they're there.")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects on a word of the line (or word '*' for a silent beat).")
+    note: str = Field(default="", description="Not for you to write: a stage direction from the user's own script.")
 
 
 class SScene(BaseModel):
@@ -858,6 +861,107 @@ def board_rules(short: bool, style: str = "documentary") -> str:
             + f"{VISUAL_SAFETY}\n{DRAWINGS}\n{PROOF}")
 
 
+# ---------- your own script (the user: "add script option for sticky as well") ----------
+
+SPEAKER = re.compile(r"^\s*([A-Za-z\u0900-\u097F][A-Za-z .'\u0900-\u097F-]{0,24}?)\s*[:：]\s*(.+)$")  # no digits: 'In 2005: ...' is narration
+HOOK_HEAD = re.compile(r"^\s*(#+\s*)?(hook|cold open|intro)\s*:?\s*$", re.I)
+STORY_HEAD = re.compile(r"^\s*(#+\s*)?(story|main|---+)\s*:?\s*$", re.I)
+
+
+def parse_stick_script(text: str) -> list[dict]:
+    """Your script, cut into beats without changing a word: 'Ben: line' is Ben speaking; any other paragraph is the
+    narrator, cut at sentence ends into lines of at most ~22 words; '(Ben facepalms)' alone is a silent beat with that
+    stage direction; a 'Hook' heading (or 'Cold open') marks the lines up to a 'Story' heading or '---' as the hook."""
+    beats, hook = [], False
+    for raw in (text or "").splitlines():
+        row = raw.strip()
+        if not row:
+            continue
+        if HOOK_HEAD.match(row):
+            hook = True
+            continue
+        if STORY_HEAD.match(row):
+            hook = False
+            continue
+        if row.startswith("(") and row.endswith(")"):
+            beats.append({"speaker": "none", "line": "", "note": row[1:-1].strip(), "hook": hook})
+            continue
+        m = SPEAKER.match(row)
+        if m and m[1].strip().lower() not in ("note", "http", "https"):
+            beats.append({"speaker": m[1].strip(), "line": m[2].strip(), "note": "", "hook": hook})
+            continue
+        sentences = re.split(r"(?<=[.!?…।])\s+", row)
+        cur: list[str] = []
+        for sent in sentences:
+            if cur and len(" ".join(cur + [sent]).split()) > 22:
+                beats.append({"speaker": "narrator", "line": " ".join(cur), "note": "", "hook": hook})
+                cur = []
+            cur.append(sent)
+        if cur:
+            beats.append({"speaker": "narrator", "line": " ".join(cur), "note": "", "hook": hook})
+    return beats
+
+
+def from_script(cfg: Config, req: StickRequest, progress: Progress) -> "Episode":
+    """An Episode from your own script: your words exactly as written, in your order. One Claude call (no web) gives
+    the title (unless you did), the description, tags, music mood and each speaker's look; the storyboard then
+    stages every beat like an AI-written one. No fact-check: the script is yours."""
+    beats = parse_stick_script(req.script)
+    if not any(b["line"] for b in beats):
+        raise ValueError("The script has no lines to say.")
+    given = {c["name"].lower(): c for c in parse_cast(req.cast)}
+    names = list(dict.fromkeys(b["speaker"] for b in beats if b["speaker"] not in ("narrator", "none")))
+    slug = lambda n: re.sub(r"[^a-z0-9]+", "-", n.lower()).strip("-") or "c"  # noqa: E731
+
+    class Meta(BaseModel):
+        title: str = Field(description="A short YouTube title for this story.")
+        logline: str
+        youtube_description: str = Field(description="2-3 natural sentences, then one line inviting viewers to subscribe. No hashtags.")
+        tags: list[str]
+        hashtags: list[str]
+        mood: StickMood = "curious"
+        music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
+        category: str = Field(default="", description="One of " + ", ".join(CATEGORIES) + ".")
+        cast: list[SCast] = Field(description="Every character who speaks or acts: id, the name as written, look and design.")
+
+    lines = "\n".join(f"{b['speaker']}: {b['line'] or '(' + b['note'] + ')'}" for b in beats)
+    known = "; ".join(f"{c['name']} ({c['look']}{', ' + c['about'] if c.get('about') else ''})" for c in given.values())
+    progress("Reading your script: title, cast and music")
+    meta = ask(cfg.ai_backend, cfg.claude_model,
+               "You prepare a stick-figure video made from the user's own finished script. Never rewrite it. "
+               + DESIGN_RULES,
+               f"Characters who speak: {', '.join(names) or 'only the narrator'}. Known cast: {known or 'none'}. "
+               "Each id: the name in lowercase with '-' for spaces.\n"
+               + (f"The title is fixed: {req.title}\n" if req.title.strip() else "")
+               + f"The script:\n{lines[:15000]}", Meta, effort="low", timeout=600)
+    cast = {c.id: c for c in meta.cast}
+    for n in names:  # every speaker is in the cast, whatever the call returned
+        cid = slug(n)
+        if cid not in cast:
+            g = given.get(n.lower(), {})
+            cast[cid] = SCast(id=cid, name=n, look=g.get("look", "man"))
+        elif cast[cid].name.lower() != n.lower():
+            cast[cid].name = n
+    lead = next(iter(cast), "")
+    scenes, cur = [], None
+    for b in beats:
+        sid = slug(b["speaker"]) if b["speaker"] not in ("narrator", "none") else b["speaker"]
+        on = [sid] if sid in cast else ([lead] if lead else [])
+        ln = SLine(speaker=sid, line=b["line"], note=b["note"],
+                   actors=[SActor(id=a, spot="center", pose="stand", face="neutral", facing="right") for a in on])
+        if cur is None or cur.hook != b["hook"]:
+            cur = SScene(setting="living-room", hook=b["hook"], lines=[])  # the storyboard picks every beat's place
+            scenes.append(cur)
+        cur.lines.append(ln)
+    ep = Episode(title=(req.title.strip() or meta.title)[:100], logline=meta.logline,
+                 youtube_description=meta.youtube_description, tags=meta.tags[:15], hashtags=meta.hashtags[:3],
+                 mood=meta.mood, music_prompt=meta.music_prompt, category=meta.category, cast=list(cast.values()),
+                 scenes=scenes)
+    said = [b["line"] for b in beats if b["line"]]
+    assert [ln.line for sc in ep.scenes for ln in sc.lines if ln.line] == said  # your words, unchanged
+    return ep
+
+
 def ensure_hook(cfg: Config, ep: "Episode", req: StickRequest, progress: Progress) -> "Episode":
     """Every Stick video opens with its hook (the user: "still there is no hook i see"). A Short: its first scene is
     the hook. An episode or documentary whose writer left the cold open out, or made it under 20 s, gets one: a
@@ -1232,6 +1336,13 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info, res
     ep = Episode.model_validate(state["ep"]) if state.get("ep") else None
     from . import stickboard
 
+    if not done("written") and req.script.strip():  # your own script: your words, staged; no writing or fact-check
+        ep = from_script(cfg, req, progress)
+        remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
+                       "places": [], "music": ep.mood})
+        save("written", ep=ep)
+        save("checked", ep=ep, fact_issues=[], findings=[], sources=[], dropped=[])
+        stage = "checked"  # `done` reads it: the writing and fact-check below are skipped
     if not done("written"):
         recent = made_before(cfg)
         progress(("Claude is researching and writing" if req.style in TRUE_STYLES else "Claude is writing")

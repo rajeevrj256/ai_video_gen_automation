@@ -527,6 +527,8 @@ class StickRequestBody(BaseModel):
     cast: str = ""
     subtitles: str = "auto"  # auto | on | off
     opening: str = "auto"  # stickstory.OPENINGS key or auto
+    script: str = ""  # your own script (stickstory.from_script); empty = Claude writes the story
+    title: str = ""
     count: int = 1
     ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
@@ -1456,7 +1458,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/stick")
     def stick(body: StickRequestBody):
-        from .stickstory import DEFAULT_CAST, OPENINGS
+        from .stickstory import DEFAULT_CAST, OPENINGS, parse_stick_script
 
         fmt = "short" if body.format == "short" else "long"
         given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))), "seconds": body.seconds if body.seconds in (15, 30, 45, 60) else 0,
@@ -1464,8 +1466,11 @@ def create_app(cfg: Config) -> FastAPI:
                  "speed": min(2.0, max(0.8, float(body.speed))), "cast": body.cast.strip() or DEFAULT_CAST,
                  "style": body.style if body.style in ("comedy", "fiction", "facts", "documentary") else "comedy",
                  "subtitles": body.subtitles if body.subtitles in ("on", "off") else "auto",
-                 "opening": body.opening if body.opening in OPENINGS else "auto"}
-        return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick",
+                 "opening": body.opening if body.opening in OPENINGS else "auto",
+                 "script": body.script.strip()[:20000], "title": body.title.strip()[:100]}
+        if given["script"] and not any(b["line"] for b in parse_stick_script(given["script"])):
+            raise HTTPException(400, "The script has no lines to say.")
+        return jobs.submit((given["title"] or body.idea.strip())[:80] or None, 1 if given["script"] else max(1, min(body.count, 5)), "stick",
                            {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given["style"], "comedy"),
                            "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False, ai=body.ai)
 

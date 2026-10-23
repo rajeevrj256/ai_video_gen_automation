@@ -85,14 +85,13 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     """`_synthesize`, then the whole narration levelled to one loudness (reelgen/audio.py), whatever the voice:
     every pipeline's voice comes out at the same level, so the music and effects sit the same way under it.
 
-    `separate` (the hook): each line its own take when the voice gives no word timings (Sarvam, Kokoro). One take
-    is cut between lines at a pause found by estimate, and where a lively hook read ran two lines together the cut
-    fell inside a word: the user heard a quarter of a word, the shot's breath, then the rest. The hook's shots have
-    a pause between them anyway, so separate takes lose nothing there. Microsoft's voice times every word, so its
-    cuts are exact and it keeps one take."""
+    `separate` (the hook): each line its own take, whatever the voice. One take was cut between lines, and where
+    the read ran two lines together the cut fell inside a word: the user heard a quarter of a word, the shot's
+    breath, then the rest (Sarvam first, then "andrew also": Microsoft's word times can be off too). The hook's
+    shots have a pause between them anyway, so separate takes lose nothing there."""
     from .audio import level_voice
 
-    if separate and len(narrations) > 1 and (voice.startswith("sarvam:") or engine == "kokoro"):
+    if separate and len(narrations) > 1:
         scenes = []
         for i, line in enumerate(narrations):
             one = _synthesize([line], voice, out_dir / f"line_{i:02d}", engine, kokoro_voice, rate, pitch, volume,

@@ -115,7 +115,7 @@ def beats_of(ep) -> list[tuple[int, int]]:
 
 def _numbered(ep) -> str:
     def say(ln) -> str:
-        return f"[{ln.speaker}] {ln.line}" if ln.line.strip() else f"[silent beat: {ln.speaker}]"
+        return f"[{ln.speaker}] {ln.line}" if ln.line.strip() else f"[silent beat: {ln.speaker}] {getattr(ln, 'note', '')}".rstrip()
     return "\n".join(f"{k}.{' HOOK' if ep.scenes[si].hook else ''} {say(ep.scenes[si].lines[li])}"
                      for k, (si, li) in enumerate(beats_of(ep)))
 
