@@ -210,8 +210,8 @@ class EngineBusy(RuntimeError):
 
 def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str, wait: float | None = None) -> None:
     """Run one worker stage to the end. Stop or Pause kills it at once; finished items stay on disk. A worker
-    that crashes is started once more for what's left (the music model once died on the last of 8 tracks with
-    no error of its own, and the 7 made were thrown away). `wait`: give up after that many seconds when another
+    that crashes is started again for what's left while each run finishes something (the music model once died
+    on the last of 8 tracks with no error of its own, and the 7 made were thrown away). `wait`: give up after that many seconds when another
     AI step holds the card (EngineBusy): a Short's music never waits hours behind an animated video's clips."""
     if not installed():
         raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
@@ -231,13 +231,53 @@ def run_on_card(stage: str, job: dict, work: Path, progress: Progress, label: st
             if wait is not None and waited >= wait:
                 raise EngineBusy("the graphics card is busy with another video's AI step")
     try:
-        try:
-            _run_stage(stage, job, work, progress, label, py, worker)
-        except WorkerCrashed as exc:
-            progress(f"{label}: the AI worker stopped unexpectedly ({exc.why}); starting it again for what's left")
-            _run_stage(stage, job, work, progress, label, py, worker)
+        batch = FRESH_EVERY.get(stage)
+        tracks = job.get("tracks") or []
+        if batch and len(tracks) > batch:  # a fresh process every few tracks: they wear down (see FRESH_EVERY)
+            todo = [t for t in tracks if not _finished({"tracks": [t]})]
+            for i in range(0, len(todo), batch):
+                whole = {"todo": todo, "done": len(tracks) - len(todo), "first": i == 0}
+                _until_done(stage, {**job, "tracks": todo[i:i + batch]}, work, progress, label, py, worker, whole)
+        else:
+            _until_done(stage, job, work, progress, label, py, worker)
     finally:
         _gpu.release()
+
+
+# The music model's process crashed with 0xC0000005 after a few tracks on the user's laptop, whatever the precision
+# (the last of 8 tracks in bf16; after 3 and then 4 tracks of 11 in fp32, ~5 min each): every few tracks it starts
+# fresh (a reload is ~1 min; a crash loses the track being made, then reloads anyway).
+FRESH_EVERY = {"music": 3}
+
+
+def _finished(job: dict) -> int:
+    """How many of the job's outputs are finished (an output and its .ok marker)."""
+    return sum(1 for key in ("characters", "shots", "tracks") for it in job.get(key) or []
+               if it.get("out") and Path(it["out"]).exists() and Path(str(it["out"]) + ".ok").exists())
+
+
+def _until_done(stage: str, job: dict, work: Path, progress: Progress, label: str, py: Path, worker: Path,
+                whole: dict | None = None) -> None:
+    """Run the stage; a worker that crashes is started again for what's left as long as each run finished
+    something more. Two crashes in a row with nothing new finished: give up. `whole`: this job is one batch of
+    a bigger set (its todo list, how many were done before it), so the progress lines count the whole set."""
+    idle = 0
+    while True:
+        before = _finished(job)
+        if whole:
+            made = _finished({"tracks": whole["todo"]})
+            job = {**job, "_shown": {"made": made, "more": len(whole["todo"]) - made - (len(job["tracks"]) - before),
+                                     "first": whole["first"] and not made, "done": whole["done"]}}
+        try:
+            _run_stage(stage, job, work, progress, label, py, worker)
+            return
+        except WorkerCrashed as exc:
+            idle = 0 if _finished(job) > before else idle + 1
+            if idle >= 2:
+                raise
+            if whole:
+                whole = {**whole, "first": False}
+            progress(f"{label}: the AI worker stopped unexpectedly ({exc.why}); starting it again for what's left")
 
 
 def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str, py: Path | None = None,
@@ -304,15 +344,23 @@ def _run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str
         except ValueError:
             continue
         kind = msg.get("kind")
+        shown = job.get("_shown") or {}  # this run is one batch of a bigger set: count the whole set
         if kind == "item":
             times.append(float(msg.get("secs") or 0))
             n, of = int(msg["n"]), int(msg["of"])
+            n, of = n + shown.get("made", 0), of + shown.get("made", 0) + shown.get("more", 0)
             live.update(n=n, of=of, since=time.time(), step="")
             each = sum(times[-8:]) / len(times[-8:])
             left = (of - n) * each
             progress(f"{label}: {n} of {of} done · {each:.0f} s each · about "
                      + (f"{left / 3600:.1f} h left" if left > 5400 else f"{left / 60:.0f} min left"))
+        elif kind == "start" and msg.get("todo") and shown and not shown.get("first"):
+            live.update(n=shown.get("made", 0), of=int(msg["todo"]) + shown.get("made", 0) + shown.get("more", 0),
+                        since=time.time(), step="")
         elif kind == "start" and msg.get("todo"):
+            if shown:
+                msg = {**msg, "todo": int(msg["todo"]) + shown.get("more", 0),
+                       "total": int(msg["todo"]) + shown.get("more", 0) + shown.get("done", 0)}
             live.update(n=0, of=int(msg["todo"]), since=time.time(), step="")
             progress(f"{label}: {msg['todo']} to make" + (f" ({msg['total'] - msg['todo']} already done)" if msg["total"] > msg["todo"] else ""))
         elif kind in ("warn", "note"):
