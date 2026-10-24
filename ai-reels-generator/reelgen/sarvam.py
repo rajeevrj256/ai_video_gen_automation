@@ -29,10 +29,10 @@ URL = "https://api.sarvam.ai/text-to-speech"
 # Your own cloned voice (Sarvam Content Studio / POST /voices/create gives an ID `svc-<uuid>`; Settings > Long videos
 # 'Your Sarvam voice'): spoken through POST /voices/clone, multipart, at most 1000 characters a request, the answer
 # {"audio_b64" (or the older "audio"), "request_id", "audio_duration"}. The user's own playground setup: en-IN,
-# pace 1.2, 32000 Hz, quality control and text normalisation on.
+# pace 1.2, 48000 Hz, quality control and text normalisation on.
 CLONE_URL = "https://api.sarvam.ai/voices/clone"
 CLONE_LIMIT = 950  # characters a request (the API refuses over 1000)
-CLONE_RATE = 32000
+CLONE_RATE = 48000  # the user asked for 48 kHz (Sarvam allows up to 48000)
 LIMIT = 2000  # characters per take (the API takes 2500; Devanagari can come out a little longer than the Roman text)
 RATE = 24000
 GAP = 0.3  # seconds of silence between two takes
@@ -321,33 +321,34 @@ def scenes(narrations: list[str], speaker: str, out_dir: Path, pace: float = 1.0
     from .voice import SceneAudio, _decode, _estimate_words, _write_wav
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    rate = CLONE_RATE if is_clone(speaker) else RATE  # your voice kept at the 48 kHz it was asked for
     pieces, cuts, t0 = [], [], 0.0
     for n, group in enumerate(_takes(narrations, CLONE_LIMIT if is_clone(speaker) else LIMIT)):
         text = " ".join(narrations[j].strip() for j in group)
         take = out_dir / f"take_{n:02d}.wav"
         take.write_bytes(say(text, speaker, pace, temperature=temperature))
         level_file(take, take)
-        samples, _ = _decode(take, RATE)
+        samples, _ = _decode(take, rate)
         if pieces:  # between two takes: the middle of the silence put there
-            pieces.append(np.zeros(int(GAP * RATE), dtype=np.float32))
+            pieces.append(np.zeros(int(GAP * rate), dtype=np.float32))
             cuts.append(t0 + GAP / 2)
             t0 += GAP
-        words = _estimate_words(text, samples, RATE)
+        words = _estimate_words(text, samples, rate)
         k = 0
         for j in group[:-1]:
             k += len(narrations[j].split())
             if 0 < k < len(words):
-                cuts.append(t0 + _pause_near(samples, RATE, (words[k - 1].end + words[k].start) / 2))
+                cuts.append(t0 + _pause_near(samples, rate, (words[k - 1].end + words[k].start) / 2))
             else:
-                cuts.append(t0 + len(samples) / RATE * (j - group[0] + 1) / len(group))
+                cuts.append(t0 + len(samples) / rate * (j - group[0] + 1) / len(group))
         pieces.append(samples.astype(np.float32))
-        t0 += len(samples) / RATE
+        t0 += len(samples) / rate
     full = np.concatenate(pieces) if pieces else np.zeros(1, dtype=np.float32)
-    bounds = [0.0, *sorted(cuts), len(full) / RATE]
+    bounds = [0.0, *sorted(cuts), len(full) / rate]
     out = []
     for i, text in enumerate(narrations):
-        seg = full[int(bounds[i] * RATE):int(bounds[i + 1] * RATE)]
+        seg = full[int(bounds[i] * rate):int(bounds[i + 1] * rate)]
         path = out_dir / f"scene_{i:02d}.wav"
-        _write_wav(path, seg, RATE)
-        out.append(SceneAudio(path, _estimate_words(text, seg, RATE) if len(seg) else []))
+        _write_wav(path, seg, rate)
+        out.append(SceneAudio(path, _estimate_words(text, seg, rate) if len(seg) else []))
     return out
