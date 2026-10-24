@@ -749,19 +749,41 @@ def upscale(job: dict) -> None:
 # ---------- music: ACE-Step 1.5 (turbo, no language model: fits a 4 GB card) ----------
 
 # ACE-Step always picks fp16 before Ampere, and on the user's GTX 1650 that gave "Generation produced NaN or
-# Inf latents" on the first track. bf16 has fp32's range at the same size, but only Ampere (8.0) and newer
-# compute it: on the GTX 1650 it was emulated and every track hit ACE-Step's 600 s limit (GPU at 4%), then
-# the restart crashed (0xC0000005). So cards before 8.0 go from fp16 straight to fp32 (`ace_ladder`).
+# Inf latents" on the first track. bf16 has fp32's range at the same size and made 7 of 8 one-minute tracks
+# there; fp32 is the last resort, and only with room for it: the model is loaded whole into system memory before
+# int8 shrinks it (~8 GB in fp32), and on the user's 16 GB laptop fp32 crashed while loading (0xC0000005).
 ACE_PRECISIONS = ["auto", "bfloat16", "float32"]
-# ACE-Step gives up on a track after ACESTEP_GENERATION_TIMEOUT (600 s by default, read when it is imported).
-# A small card offloading the model needs longer for a few-minute track; Stop still ends the worker at once.
+FP32_RAM_GB = 24  # less system memory than this: never fp32
+# ACE-Step gives up on a track after ACESTEP_GENERATION_TIMEOUT (600 s by default, read when it is imported):
+# a 3-minute Stick track in bf16 on the GTX 1650 ran out. Stop still ends the worker at once.
 ACE_TIMEOUT = "2400"
 
 
-def ace_ladder(capability: tuple[int, int] | None) -> list[str]:
-    """The precisions worth trying on this card, narrowest first."""
-    if capability and capability < (8, 0):
-        return ["auto", "float32"]
+def ram_gb() -> float:
+    """This computer's system memory, 0 when unknown."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            st = Status()
+            st.dwLength = ctypes.sizeof(Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+            return st.ullTotalPhys / 2**30
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
+    except (AttributeError, ValueError, OSError):
+        return 0.0
+
+
+def ace_ladder(ram: float) -> list[str]:
+    """The precisions worth trying on this computer, narrowest first."""
+    if 0 < ram < FP32_RAM_GB:
+        return ACE_PRECISIONS[:-1]
     return ACE_PRECISIONS
 
 
@@ -801,10 +823,10 @@ def music(job: dict) -> None:
     from acestep.llm_inference import LLMHandler
 
     vram = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0
-    ladder = ace_ladder(torch.cuda.get_device_capability(0) if torch.cuda.is_available() else None)
+    ladder = ace_ladder(ram_gb())
     prec = job.get("ace_dtype") or calibration(job).get("ace_dtype") or "auto"
-    if prec not in ladder:  # e.g. bf16 remembered on a card that only emulates it
-        prec = "float32" if prec == "bfloat16" else "auto"
+    if prec not in ladder:  # fp32 remembered, or tried, on a computer without the memory for it
+        prec = ladder[-1]
     _ace_precision(prec)
     ckpt = Path(os.environ.get("ACESTEP_CHECKPOINTS_DIR") or Path(root) / "checkpoints") / "acestep-v15-turbo"
     say("note", msg=("Loading the music model (ACE-Step" + ("" if prec == "auto" else f", {prec}") + ")") if ckpt.exists()
