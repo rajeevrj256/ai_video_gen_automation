@@ -749,8 +749,20 @@ def upscale(job: dict) -> None:
 # ---------- music: ACE-Step 1.5 (turbo, no language model: fits a 4 GB card) ----------
 
 # ACE-Step always picks fp16 before Ampere, and on the user's GTX 1650 that gave "Generation produced NaN or
-# Inf latents" on the first track. bf16 has fp32's range at the same size; fp32 is the last resort (~2x memory).
+# Inf latents" on the first track. bf16 has fp32's range at the same size, but only Ampere (8.0) and newer
+# compute it: on the GTX 1650 it was emulated and every track hit ACE-Step's 600 s limit (GPU at 4%), then
+# the restart crashed (0xC0000005). So cards before 8.0 go from fp16 straight to fp32 (`ace_ladder`).
 ACE_PRECISIONS = ["auto", "bfloat16", "float32"]
+# ACE-Step gives up on a track after ACESTEP_GENERATION_TIMEOUT (600 s by default, read when it is imported).
+# A small card offloading the model needs longer for a few-minute track; Stop still ends the worker at once.
+ACE_TIMEOUT = "2400"
+
+
+def ace_ladder(capability: tuple[int, int] | None) -> list[str]:
+    """The precisions worth trying on this card, narrowest first."""
+    if capability and capability < (8, 0):
+        return ["auto", "float32"]
+    return ACE_PRECISIONS
 
 
 def _ace_precision(prec: str) -> None:
@@ -769,7 +781,7 @@ def _ace_precision(prec: str) -> None:
 def _precision_problem(err: str) -> bool:
     import re
 
-    return bool(re.search(r"\bnan\b|\binf\b|bfloat16|not implemented for", err, re.I))
+    return bool(re.search(r"\bnan\b|\binf\b|bfloat16|not implemented for|timed out", err, re.I))
 
 def music(job: dict) -> None:
     import shutil
@@ -781,6 +793,7 @@ def music(job: dict) -> None:
     if not todo:
         return
     root = job["ace_root"]
+    os.environ.setdefault("ACESTEP_GENERATION_TIMEOUT", ACE_TIMEOUT)
     sys.path.insert(0, root)
     os.chdir(root)
     from acestep.handler import AceStepHandler
@@ -788,9 +801,10 @@ def music(job: dict) -> None:
     from acestep.llm_inference import LLMHandler
 
     vram = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0
+    ladder = ace_ladder(torch.cuda.get_device_capability(0) if torch.cuda.is_available() else None)
     prec = job.get("ace_dtype") or calibration(job).get("ace_dtype") or "auto"
-    if prec not in ACE_PRECISIONS:
-        prec = "auto"
+    if prec not in ladder:  # e.g. bf16 remembered on a card that only emulates it
+        prec = "float32" if prec == "bfloat16" else "auto"
     _ace_precision(prec)
     ckpt = Path(os.environ.get("ACESTEP_CHECKPOINTS_DIR") or Path(root) / "checkpoints") / "acestep-v15-turbo"
     say("note", msg=("Loading the music model (ACE-Step" + ("" if prec == "auto" else f", {prec}") + ")") if ckpt.exists()
@@ -799,11 +813,11 @@ def music(job: dict) -> None:
     def wider(err: str):
         """This card can't run the music model in `prec`: start the stage again one step wider (the tracks
         already made are kept), and remember it for the next video."""
-        if not _precision_problem(err) or prec == ACE_PRECISIONS[-1]:
+        if not _precision_problem(err) or prec == ladder[-1]:
             return None
-        nxt = ACE_PRECISIONS[ACE_PRECISIONS.index(prec) + 1]
+        nxt = ladder[ladder.index(prec) + 1]
         names = {"auto": "half precision", "bfloat16": "bf16", "float32": "full precision (more memory, slower)"}
-        say("warn", msg=f"The music came out broken in {names[prec]} on this card; trying {names[nxt]}")
+        say("warn", msg=f"The music didn't work in {names[prec]} on this card; trying {names[nxt]}")
         remember(job, "ace_dtype", nxt)
         return {**job, "ace_dtype": nxt}
 

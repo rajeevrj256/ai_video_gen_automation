@@ -20,6 +20,8 @@ Progress = Callable[[str], None]
 
 BUSY_WAIT = 120  # seconds a video waits for the card when another video's AI step holds it, then composes
 LONGEST = 300  # seconds of one generated track (longer parts loop it)
+SMALL_CARD_GB = 6  # on a card under this much memory a track is at most SMALL_LONGEST seconds
+SMALL_LONGEST = 120  # the GTX 1650 (4 GB) offloads the music model; a 5-minute track took over 10 minutes
 RECENT = 4  # a genre rests for this many videos
 
 # Genre: (what the music model hears, the moods it suits). Every video gets one the last RECENT didn't use.
@@ -120,6 +122,9 @@ def make(cfg, tracks: list[dict], work: Path, progress: Progress, label: str = "
         return {}
     todo = [t for t in tracks if not _ready(Path(t["out"]))]
     if todo:
+        vram = float(anim_engine.probe().get("vram_gb") or 0)
+        if 0 < vram < SMALL_CARD_GB:
+            todo = [{**t, "duration": min(float(t["duration"]), SMALL_LONGEST)} for t in todo]
         try:
             anim_engine.run_stage("music", {"tracks": todo, "ace_root": str(anim_engine.ENGINE)}, work, progress, label,
                                   wait=BUSY_WAIT)
