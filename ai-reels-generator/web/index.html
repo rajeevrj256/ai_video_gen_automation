@@ -573,6 +573,8 @@ Plain paragraphs are read by the narrator."></textarea>
             <option value="you">👉 You in the situation</option><option value="ending">⏪ The ending first</option></select></div>
         <div><label for="stSubs">Subtitles</label>
           <select id="stSubs"><option value="auto">Auto (off for documentaries)</option><option value="on">💬 On</option><option value="off">🚫 Off</option></select></div>
+        <div><label for="stNarrator">Narrator's voice</label>
+          <select id="stNarrator"><option value="">Auto: a voice none of the cast has</option></select></div>
       </div>
       <label>Cast and voices</label>
       <p class="hint">Each character's look and voice. "Auto" gives everyone a different voice; ▶ plays a sample at the chosen speed.
@@ -913,6 +915,17 @@ Plain paragraphs are read by the narrator."></textarea>
       <div class="row"><input id="k-sarvam" type="password" autocomplete="off" placeholder="Paste your key from dashboard.sarvam.ai">
         <button id="k-sarvam-save" style="flex:0 0 auto">Save key</button></div>
       <p class="hint">Saved in the .env file on this computer only, never shown again. About ₹25–30 of Sarvam credits per 10-minute video.</p>
+      <label for="s-my_voice_id">🎙 Your cloned voice (Sarvam voice ID)</label>
+      <input id="s-my_voice_id" placeholder="svc-… from Sarvam's Voice Cloning page" autocomplete="off">
+      <div class="row">
+        <div><label for="s-my_voice_name">Its name in the voice lists</label><input id="s-my_voice_name" placeholder="My voice"></div>
+        <div><label for="s-my_voice_pace">Its pace</label>
+          <select id="s-my_voice_pace"><option value="0.9">0.9x</option><option value="1">1.0x</option><option value="1.1">1.1x</option>
+            <option value="1.2">1.2x (as in your Sarvam setup)</option><option value="1.3">1.3x</option><option value="1.4">1.4x</option><option value="1.5">1.5x</option></select></div>
+      </div>
+      <p class="hint">Save, and your voice appears first in every voice list: Shorts, long and Script videos, Shoot B-roll lines,
+        Shorts+, Toon, Anim and the Stick narrator. It speaks through Sarvam's voice cloning (your key above):
+        ₹2 per 1,000 characters, about ₹2 a minute of narration.</p>
     </div>
     <div class="panel">
       <h2>Automations</h2>
@@ -1170,6 +1183,7 @@ function toast(msg) {
 
 function show(view) {
   current = view;
+  if (view !== "login" && !show.myVoice) { show.myVoice = true; loadMyVoice(); }  // your cloned voice in every list
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
@@ -1458,7 +1472,7 @@ function paceSlider(sel, { blank = null, base = "+0%", video = null } = {}) {
   if (keep) keep.onclick = () => { setPace(sel, ""); sel.dispatchEvent(new Event("change")); };
   sel.syncPace();
 }
-const voiceName = (v) => String(v || "").replace(/^sarvam:/, "").replace(/^[a-z]{2}-[A-Z]{2}-/, "").replace(/(Multilingual)?Neural$/, "").replace(/_.*/, "");
+const voiceName = (v) => /^sarvam:svc-/.test(String(v || "")) ? ((MY_VOICE && MY_VOICE.label.replace(/^🎙 | \(your cloned voice\)$/g, "")) || "My voice") : String(v || "").replace(/^sarvam:/, "").replace(/^[a-z]{2}-[A-Z]{2}-/, "").replace(/(Multilingual)?Neural$/, "").replace(/_.*/, "");
 let demoTimer = null;
 function wireDemos(id, v) {
   const box = $("#rvDemoBox"), player = $("#rvDemoVideo");
@@ -2699,11 +2713,31 @@ $("#k-sarvam-save").onclick = async () => {
     $("#k-sarvam").value = ""; toast(key ? "Sarvam key saved" : "Sarvam key removed"); loadKeys();
   } catch (e) { toast(e.message); }
 };
+// Your Sarvam cloned voice (Settings > Long videos) first in every voice list, the copies made from them included.
+const MY_VOICE_LISTS = ["#s-long_voice", "#s-voice", "#sv-voice", "#ssVoice", "#rv-voice", "#stNarrator"];  // Toon/Anim: the server lists it
+let MY_VOICE = null;
+async function loadMyVoice() {
+  try {
+    const [s, k] = await Promise.all([api("/api/settings"), api("/api/keys").catch(() => ({}))]);
+    MY_VOICE = s.my_voice_id && k.sarvam ? { value: "sarvam:" + s.my_voice_id.trim().toLowerCase(), label: "🎙 " + (s.my_voice_name || "My voice") + " (your cloned voice)" } : null;
+  } catch (e) { MY_VOICE = null; }
+  MY_VOICE_LISTS.forEach((sel) => addMyVoice($(sel)));
+}
+function addMyVoice(el) {
+  if (!el || !el.options.length) return;  // a list filled later copies #s-long_voice, which has it
+  const old = el.querySelector("option[data-mine]");
+  if (old && (!MY_VOICE || old.value !== MY_VOICE.value)) old.remove();
+  if (!MY_VOICE || el.querySelector("option[data-mine]")) return;
+  const o = new Option(MY_VOICE.label, MY_VOICE.value); o.dataset.mine = "1";
+  const auto = el.options.length && el.options[0].value === "" ? 1 : 0;  // after an "Auto" first choice
+  el.insertBefore(o, el.options[auto] || null);
+}
 async function loadSettings() {
   loadAutomations().catch(() => {});
   loadLibrary().catch(() => {});
   loadKeys().catch(() => {});
   const [s, st] = await Promise.all([api("/api/settings"), api("/api/status")]);
+  await loadMyVoice();
   for (const [k, v] of Object.entries(s)) {
     const el = $("#s-" + k); if (!el) continue;
     if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(v))) el.add(new Option(v, v));
@@ -2967,7 +3001,7 @@ document.querySelectorAll("#stFormat button").forEach((b) => b.onclick = () => {
 });
 $("#stBtn").onclick = async () => {
   const body = { idea: $("#stIdea").value, format: stFormat, minutes: Number($("#stMinutes").value), seconds: Number($("#stSeconds").value), language: "english", speed: Number($("#stSpeed").value),
-                 style: stStyle, cast: stSerialize(), count: Number($("#stCount").value), opening: $("#stOpening").value, subtitles: $("#stSubs").value,
+                 style: stStyle, cast: stSerialize(), count: Number($("#stCount").value), opening: $("#stOpening").value, subtitles: $("#stSubs").value, narrator: ($("#stNarrator") || {}).value || "",
                  script: stSource === "script" ? $("#stScript").value : "", title: stSource === "script" ? $("#stTitle").value : "" };
   if (stSource === "script" && !body.script.trim()) return toast("Paste your script first");
   $("#stBtn").disabled = true;

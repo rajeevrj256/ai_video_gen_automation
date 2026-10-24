@@ -431,7 +431,7 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
     progress("Recording the voiceover")
     plan: list[tuple[int, AShot]] = [(-1, sh) for sh in sc.cold_open]
     plan += [(ci, sh) for ci, ch in enumerate(sc.chapters) for sh in ch.shots]
-    voice = req.voice if req.voice in VOICES else "en-US-AndrewMultilingualNeural"
+    voice = req.voice if req.voice in VOICES or req.voice.startswith("sarvam:") else "en-US-AndrewMultilingualNeural"
     audio: list = [None] * len(plan)
     i = 0
     while i < len(plan):  # one take per run of lines in the same tone (see toon.TONES)

@@ -531,6 +531,7 @@ class StickRequestBody(BaseModel):
     style: str = "comedy"  # comedy | fiction | facts | documentary
     cast: str = ""
     subtitles: str = "auto"  # auto | on | off
+    narrator: str = ""  # the narrator's voice (e.g. your cloned Sarvam voice); empty = one nobody in the cast has
     opening: str = "auto"  # stickstory.OPENINGS key or auto
     script: str = ""  # your own script (stickstory.from_script); empty = Claude writes the story
     title: str = ""
@@ -1396,7 +1397,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .voice import _edge_synthesize
 
         voice, text = str(body.get("voice") or ""), str(body.get("text") or "").strip()[:2000]  # Sarvam takes 2500
-        if not (re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or re.fullmatch(r"sarvam:[a-z_]{2,40}", voice)) or not text:
+        if not (re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or re.fullmatch(r"sarvam:([a-z_]{2,40}|svc-[0-9a-f-]{8,64})", voice)) or not text:
             raise HTTPException(400, "Pick a voice and type a line")
         from . import sarvam
 
@@ -1410,14 +1411,14 @@ def create_app(cfg: Config) -> FastAPI:
         pct = int(re.sub(r"[^\d-]", "", rate if re.fullmatch(r"[+-]\d{1,2}%", rate) else cfg.long_voice_rate) or 0)
         level = str(body.get("delivery") or "normal")
         temperature, factor = sarvam.delivery(level if level in sarvam.DELIVERY else "normal")
-        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace() if sarvam.is_sarvam(voice) else ''}|{level}|lv1|{spoken}".encode()).hexdigest()[:16]
+        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace_for(sarvam.speaker_of(voice)) if sarvam.is_sarvam(voice) else ''}|{level}|lv1|{spoken}".encode()).hexdigest()[:16]
         path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if sarvam.is_sarvam(voice):  # levelled like the video's takes, so the sample sounds like the video
                     raw = path.with_suffix(".wav")
-                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), min(2.0, sarvam.pace() * factor * (1 + pct / 100)),
+                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), min(2.0, sarvam.pace_for(sarvam.speaker_of(voice)) * factor * (1 + pct / 100)),
                                                temperature=temperature))
                     sarvam.level_file(raw, path)
                     raw.unlink(missing_ok=True)
@@ -1481,18 +1482,28 @@ def create_app(cfg: Config) -> FastAPI:
                  "style": body.style if body.style in ("comedy", "fiction", "facts", "documentary") else "comedy",
                  "subtitles": body.subtitles if body.subtitles in ("on", "off") else "auto",
                  "opening": body.opening if body.opening in OPENINGS else "auto",
-                 "script": body.script.strip()[:20000], "title": body.title.strip()[:100]}
+                 "script": body.script.strip()[:20000], "title": body.title.strip()[:100],
+                 "narrator": body.narrator if re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural|sarvam:([a-z_]{2,40}|svc-[0-9a-f-]{8,64})",
+                                                           body.narrator or "") else ""}
+        if given["narrator"].startswith("sarvam:") and not os.environ.get("SARVAM_API_KEY"):
+            raise HTTPException(400, "Sarvam voices need your Sarvam AI key (Settings > Long videos).")
         if given["script"] and not any(b["line"] for b in parse_stick_script(given["script"])):
             raise HTTPException(400, "The script has no lines to say.")
         return jobs.submit((given["title"] or body.idea.strip())[:80] or None, 1 if given["script"] else max(1, min(body.count, 5)), "stick",
                            {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given["style"], "comedy"),
                            "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False, ai=body.ai)
 
+    def _with_my_voice(voices: dict) -> dict:
+        """A pipeline's own voice list with your Sarvam cloned voice first, when Settings has one and the key is set."""
+        from . import sarvam
+        name, label = sarvam.my_voice()
+        return {name: f"🎙 {label} (your cloned voice)", **voices} if name and sarvam.key() else voices
+
     @app.get("/api/toon/options")
     def toon_options():
         from .toon import FORMS, VOICES
 
-        return {"forms": FORMS, "voices": VOICES}
+        return {"forms": FORMS, "voices": _with_my_voice(VOICES)}
 
     @app.post("/api/toon")
     def toon(body: ToonRequestBody):
@@ -1500,7 +1511,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
                  "form": body.form if body.form in FORMS else "auto",
-                 "voice": body.voice if body.voice in VOICES else "en-US-AndrewMultilingualNeural",
+                 "voice": body.voice if body.voice in _with_my_voice(VOICES) else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "toon", "facts", "toon",
@@ -1511,7 +1522,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .animated import ART_STYLES
         from .toon import VOICES
 
-        return {"styles": {k: v[0] for k, v in ART_STYLES.items()}, "voices": VOICES}
+        return {"styles": {k: v[0] for k, v in ART_STYLES.items()}, "voices": _with_my_voice(VOICES)}
 
     @app.get("/api/anim/setup")
     def anim_setup():
@@ -1571,7 +1582,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
-                 "voice": body.voice if body.voice in VOICES else "en-US-AndrewMultilingualNeural",
+                 "voice": body.voice if body.voice in _with_my_voice(VOICES) else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40]}
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 3)), "anim", "facts", "anim",
@@ -1589,7 +1600,7 @@ def create_app(cfg: Config) -> FastAPI:
         if visuals == "footage" and not load_settings(Config()).pexels_api_key:
             raise HTTPException(400, "Stock footage needs a Pexels key (Settings), or pick AI pictures.")
         voice = body.voice.strip()
-        if voice and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural|sarvam:[a-z_]{2,40}", voice):
+        if voice and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural|sarvam:([a-z_]{2,40}|svc-[0-9a-f-]{8,64})", voice):
             raise HTTPException(400, "Unknown voice")
         if voice.startswith("sarvam:") and not os.environ.get("SARVAM_API_KEY"):
             raise HTTPException(400, "Sarvam voices need your Sarvam AI key (Settings > Long videos).")

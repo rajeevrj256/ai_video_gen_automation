@@ -200,6 +200,7 @@ class StickRequest:
     subtitles: str = "auto"  # auto (on, off for documentaries) | on | off
     script: str = ""  # your own script: every word spoken as written (`from_script`); empty = Claude writes it
     title: str = ""  # your script's title (empty: Claude names it)
+    narrator: str = ""  # the narrator's voice (the tab's pick, e.g. your cloned Sarvam voice); empty = one nobody has
     opening: str = "auto"  # how the first line hooks: a key of OPENINGS, or auto (the writer picks one the last videos didn't use)
 
 
@@ -1141,8 +1142,9 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     cast = [{"id": c.id, "look": c.look, "voice": given.get(c.id, {}).get("voice", "")} for c in ep.cast]
     voice_of = assign_voices(cast, req.language)
     # The narrator: a voice none of the cast has.
-    voice_of["narrator"] = next((v for v in NARRATORS.get(req.language, NARRATORS["english"]) if v not in voice_of.values()),
-                                NARRATORS.get(req.language, NARRATORS["english"])[0])
+    voice_of["narrator"] = getattr(req, "narrator", "") or next(
+        (v for v in NARRATORS.get(req.language, NARRATORS["english"]) if v not in voice_of.values()),
+        NARRATORS.get(req.language, NARRATORS["english"])[0])
     speakers = set(looks) | {"narrator"}
     doc = req.style == "documentary"
 

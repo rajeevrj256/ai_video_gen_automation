@@ -105,6 +105,10 @@ class Config:
     # How a Sarvam voice speaks the hook: normal (like the chapters), lively or very (more expressive, 5% faster);
     # picked by ear in the Script tab's voice test
     hook_delivery: str = field(default_factory=lambda: _env("REEL_HOOK_DELIVERY", "normal"))
+    # Your own voice cloned in Sarvam (`svc-<uuid>`): offered as 'sarvam:svc-...' in every voice list (sarvam.py).
+    my_voice_id: str = field(default_factory=lambda: _env("REEL_MY_VOICE_ID", ""))
+    my_voice_name: str = field(default_factory=lambda: _env("REEL_MY_VOICE_NAME", "My voice"))
+    my_voice_pace: float = field(default_factory=lambda: float(_env("REEL_MY_VOICE_PACE", "1.2")))
     hinglish_mix: bool = field(default_factory=lambda: _env("REEL_HINGLISH_MIX", "1").lower() not in ("0", "false", "no", "off"))
     # Every pipeline's music made by the local AI music model (ACE-Step, reelgen/aimusic.py) when the AI engine is
     # installed; composed music otherwise, or when this is off.
@@ -162,7 +166,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "my_music", "memes", "meme_source", "long_voice_rate", "hook_template"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "my_music", "memes", "meme_source", "long_voice_rate", "hook_template", "my_voice_id", "my_voice_name", "my_voice_pace"]
 
 
 def settings_path(cfg: Config) -> Path:

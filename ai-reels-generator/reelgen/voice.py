@@ -172,7 +172,7 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
         mix = (hinglish.needs_mixing(voice, narrations) and hinglish.enabled()) if mixed is None else mixed
         speak = hinglish.to_speech(narrations) if mix else narrations
         temperature, factor = sarvam.delivery(delivery)  # "hook": the hook's own, livelier delivery if chosen
-        return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace() * factor * sarvam_speed),
+        return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace_for(sarvam.speaker_of(voice)) * factor * sarvam_speed),
                                                temperature), narrations, speak)
     edge_error = None
     from . import hinglish

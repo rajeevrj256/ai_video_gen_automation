@@ -28,7 +28,7 @@ _lock = threading.Lock()
 def is_hindi_voice(voice: str) -> bool:
     """Hindi voices, and Sarvam's (its docs: transliterated input "significantly reduces output quality. Always use
     native script for Indic words")."""
-    return voice.startswith("hi-IN") or voice.startswith("sarvam:")
+    return voice.startswith("hi-IN") or (voice.startswith("sarvam:") and not voice.startswith("sarvam:svc-"))
 
 
 # Very common Hindi words typed in Roman letters that aren't English words too: how Hinglish text is told apart
@@ -58,7 +58,9 @@ def needs_mixing(voice: str, texts: list[str], least: int = 20) -> bool:
     latin, deva = len(LATIN.findall(joined)), len(DEVANAGARI.findall(joined))
     if latin <= least or latin <= 2 * deva:
         return False
-    return is_hindi_voice(voice) or ("Multilingual" in voice and looks_hinglish(texts))
+    # your cloned Sarvam voice reads English and Hindi like a multilingual one: Hindi words to Devanagari only in Hinglish
+    multilingual = "Multilingual" in voice or voice.startswith("sarvam:svc-")
+    return is_hindi_voice(voice) or (multilingual and looks_hinglish(texts))
 
 
 def words(text: str) -> list[str]:

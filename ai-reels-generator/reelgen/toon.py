@@ -560,7 +560,7 @@ def build(sc: ToonScript, req: ToonRequest, cfg: Config, work: Path, progress: P
     # Each run of lines in the same tone is one take (calm explaining, a firm fact, a dramatic reveal, an urgent
     # warning...): the delivery follows the sentence, and within a run the voice still flows.
     progress("Recording the voiceover")
-    voice = req.voice if req.voice in VOICES else "en-US-AndrewMultilingualNeural"
+    voice = req.voice if req.voice in VOICES or req.voice.startswith("sarvam:") else "en-US-AndrewMultilingualNeural"
     tone_of = lambda item: item[2].tone if item[2] is not None else "firm"  # noqa: E731
     audio: list = [None] * len(plan)
     i = 0

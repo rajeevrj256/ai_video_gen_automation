@@ -26,6 +26,13 @@ import requests
 log = logging.getLogger(__name__)
 
 URL = "https://api.sarvam.ai/text-to-speech"
+# Your own cloned voice (Sarvam Content Studio / POST /voices/create gives an ID `svc-<uuid>`; Settings > Long videos
+# 'Your Sarvam voice'): spoken through POST /voices/clone, multipart, at most 1000 characters a request, the answer
+# {"audio_b64" (or the older "audio"), "request_id", "audio_duration"}. The user's own playground setup: en-IN,
+# pace 1.2, 32000 Hz, quality control and text normalisation on.
+CLONE_URL = "https://api.sarvam.ai/voices/clone"
+CLONE_LIMIT = 950  # characters a request (the API refuses over 1000)
+CLONE_RATE = 32000
 LIMIT = 2000  # characters per take (the API takes 2500; Devanagari can come out a little longer than the Roman text)
 RATE = 24000
 GAP = 0.3  # seconds of silence between two takes
@@ -57,6 +64,20 @@ def is_sarvam(voice: str) -> bool:
     return voice.startswith("sarvam:")
 
 
+def is_clone(speaker: str) -> bool:
+    """`svc-<uuid>`: a voice cloned in Sarvam (yours), not one of their speakers."""
+    return speaker.startswith("svc-")
+
+
+def my_voice() -> tuple[str, str]:
+    """(voice name as the app uses it, its label) for the cloned voice in Settings, or ('', '')."""
+    from .config import Config, load_settings
+
+    cfg = load_settings(Config())
+    vid = (cfg.my_voice_id or "").strip()
+    return (f"sarvam:{vid}", (cfg.my_voice_name or "My voice").strip()) if vid else ("", "")
+
+
 def key() -> str:
     return os.environ.get("SARVAM_API_KEY", "").strip()
 
@@ -84,8 +105,19 @@ def pace() -> float:
     return min(2.0, max(0.5, float(load_settings(Config()).sarvam_pace or 1.0)))
 
 
+def pace_for(speaker: str) -> float:
+    """Your cloned voice has its own pace (Settings 'Your voice's pace', 1.2 as in your playground setup)."""
+    if not is_clone(speaker):
+        return pace()
+    from .config import Config, load_settings
+
+    return min(2.0, max(0.5, float(load_settings(Config()).my_voice_pace or 1.2)))
+
+
 def speaker_of(voice: str) -> str:
     name = voice.split(":", 1)[1].strip().lower() if ":" in voice else voice.lower()
+    if re.fullmatch(r"svc-[0-9a-f-]{8,64}", name):
+        return name
     if name not in SPEAKERS and not re.fullmatch(r"[a-z]+_[a-z]{2,4}_[a-z_]+", name):
         raise ValueError(f"Unknown Sarvam voice '{name}'")
     return name
@@ -103,6 +135,8 @@ def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperat
     """One take. Rate limits and server hiccups are tried again; a wrong key or used-up credits are said plainly."""
     if not key():
         raise RuntimeError("Add your Sarvam API key in Settings > Long videos to use the Sarvam voices")
+    if is_clone(speaker):
+        return _clone_say(text, speaker, pace, codec)
     body = {"text": text, "language_code": language_for(speaker), "speaker": speaker, "model": model_for(speaker),
             "pace": round(min(2.0, max(0.5, pace)), 2), "speech_sample_rate": RATE, "output_audio_codec": codec}
     if temperature is not None:
@@ -142,6 +176,84 @@ def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperat
     raise RuntimeError("Sarvam voice failed")
 
 
+def _chunks(text: str, limit: int) -> list[str]:
+    """Text in pieces of at most `limit` characters, cut at sentence ends (else at a comma, else a space)."""
+    out: list[str] = []
+    for sent in re.split(r"(?<=[.!?…।])\s+", text.strip()):
+        while len(sent) > limit:
+            cut = max(sent.rfind(", ", 0, limit), sent.rfind(" ", 0, limit))
+            cut = cut if cut > limit // 3 else limit
+            out.append(sent[:cut + 1].strip())
+            sent = sent[cut + 1:].strip()
+        if out and len(out[-1]) + 1 + len(sent) <= limit:
+            out[-1] = f"{out[-1]} {sent}"
+        elif sent:
+            out.append(sent)
+    return out
+
+
+def _clone_say(text: str, speaker: str, pace: float, codec: str = "wav") -> bytes:
+    """Your cloned voice. Over CLONE_LIMIT characters the text is spoken in pieces cut at sentence ends and joined
+    with GAP seconds between them (a WAV; another codec only for one piece)."""
+    pieces = _chunks(text, CLONE_LIMIT)
+    if len(pieces) > 1:
+        import io
+        import wave
+
+        frames, params = [], None
+        for piece in pieces:
+            with wave.open(io.BytesIO(_clone_once(piece, speaker, pace, "wav"))) as w:
+                params = params or w.getparams()
+                if frames:
+                    frames.append(b"\0" * int(GAP * params.framerate) * params.sampwidth * params.nchannels)
+                frames.append(w.readframes(w.getnframes()))
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as out:
+            out.setparams(params)
+            out.writeframes(b"".join(frames))
+        return buf.getvalue()
+    return _clone_once(text, speaker, pace, codec)
+
+
+def _clone_once(text: str, speaker: str, pace: float, codec: str) -> bytes:
+    """One request to POST /voices/clone (multipart). Hindi in Devanagari goes as hi-IN, the rest as en-IN (cloning
+    is cross-lingual and reads code-mixed text); numbers and dates are spoken by Sarvam's own normalisation."""
+    form = {"text": text, "language_code": "hi-IN" if re.search("[\u0900-\u097F]", text) else "en-IN",
+            "voice_id": speaker, "pace": str(round(min(2.0, max(0.5, pace)), 2)), "speech_sample_rate": str(CLONE_RATE),
+            "output_audio_codec": codec, "enable_qc": "true", "enable_text_normalization": "true"}
+    for attempt in range(4):
+        try:
+            resp = requests.post(CLONE_URL, files={k: (None, v) for k, v in form.items()},  # multipart/form-data
+                                 headers={"api-subscription-key": key()}, timeout=240)
+        except requests.RequestException as exc:
+            if attempt == 3:
+                raise RuntimeError(f"Couldn't reach Sarvam: {exc}") from None
+            time.sleep(4 * (attempt + 1))
+            continue
+        if resp.status_code == 200:
+            data = resp.json() or {}
+            audio = data.get("audio_b64") or data.get("audio")
+            if not audio:
+                raise RuntimeError("Sarvam answered without audio")
+            return base64.b64decode(audio)
+        try:
+            err = resp.json().get("error") or {}
+        except ValueError:
+            err = {}
+        code, msg = err.get("code", ""), str(err.get("message") or resp.text)[:200]
+        if resp.status_code == 402 or code == "insufficient_quota_error":
+            raise RuntimeError("Your Sarvam credits have run out (sarvam.ai dashboard)")
+        if resp.status_code in (401, 403):
+            raise RuntimeError("Sarvam refused the API key: check it in Settings > Long videos")
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < 3:
+            time.sleep(6 * (attempt + 1))
+            continue
+        if resp.status_code in (400, 404, 422) and "voice" in msg.lower():
+            raise RuntimeError(f"Sarvam doesn't know the voice ID {speaker}: check it in Settings > Long videos ({msg})")
+        raise RuntimeError(f"Your Sarvam voice failed ({resp.status_code} {code}): {msg}")
+    raise RuntimeError("Your Sarvam voice failed")
+
+
 def level_file(src: Path, dst: Path) -> float:
     """Copy src to dst (wav or mp3 by its extension) at TARGET_LUFS, peaks kept under PEAK_CEILING. Returns the gain."""
     import subprocess
@@ -168,12 +280,12 @@ def level_file(src: Path, dst: Path) -> float:
     return gain
 
 
-def _takes(narrations: list[str]) -> list[list[int]]:
-    """Whole lines grouped into takes of at most LIMIT characters."""
+def _takes(narrations: list[str], limit: int = LIMIT) -> list[list[int]]:
+    """Whole lines grouped into takes of at most `limit` characters."""
     groups: list[list[int]] = []
     for i, text in enumerate(narrations):
         size = len(text) + 1
-        if groups and sum(len(narrations[j]) + 1 for j in groups[-1]) + size <= LIMIT:
+        if groups and sum(len(narrations[j]) + 1 for j in groups[-1]) + size <= limit:
             groups[-1].append(i)
         else:
             groups.append([i])
@@ -210,7 +322,7 @@ def scenes(narrations: list[str], speaker: str, out_dir: Path, pace: float = 1.0
 
     out_dir.mkdir(parents=True, exist_ok=True)
     pieces, cuts, t0 = [], [], 0.0
-    for n, group in enumerate(_takes(narrations)):
+    for n, group in enumerate(_takes(narrations, CLONE_LIMIT if is_clone(speaker) else LIMIT)):
         text = " ".join(narrations[j].strip() for j in group)
         take = out_dir / f"take_{n:02d}.wav"
         take.write_bytes(say(text, speaker, pace, temperature=temperature))
