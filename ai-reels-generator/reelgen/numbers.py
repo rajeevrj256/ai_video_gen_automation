@@ -93,3 +93,80 @@ def speakable(text: str) -> str:
         "" if m.group(2) == "00" else " oh " + num2words(int(m.group(2))) if m.group(2).startswith("0")
         else " " + num2words(int(m.group(2)))), text)
     return _TOKEN.sub(_say, text)
+
+
+# ---------- Hindi number words, for the Sarvam voices ----------
+# Sarvam read "₹5,000" as "rupees five zero zero zero" in the user's video (its docs say v3/v4 normalise numbers,
+# and that commas help; it didn't). num2words has no Hindi, so the words are written here: 0-99 each have their own
+# word in Hindi, then सौ / हज़ार / लाख / करोड़ in the Indian grouping.
+HI_0_99 = (
+    "शून्य एक दो तीन चार पाँच छह सात आठ नौ दस ग्यारह बारह तेरह चौदह पंद्रह सोलह सत्रह अठारह उन्नीस "
+    "बीस इक्कीस बाईस तेईस चौबीस पच्चीस छब्बीस सत्ताईस अट्ठाईस उनतीस तीस इकतीस बत्तीस तैंतीस चौंतीस पैंतीस छत्तीस "
+    "सैंतीस अड़तीस उनतालीस चालीस इकतालीस बयालीस तैंतालीस चवालीस पैंतालीस छियालीस सैंतालीस अड़तालीस उनचास पचास "
+    "इक्यावन बावन तिरेपन चौवन पचपन छप्पन सत्तावन अट्ठावन उनसठ साठ इकसठ बासठ तिरेसठ चौंसठ पैंसठ छियासठ सड़सठ "
+    "अड़सठ उनहत्तर सत्तर इकहत्तर बहत्तर तिहत्तर चौहत्तर पचहत्तर छिहत्तर सतहत्तर अठहत्तर उन्यासी अस्सी इक्यासी बयासी "
+    "तिरासी चौरासी पचासी छियासी सत्तासी अट्ठासी नवासी नब्बे इक्यानवे बानवे तिरानवे चौरानवे पचानवे छियानवे सत्तानवे "
+    "अट्ठानवे निन्यानवे").split()
+assert len(HI_0_99) == 100
+HI_CURRENCY = {"₹": "रुपये", "rs": "रुपये", "rs.": "रुपये", "inr": "रुपये", "$": "डॉलर", "usd": "डॉलर", "€": "यूरो", "£": "पाउंड"}
+
+
+def hindi_words(n: int) -> str:
+    """5000 -> पाँच हज़ार, 1,25,000 -> एक लाख पच्चीस हज़ार, 3,20,00,000 -> तीन करोड़ बीस लाख."""
+    if n < 100:
+        return HI_0_99[n]
+    parts = []
+    for size, name in ((10 ** 7, "करोड़"), (10 ** 5, "लाख"), (1000, "हज़ार"), (100, "सौ")):
+        count, n = divmod(n, size)
+        if count:
+            parts.append(f"{hindi_words(count)} {name}")
+    if n:
+        parts.append(HI_0_99[n])
+    return " ".join(parts)
+
+
+def _hi_number(n: str, year: bool = False) -> str:
+    whole, _, frac = n.replace(",", "").partition(".")
+    value = int(whole)
+    if year and 1100 <= value <= 1999 and value % 100:  # 1990 -> उन्नीस सौ नब्बे, as years are said
+        text = f"{HI_0_99[value // 100]} सौ {HI_0_99[value % 100]}"
+    else:
+        text = hindi_words(value)
+    if frac:  # 2.5 -> दो दशमलव पाँच (every digit, as said)
+        text += " दशमलव " + " ".join(HI_0_99[int(d)] for d in frac)
+    return text
+
+
+def _say_hi(m: re.Match) -> str:
+    raw, num, num2, suffix = m.group(0), m.group("num"), m.group("num2"), (m.group("suffix") or "")
+    cur = (m.group("cur") or "").strip().lower()
+    unit = m.group("unit") or ""
+    digits = num.replace(",", "").split(".")[0]
+    if len(digits) > 12 or (len(digits) > 9 and "," not in num and not cur):  # a phone number, an ID: as written
+        return raw
+    if suffix.lower() in ("st", "nd", "rd", "th") and "." not in num and not num2:
+        return num2words(int(digits), to="ordinal", lang="en") if num2words else raw
+    if suffix.lower() == "s":  # the 1990s and the like: the number, as said
+        suffix = ""
+    year = not cur and not unit and suffix != "%" and _year(num)
+    spoken = _hi_number(num, year) + (f" से {_hi_number(num2, year)}" if num2 else "")
+    if suffix == "%":
+        spoken += " प्रतिशत"
+    if unit:
+        spoken += f" {unit}"
+    if cur:
+        spoken += f" {HI_CURRENCY.get(cur, '')}".rstrip()
+    return spoken
+
+
+def speakable_hindi(text: str) -> str:
+    """`text` with its numbers in Hindi words (Devanagari); everything else unchanged."""
+    if not re.search(r"\d", text):
+        return text
+    text = _TIME.sub(lambda m: hindi_words(int(m.group(1))) + ("" if m.group(2) == "00" else " " + hindi_words(int(m.group(2)))), text)
+    return _TOKEN.sub(_say_hi, text)
+
+
+def speakable_for(text: str) -> str:
+    """Numbers in the line's own language: Hindi words in a line with Devanagari, else English words."""
+    return speakable_hindi(text) if re.search("[ऀ-ॿ]", text) else speakable(text)

@@ -72,7 +72,7 @@ HOOK = "Microsoft ne 1,400 flaws fix kiye. Lekin sawaal hai... kya aapka PC ab b
 
 def behaviour() -> None:
     from . import hinglish, scriptvideo, shoot, stickstory, wordfix
-    from .numbers import speakable
+    from .numbers import speakable, speakable_for
     from .voice import Word
 
     hinglish_line = ["Aaj hum baat karenge ki Microsoft ne 1,400 se zyada security flaws kaise fix kiye aur aapka PC kitna safe hai"]
@@ -94,6 +94,10 @@ def behaviour() -> None:
                 "Narrator (V.O.): Google bought it.\nIn 2005: nothing.")],
          [("narrator", "They met in 2005."), ("Ben", "Wait."), ("narrator", "Here is what happened:"),
           ("narrator", "It grew."), ("narrator", "Google bought it."), ("narrator", "In 2005: nothing.")]),
+        ("numbers.speakable_for (Sarvam lines: numbers in the line's language)", lambda: [
+            speakable_for("Spent ₹5,000 for a ₹200 reward."), speakable_for("मैंने ₹1,25,000 खर्च किए, 18% ज़्यादा")],
+         ["Spent five thousand rupees for a two hundred rupees reward.",
+          "मैंने एक लाख पच्चीस हज़ार रुपये खर्च किए, अठारह प्रतिशत ज़्यादा"]),
         ("scriptvideo.parse_hook keeps every word", lambda: " ".join(scriptvideo.parse_hook(HOOK)).split() == HOOK.split(), True),
         ("numbers.speakable (English voices read numbers in English)", lambda: speakable(
             "1 lakh in 2024, ₹2.5 crore, 1,00,000 and 18% at 7:30 in the 1990s; 5G and COVID-19 stay."),

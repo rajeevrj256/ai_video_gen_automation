@@ -170,7 +170,10 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
     if voice.startswith("sarvam:"):  # Sarvam's Indian voices: no fallback to another voice mid-video
         from . import hinglish, sarvam
         mix = (hinglish.needs_mixing(voice, narrations) and hinglish.enabled()) if mixed is None else mixed
-        speak = hinglish.to_speech(narrations) if mix else narrations
+        from .numbers import speakable_for
+
+        # numbers in words, in each line's language: Sarvam read "₹5,000" as "rupees five zero zero zero"
+        speak = [speakable_for(t) for t in (hinglish.to_speech(narrations) if mix else narrations)]
         temperature, factor = sarvam.delivery(delivery)  # "hook": the hook's own, livelier delivery if chosen
         return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace_for(sarvam.speaker_of(voice)) * factor * sarvam_speed),
                                                temperature), narrations, speak)
@@ -215,15 +218,17 @@ def _shown_as_written(scenes: list[SceneAudio], narrations: list[str], speak: li
         return scenes
     from .hinglish import words as split_words
 
-    from .numbers import speakable
+    from .numbers import speakable, speakable_hindi
 
-    for scene, text in zip(scenes, narrations):
+    for scene, text, said in zip(scenes, narrations, speak):
         mine = split_words(text)
         if len(mine) == len(scene.words):
             scene.words = [Word(m, w.start, w.end) for m, w in zip(mine, scene.words)]
             continue
-        # Numbers read as words ('1,400' -> 'one thousand four hundred'): each written word over its spoken words
-        groups = [(w, len(split_words(speakable(tok)))) for tok in text.split() for w in split_words(tok)]
+        # Numbers read as words ('1,400' -> 'one thousand four hundred', or in Hindi words in a Hindi line):
+        # each written word over its spoken words
+        say = speakable_hindi if re.search("[\u0900-\u097F]", said) else speakable
+        groups = [(w, len(split_words(say(tok)))) for tok in text.split() for w in split_words(tok)]
         if groups and all(n for _, n in groups) and sum(n for _, n in groups) == len(scene.words):
             at, merged = 0, []
             for w, n in groups:
