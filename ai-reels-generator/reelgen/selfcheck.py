@@ -71,7 +71,7 @@ HOOK = "Microsoft ne 1,400 flaws fix kiye. Lekin sawaal hai... kya aapka PC ab b
 
 
 def behaviour() -> None:
-    from . import hinglish, scriptvideo, shoot, wordfix
+    from . import hinglish, scriptvideo, shoot, stickstory, wordfix
     from .numbers import speakable
     from .voice import Word
 
@@ -88,6 +88,12 @@ def behaviour() -> None:
         ("scriptvideo.parse_script keeps every word and the chapters", lambda: (
             " ".join(scriptvideo.parse_script(SCRIPT)[0]).split(), [t for _, t in scriptvideo.parse_script(SCRIPT)[1]]),
          (SCRIPT_WORDS, ["Shuruaat", "Patch kya hai"])),
+        ("stickstory.parse_stick_script: 'Narrator:' alone is a label, not a line", lambda: [
+            (b["speaker"], b["line"]) for b in stickstory.parse_stick_script(
+                "Narrator:\nThey met in 2005.\n\n**Ben:**\nWait.\n\nHere is what happened:\nIt grew.\n"
+                "Narrator (V.O.): Google bought it.\nIn 2005: nothing.")],
+         [("narrator", "They met in 2005."), ("Ben", "Wait."), ("narrator", "Here is what happened:"),
+          ("narrator", "It grew."), ("narrator", "Google bought it."), ("narrator", "In 2005: nothing.")]),
         ("scriptvideo.parse_hook keeps every word", lambda: " ".join(scriptvideo.parse_hook(HOOK)).split() == HOOK.split(), True),
         ("numbers.speakable (English voices read numbers in English)", lambda: speakable(
             "1 lakh in 2024, ₹2.5 crore, 1,00,000 and 18% at 7:30 in the 1990s; 5G and COVID-19 stay."),

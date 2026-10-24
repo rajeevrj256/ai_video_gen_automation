@@ -863,42 +863,78 @@ def board_rules(short: bool, style: str = "documentary") -> str:
 
 # ---------- your own script (the user: "add script option for sticky as well") ----------
 
-SPEAKER = re.compile(r"^\s*([A-Za-z\u0900-\u097F][A-Za-z .'\u0900-\u097F-]{0,24}?)\s*[:：]\s*(.+)$")  # no digits: 'In 2005: ...' is narration
+SPEAKER = re.compile(r"^\s*([A-Za-z\u0900-\u097F][A-Za-z .'()\u0900-\u097F-]{0,30}?)\s*[:：]\s*(.+)$")  # no digits: 'In 2005: ...' is narration
 HOOK_HEAD = re.compile(r"^\s*(#+\s*)?(hook|cold open|intro)\s*:?\s*$", re.I)
 STORY_HEAD = re.compile(r"^\s*(#+\s*)?(story|main|---+)\s*:?\s*$", re.I)
+# 'Narrator:' (or 'BEN:', '**Ben:**') on a line of its own: the lines under it are that speaker's, until the next
+# label or heading. The user's script had 'Narrator:' alone above each paragraph, and every one became a line of its
+# own, spoken as 'Narrator' and shown as a subtitle, with its own shot.
+LABEL = re.compile(r"^\s*([A-Za-z\u0900-\u097F][A-Za-z .'()\u0900-\u097F-]{0,30}?)\s*[:：]\s*$")
+NARRATOR_NAMES = {"narrator", "narration", "voiceover", "voice over", "voice-over", "vo", "v.o", "narrator vo"}
+
+
+def _who(name: str) -> str:
+    """A speaker label as the script wrote it: 'Narrator', 'VO', 'Narrator (V.O.)' are the narrator."""
+    name = re.sub(r"\s*\((v\.?\s*o\.?|o\.?\s*s\.?|cont'?d)\)\s*$", "", name.strip(), flags=re.I).strip()
+    return "narrator" if name.lower().strip(". ") in NARRATOR_NAMES else name
+
+
+def _label(row: str) -> str | None:
+    """'Ben:' alone on its line -> 'Ben'. Up to 3 words, each capitalised (or Devanagari), so 'Here is what
+    happened:' stays narration."""
+    m = LABEL.match(row)
+    if not m:
+        return None
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", m[1]).strip()
+    words = name.split()
+    if not 1 <= len(words) <= 3 or not all(w[0].isupper() or not w[0].isascii() for w in words):
+        return None
+    return _who(m[1])
 
 
 def parse_stick_script(text: str) -> list[dict]:
     """Your script, cut into beats without changing a word: 'Ben: line' is Ben speaking; any other paragraph is the
     narrator, cut at sentence ends into lines of at most ~22 words; '(Ben facepalms)' alone is a silent beat with that
     stage direction; a 'Hook' heading (or 'Cold open') marks the lines up to a 'Story' heading or '---' as the hook."""
-    beats, hook = [], False
-    for raw in (text or "").splitlines():
-        row = raw.strip()
-        if not row:
-            continue
-        if HOOK_HEAD.match(row):
-            hook = True
-            continue
-        if STORY_HEAD.match(row):
-            hook = False
-            continue
-        if row.startswith("(") and row.endswith(")"):
-            beats.append({"speaker": "none", "line": "", "note": row[1:-1].strip(), "hook": hook})
-            continue
-        m = SPEAKER.match(row)
-        if m and m[1].strip().lower() not in ("note", "http", "https"):
-            beats.append({"speaker": m[1].strip(), "line": m[2].strip(), "note": "", "hook": hook})
-            continue
-        sentences = re.split(r"(?<=[.!?…।])\s+", row)
+    beats, hook, who, used = [], False, "narrator", False
+
+    def say(speaker: str, text: str) -> None:
+        if speaker != "narrator":
+            beats.append({"speaker": speaker, "line": text, "note": "", "hook": hook})
+            return
         cur: list[str] = []
-        for sent in sentences:
+        for sent in re.split(r"(?<=[.!?…।])\s+", text):  # the narrator in lines of at most ~22 words
             if cur and len(" ".join(cur + [sent]).split()) > 22:
                 beats.append({"speaker": "narrator", "line": " ".join(cur), "note": "", "hook": hook})
                 cur = []
             cur.append(sent)
         if cur:
             beats.append({"speaker": "narrator", "line": " ".join(cur), "note": "", "hook": hook})
+
+    for raw in (text or "").splitlines():
+        row = re.sub(r"^[*_]+([^*_:：]{1,30}?)[*_]*\s*([:：])[*_]*", r"\1\2", raw.strip())  # '**Ben:**' -> 'Ben:'
+        if not row:
+            if used:  # a blank line after a speaker's lines ends them ('Ben:' then a blank line still waits)
+                who, used = "narrator", False
+            continue
+        if HOOK_HEAD.match(row):
+            hook, who = True, "narrator"
+            continue
+        if STORY_HEAD.match(row):
+            hook, who = False, "narrator"
+            continue
+        if row.startswith("(") and row.endswith(")"):
+            beats.append({"speaker": "none", "line": "", "note": row[1:-1].strip(), "hook": hook})
+            continue
+        if (label := _label(row)) is not None:
+            who, used = label, False
+            continue
+        m = SPEAKER.match(row)
+        if m and m[1].strip().lower() not in ("note", "http", "https"):
+            say(_who(m[1]), m[2].strip())
+            continue
+        say(who, row)
+        used = True
     return beats
 
 
