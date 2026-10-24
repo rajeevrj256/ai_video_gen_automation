@@ -82,23 +82,32 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
                       kokoro_voice: str = "", rate: str = "+10%", pitch: str = "+0Hz",
                       volume: str = "+0%", delivery: str = "", sarvam_speed: float = 1.0,
                       separate: bool = False) -> list[SceneAudio]:
-    """`_synthesize`, then the whole narration levelled to one loudness (reelgen/audio.py), whatever the voice:
-    every pipeline's voice comes out at the same level, so the music and effects sit the same way under it.
+    """One audio file per line, the whole narration levelled to one loudness (reelgen/audio.py).
 
-    `separate` (the hook): each line its own take, whatever the voice. One take was cut between lines, and where
-    the read ran two lines together the cut fell inside a word: the user heard a quarter of a word, the shot's
-    breath, then the rest (Sarvam first, then "andrew also": Microsoft's word times can be off too). The hook's
-    shots have a pause between them anyway, so separate takes lose nothing there."""
+    **No word is ever cut.** The voice used to be one take per chapter (or per Stick character), cut into lines at
+    the word times or at estimated pauses, and the user kept hearing a quarter of a word, a pause, then the rest
+    ("remove it completely"). Now every run of lines that ends a sentence is its own take (`_sentence_takes`): a
+    line that is whole sentences is recorded alone and needs no cut at all; lines that split one sentence stay in one
+    take so it still reads as one sentence, and each cut between them must land in silence (`_clean_joins`), else
+    those lines are recorded one by one too. `separate` is kept for callers; every line is separate-safe now."""
+    from . import hinglish
     from .audio import level_voice
 
-    if separate and len(narrations) > 1:
-        scenes = []
-        for i, line in enumerate(narrations):
-            one = _synthesize([line], voice, out_dir / f"line_{i:02d}", engine, kokoro_voice, rate, pitch, volume,
-                              delivery, sarvam_speed)[0]
-            scenes.append(one)
-    else:
-        scenes = _synthesize(narrations, voice, out_dir, engine, kokoro_voice, rate, pitch, volume, delivery, sarvam_speed)
+    # Decided once for the whole narration (a short take alone might not look Hinglish), and the mixed-script
+    # conversion is made once for every line together, so each take reads it from the cache.
+    mixed = hinglish.needs_mixing(voice, narrations) and hinglish.enabled()
+    if mixed:
+        hinglish.to_speech(narrations)
+    scenes: list[SceneAudio] = []
+    for g, idx in enumerate(_sentence_takes(narrations)):
+        lines = [narrations[i] for i in idx]
+        where = out_dir / f"take_{g:03d}"
+        got = _synthesize(lines, voice, where, engine, kokoro_voice, rate, pitch, volume, delivery, sarvam_speed, mixed)
+        if len(lines) > 1 and not _clean_joins(got):
+            log.info("A cut between lines %d-%d wasn't in silence: recording them one by one", idx[0] + 1, idx[-1] + 1)
+            got = [_synthesize([line], voice, where / f"line_{k:02d}", engine, kokoro_voice, rate, pitch, volume,
+                               delivery, sarvam_speed, mixed)[0] for k, line in enumerate(lines)]
+        scenes += got
     try:
         level_voice([s.path for s in scenes])
     except Exception as exc:  # noqa: BLE001 - an unlevelled voice is still a voice
@@ -106,10 +115,46 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     return scenes
 
 
+SENTENCE_END = re.compile(r"[.!?…।]['\"”’)\]]*$")
+
+
+def _sentence_takes(narrations: list[str]) -> list[list[int]]:
+    """Runs of line numbers that end where a sentence ends: each run is one take."""
+    runs, cur = [], []
+    for i, text in enumerate(narrations):
+        cur.append(i)
+        if SENTENCE_END.search(text.strip()) or i == len(narrations) - 1:
+            runs.append(cur)
+            cur = []
+    return runs
+
+
+def _clean_joins(scenes: list[SceneAudio], edge: float = 0.03) -> bool:
+    """True when every cut between these lines is in silence: the last and first 30 ms around each cut are quiet
+    (under 6% of the take's speech level)."""
+    clips = []
+    for sc in scenes:
+        try:
+            with wave.open(str(sc.path)) as w:
+                rate = w.getframerate()
+                clips.append((np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32767, rate))
+        except (OSError, wave.Error):
+            return False
+    allx = np.concatenate([c for c, _ in clips]) if clips else np.zeros(1)
+    level = float(np.percentile(np.abs(allx), 95)) or 1e-4
+    rms = lambda x: float(np.sqrt(np.mean(x ** 2))) if len(x) else 0.0  # noqa: E731
+    for (a, ra), (b, rb) in zip(clips, clips[1:]):
+        if rms(a[-int(edge * ra):]) > level * 0.06 or rms(b[:int(edge * rb)]) > level * 0.06:
+            return False
+    return True
+
+
 def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = "auto",
                 kokoro_voice: str = "", rate: str = "+10%", pitch: str = "+0Hz",
-                volume: str = "+0%", delivery: str = "", sarvam_speed: float = 1.0) -> list[SceneAudio]:
-    """One audio file per scene, so each scene's duration follows its voiceover.
+                volume: str = "+0%", delivery: str = "", sarvam_speed: float = 1.0,
+                mixed: bool | None = None) -> list[SceneAudio]:
+    """`mixed`: the Hinglish decision made for the whole narration (None: decided here).
+    One audio file per scene, so each scene's duration follows its voiceover.
 
     The whole narration is spoken in one take and then cut between scenes. Speaking
     each scene on its own restarts the intonation every few seconds (every scene ends
@@ -124,7 +169,8 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
     pct = int(re.sub(r"[^\d-]", "", rate) or 0)
     if voice.startswith("sarvam:"):  # Sarvam's Indian voices: no fallback to another voice mid-video
         from . import hinglish, sarvam
-        speak = hinglish.to_speech(narrations) if hinglish.needs_mixing(voice, narrations) and hinglish.enabled() else narrations
+        mix = (hinglish.needs_mixing(voice, narrations) and hinglish.enabled()) if mixed is None else mixed
+        speak = hinglish.to_speech(narrations) if mix else narrations
         temperature, factor = sarvam.delivery(delivery)  # "hook": the hook's own, livelier delivery if chosen
         return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace() * factor * sarvam_speed),
                                                temperature), narrations, speak)
@@ -132,7 +178,8 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
     from . import hinglish
     from .numbers import speakable
 
-    mixed = hinglish.needs_mixing(voice, narrations) and hinglish.enabled()
+    if mixed is None:
+        mixed = hinglish.needs_mixing(voice, narrations) and hinglish.enabled()
     # English narration: numbers in English words, or a Multilingual voice reads them in Hindi ('1 lakh' -> 'ek lakh')
     english = narrations if mixed or hinglish.is_hindi_voice(voice) else [speakable(t) for t in narrations]
     if engine in ("auto", "edge"):
@@ -287,7 +334,7 @@ def _edge_scenes(narrations: list[str], voice: str, out_dir: Path, rate: str, pi
 
 
 def snap_to_gap(samples: np.ndarray, rate: int, t: float, reach: float = 0.6) -> float:
-    """The middle of the silent gap (>=50 ms below 4% of the take's speech level) nearest to t, looked for up to
+    """The middle of the silent gap (>=100 ms below 4% of the take's speech level) nearest to t, looked for up to
     `reach` s away, then twice as far; t itself when the take has no gap there."""
     win = max(1, int(0.01 * rate))
     env = np.sqrt(np.convolve(samples.astype(np.float64) ** 2, np.ones(win) / win, "same"))[::win]
@@ -298,7 +345,7 @@ def snap_to_gap(samples: np.ndarray, rate: int, t: float, reach: float = 0.6) ->
     edges = np.diff(np.concatenate([[0], quiet.astype(np.int8), [0]]))
     runs = [((a + b) / 2 * win / rate, (b - a) * win / rate) for a, b in zip(np.nonzero(edges == 1)[0], np.nonzero(edges == -1)[0])]
     for r in (reach, reach * 2):
-        near = [m for m, d in runs if d >= 0.05 and abs(m - t) <= r]
+        near = [m for m, d in runs if d >= 0.1 and abs(m - t) <= r]  # a stop consonant's ~50-80 ms silence is inside a word
         if near:
             return float(min(near, key=lambda m: abs(m - t)))
     return float(t)
