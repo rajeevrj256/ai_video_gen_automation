@@ -1435,16 +1435,24 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/keys")
     def keys_state():
         """Which voice keys are saved (never the keys themselves)."""
-        return {"sarvam": bool(os.environ.get("SARVAM_API_KEY", "").strip())}
+        from . import sarvam
+        st = sarvam.key_status()
+        return {"sarvam": st["count"] > 0, "sarvam_count": st["count"], "sarvam_spent": st["spent"]}
 
     @app.put("/api/keys/sarvam")
     def save_sarvam_key(body: dict):
-        """Settings > Voices: the Sarvam API key goes into .env on this computer (and the running app); empty removes it."""
+        """Settings > Long videos: Sarvam keys go into .env on this computer (and the running app), several separated by
+        commas (one per account: when one runs out of credits the next takes over, sarvam._post). `add` (default)
+        adds the pasted key(s) to the saved ones; `add: false` with an empty key removes them all."""
+        from . import sarvam
         from .config import PROJECT_ROOT
 
-        value = str(body.get("key") or "").strip()
-        if value and not re.fullmatch(r"[A-Za-z0-9_\-.]{8,200}", value):
+        pasted = [k for k in re.split(r"[\s,;]+", str(body.get("key") or "")) if k]
+        if any(not re.fullmatch(r"[A-Za-z0-9_\-.]{8,200}", k) for k in pasted):
             raise HTTPException(400, "That doesn't look like a Sarvam API key")
+        current = sarvam.keys() if body.get("add", True) else []
+        value = ",".join(dict.fromkeys(current + pasted))
+        sarvam.forget_spent()  # saved again: every key gets another try (a recharged account comes back)
         env = PROJECT_ROOT / ".env"
         lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
         lines = [x for x in lines if not re.match(r"\s*SARVAM_API_KEY\s*=", x)]
@@ -1454,7 +1462,7 @@ def create_app(cfg: Config) -> FastAPI:
         else:
             os.environ.pop("SARVAM_API_KEY", None)
         env.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return {"sarvam": bool(value)}
+        return {"sarvam": bool(value), "sarvam_count": len(sarvam.keys())}
 
     @app.get("/api/voice-test/{key}.mp3")
     def voice_test_audio(key: str):

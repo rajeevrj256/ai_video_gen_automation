@@ -78,8 +78,106 @@ def my_voice() -> tuple[str, str]:
     return (f"sarvam:{vid}", (cfg.my_voice_name or "My voice").strip()) if vid else ("", "")
 
 
+def keys() -> list[str]:
+    """Every Sarvam key you saved (SARVAM_API_KEY, several separated by commas: one per free account)."""
+    return [k for k in re.split(r"[\s,;]+", os.environ.get("SARVAM_API_KEY", "")) if k]
+
+
 def key() -> str:
-    return os.environ.get("SARVAM_API_KEY", "").strip()
+    """The first key (any key at all = the Sarvam voices are available)."""
+    return next(iter(keys()), "")
+
+
+# Several keys: when one account's credits run out (or its key is refused) the next key takes over, and the spent one
+# is skipped for RETRY_HOURS (a recharge brings it back after that, or at once when the keys are saved again).
+# Only a fingerprint of each key is written down (<output>/sarvam-keys.json), never the key.
+RETRY_HOURS = 12
+
+
+def _keys_file() -> Path:
+    from .config import Config
+
+    return Config().output_dir / "sarvam-keys.json"
+
+
+def _fingerprint(k: str) -> str:
+    import hashlib
+
+    return hashlib.sha1(k.encode()).hexdigest()[:12]
+
+
+def _spent() -> dict:
+    import json
+
+    try:
+        return json.loads(_keys_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _retire(k: str, why: str) -> None:
+    import json
+
+    state = _spent()
+    state[_fingerprint(k)] = {"at": time.time(), "why": why}
+    try:
+        _keys_file().parent.mkdir(parents=True, exist_ok=True)
+        _keys_file().write_text(json.dumps(state, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    log.warning("Sarvam key %d of %d: %s; trying the next key", keys().index(k) + 1 if k in keys() else 0, len(keys()), why)
+
+
+def forget_spent() -> None:
+    """Keys saved again in Settings: every key gets another try."""
+    _keys_file().unlink(missing_ok=True)
+
+
+def key_status() -> dict:
+    state, now = _spent(), time.time()
+    spent = [k for k in keys() if now - state.get(_fingerprint(k), {}).get("at", 0) < RETRY_HOURS * 3600]
+    return {"count": len(keys()), "spent": len(spent)}
+
+
+def _post(url: str, voice_bound: bool = False, **kw):
+    """POST with the first key that still has credits. A key whose credits ran out (402 / insufficient_quota) or that
+    Sarvam refuses (401/403) is set aside and the next one tried. `voice_bound`: your cloned voice belongs to one
+    account, so another account's key that doesn't know the voice is skipped (not set aside)."""
+    state, now = _spent(), time.time()
+    fresh = [k for k in keys() if now - state.get(_fingerprint(k), {}).get("at", 0) >= RETRY_HOURS * 3600]
+    if not keys():
+        raise RuntimeError("Add your Sarvam API key in Settings > Long videos to use the Sarvam voices")
+    resp, last = None, ""
+    for k in fresh:
+        resp = requests.post(url, headers={"api-subscription-key": k}, **kw)
+        try:
+            err = (resp.json() or {}).get("error") or {} if resp.status_code != 200 else {}
+        except ValueError:
+            err = {}
+        code, msg = str(err.get("code", "")), str(err.get("message", ""))
+        if resp.status_code == 402 or code == "insufficient_quota_error":
+            _retire(k, "credits ran out")
+            last = "credits"
+            continue
+        if resp.status_code in (401, 403) or code == "authentication_error":
+            _retire(k, "key refused")
+            last = last or "refused"
+            continue
+        if voice_bound and resp.status_code in (400, 404, 422) and "voice" in msg.lower():
+            if k != fresh[-1]:
+                last = last or "voice"
+                continue  # this account doesn't have your cloned voice: try the next key
+            if len(fresh) < len(keys()):  # the keys left don't have it, and the others are out of credits
+                raise RuntimeError("Your cloned voice belongs to a Sarvam account that is out of credits right now (your "
+                                   "other keys don't have this voice). Recharge that account, then start it again: the "
+                                   "takes already recorded are kept on this computer and not paid for twice")
+        return resp
+    many = len(keys()) > 1
+    if last == "refused":
+        raise RuntimeError("Sarvam refused " + ("every key" if many else "the API key") + ": check them in Settings > Long videos")
+    raise RuntimeError(("All your Sarvam keys have" if many else "Your Sarvam credits have") + " run out of credits "
+                       "(sarvam.ai dashboard). Recharge or add another key in Settings > Long videos, then start it "
+                       "again: the takes already recorded are kept on this computer and not paid for twice")
 
 
 # Delivery levels: Sarvam's `temperature` ("controls expressiveness", 0.01-1.0, default 0.6, v3 and v4-flash) and a
@@ -131,8 +229,60 @@ def language_for(speaker: str) -> str:
     return "en-IN" if "_en_" in speaker else "hi-IN"  # hi and enhi voices read Hindi and Hinglish
 
 
+# Every take Sarvam made is kept on this computer, keyed by what was asked (voice, text, pace, delivery, rate...): a
+# re-make that ran out of credits after 8 of 10 chapters recorded all 8 again on the next try and paid twice. Now
+# any retry, re-make or resume with the same words reuses the paid takes. Takes not used for CACHE_DAYS are dropped.
+CACHE_DIR = "sarvam-cache"
+CACHE_DAYS = 60
+
+
+def _cache_path(*parts) -> Path:
+    import hashlib
+
+    from .config import Config
+
+    key_ = hashlib.sha1(repr(parts).encode("utf-8")).hexdigest()
+    return Config().output_dir / CACHE_DIR / key_[:2] / f"{key_}.bin"
+
+
+def _prune_cache() -> None:
+    """Drop takes not used for CACHE_DAYS (at most once a day, cheap)."""
+    from .config import Config
+
+    root = Config().output_dir / CACHE_DIR
+    stamp = root / ".pruned"
+    try:
+        if stamp.exists() and time.time() - stamp.stat().st_mtime < 86400:
+            return
+        root.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        for f in root.glob("*/*.bin"):
+            if time.time() - f.stat().st_mtime > CACHE_DAYS * 86400:
+                f.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperature: float | None = None) -> bytes:
-    """One take. Rate limits and server hiccups are tried again; a wrong key or used-up credits are said plainly."""
+    """One take, from this computer's cache when the same take was already paid for; else from Sarvam."""
+    path = _cache_path(speaker, text, round(pace, 3), codec, temperature, RATE, CLONE_RATE, model_for(speaker))
+    if path.exists() and path.stat().st_size > 1000:
+        path.touch()  # used: kept another CACHE_DAYS
+        return path.read_bytes()
+    audio = _say(text, speaker, pace, codec, temperature)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(audio)
+        tmp.replace(path)
+        _prune_cache()
+    except OSError as exc:  # a full disk never stops a video
+        log.warning("Couldn't keep the Sarvam take: %s", exc)
+    return audio
+
+
+def _say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperature: float | None = None) -> bytes:
+    """One take from Sarvam. Rate limits and server hiccups are tried again; a wrong key or used-up credits are said plainly."""
     if not key():
         raise RuntimeError("Add your Sarvam API key in Settings > Long videos to use the Sarvam voices")
     if is_clone(speaker):
@@ -144,7 +294,7 @@ def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperat
     swapped = False
     for attempt in range(4):
         try:
-            resp = requests.post(URL, json=body, headers={"api-subscription-key": key()}, timeout=180)
+            resp = _post(URL, json=body, timeout=180)
         except requests.RequestException as exc:
             if attempt == 3:
                 raise RuntimeError(f"Couldn't reach Sarvam: {exc}") from None
@@ -161,7 +311,8 @@ def say(text: str, speaker: str, pace: float = 1.0, codec: str = "wav", temperat
             err = {}
         code, msg = err.get("code", ""), str(err.get("message") or resp.text)[:200]
         if code == "insufficient_quota_error":
-            raise RuntimeError("Your Sarvam credits have run out (sarvam.ai dashboard)")
+            raise RuntimeError("Your Sarvam credits have run out (sarvam.ai dashboard). After recharging, start it again: "
+                               "the takes already recorded are kept on this computer and not paid for twice")
         if resp.status_code in (401, 403) or "api_key" in code or code == "authentication_error":
             raise RuntimeError("Sarvam refused the API key: check it in Settings > Long videos")
         if resp.status_code in (400, 422) and "language" in msg.lower() and not swapped:
@@ -223,8 +374,8 @@ def _clone_once(text: str, speaker: str, pace: float, codec: str) -> bytes:
             "output_audio_codec": codec, "enable_qc": "true", "enable_text_normalization": "true"}
     for attempt in range(4):
         try:
-            resp = requests.post(CLONE_URL, files={k: (None, v) for k, v in form.items()},  # multipart/form-data
-                                 headers={"api-subscription-key": key()}, timeout=240)
+            resp = _post(CLONE_URL, voice_bound=True, files={k: (None, v) for k, v in form.items()},  # multipart
+                         timeout=240)
         except requests.RequestException as exc:
             if attempt == 3:
                 raise RuntimeError(f"Couldn't reach Sarvam: {exc}") from None
@@ -242,7 +393,8 @@ def _clone_once(text: str, speaker: str, pace: float, codec: str) -> bytes:
             err = {}
         code, msg = err.get("code", ""), str(err.get("message") or resp.text)[:200]
         if resp.status_code == 402 or code == "insufficient_quota_error":
-            raise RuntimeError("Your Sarvam credits have run out (sarvam.ai dashboard)")
+            raise RuntimeError("Your Sarvam credits have run out (sarvam.ai dashboard). After recharging, start it again: "
+                               "the takes already recorded are kept on this computer and not paid for twice")
         if resp.status_code in (401, 403):
             raise RuntimeError("Sarvam refused the API key: check it in Settings > Long videos")
         if resp.status_code in (429, 500, 502, 503, 504) and attempt < 3:
