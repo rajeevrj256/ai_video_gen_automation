@@ -216,9 +216,14 @@ class JobManager:
                 from .remix import remove_sound
                 r = job["sound_remove"]
                 reports = [remove_sound(cfg, video_dir(cfg, r["id"]), r["name"], progress)]
-            elif job.get("anim_music"):  # a finished animated video, its music made by ACE-Step again
-                from .animated import redo_music
-                reports = [redo_music(cfg, video_dir(cfg, job["anim_music"]["id"]), progress)]
+            elif job.get("anim_music"):  # a finished video, its music made by ACE-Step again
+                folder = video_dir(cfg, job["anim_music"]["id"])
+                if json.loads((folder / "report.json").read_text(encoding="utf-8")).get("source") == "anim":
+                    from .animated import redo_music
+                    reports = [redo_music(cfg, folder, progress)]
+                else:  # long, medium, Script or Shoot (reelgen/remix.py)
+                    from .remix import redo_ai_music
+                    reports = [redo_ai_music(cfg, folder, progress)]
             elif job.get("clip_short"):  # a Short from part of a finished video, ending on it (reelgen/clipshort.py)
                 from .clipshort import make
                 r = job["clip_short"]
@@ -1151,12 +1156,21 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/videos/{video_id}/music")
     def redo_music_route(video_id: str):
-        """An animated video whose music was composed (or partly so) gets ACE-Step's tracks: the ones already made
-        are kept, the missing ones generated, the soundtrack mixed under the same picture (animated.redo_music)."""
+        """A video whose music was composed (or partly so) gets ACE-Step's tracks: the ones already made are kept,
+        the missing ones generated, the soundtrack mixed under the same picture. Animated videos:
+        animated.redo_music; long, medium, Script and Shoot videos: remix.redo_ai_music."""
         from . import anim_engine
         from .animated import music_redoable
-        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
-        if not music_redoable(report):
+        from .remix import ai_music_redoable, why_not
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "anim":
+            props = json.loads((folder / "props.json").read_text(encoding="utf-8")) if (folder / "props.json").exists() else {}
+            if not ai_music_redoable(report, props):
+                raise HTTPException(400, "This video's music is already generated (or your own track)")
+            if reason := why_not(folder):
+                raise HTTPException(400, reason)
+        elif not music_redoable(report):
             raise HTTPException(400, "This video's music is already generated (or your own track)")
         if not anim_engine.installed():
             raise HTTPException(400, "Install the AI engine first (Anim tab).")

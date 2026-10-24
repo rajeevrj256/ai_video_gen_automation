@@ -205,3 +205,70 @@ def replace_music(cfg: Config, folder: Path, src: str, progress: Progress = log.
     progress(f"Done: the claimed track is out ({rel} in its place)" + (f"; '{file}' is never used again" if file else "")
              + ". The video as it was is kept as reel-original.mp4.")
     return report
+
+
+def ai_music_redoable(report: dict, props: dict) -> bool:
+    """A long, medium, Script or Shoot video whose music the AI music model didn't make (or made only part of)."""
+    choice = str(props.get("musicChoice") or report.get("music") or "")
+    return "beats" in props and (choice.startswith("composed") or bool(re.match(r"generated \(ACE-Step.*\) for", choice)))
+
+
+def redo_ai_music(cfg: Config, folder: Path, progress: Progress = log.info) -> dict:
+    """A finished long-format video (long, medium, Script, Shoot) with its music made by the AI music model again:
+    the tracks it already finished are kept (the music model crashed after 7 of 11 on the user's laptop and the rest
+    was composed), only the missing chapters and hook are generated, the new tracks levelled under the voice like
+    any video's, and the soundtrack mixed again under the same picture. No new edit, no Claude."""
+    import zlib
+
+    from . import aimusic, media
+
+    reason = why_not(folder)
+    if reason:
+        raise ValueError(reason)
+    props = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    if composition(report, props) != "Long" or not ai_music_redoable(report, props):
+        raise ValueError("This video's music is already from the AI music model (or your own track)")
+    if not aimusic.available(cfg):
+        raise ValueError("The AI music model isn't available: install the AI engine (Anim tab) and turn AI music on in Settings")
+    script = json.loads((folder / "script.json").read_text(encoding="utf-8"))
+    mood, brief = script.get("mood") or "curious", script.get("music_prompt") or ""
+    seed = zlib.crc32((script.get("topic", "") + script.get("youtube_title", "")).encode("utf-8")) & 0x7FFFFFFF  # longform._seed
+    look, hook = props.setdefault("look", {}), props.get("hook") or {}
+    genre = look.get("aiGenre") or aimusic.pick_genre(cfg, mood, seed)
+    own = [p for p in props.get("musicParts") or [] if not str(p.get("name", "")).startswith("AI music")]  # your uploads stay
+    covered = lambda c: any(p["from"] - 0.5 <= c["start"] < p["to"] for p in own)  # noqa: E731
+    chapters = [c for c in props.get("chapters") or [] if not covered(c)]
+    want = [aimusic.track(f"ch{c['index']}", folder / "music" / f"ai-ch{c['index']:02d}.wav", c["end"] - c["start"] + 2,
+                          genre, mood, (c.get("intensity", 3) - 1) / 4, brief, seed + 20 + c["index"]) for c in chapters]
+    if hook.get("shots") and not hook.get("own"):  # same as longform.build_long
+        from . import cinehook
+
+        want.append(aimusic.track("hook", folder / "music" / "ai-hook.wav", hook["duration"] - hook.get("drop", 0) + 0.5,
+                                  genre, mood, 1.0 if cinehook.energetic(hook.get("template")) else 0.9, brief, seed + 11,
+                                  hook=True, cine=bool(hook.get("cine")) and not cinehook.energetic(hook.get("template"))))
+    before = len(aimusic.kept(want))
+    progress(f"AI music: {before} of {len(want)} tracks already made, making the other {len(want) - before}")
+    made = aimusic.make(cfg, want, folder, progress, "Music (AI)")
+    if len(made) <= before:
+        raise RuntimeError("The AI music model made no new track this time; the video keeps its music")
+    if "hook" in made:
+        hook["music"], hook["ai"] = made["hook"].relative_to(folder).as_posix(), genre
+    parts = own + [{"src": made[f"ch{c['index']}"].relative_to(folder).as_posix(), "from": c["start"], "to": c["end"],
+                    "name": f"AI music ({genre})"} for c in chapters if f"ch{c['index']}" in made]
+    props["musicParts"] = sorted(parts, key=lambda p: p["from"])
+    if all(f"ch{c['index']}" in made for c in chapters):
+        props["music"] = None  # every chapter has its own track: the composed score isn't needed
+    look["aiGenre"] = genre
+    choice = (f"generated (ACE-Step, {genre})" if len(made) == len(want)
+              else f"generated (ACE-Step, {genre}) for {len(made)} of {len(want)} tracks, composed for the rest")
+    props["musicChoice"] = choice
+    voice = [b["audio"] for b in props.get("beats") or [] if b.get("audio")] + \
+            [s["audio"] for s in hook.get("shots") or [] if s.get("audio")]
+    props["musicLevels"] = {**(props.get("musicLevels") or {}), **media.level_music(props, folder, voice, "Long")}
+    _remix(folder, props, report, "Long", progress, "Mixing the new music under the same picture")
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    report["music"] = choice
+    (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    progress(f"Done: the music is now {choice} (the video as it was is kept as reel-original.mp4)")
+    return report
