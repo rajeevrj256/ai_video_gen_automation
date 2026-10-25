@@ -26,9 +26,7 @@ const Hands: React.FC<{tone: string; tap: number; thumb: [number, number]}> = ({
     {/* left hand: fingers wrapping the left edge */}
     <path d={`M${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={INK} strokeWidth={128} fill="none" strokeLinecap="round" />
     <path d={`M${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={tone} strokeWidth={120} fill="none" strokeLinecap="round" />
-    {/* the fingers as one hand gripping the phone's edge (three separate knuckles read as three dots) */}
-    <rect x={PX - 52} y={PY + 470} width={84} height={250} rx={40} fill={tone} stroke={INK} strokeWidth={4} />
-    <path d={`M${PX - 14},${PY + 552} q16,4 34,0 M${PX - 14},${PY + 636} q16,4 34,0`} stroke={INK} strokeWidth={3} opacity={0.35} fill="none" strokeLinecap="round" />
+    {/* no fingers drawn over the edge: three knuckles read as three dots, a finger shape as a button on the phone */}
     {/* right hand and thumb */}
     <path d={`M${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
     <path d={`M${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={tone} strokeWidth={90} fill="none" strokeLinecap="round" />
