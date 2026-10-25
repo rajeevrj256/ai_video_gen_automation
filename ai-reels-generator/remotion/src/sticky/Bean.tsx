@@ -38,7 +38,7 @@ const ease = (k: number) => (k < 0 ? 0 : k > 1 ? 1 : k * k * (3 - 2 * k));
 // Seat heights by set furniture (the pipeline puts a sitting actor on the set's own chair, bed or couch).
 export const SEAT = {chair: -118, bed: -150, couch: -122, floor: -40};
 
-export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: number): Rig => {
+export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: number, speed = 0): Rig => {
   const base: Rig = {rot: 0, dx: 0, dy: 0, head: 0, hl: [-44, -96], hr: [44, -96], fl: [-20, 0], fr: [20, 0], squash: 1, jitter: [0, 0]};
   const sitDy = seat - HIP_L[1]; // raise the hips to the seat
   const sitting = (r: Partial<Rig>): Rig => ({...base, dy: sitDy, kl: [70, seat + 2], kr: [84, seat + 6], fl: [74, 0], fr: [90, 0],
@@ -47,22 +47,30 @@ export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: n
     case 'walk':
     case 'climb':
     case 'run': {
+      // The step is matched to how fast he really travels (`speed`, px a second in this figure's own units): a foot on
+      // the ground stays planted while the body passes over it (it moves back by exactly the body's travel), then
+      // swings forward through the air. Fixed small steps under a body gliding 370 px/s looked like a moonwalk.
       const run = pose === 'run';
-      const period = run ? 0.42 : 0.62;
-      const ph = ((t + seed * 0.37) / period) * Math.PI * 2;
-      const s = Math.sin(ph);
-      const swing = run ? 34 : 24;
-      const lift = run ? 20 : 11;
-      // a foot moves forward (+x, the way he faces) while it is lifted and back while it carries him: x = -cos,
-      // lifted while sin > 0. The first version had it the other way round, a moonwalk.
-      const c = Math.cos(ph);
-      const arm = run ? 34 : 24;
-      return {...base, rot: run ? 10 : 5, dy: -Math.abs(Math.cos(ph)) * (run ? 9 : 4),
-        // each foot steps around its own hip, so the legs never cross into an X on the front-facing bean
-        fl: [-16 - c * swing * 0.6, -Math.max(0, s) * lift], fr: [16 + c * swing * 0.6, -Math.max(0, -s) * lift],
-        kl: run ? [-c * swing * 0.5 + 18, -54] : undefined, kr: run ? [c * swing * 0.5 + 18, -54] : undefined,
-        hl: [-14 + c * arm, run ? -128 : -102], hr: [14 - c * arm, run ? -128 : -102],
-        el: run ? [-10 + c * 14, -146] : undefined, er: run ? [10 - c * 14, -146] : undefined};
+      const v = Math.abs(speed);
+      const target = run ? 46 : 34; // half a stride, px
+      const period = v > 1 ? Math.min(run ? 0.5 : 0.9, Math.max(run ? 0.28 : 0.45, (4 * target) / v)) : run ? 0.42 : 0.62;
+      const A = v > 1 ? Math.min(run ? 64 : 50, (v * period) / 4) : run ? 18 : 12;
+      const lift = run ? 26 : 14;
+      const phase = ((t + seed * 0.37) / period) % 1;
+      const foot = (ph: number): P => {
+        const f = ((ph % 1) + 1) % 1;
+        if (f < 0.5) return [A - 2 * A * (f / 0.5), 0]; // planted: slides back as the body goes forward
+        const u = (f - 0.5) / 0.5;
+        return [-A + 2 * A * ease(u), -Math.sin(Math.PI * u) * lift]; // swinging forward in the air
+      };
+      const L = foot(phase), R = foot(phase + 0.5);
+      const arm = run ? 0.8 : 0.6;
+      return {...base, rot: run ? 10 : 5, dy: -Math.abs(Math.sin(phase * Math.PI * 2)) * (run ? 9 : 4),
+        fl: [-8 + L[0], L[1]], fr: [8 + R[0], R[1]],
+        kl: run ? [(-17 + L[0]) / 2 + 16, -50 + L[1] * 0.4] : undefined, kr: run ? [(17 + R[0]) / 2 + 16, -50 + R[1] * 0.4] : undefined,
+        // each arm swings with the opposite leg
+        hl: [-12 + R[0] * arm, run ? -128 : -102], hr: [12 + L[0] * arm, run ? -128 : -102],
+        el: run ? [-10 + R[0] * 0.3, -148] : undefined, er: run ? [10 + L[0] * 0.3, -148] : undefined};
     }
     case 'sit':
       return sitting({});
@@ -165,10 +173,10 @@ const BODY = 'M-44,-176 C-50,-130 -48,-100 -36,-86 C-20,-74 20,-74 36,-86 C48,-1
 const FRONT = ['stand', 'cheer', 'wave', 'think', 'lie', 'sleep', 'fall'];
 
 export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; seat: number; scale?: number; grey?: boolean;
-  desk?: number; screen?: boolean; company?: boolean}> = (p) => {
+  desk?: number; screen?: boolean; company?: boolean; speed?: number}> = (p) => {
   const {cast, actor, t, dur, seat} = p;
   const seed = Array.from(cast.id).reduce((s, c) => s + c.charCodeAt(0), 0) % 97;
-  const rig = rigFor(actor.pose, t, dur, seed, seat);
+  const rig = rigFor(actor.pose, t, dur, seed, seat, (p.speed ?? 0) / ((cast.kid ? KID : 1) * (p.scale ?? 1)));
   const k = (cast.kid ? KID : 1) * (p.scale ?? 1);
   if ((actor.pose === 'lie') && (actor.prop === 'phone' || actor.glow)) rig.hr = [96, -226]; // the phone held up over the face
   const typing = actor.pose === 'type' || actor.pose === 'write';
@@ -237,7 +245,7 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
     </>
   ) : (
     <>
-      <Hose d={limb(hipL, rig.fl, rig.kl, 0.08)} fill={fill} />
+      <g style={moving ? {filter: 'brightness(0.82)'} : undefined}><Hose d={limb(hipL, rig.fl, rig.kl, 0.08)} fill={fill} /></g>
       <Hose d={limb(hipR, rig.fr, rig.kr, 0.08)} fill={fill} />
     </>
   );

@@ -156,7 +156,8 @@ export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast
       {placed.map((p, i) => (
         <g key={i} transform={`translate(${p.xpx},${p.y})`}>
           <Bean cast={byId[p.a.id]} actor={{...p.a, facing: p.facing}} t={t} dur={dur} seat={p.seat} grey={grey && byId[p.a.id] !== hero ? true : undefined}
-            desk={p.desk} screen={p.screen} company={placed.length > 1} />
+            desk={p.desk} screen={p.screen} company={placed.length > 1}
+            speed={p.a.to !== undefined && MOVING.includes(p.a.pose) ? Math.abs(px(p.a.to) - px(p.a.x)) / Math.max(0.5, dur) : 0} />
         </g>
       ))}
       {shot.rain ? <Rain t={t} /> : null}
