@@ -67,7 +67,9 @@ export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: n
       const arm = run ? 0.8 : 0.6;
       return {...base, rot: run ? 10 : 5, dy: -Math.abs(Math.sin(phase * Math.PI * 2)) * (run ? 9 : 4),
         fl: [-8 + L[0], L[1]], fr: [8 + R[0], R[1]],
-        kl: run ? [(-17 + L[0]) / 2 + 16, -50 + L[1] * 0.4] : undefined, kr: run ? [(17 + R[0]) / 2 + 16, -50 + R[1] * 0.4] : undefined,
+        // knees always bend forward (the way he faces): a knee-less leg bowed backwards and every walk read as reverse
+        kl: run ? [(-17 + L[0]) / 2 + 16, -50 + L[1] * 0.4] : [(-17 + L[0]) / 2 + 5 + (-L[1] / lift) * 12, -48 + L[1] * 0.5],
+        kr: run ? [(17 + R[0]) / 2 + 16, -50 + R[1] * 0.4] : [(17 + R[0]) / 2 + 5 + (-R[1] / lift) * 12, -48 + R[1] * 0.5],
         // each arm swings with the opposite leg
         hl: [-12 + R[0] * arm, run ? -128 : -102], hr: [12 + L[0] * arm, run ? -128 : -102],
         el: run ? [-10 + R[0] * 0.3, -148] : undefined, er: run ? [10 + L[0] * 0.3, -148] : undefined};
@@ -245,8 +247,8 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
     </>
   ) : (
     <>
-      <g style={moving ? {filter: 'brightness(0.82)'} : undefined}><Hose d={limb(hipL, rig.fl, rig.kl, 0.08)} fill={fill} /></g>
-      <Hose d={limb(hipR, rig.fr, rig.kr, 0.08)} fill={fill} />
+      <g style={moving ? {filter: 'brightness(0.82)'} : undefined}><Hose d={limb(hipL, rig.fl, rig.kl, -0.05)} fill={fill} /></g>
+      <Hose d={limb(hipR, rig.fr, rig.kr, -0.05)} fill={fill} />
     </>
   );
   return (
