@@ -145,7 +145,7 @@ def _thud() -> np.ndarray:
 
 
 MAKERS = {
-    "ding": (sfx._ding, 0.45), "notify": (_notify, 0.4), "buzz": (_buzz, 0.4), "typing": (lambda: sfx._typing(2.0), 0.3),
+    "ding": (sfx._ding, 0.45), "notify": (_notify, 0.4), "buzz": (_buzz, 0.28), "typing": (lambda: sfx._typing(2.0), 0.3),
     "tap": (_tap, 0.35), "send": (_send, 0.35), "knock": (_knock, 0.55), "door": (_door, 0.45),
     "footsteps": (lambda: sfx._footsteps(2.0, 0.42), 0.35), "alarm": (_alarm, 0.4), "heartbeat": (lambda: sfx._heartbeat(1.1), 0.6),
     "rumble": (lambda: sfx._rumble(2.2), 0.45), "static": (_static, 0.3), "chime": (_chime, 0.35), "bell": (_bell, 0.4),

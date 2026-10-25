@@ -150,6 +150,21 @@ def _cues(s: FShot, at: float, dur: float) -> list[dict]:
     return c
 
 
+def _dedupe(cues: list[dict], gap: float = 0.6) -> list[dict]:
+    """One sound once: Claude's own cue and the automatic one for the same moment (a call's buzz, the rumble under
+    the inner voice) used to pile up, three rumbles in half a second. Of the same sound within `gap` s, the loudest
+    (then the longest) is kept."""
+    kept: list[dict] = []
+    for c in sorted(cues, key=lambda c: (c["sound"], c["at"])):
+        last = kept[-1] if kept and kept[-1]["sound"] == c["sound"] else None
+        if last and c["at"] - last["at"] < gap:
+            if (c.get("volume", 1), c.get("length", 0)) > (last.get("volume", 1), last.get("length", 0)):
+                kept[-1] = {**c, "at": last["at"]}
+            continue
+        kept.append(c)
+    return sorted(kept, key=lambda c: c["at"])
+
+
 def build(film: Film) -> tuple[dict, list[dict], list[dict]]:
     """(props, cues, sections): the editor's props, every sound cue in film seconds, and one music section per act
     (with the spans its music drops away)."""
@@ -172,6 +187,7 @@ def build(film: Film) -> tuple[dict, list[dict], list[dict]]:
         sections.append({"act": "title", "mood": "emotional", "start": round(t, 3), "end": round(t + 6.5, 3), "quiet": []})
         t += 6.5
     cues.append({"sound": "chime", "at": round(shots[-1]["start"] + 1.0, 3), "volume": 0.6})
+    cues = _dedupe(cues)
     m = film.meter
     props = {
         "title": film.title.strip(), "tagline": (film.tagline + ["", ""])[:2], "accent": ACCENTS[film.accent],

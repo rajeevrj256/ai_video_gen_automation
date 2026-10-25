@@ -18,6 +18,8 @@ from . import sounds
 log = logging.getLogger(__name__)
 RATE = 44100
 MUSIC_GAIN = 0.34
+EFFECT_RMS = 0.09
+MUSIC_RMS = 0.18  # every act's track brought to this level first (composed moods came out up to ~6 dB apart)
 QUIET_GAIN = 0.1
 INTENSITY = {"open": 0.3, "loop": 0.45, "low": 0.2, "turn": 0.3, "day1": 0.35, "climb": 0.75, "test": 0.6, "resolve": 0.55,
              "thesis": 0.25, "title": 0.35}
@@ -43,6 +45,14 @@ def _place(buf: np.ndarray, x: np.ndarray, at: float, gain: float, length: float
         x[-fade:] *= np.linspace(1, 0, fade)[:, None]
     j = min(len(buf), i + len(x))
     buf[i:j] += x[: j - i] * gain
+
+
+def _capped(x: np.ndarray) -> np.ndarray:
+    """An effect no louder than EFFECT_RMS where it sounds: the phone buzz, dense from start to end, sat ~5 dB over
+    every other sound at the same peak."""
+    loud = x[np.abs(x).max(axis=1) > 0.01]
+    rms = float(np.sqrt((loud ** 2).mean())) if len(loud) else 0.0
+    return x * (EFFECT_RMS / rms) if rms > EFFECT_RMS else x
 
 
 def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress) -> dict[int, Path]:
@@ -104,6 +114,9 @@ def mix(cfg, props: dict, cues: list[dict], sections: list[dict], work: Path, ou
     tracks = _tracks(cfg, sections, work, seed, progress)
     for i, s in enumerate(sections):
         x = decode(tracks[i])
+        loud = x[np.abs(x).max(axis=1) > 0.01] if len(x) else x
+        if len(loud):
+            x = x * min(4.0, MUSIC_RMS / max(1e-6, float(np.sqrt((loud ** 2).mean()))))
         length = s["end"] - s["start"] + (1.5 if i < len(sections) - 1 else 0.5)
         x = np.tile(x, (int(length * RATE) // max(1, len(x)) + 1, 1))[: int(length * RATE)]
         n = len(x)
@@ -119,9 +132,9 @@ def mix(cfg, props: dict, cues: list[dict], sections: list[dict], work: Path, ou
             g[max(0, qa - ramp):max(0, qa)] = np.linspace(1, QUIET_GAIN, max(0, qa) - max(0, qa - ramp))
             g[max(0, qb):min(n, qb + ramp)] = np.linspace(QUIET_GAIN, 1, min(n, qb + ramp) - max(0, qb))
             env *= g
-        _place(buf, x * env[:, None], s["start"], MUSIC_GAIN)
+        _place(buf, x * env[:, None], s["start"], MUSIC_GAIN * (0.75 + 0.5 * INTENSITY.get(s["act"], 0.4)))  # low quieter, climb fuller
     files = sounds.write_all(work / "sfx", {c["sound"] for c in cues})
-    loaded = {k: decode(p) for k, p in files.items()}
+    loaded = {k: _capped(decode(p)) for k, p in files.items()}
     for c in cues:
         _place(buf, loaded[c["sound"]], c["at"], 0.9 * float(c.get("volume", 1)), c.get("length"))
     said = []
