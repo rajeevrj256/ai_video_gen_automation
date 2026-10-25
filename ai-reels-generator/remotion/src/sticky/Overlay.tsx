@@ -33,7 +33,7 @@ export const Hud: React.FC<{meter: Meter; now: number[]; before: number[] | null
   const color = meter.color || accent;
   const reset = meter.kind === 'counter' && before && before[0] > 0 && now[0] === 0; // the streak crashed
   return (
-    <g fontFamily={SANS}>
+    <g fontFamily={SANS} style={{filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.85))'}}>
       {day ? <text x={64} y={meter.kind === 'none' ? 66 : 54} fontSize={26} fontWeight={700} letterSpacing={2} fill="#C9CBD3">{day.toUpperCase()}</text> : null}
       {time ? <text x={W - 64} y={66} textAnchor="end" fontSize={26} fontWeight={700} fill="#C9CBD3">{time}</text> : null}
       {meter.kind === 'battery' && now.length ? (() => {
@@ -133,8 +133,8 @@ export const Bubbles: React.FC<{b: NonNullable<Shot['bubbles']>; heads: Record<s
         const pop = spring({frame: Math.round((t - at) * 30), fps: 30, config: {damping: 12, mass: 0.5}});
         const [hx, hy] = heads[q.who] ?? [W / 2, H / 2 - 100];
         const w = Math.min(560, 60 + q.text.length * 17);
-        const x = Math.max(30, Math.min(W - w - 30, hx + 40));
-        const y = Math.max(40, hy - 140);
+        const x = Math.max(30, Math.min(W - w - 30, hx - w / 2 + 30));
+        const y = Math.max(40, hy - 150);
         const gone = i < b.length - 1 && t > at + each * 1.6 ? 0.25 : 1;
         return (
           <g key={i} opacity={Math.min(1, pop) * gone} transform={`translate(${x},${y}) scale(${0.7 + 0.3 * pop})`}>

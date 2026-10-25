@@ -178,7 +178,7 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
         <Hose d={limb(SHOULDER_L, rig.hl, rig.el)} fill={fill} />
         <BodyAndHead fill={fill} rig={rig} cast={cast} face={face} actor={actor} t={t} seed={seed} />
         <Hose d={limb(SHOULDER_R, rig.hr, rig.er)} fill={fill} />
-        <PropView prop={actor.prop ?? (actor.pose === 'phone' || actor.pose === 'reach' ? 'phone' : actor.pose === 'guitar' ? 'guitar' : 'none')}
+        <PropView prop={actor.prop && actor.prop !== 'none' ? actor.prop : (actor.pose === 'phone' || actor.pose === 'reach' ? 'phone' : actor.pose === 'guitar' ? 'guitar' : 'none')}
           at={actor.pose === 'reach' ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
       </g>
     </g>

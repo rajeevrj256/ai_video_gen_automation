@@ -59,10 +59,10 @@ class UpdateBody(BaseModel):
 
 
 def job_label(job: dict) -> str:
-    inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input")
+    inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input") or job.get("sticky_input")
            or job.get("story_input") or job.get("shoot_input") or {})
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
-    kind = ("Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
+    kind = ("Sticky film" if job.get("sticky_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
@@ -248,6 +248,9 @@ class JobManager:
             elif job.get("story_input"):  # Story Shorts (reelgen/storyshorts.py), new or resumed
                 from .storyshorts import StoryRequest, run_story_job
                 reports = run_story_job(cfg, StoryRequest(**job["story_input"]), progress, job.get("story_resume"))
+            elif job.get("sticky_input"):  # Sticky Films (reelgen/sticky/), new or resumed: a pipeline of its own
+                from .sticky.run import StickyRequest, run_sticky_job
+                reports = run_sticky_job(cfg, StickyRequest(**job["sticky_input"]), job["count"], progress, job.get("sticky_resume"))
             elif job.get("toon_input"):  # Toon Explainers (reelgen/toon.py), new or resumed
                 from .toon import ToonRequest, run_toon_job
                 reports = run_toon_job(cfg, ToonRequest(**job["toon_input"]), job["count"], progress, job.get("toon_resume"))
@@ -521,6 +524,15 @@ class LicenceEdit(BaseModel):
 class LicenceAll(BaseModel):
     licence: str
     only_unknown: bool = True
+
+
+class StickyBody(BaseModel):
+    """Sticky Films (reelgen/sticky/): a voiceless animated short film about an everyday struggle."""
+    topic: str = ""
+    minutes: float = 3.0
+    count: int = 1
+    whispers: bool = True
+    ai: AIPick | None = None
 
 
 class StickRequestBody(BaseModel):
@@ -1487,6 +1499,12 @@ def create_app(cfg: Config) -> FastAPI:
         except Exception as exc:
             raise HTTPException(502, f"Couldn't make the sample: {exc}")
 
+    @app.post("/api/sticky")
+    def sticky(body: StickyBody):
+        given = {"topic": body.topic.strip()[:400], "minutes": min(4.0, max(2.5, float(body.minutes))), "whispers": bool(body.whispers)}
+        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
+                           sticky_input=given, captions=False, ai=body.ai)
+
     @app.post("/api/stick")
     def stick(body: StickRequestBody):
         from .stickstory import DEFAULT_CAST, OPENINGS, parse_stick_script
@@ -2000,6 +2018,14 @@ def create_app(cfg: Config) -> FastAPI:
                 raise HTTPException(400, "Nothing saved to resume for this story; make it again.")
             return jobs.submit(job["topic"], job["count"], "resume", job.get("style"), "storyshorts",
                                story_input=job["story_input"], story_resume=saved[:1], captions=job.get("captions"), ai=job.get("ai"))
+        if job.get("sticky_input"):  # a Sticky job resumes its own saved films (sticky-checkpoint.json)
+            from .sticky.run import unfinished as unfinished_sticky
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_sticky(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these films; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", "story", "sticky",
+                               sticky_input=job["sticky_input"], sticky_resume=saved or None, captions=False, ai=job.get("ai"))
         if job.get("stick_input"):  # a Stick job resumes its own saved videos (stick-checkpoint.json)
             from .stickstory import unfinished_sticks
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_sticks(cfg) and f not in busy_folders()]

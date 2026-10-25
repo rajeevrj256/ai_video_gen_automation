@@ -261,7 +261,7 @@ export const SetView: React.FC<{name: SetName; light: Light; clock?: string; t: 
           <Room light={light} />
           <Window x={px(42)} y={150} w={250} h={230} light={light} />
           {nightish ? <Beam from={[px(42), 380, 250]} to={[px(38), FLOOR, 520]} color="#9FB4E8" opacity={0.16} /> : null}
-          <Note x={px(14)} y={250} />
+          <Note x={px(22)} y={300} />
           <Bed x0={f.bed![0]} x1={f.bed![1]} />
           <Nightstand x={px(f.bed![0]) - 260} clock={clock} />
           <Desk x={px(76)} lamp screen={false} />
@@ -468,6 +468,7 @@ export const SetView: React.FC<{name: SetName; light: Light; clock?: string; t: 
           <rect x={px(40)} y={FLOOR - 70} width={W} height={70} fill="#3A2A1E" stroke={LINE} strokeWidth={3} />
           <polygon points={`${px(62) - 60},0 ${px(62) + 60},0 ${px(62) + 260},${FLOOR - 70} ${px(62) - 260},${FLOOR - 70}`} fill="#F6E2B0" opacity={0.16} />
           <line x1={px(78)} y1={FLOOR - 70} x2={px(78)} y2={FLOOR - 300} stroke={LINE} strokeWidth={3} /><circle cx={px(78)} cy={FLOOR - 304} r={10} fill="#333" stroke={LINE} strokeWidth={2} />
+          <g stroke={LINE} strokeWidth={3} fill="none"><line x1={px(62) - 34} y1={FLOOR - 188} x2={px(62) + 34} y2={FLOOR - 188} strokeWidth={5} /><line x1={px(62) - 26} y1={FLOOR - 188} x2={px(62) - 38} y2={FLOOR - 70} /><line x1={px(62) + 26} y1={FLOOR - 188} x2={px(62) + 38} y2={FLOOR - 70} /><line x1={px(62) - 32} y1={FLOOR - 120} x2={px(62) + 32} y2={FLOOR - 120} /></g>
           {[px(4), px(14), px(24)].map((x) => <g key={x}><rect x={x} y={FLOOR - 110} width={90} height={14} fill={FILL} stroke={LINE} strokeWidth={2} /><circle cx={x + 45} cy={FLOOR - 124} r={6} fill="#F6B25A" /></g>)}
         </g>
       );

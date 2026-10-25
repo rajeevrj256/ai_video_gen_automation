@@ -146,7 +146,7 @@ const ShotView: React.FC<{shot: Shot; p: StickyProps; first: boolean}> = ({shot,
   // on the actors (kept inside the set's edges). Bubble anchors follow the same zoom.
   const zoomed = shot.kind === 'scene' && shot.set && shot.set !== 'void' && shot.set !== 'stairs';
   const xs = (shot.actors ?? []).map((a) => px(a.to !== undefined ? (a.x + a.to) / 2 : a.x)).concat(shot.shadow ? [px(shot.shadow.x)] : []);
-  const z = zoomed ? ZOOM : 1;
+  const z = zoomed ? (shot.shadow?.size === 'giant' ? 1.05 : ZOOM) : 1;
   const fx = zoomed ? Math.min(W - W / (2 * z), Math.max(W / (2 * z), xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : W / 2)) : W / 2;
   const picture = <ShotPicture shot={shot} t={t} dur={dur} p={p} heads={heads} />;
   for (const k of Object.keys(heads)) heads[k] = [W / 2 + (heads[k][0] - fx) * z, FLOOR + (heads[k][1] - FLOOR) * z];
