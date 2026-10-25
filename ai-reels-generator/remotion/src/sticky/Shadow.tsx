@@ -24,8 +24,15 @@ export const ShadowView: React.FC<{s: Shadow; t: number; dur: number; accent: st
     return (
       <g opacity={appear * (1 - gone)} transform={`translate(0,${(1 - appear) * 30}) scale(${SIZE.normal * 0.9 * grow})`}>
         <ellipse cx={0} cy={4} rx={64} ry={12} fill="none" stroke={accent} strokeWidth={4} style={{filter: glow}} />
-        <g style={{filter: `brightness(0.72) saturate(0.6) ${glow}`}}>
-          <Bean cast={{...cast, id: cast.id + '-voice'}} actor={{id: cast.id, x: 0, pose: 'stand', face: 'smug', facing: facing === 1 ? 'right' : 'left'}} t={t} dur={dur} seat={-118} />
+        {/* his own outline (hood, hair) in black, with the voice's glow and its crescent face: a grey twin of him read
+            as a ghost */}
+        <g style={{filter: `brightness(0) ${glow}`}}>
+          <Bean cast={{...cast, id: cast.id + '-voice'}} actor={{id: cast.id, x: 0, pose: 'stand', face: 'neutral', facing: facing === 1 ? 'right' : 'left'}} t={t} dur={dur} seat={-118} />
+        </g>
+        <g stroke={accent} strokeWidth={6} fill="none" strokeLinecap="round" style={{filter: `drop-shadow(0 0 6px ${accent})`}}>
+          <path d="M-34,-246 Q-22,-234 -10,-246" />
+          <path d="M12,-246 Q24,-234 36,-246" />
+          <path d="M-22,-214 Q2,-196 26,-214" />
         </g>
         {gone > 0 ? <Particles t={t} accent={accent} k={1} gone={gone} /> : null}
       </g>

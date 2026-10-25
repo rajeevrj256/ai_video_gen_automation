@@ -59,14 +59,17 @@ def _shot(film: Film, s: FShot, act: str, start: float, dur: float) -> dict:
                         "typing": p.typing if p else "", "items": p.items if p else [], "seen": bool(p and p.seen),
                         "messages": [m.model_dump() for m in (p.messages if p else [])]}
     if s.kind == "calendar" and s.calendar:
-        out["calendar"] = s.calendar.model_dump()
+        out["calendar"] = s.calendar.model_dump()  # continuity added by `_calendars`
     if s.kind == "object" and s.object:
         out["object"] = s.object.model_dump()
     if s.kind == "graph" and s.graph:
         out["graph"] = s.graph.model_dump()
     caption = s.caption or (film.thesis if act == "thesis" and s.kind == "card" else [])
     if caption and act != "title":
-        out["caption"] = {"lines": caption[:3], "pos": "center" if s.kind == "card" else s.caption_pos}
+        # a calendar or a paper fills the top of the frame: its words go below it (they covered the month's name)
+        pos = ("center" if s.kind == "card" else "bottom" if s.kind == "calendar"
+               else "top" if s.kind == "object" and s.object and s.object.kind == "drawing" else "bottom" if s.kind == "object" else s.caption_pos)
+        out["caption"] = {"lines": caption[:3], "pos": pos}
     if s.whisper:
         out["whisper"] = {"text": s.whisper, "x": s.whisper_x, "y": s.whisper_y}
     if s.bubbles:
@@ -85,7 +88,25 @@ def _shot(film: Film, s: FShot, act: str, start: float, dur: float) -> dict:
     return out
 
 
-def _cues(s: FShot, at: float, dur: float) -> list[dict]:
+def _calendars(shots: list[dict]) -> None:
+    """One wall calendar per month through the whole film: a later calendar of the same month keeps every tick and
+    scribble already shown and never has fewer ticks (Claude's later calendars restarted, or skipped days the earlier
+    one had ticked). `before`/`beforeMarks` tell the editor what is already drawn, so only new days are animated."""
+    seen: dict[str, dict] = {}
+    for sh in shots:
+        c = sh.get("calendar")
+        if not c:
+            continue
+        key = c["month"].strip().upper()
+        prev = seen.get(key)
+        if prev:
+            c["checks"] = max(c["checks"], prev["checks"])
+            c["marks"] = sorted(set(c.get("marks") or []) | set(prev["marks"]))
+            c["before"], c["beforeMarks"] = prev["checks"], list(prev["marks"])
+        seen[key] = {"checks": c["checks"], "marks": list(c.get("marks") or [])}
+
+
+def _cues(s: FShot, at: float, dur: float, cal: dict | None = None) -> list[dict]:
     """The automatic sounds of one shot, timed like the editor animates it."""
     c: list[dict] = []
     add = lambda name, t, vol=1.0, length=None: c.append({"sound": name, "at": round(at + max(0.0, t), 3), "volume": vol,  # noqa: E731
@@ -114,23 +135,22 @@ def _cues(s: FShot, at: float, dur: float) -> list[dict]:
     elif s.kind == "clock":
         add("tick", 0.1, 0.6, min(dur, 2.0))
     elif s.kind == "calendar" and s.calendar:
-        fresh = min(7, s.calendar.checks)
-        for i in range(fresh):
-            add("scribble", 0.3 + (max(0.6, dur * 0.7) - 0.3) * (i + 0.5) / max(1, fresh), 0.6)
+        # one scribble per day ticked or crossed during the shot, at the times CalendarInsert draws them
+        cal = cal or {}
+        before = cal.get("before", max(0, s.calendar.checks - 7))
+        fresh = max(0, cal.get("checks", s.calendar.checks) - before) + len(set(cal.get("marks", [])) - set(cal.get("beforeMarks", [])))
+        span = max(0.6, dur * 0.7)
+        for i in range(min(fresh, 12)):
+            add("scribble", 0.3 + (span - 0.3) * i / max(1, fresh), 0.6)
     elif s.kind == "object":
         add("page", 0.0, 0.7)
     if s.bubbles:
         each = max(0.9, dur * 0.75 / max(1, len(s.bubbles)))
         for i, _ in enumerate(s.bubbles):
             add("pop", i * each, 0.8)
-    if s.whisper:
-        add("rumble", 0.0, 0.5)
-    if s.shadow:
-        if s.shadow.act == "appear":
-            add("static", 0.0, 0.6)
-            add("rumble", 0.1, 0.6)
-        elif s.shadow.act in ("grow", "loom"):
-            add("rumble", 0.0, 0.8)
+    if s.shadow:  # nothing under the whisper itself: it has to be heard
+        if s.shadow.act in ("appear", "grow", "loom"):
+            add("swell", 0.0, 0.7 if s.shadow.act == "appear" else 0.8)
         elif s.shadow.act == "dissolve":
             add("chime", 0.3, 0.8)
     for i, _ in enumerate(s.notes):
@@ -176,7 +196,9 @@ def build(film: Film) -> tuple[dict, list[dict], list[dict]]:
         for s in act.shots:
             dur = hold(s, act.act)
             shots.append(_shot(film, s, act.act, t, dur))
-            cues += _cues(s, t, dur)
+            if shots[-1].get("calendar"):
+                _calendars(shots)
+            cues += _cues(s, t, dur, shots[-1].get("calendar"))
             if s.quiet:
                 quiet.append([round(t, 3), round(t + dur, 3)])
             t += dur

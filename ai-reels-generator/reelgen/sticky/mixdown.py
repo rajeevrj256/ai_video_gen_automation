@@ -27,10 +27,15 @@ GENRES = ("lofi", "piano-minimal", "ambient-electronic", "acoustic-folk")
 WHISPER_VOICE = "en-US-ChristopherNeural"
 
 
-def decode(path: Path) -> np.ndarray:
-    """Any sound file as float32 stereo at RATE."""
-    raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(path), "-ac", "2", "-ar", str(RATE), "-f", "f32le", "-"],
-                         capture_output=True, check=True).stdout
+MUSIC_EQ = "highpass=f=60,lowshelf=f=180:g=-4"  # the dark moods' bass made the shadow scenes muddy
+WHISPER_DUCK = 0.4  # music under a whisper (effects 0.6): the whispers were buried, no line could be made out
+WHISPER_GAIN = 1.0
+
+
+def decode(path: Path, af: str = "") -> np.ndarray:
+    """Any sound file as float32 stereo at RATE (through an ffmpeg filter when given)."""
+    raw = subprocess.run([FFMPEG, "-v", "error", "-i", str(path), *(["-af", af] if af else []), "-ac", "2", "-ar", str(RATE),
+                          "-f", "f32le", "-"], capture_output=True, check=True).stdout
     return np.frombuffer(raw, np.float32).reshape(-1, 2).copy()
 
 
@@ -96,9 +101,11 @@ def _whispers(lines: list[tuple[float, str]], work: Path, progress) -> list[tupl
         raw, final = out_dir / f"w{k:02d}.mp3", out_dir / f"w{k:02d}.wav"
         if not final.exists():
             try:
-                asyncio.run(edge_tts.Communicate(text, WHISPER_VOICE, rate="-12%", pitch="-14Hz", volume="-10%").save(str(raw)))
+                asyncio.run(edge_tts.Communicate(text, WHISPER_VOICE, rate="-8%", pitch="-6Hz").save(str(raw)))
+                # close and breathy, but the words clear: no band-limiting to a telephone, a short room, the
+                # consonants lifted (the old 3.4 kHz cut and long echo smeared every word)
                 subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(raw), "-af",
-                                "highpass=f=220,lowpass=f=3400,aecho=0.6:0.4:70:0.25,volume=1.4", str(final)], check=True)
+                                "highpass=f=150,equalizer=f=3200:t=q:w=1.2:g=5,aecho=0.8:0.3:30:0.12,volume=1.6", str(final)], check=True)
             except Exception as exc:  # noqa: BLE001 - whispers are a garnish
                 progress(f"The inner voice stays silent ({str(exc)[:120]})")
                 return done
@@ -106,14 +113,27 @@ def _whispers(lines: list[tuple[float, str]], work: Path, progress) -> list[tupl
     return done
 
 
+def _duck(voice: np.ndarray) -> np.ndarray:
+    """1 where no whisper sounds, 0 under one, with 0.3 s ramps (in 10 ms blocks)."""
+    block = RATE // 100
+    n = len(voice) // block
+    on = (np.abs(voice[: n * block]).reshape(n, block, 2).max(axis=(1, 2)) > 0.01).astype(np.float32)
+    hold = np.convolve(on, np.ones(30), mode="same") > 0  # bridge the gaps between words
+    ramp = np.convolve(hold.astype(np.float32), np.ones(30) / 30, mode="same")
+    g = np.repeat(1 - np.clip(ramp, 0, 1), block)
+    return np.concatenate([g, np.ones(len(voice) - len(g), np.float32)]).astype(np.float32)
+
+
 def mix(cfg, props: dict, cues: list[dict], sections: list[dict], work: Path, out: Path, seed: int,
         whispers: bool, progress) -> dict:
     """Write the soundtrack (WAV) and return what went into it for the report."""
     total = float(props["duration"]) + 0.5
-    buf = np.zeros((int(total * RATE), 2), np.float32)
+    buf = np.zeros((int(total * RATE), 2), np.float32)  # music
+    fx = np.zeros_like(buf)  # sound effects
+    voice = np.zeros_like(buf)  # whispers
     tracks = _tracks(cfg, sections, work, seed, progress)
     for i, s in enumerate(sections):
-        x = decode(tracks[i])
+        x = decode(tracks[i], MUSIC_EQ)
         loud = x[np.abs(x).max(axis=1) > 0.01] if len(x) else x
         if len(loud):
             x = x * min(4.0, MUSIC_RMS / max(1e-6, float(np.sqrt((loud ** 2).mean()))))
@@ -136,13 +156,15 @@ def mix(cfg, props: dict, cues: list[dict], sections: list[dict], work: Path, ou
     files = sounds.write_all(work / "sfx", {c["sound"] for c in cues})
     loaded = {k: _capped(decode(p)) for k, p in files.items()}
     for c in cues:
-        _place(buf, loaded[c["sound"]], c["at"], 0.9 * float(c.get("volume", 1)), c.get("length"))
+        _place(fx, loaded[c["sound"]], c["at"], 0.9 * float(c.get("volume", 1)), c.get("length"))
     said = []
     if whispers:
         lines = [(sh["start"] + 0.15, sh["whisper"]["text"]) for sh in props["shots"] if sh.get("whisper")]
         said = _whispers(lines, work, progress)
         for at, path in said:
-            _place(buf, decode(path), at, 0.75)
+            _place(voice, decode(path), at, WHISPER_GAIN)
+    duck = _duck(voice)
+    buf = buf * (WHISPER_DUCK + (1 - WHISPER_DUCK) * duck)[:, None] + fx * (0.6 + 0.4 * duck)[:, None] + voice
     peak = float(np.abs(buf).max() or 1)
     buf = buf / peak * 0.89 if peak > 0.89 else buf
     pcm = (np.clip(buf, -1, 1) * 32767).astype(np.int16)

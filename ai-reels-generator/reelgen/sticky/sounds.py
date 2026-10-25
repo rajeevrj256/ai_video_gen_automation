@@ -138,6 +138,16 @@ def _cheer() -> np.ndarray:
     return _lowpass(out, 3000) * np.minimum(t / 0.3, 1) * np.minimum((2.5 - t) / 0.8, 1)
 
 
+def _swell() -> np.ndarray:
+    """The inner voice arriving: a soft dark swell (muffled air and a low fifth fading in and away). The first
+    version used a static burst and a sub rumble under every whisper, which buried the whisper itself."""
+    t = _t(2.6)
+    env = np.minimum(t / 0.9, 1) ** 2 * np.exp(-np.maximum(t - 0.9, 0) * 1.6)
+    air = _lowpass(np.random.default_rng(17).standard_normal(len(t)), 700) * 0.6
+    tone = np.sin(2 * np.pi * 146.8 * t) + 0.6 * np.sin(2 * np.pi * 220 * t) + 0.25 * np.sin(2 * np.pi * 293.7 * t)
+    return (air + tone * 0.35) * env
+
+
 def _thud() -> np.ndarray:
     """Something soft hitting the floor (a phone face-down, a bag dropped)."""
     t = _t(0.35)
@@ -151,6 +161,7 @@ MAKERS = {
     "rumble": (lambda: sfx._rumble(2.2), 0.45), "static": (_static, 0.3), "chime": (_chime, 0.35), "bell": (_bell, 0.4),
     "pop": (sfx._pop, 0.35), "swoosh": (sfx._whoosh, 0.3), "scribble": (_scribble, 0.35), "tick": (lambda: sfx._tick(2.0), 0.35),
     "page": (_page, 0.35), "coins": (sfx._cash, 0.4), "rain": (_rain, 0.3), "cheer": (_cheer, 0.4), "thud": (_thud, 0.5),
+    "swell": (_swell, 0.3),
 }
 LOOPED = {"footsteps", "typing", "rain", "tick", "heartbeat"}  # played for the whole span they're given
 

@@ -41,7 +41,7 @@ export const SEAT = {chair: -118, bed: -150, couch: -122, floor: -40};
 export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: number): Rig => {
   const base: Rig = {rot: 0, dx: 0, dy: 0, head: 0, hl: [-44, -96], hr: [44, -96], fl: [-20, 0], fr: [20, 0], squash: 1, jitter: [0, 0]};
   const sitDy = seat - HIP_L[1]; // raise the hips to the seat
-  const sitting = (r: Partial<Rig>): Rig => ({...base, dy: sitDy, kl: [40, seat + 4], kr: [52, seat + 4], fl: [44, 0], fr: [58, 0],
+  const sitting = (r: Partial<Rig>): Rig => ({...base, dy: sitDy, kl: [70, seat + 2], kr: [84, seat + 6], fl: [74, 0], fr: [90, 0],
     hl: [30, -110], hr: [46, -112], ...r});
   switch (pose) {
     case 'walk':
@@ -53,11 +53,16 @@ export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: n
       const s = Math.sin(ph);
       const swing = run ? 34 : 24;
       const lift = run ? 20 : 11;
+      // a foot moves forward (+x, the way he faces) while it is lifted and back while it carries him: x = -cos,
+      // lifted while sin > 0. The first version had it the other way round, a moonwalk.
+      const c = Math.cos(ph);
+      const arm = run ? 34 : 24;
       return {...base, rot: run ? 9 : 2, dy: -Math.abs(Math.cos(ph)) * (run ? 9 : 4),
-        fl: [-6 + s * swing, -Math.max(0, Math.sin(ph)) * lift], fr: [6 - s * swing, -Math.max(0, -Math.sin(ph)) * lift],
-        kl: run ? [-2 + s * swing * 0.7 + 12, -52] : undefined, kr: run ? [2 - s * swing * 0.7 + 12, -52] : undefined,
-        hl: [-30 - s * (run ? 36 : 26), run ? -128 : -100], hr: [30 + s * (run ? 36 : 26), run ? -128 : -100],
-        el: run ? [-26 - s * 10, -134] : undefined, er: run ? [26 + s * 10, -134] : undefined};
+        // each foot steps around its own hip, so the legs never cross into an X on the front-facing bean
+        fl: [-16 - c * swing * 0.6, -Math.max(0, s) * lift], fr: [16 + c * swing * 0.6, -Math.max(0, -s) * lift],
+        kl: run ? [-c * swing * 0.5 + 18, -54] : undefined, kr: run ? [c * swing * 0.5 + 18, -54] : undefined,
+        hl: [-14 + c * arm, run ? -128 : -102], hr: [14 - c * arm, run ? -128 : -102],
+        el: run ? [-10 + c * 14, -146] : undefined, er: run ? [10 - c * 14, -146] : undefined};
     }
     case 'sit':
       return sitting({});
@@ -85,9 +90,10 @@ export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: n
       return {...sitting({rot: 6, hl: [30, -150], hr: [40, -146], head: 10}), jitter: [j, 0]};
     }
     case 'pushup': {
-      const k = (Math.sin(((t + seed) / 0.9) * Math.PI * 2) + 1) / 2;
-      return {...base, rot: 72 + k * 8, dy: -34 + k * 26, dx: -60, hl: [60, -40 - k * 10], hr: [70, -38 - k * 10],
-        fl: [-140, 0], fr: [-128, 0], head: -40};
+      // a plank along the floor: hips low, toes behind, the head end dipping; hands are planted in Bean
+      const k = (Math.sin(((t + seed) / 1.1) * Math.PI * 2) + 1) / 2;
+      const rot = 60 + k * 9; // inclined, the shoulders up (the user's reference push-up), dipping on the way down
+      return {...base, rot, dy: 24 + k * 12, dx: -40, fl: [-196, 0], fr: [-182, 0], head: -rot - 14}; // the face tipped forward, to the floor ahead
     }
     case 'punch': {
       const k = (Math.sin(((t + seed) / 0.36) * Math.PI * 2) + 1) / 2;
@@ -120,6 +126,18 @@ export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: n
   }
 };
 
+// the body frame (rotated about the hips, then offset) to the actor's world frame, and back
+const toWorldOf = (rig: Rig, q: P): P => {
+  const r = (rig.rot * Math.PI) / 180;
+  const x = q[0], y = q[1] + 96;
+  return [x * Math.cos(r) - y * Math.sin(r) + rig.dx, x * Math.sin(r) + y * Math.cos(r) - 96 + rig.dy];
+};
+const toBodyOf = (rig: Rig, w: P): P => {
+  const r = (-rig.rot * Math.PI) / 180;
+  const x = w[0] - rig.dx, y = w[1] - rig.dy + 96;
+  return [x * Math.cos(r) - y * Math.sin(r), x * Math.sin(r) + y * Math.cos(r) - 96];
+};
+
 const limb = (a: P, b: P, bend?: P, curl = 0.18): string => {
   // a rubber hose from a to b: through `bend` when given, else a soft curve
   if (bend) return `M${a[0]},${a[1]} Q${bend[0] * 2 - (a[0] + b[0]) / 2},${bend[1] * 2 - (a[1] + b[1]) / 2} ${b[0]},${b[1]}`;
@@ -130,8 +148,8 @@ const limb = (a: P, b: P, bend?: P, curl = 0.18): string => {
 
 const Hose: React.FC<{d: string; fill: string; w?: number}> = ({d, fill, w = LIMB}) => (
   <>
-    <path d={d} stroke={INK} strokeWidth={w + LINE * 2} fill="none" strokeLinecap="round" />
-    <path d={d} stroke={fill} strokeWidth={w} fill="none" strokeLinecap="round" />
+    <path d={d} stroke={INK} strokeWidth={w + LINE * 2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <path d={d} stroke={fill} strokeWidth={w} fill="none" strokeLinecap="round" strokeLinejoin="round" />
   </>
 );
 
@@ -141,15 +159,45 @@ const HEAD_R = 60;
 
 const BODY = 'M-44,-176 C-50,-130 -48,-100 -36,-86 C-20,-74 20,-74 36,-86 C48,-100 50,-130 44,-176 Z';
 
-export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; seat: number; scale?: number; grey?: boolean}> = (p) => {
+// The face looks the way the body points (the user: "face direction must match the body direction"): every pose with a
+// direction (sitting with the knees out to one side, walking, typing, holding something out, push-ups) turns the face
+// that way in a three-quarter view. Only poses that face the camera keep it straight.
+const FRONT = ['stand', 'cheer', 'wave', 'think', 'lie', 'sleep', 'fall'];
+
+export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; seat: number; scale?: number; grey?: boolean;
+  desk?: number; screen?: boolean; company?: boolean}> = (p) => {
   const {cast, actor, t, dur, seat} = p;
   const seed = Array.from(cast.id).reduce((s, c) => s + c.charCodeAt(0), 0) % 97;
   const rig = rigFor(actor.pose, t, dur, seed, seat);
+  const k = (cast.kid ? KID : 1) * (p.scale ?? 1);
   if ((actor.pose === 'lie') && (actor.prop === 'phone' || actor.glow)) rig.hr = [96, -226]; // the phone held up over the face
+  const typing = actor.pose === 'type' || actor.pose === 'write';
+  const deskTop = p.desk !== undefined ? -p.desk / (cast.kid ? KID : 1) : undefined;
+  if (typing && deskTop !== undefined) {
+    // hands on the desk in front of him (the laptop lies there, drawn below), not a laptop held up in the air
+    const tap = (q: number) => (actor.pose === 'type' ? Math.max(0, Math.sin(t * q)) * 5 : 0);
+    const w = actor.pose === 'write' ? Math.sin(t * 9) * 8 : 0;
+    rig.hl = toBodyOf(rig, [104, deskTop - 10 - tap(21)]);
+    rig.hr = toBodyOf(rig, [132 + w, deskTop - 8 - tap(17)]);
+    rig.el = undefined; rig.er = undefined;
+  } else if (typing && actor.prop === 'laptop') {
+    // no desk: the laptop on his lap
+    rig.hl = toBodyOf(rig, [58, seat - 30]); rig.hr = toBodyOf(rig, [84, seat - 28]);
+  }
+  if (actor.pose === 'pushup') {
+    // both hands flat on the floor under the shoulders; elbows bend back as he goes down
+    // the hands stay where they were planted while the body goes down; the elbows bend back toward the feet
+    // elbows bent up and back, forearms down to the hands (like the reference: an inverted V on each side)
+    const bend = (rig.rot - 60) / 9;
+    const shL = toWorldOf(rig, SHOULDER_L), shR = toWorldOf(rig, SHOULDER_R);
+    rig.hl = toBodyOf(rig, [58, 0]); rig.hr = toBodyOf(rig, [80, 0]);
+    rig.el = toBodyOf(rig, [shL[0] - 24 - 14 * bend, shL[1] * 0.45]); rig.er = toBodyOf(rig, [shR[0] - 14 - 14 * bend, shR[1] * 0.45]);
+  }
+  const umbrella = actor.prop === 'umbrella' && actor.pose !== 'lie' && actor.pose !== 'sleep';
+  if (umbrella) { rig.hr = [74, -196]; rig.er = [84, -148]; } // held up beside him (the shaft clear of the face), over the head
   const fill = p.grey ? TONES.grey : TONES[cast.tone] ?? TONES.cream;
   const face: Face = actor.face2 && actor.faceAt !== undefined && t >= actor.faceAt ? actor.face2 : actor.face;
   const flip = actor.facing === 'left' ? -1 : 1;
-  const k = (cast.kid ? 0.66 : 1) * (p.scale ?? 1);
   const seated = ['sit', 'sit_bed', 'type', 'write', 'guitar', 'slump', 'shake'].includes(actor.pose);
   // legs: hips (body frame) to feet (world frame)
   const toWorld = (q: P): P => {
@@ -159,15 +207,40 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
   };
   const hipL = toWorld(HIP_L), hipR = toWorld(HIP_R);
   const lying = actor.pose === 'lie' || actor.pose === 'sleep';
-  const legs = lying ? null : (
+  const sleeve = cast.wear === 'hood' ? cast.color : fill; // a hoodie: its sleeves too
+  // standing with someone else in the shot: turned a little toward the way he faces (toward them)
+  const turn = actor.pose === 'pushup' ? 28 : actor.pose === 'stand' && p.company ? 10 : FRONT.includes(actor.pose) ? 0 : 16;
+  const grit = actor.pose === 'pushup' && !['happy', 'smile', 'smug', 'shock', 'cry', 'sad'].includes(face);
+  const laptop = typing && (actor.prop === 'laptop' || (deskTop !== undefined && !p.screen)) ? (
+    deskTop !== undefined
+      ? <Laptop x={96} y={deskTop} glow={!!actor.glow} />
+      : <Laptop x={40} y={seat - 22} glow={!!actor.glow} />
+  ) : null;
+  // Sitting: a thigh out past the body to the knee, then the shin down (one curve from hip to foot hid the thigh behind
+  // the body and read as two sticks hanging off a bench). Push-ups: both legs from the middle of the hips, side by
+  // side, a straight plank to the toes.
+  const bent = (a: P, kn: P, f: P) => `M${a[0]},${a[1]} L${kn[0]},${kn[1]} L${f[0]},${f[1]}`;
+  const mid = toWorld([0, -96]);
+  const legs = lying ? null : actor.pose === 'pushup' ? (
     <>
-      <Hose d={limb(hipL, rig.fl, rig.kl, seated ? 0 : 0.08)} fill={fill} />
-      <Hose d={limb(hipR, rig.fr, rig.kr, seated ? 0 : 0.08)} fill={fill} />
+      <Hose d={`M${mid[0]},${mid[1] - 6} L${rig.fl[0]},${rig.fl[1] - 2}`} fill={fill} />
+      <Hose d={`M${mid[0]},${mid[1] + 6} L${rig.fr[0]},${rig.fr[1]}`} fill={fill} />
+    </>
+  ) : seated && rig.kl && rig.kr ? (
+    <>
+      <Hose d={bent(hipL, rig.kl, rig.fl)} fill={fill} />
+      <Hose d={bent(hipR, rig.kr, rig.fr)} fill={fill} />
+    </>
+  ) : (
+    <>
+      <Hose d={limb(hipL, rig.fl, rig.kl, 0.08)} fill={fill} />
+      <Hose d={limb(hipR, rig.fr, rig.kr, 0.08)} fill={fill} />
     </>
   );
   return (
     <g transform={`translate(${rig.jitter[0]},${rig.jitter[1]}) scale(${flip * k},${k})`}>
       {legs}
+      {laptop}
       <g transform={`translate(${rig.dx},${rig.dy}) rotate(${rig.rot},0,-96)`}>
         {lying ? (
           <>
@@ -175,35 +248,48 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
             <Hose d={limb(HIP_R, [14, 64])} fill={fill} />
           </>
         ) : null}
-        <Hose d={limb(SHOULDER_L, rig.hl, rig.el)} fill={fill} />
-        <BodyAndHead fill={fill} rig={rig} cast={cast} face={face} actor={actor} t={t} seed={seed} />
-        <Hose d={limb(SHOULDER_R, rig.hr, rig.er)} fill={fill} />
-        <PropView prop={actor.prop && actor.prop !== 'none' ? actor.prop : (actor.pose === 'phone' || actor.pose === 'reach' ? 'phone' : actor.pose === 'guitar' ? 'guitar' : 'none')}
-          at={actor.pose === 'reach' ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
+        <Hose d={limb(SHOULDER_L, rig.hl, rig.el)} fill={sleeve} />
+        <BodyAndHead fill={fill} rig={rig} cast={cast} face={face} actor={actor} t={t} seed={seed} turn={turn} grit={grit} />
+        <Hose d={limb(SHOULDER_R, rig.hr, rig.er)} fill={sleeve} />
+        {umbrella ? <Umbrella at={rig.hr} /> : (
+          <PropView prop={actor.prop && actor.prop !== 'none' && !(typing && actor.prop === 'laptop') ? actor.prop
+            : (actor.pose === 'phone' || actor.pose === 'reach' ? 'phone' : actor.pose === 'guitar' ? 'guitar' : 'none')}
+            at={actor.pose === 'reach' ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
+        )}
       </g>
     </g>
   );
 };
 
-const BodyAndHead: React.FC<{fill: string; rig: Rig; cast: Cast; face: Face; actor: Actor; t: number; seed: number}> = ({fill, rig, cast, face, actor, t, seed}) => (
+const BodyAndHead: React.FC<{fill: string; rig: Rig; cast: Cast; face: Face; actor: Actor; t: number; seed: number; turn: number; grit?: boolean}> = ({fill, rig, cast, face, actor, t, seed, turn, grit}) => {
+  const hoodie = cast.wear === 'hood';
+  return (
   <>
     <g>
-      {cast.wear === 'hood' ? <path d="M-74,-226 C-80,-310 80,-310 74,-226 C70,-176 50,-166 0,-164 C-50,-166 -70,-176 -74,-226 Z" fill={cast.color} stroke={INK} strokeWidth={LINE} /> : null}
       {cast.wear === 'long' || cast.wear === 'ponytail' ? <HairBack cast={cast} /> : null}
       {/* outline layer, then the fill: the head and the body read as one bean */}
       <path d={BODY} fill={INK} stroke={INK} strokeWidth={LINE * 2} />
+      {hoodie ? <path d="M-58,-200 C-70,-160 -40,-148 0,-150 C40,-148 70,-160 58,-200 Z" fill={INK} stroke={INK} strokeWidth={LINE * 2} /> : null}
       <circle cx={HEAD[0]} cy={HEAD[1]} r={HEAD_R + LINE} fill={INK} />
-      <path d={BODY} fill={fill} />
+      <path d={BODY} fill={hoodie ? cast.color : fill} />
+      {hoodie ? (
+        <g stroke={INK} strokeWidth={2.4} fill="none" strokeLinecap="round">
+          {/* the hood lying bunched behind the neck, a kangaroo pocket and two drawstrings */}
+          <path d="M-58,-200 C-70,-160 -40,-148 0,-150 C40,-148 70,-160 58,-200 Z" fill={cast.color} />
+          <path d="M-30,-122 L30,-122 L36,-96 L-36,-96 Z" opacity={0.55} />
+          <path d="M-12,-168 L-14,-138 M12,-168 L14,-138" />
+        </g>
+      ) : null}
       <circle cx={HEAD[0]} cy={HEAD[1]} r={HEAD_R} fill={fill} />
-      {cast.wear === 'hood' ? <path d="M-60,-178 C-36,-160 36,-160 60,-178 C64,-160 40,-148 0,-148 C-40,-148 -64,-160 -60,-178 Z" fill={cast.color} stroke={INK} strokeWidth={LINE} /> : null}
     </g>
-    <g transform={`rotate(${rig.head},0,-180)`}>
-      <FaceView face={face} t={t} seed={seed} tear={!!actor.tear} sweat={!!actor.sweat} glow={!!actor.glow} />
+    <g transform={`rotate(${rig.head},0,-236)`}>
+      <g transform={`translate(${turn},${actor.pose === 'pushup' ? 10 : 0})`}><FaceView face={face} t={t} seed={seed} tear={!!actor.tear} sweat={!!actor.sweat || !!grit} glow={!!actor.glow} grit={grit} asleep={actor.pose === 'sleep'} /></g>
       <WearView cast={cast} wear={cast.wear} />
       {cast.extra ? <WearView cast={cast} wear={cast.extra} /> : null}
     </g>
   </>
-);
+  );
+};
 
 // ---------- faces ----------
 
@@ -225,8 +311,8 @@ const FACES: Record<Face, {eye: 'dot' | 'line' | 'half' | 'wide' | 'happy' | 'cl
   smug: {eye: 'half', brow: [-4, 4], mouth: 'M-10,-206 Q4,-200 12,-210'},
 };
 
-const FaceView: React.FC<{face: Face; t: number; seed: number; tear: boolean; sweat: boolean; glow: boolean}> = ({face, t, seed, tear, sweat, glow}) => {
-  const f = FACES[face] ?? FACES.neutral;
+const FaceView: React.FC<{face: Face; t: number; seed: number; tear: boolean; sweat: boolean; glow: boolean; grit?: boolean; asleep?: boolean}> = ({face, t, seed, tear, sweat, glow, grit, asleep}) => {
+  const f = asleep ? {...FACES[face] ?? FACES.neutral, eye: 'closed' as const, brow: [2, 2] as Brow} : FACES[face] ?? FACES.neutral;
   const blink = ((t + seed * 0.11) % 3.4) < 0.12 && f.eye !== 'happy' && f.eye !== 'closed';
   const eyes = [-19, 21].map((x, i) => {
     const y = -240;
@@ -250,7 +336,13 @@ const FaceView: React.FC<{face: Face; t: number; seed: number; tear: boolean; sw
       {f.bags ? [-19, 21].map((x) => <path key={x} d={`M${x - 8},${-231} Q${x},${-226} ${x + 8},${-231}`} stroke="#8a7f8f" strokeWidth={2.2} fill="none" />) : null}
       {eyes}
       {brows}
-      <path d={f.mouth} stroke={INK} strokeWidth={3.4} fill={face === 'shock' ? INK : 'none'} strokeLinecap="round" strokeLinejoin="round" />
+      {grit ? (
+        // effort: gritted teeth
+        <g stroke={INK} strokeWidth={3}>
+          <rect x={-15} y={-216} width={30} height={15} rx={5} fill="#fff" />
+          <path d="M-15,-208.5 L15,-208.5 M-7,-216 L-7,-201 M0,-216 L0,-201 M7,-216 L7,-201" strokeWidth={2} />
+        </g>
+      ) : <path d={f.mouth} stroke={INK} strokeWidth={3.4} fill={face === 'shock' ? INK : 'none'} strokeLinecap="round" strokeLinejoin="round" />}
       {f.blush ? [-30, 32].map((x) => <ellipse key={x} cx={x} cy={-218} rx={9} ry={5} fill="#E88A8A" opacity={0.55} />) : null}
       {tear || face === 'cry' ? <Tears t={t} /> : null}
       {sweat || face === 'anxious' ? <path d="M48,-262 q-7,12 0,16 q7,-4 0,-16" fill="#9BD3F5" stroke={INK} strokeWidth={1.6} /> : null}
@@ -306,6 +398,34 @@ const WearView: React.FC<{cast: Cast; wear: Cast['wear']}> = ({cast, wear}) => {
 };
 
 // ---------- things in hand ----------
+
+export const KID = 0.74;
+
+// An umbrella held up in one hand: the handle's hook in the fist, the shaft up past the head, the canopy above it.
+const Umbrella: React.FC<{at: P}> = ({at}) => {
+  const [hx, hy] = at;
+  const tx = hx - 14, ty = -352; // the canopy's rim centre, above the head (its top is at -296)
+  return (
+    <g strokeLinecap="round">
+      <path d={`M${hx + 2},${hy + 22} q0,14 -12,14 q-10,0 -10,-10`} stroke={INK} strokeWidth={5} fill="none" />
+      <line x1={hx + 2} y1={hy + 22} x2={tx} y2={ty - 6} stroke={INK} strokeWidth={5} />
+      <path d={`M${tx - 118},${ty} C${tx - 108},${ty - 96} ${tx + 108},${ty - 96} ${tx + 118},${ty}
+        C${tx + 96},${ty - 12} ${tx + 70},${ty - 12} ${tx + 59},${ty} C${tx + 44},${ty - 12} ${tx + 15},${ty - 12} ${tx},${ty}
+        C${tx - 15},${ty - 12} ${tx - 44},${ty - 12} ${tx - 59},${ty} C${tx - 70},${ty - 12} ${tx - 96},${ty - 12} ${tx - 118},${ty} Z`}
+        fill="#F2C230" stroke={INK} strokeWidth={3} strokeLinejoin="round" />
+      <line x1={tx} y1={ty - 72} x2={tx} y2={ty - 88} stroke={INK} strokeWidth={4} />
+    </g>
+  );
+};
+
+// A laptop seen from the side, open on the desk (or his lap): the base flat, the screen's back toward us.
+const Laptop: React.FC<{x: number; y: number; glow: boolean}> = ({x, y, glow}) => (
+  <g>
+    {glow ? <ellipse cx={x + 40} cy={y - 60} rx={70} ry={60} fill="#9CC2FF" opacity={0.12} /> : null}
+    <rect x={x} y={y - 7} width={96} height={8} rx={2} fill="#3A3F4C" stroke={INK} strokeWidth={2} />
+    <path d={`M${x + 92},${y - 6} L${x + 108},${y - 96} L${x + 118},${y - 95} L${x + 102},${y - 5} Z`} fill="#4A5060" stroke={INK} strokeWidth={2} strokeLinejoin="round" />
+  </g>
+);
 
 const PropView: React.FC<{prop: Prop; at: P; glow: boolean}> = ({prop, at, glow}) => {
   const [x, y] = at;

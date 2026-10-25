@@ -32,7 +32,7 @@ Colour = Literal["black", "charcoal", "grey", "white", "navy", "blue", "red", "o
 Accent = Literal["pink", "red", "purple", "amber", "cyan"]
 Sound = Literal["ding", "notify", "buzz", "typing", "tap", "send", "knock", "door", "footsteps", "alarm", "heartbeat",
                 "rumble", "static", "chime", "bell", "pop", "swoosh", "scribble", "tick", "page", "coins", "rain", "cheer",
-                "thud"]
+                "thud", "swell"]
 Act = Literal["open", "loop", "low", "turn", "day1", "climb", "test", "resolve", "thesis", "title"]
 Mood = Literal["calm", "dark", "emotional", "suspense", "uplifting", "curious", "playful"]
 
@@ -49,16 +49,16 @@ class FCast(BaseModel):
     tone: Tone = Field(description="Skin: cream for most; background strangers are 'grey' (the editor greys them too).")
     wear: Wear = Field(description="The ONE item (or hair) that tells this person apart at a glance: hood, bob, beanie, headband...")
     color: Colour = Field(description="Its colour.")
-    kid: bool = Field(default=False, description="A child (drawn smaller).")
+    kid: bool = Field(default=False, description="A real child (drawn smaller): a little sister, a son. Never a friend or a sibling his age.")
     extra: Wear = Field(default="none", description="A second item, rarely: a scarf with a bob. 'none' usually.")
 
 
 class FActor(BaseModel):
     id: str = Field(description="A cast id.")
     x: int = Field(ge=0, le=100, description="Where on the floor, 0 (left) to 100 (right). Two people talking stand 15-25 apart.")
-    pose: Pose = Field(description="What the body does. lie/sleep/sit_bed go on the set's bed, sit on its chair or couch; walk/run/climb move from x to 'to'.")
+    pose: Pose = Field(description="What the body does. sleep/lie: lying on the set's bed (asleep or awake in bed). sit_bed: sitting on its edge, awake. sit on its chair or couch; walk/run/climb move from x to 'to'.")
     face: Face
-    facing: Literal["left", "right"] = "right"
+    facing: Literal["left", "right"] = Field(default="right", description="Where the body and face point (toward the person he talks to). Walking/running ignore it: they face the way they go.")
     to: int = Field(default=-1, ge=-1, le=100, description="walk/run/climb: where they end up; -1 otherwise.")
     prop: Prop = "none"
     glow: bool = Field(default=False, description="A phone screen lights the face (night scrolling).")
@@ -232,8 +232,21 @@ THE TELLING: pictures first. 15-30 caption lines in the whole film, most shots n
 human (max 9 words a line), the second line the turn in bold. Dialogue only in bubbles or chat, a few words. Change \
 the picture every 2-4 s: wide room shots, a face close-up for a feeling, inserts of the phone, the clock, the calendar, \
 a drawing. Keep the hero's main room so the loop is felt. Give every action a sound (`sounds`) where it isn't \
-automatic: alarm, door, coins, rain, a heartbeat at the realisation, a chime or bell when something good lands, \
-rumble under the voice. Total length {minutes} minutes: about {shots} shots."""
+automatic: alarm, door, coins, rain, a heartbeat at the realisation, a chime or bell when something good lands. Never \
+put a sound under a whisper: it has to be heard. Total length {minutes} minutes: about {shots} shots.
+
+STAGING (the editor draws exactly what you set, so set what the story says):
+- Asleep, in bed, lying awake = pose 'sleep' or 'lie' (lying on the bed). 'sit_bed' is sitting on the edge of the bed, \
+awake; never use it for sleeping.
+- Walking or running = pose walk/run with `x` and `to`; the editor turns them the way they go.
+- Typing or writing = pose type/write in a set with a desk (desk, office, bedroom, kitchen, classroom); the laptop or \
+paper sits on the desk. An umbrella, a coffee, a phone = `prop` in the hand.
+- Push-ups, a gym, running = real places for them (gym, park, street), the person on the floor or the path.
+- Who someone is: the first time anyone besides the hero appears, the picture or the words say who they are (a caption \
+'His little sister, Mia.', the chat title 'mum', a bubble 'bro!'). `kid` only for a real child (a little sister, a \
+son); a friend, a coworker or a sibling of his age is not a kid.
+- One wall calendar per month: every later calendar of that month keeps the ticks and scribbles already shown and adds \
+the new days; `checks` never goes down within a month."""
 
 
 def _recent(cfg: Config) -> list[dict]:

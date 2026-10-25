@@ -14,7 +14,10 @@ const LINE_DIM = 'rgba(222,226,234,0.38)';
 const FILL = '#1B1F28';
 
 export type Furniture = {bed?: [number, number]; chair?: number; couch?: [number, number]; desk?: number};
-export type SetInfo = {furniture: Furniture; floorAt: (x: number) => number; outdoor: boolean};
+export type SetInfo = {furniture: Furniture; floorAt: (x: number) => number; outdoor: boolean; screen?: boolean};
+// The desks' top, above the floor (Desk draws its top at FLOOR - 200).
+export const DESK_TOP = 200;
+const SEAT_COUCH = -122; // Bean's SEAT.couch: a person sits on the bench at this height
 
 // x in 0..100 -> pixels
 export const px = (x: number) => 150 + (W - 300) * (x / 100);
@@ -32,12 +35,12 @@ export const setInfo = (name: SetName): SetInfo => {
   const flat = () => FLOOR;
   switch (name) {
     case 'bedroom': return {furniture: {bed: [34, 58], chair: 82, desk: 86}, floorAt: flat, outdoor: false};
-    case 'desk': return {furniture: {chair: 48, desk: 56}, floorAt: flat, outdoor: false};
+    case 'desk': return {furniture: {chair: 44, desk: 50}, floorAt: flat, outdoor: false, screen: true};
     case 'living': return {furniture: {couch: [30, 52]}, floorAt: flat, outdoor: false};
     case 'kitchen': return {furniture: {chair: 70, desk: 76}, floorAt: flat, outdoor: false};
     case 'cafe': return {furniture: {chair: 20}, floorAt: flat, outdoor: false};
     case 'classroom': return {furniture: {chair: 40, desk: 46}, floorAt: flat, outdoor: false};
-    case 'office': return {furniture: {chair: 44, desk: 50}, floorAt: flat, outdoor: false};
+    case 'office': return {furniture: {chair: 44, desk: 50}, floorAt: flat, outdoor: false, screen: true};
     case 'busstop': return {furniture: {couch: [40, 56]}, floorAt: flat, outdoor: true};
     case 'park': return {furniture: {couch: [44, 58]}, floorAt: flat, outdoor: true};
     case 'court': return {furniture: {couch: [30, 40]}, floorAt: flat, outdoor: true};
@@ -159,6 +162,43 @@ const Desk: React.FC<{x: number; lamp?: boolean; screen?: boolean}> = ({x, lamp 
   </g>
 );
 
+// A park bench seen from the front: wooden slats on iron legs, a backrest, armrests (it sat as two lines before).
+const ParkBench: React.FC<{x0: number; x1: number}> = ({x0, x1}) => {
+  const seat = FLOOR + SEAT_COUCH;
+  const wood = '#8A5A3A';
+  return (
+    <g stroke={LINE} strokeWidth={3}>
+      {[x0 + 30, x1 - 30].map((x) => <g key={x} fill="#2E3038"><path d={`M${x - 10},${seat} L${x - 16},${FLOOR} L${x - 4},${FLOOR} L${x + 2},${seat} Z`} /><path d={`M${x - 8},${seat - 2} L${x - 8},${seat - 104} L${x + 4},${seat - 104} L${x + 4},${seat - 2} Z`} /></g>)}
+      <rect x={x0} y={seat - 6} width={x1 - x0} height={14} rx={4} fill={wood} />
+      <rect x={x0 + 6} y={seat + 8} width={x1 - x0 - 12} height={8} rx={3} fill="#6E4630" />
+      <rect x={x0 + 4} y={seat - 98} width={x1 - x0 - 8} height={16} rx={4} fill={wood} />
+      <rect x={x0 + 4} y={seat - 66} width={x1 - x0 - 8} height={16} rx={4} fill={wood} />
+      {[x0 - 4, x1 + 4].map((x, i) => <path key={x} d={`M${x},${seat - 4} C${x + (i ? 10 : -10)},${seat - 40} ${x + (i ? -20 : 20)},${seat - 44} ${x + (i ? -34 : 34)},${seat - 40}`} fill="none" stroke="#2E3038" strokeWidth={7} strokeLinecap="round" />)}
+    </g>
+  );
+};
+
+// A gym's rack of dumbbells on two shelves (it was a box of circles).
+const DumbbellRack: React.FC<{x: number}> = ({x}) => {
+  const w = 300;
+  const bell = (cx: number, cy: number, r: number) => (
+    <g key={`${cx}-${cy}`}>
+      <rect x={cx - 26} y={cy - 3} width={52} height={6} fill="#9AA0AA" stroke="none" />
+      <rect x={cx - 34} y={cy - r} width={14} height={r * 2} rx={4} fill="#2B2D33" />
+      <rect x={cx + 20} y={cy - r} width={14} height={r * 2} rx={4} fill="#2B2D33" />
+    </g>
+  );
+  return (
+    <g stroke={LINE} strokeWidth={3}>
+      <g fill="none"><path d={`M${x},${FLOOR} L${x + 20},${FLOOR - 230} M${x + w},${FLOOR} L${x + w - 20},${FLOOR - 230}`} /></g>
+      <rect x={x + 6} y={FLOOR - 214} width={w - 12} height={10} fill={FILL} />
+      <rect x={x + 2} y={FLOOR - 104} width={w - 4} height={10} fill={FILL} />
+      {[0, 1, 2, 3].map((i) => bell(x + 50 + i * 68, FLOOR - 228, 15))}
+      {[0, 1, 2, 3].map((i) => bell(x + 50 + i * 68, FLOOR - 122, 18))}
+    </g>
+  );
+};
+
 const Chair: React.FC<{x: number}> = ({x}) => (
   <g stroke={LINE} strokeWidth={3} fill="none">
     <line x1={x - 40} y1={FLOOR - 118} x2={x + 40} y2={FLOOR - 118} />
@@ -279,7 +319,7 @@ export const SetView: React.FC<{name: SetName; light: Light; clock?: string; t: 
           <rect x={px(28)} y={190} width={330} height={210} fill="#4A3A2A" stroke={LINE} strokeWidth={3} />
           {Array.from({length: 7}, (_, i) => <rect key={i} x={px(29) + (i % 4) * 78} y={206 + Math.floor(i / 4) * 92} width={58} height={56} fill={['#E9DDB0', '#B8D8E8', '#F2C4C4', '#C8E6C0'][i % 4]} transform={`rotate(${(i % 3 - 1) * 5},${px(29) + (i % 4) * 78 + 29},${236 + Math.floor(i / 4) * 92})`} />)}
           <Window x={px(66)} y={170} w={360} h={250} light={light} view="city" />
-          <Desk x={px(50)} lamp screen />
+          <Desk x={px(f.desk!)} lamp screen />
           <Chair x={px(f.chair!)} />
           {nightish ? <Pool x={px(62)} y={FLOOR - 180} r={360} color="#F3C27A" opacity={0.22} /> : null}
         </g>
@@ -365,7 +405,7 @@ export const SetView: React.FC<{name: SetName; light: Light; clock?: string; t: 
         <g>
           <Room light={light} />
           <Window x={px(64)} y={170} w={420} h={260} light={light} view="city" />
-          <Desk x={px(40)} lamp={false} screen />
+          <Desk x={px(f.desk!)} lamp={false} screen />
           <Chair x={px(f.chair!)} />
           <Desk x={px(6)} lamp={false} screen />
         </g>
@@ -374,9 +414,8 @@ export const SetView: React.FC<{name: SetName; light: Light; clock?: string; t: 
       return (
         <g>
           <Room light="lamp" />
-          {[px(8), px(80)].map((x, i) => <g key={x} transform={`rotate(${i ? 3 : -3},${x + 60},${300})`}><rect x={x} y={220} width={130} height={170} fill="#C4A57A" opacity={0.75} /><text x={x + 65} y={270} textAnchor="middle" fontFamily="Comic Neue" fontWeight={700} fontSize={26} fill="#5A2E1E">{i ? 'NO DAYS OFF' : 'STRONGER'}</text></g>)}
-          <g stroke={LINE} strokeWidth={3} fill={FILL}><rect x={px(10)} y={FLOOR - 220} width={300} height={14} /><line x1={px(10)} y1={FLOOR - 206} x2={px(10)} y2={FLOOR} /><line x1={px(10) + 300} y1={FLOOR - 206} x2={px(10) + 300} y2={FLOOR} />
-            {[0, 1, 2, 3].map((i) => <g key={i}><circle cx={px(11) + i * 74} cy={FLOOR - 236} r={20} /><circle cx={px(11) + i * 74} cy={FLOOR - 120} r={18} /></g>)}</g>
+          {[px(12), px(72)].map((x, i) => <g key={x} transform={`rotate(${i ? 3 : -3},${x + 100},${300})`}><rect x={x} y={220} width={200} height={150} fill="#C4A57A" opacity={0.75} /><text x={x + 100} y={290} textAnchor="middle" fontFamily="Comic Neue" fontWeight={700} fontSize={30} fill="#5A2E1E">{i ? 'NO DAYS OFF' : 'STRONGER'}</text></g>)}
+          <DumbbellRack x={px(8)} />
           <line x1={px(50)} y1={0} x2={px(50)} y2={150} stroke={LINE} strokeWidth={3} />
           <path d={`M${px(50) - 90},210 L${px(50) + 90},210 L${px(50) + 50},150 L${px(50) - 50},150 Z`} fill="#3A3026" stroke={LINE} strokeWidth={3} />
           <polygon points={`${px(50) - 80},210 ${px(50) + 80},210 ${px(50) + 380},${FLOOR + 40} ${px(50) - 380},${FLOOR + 40}`} fill="#F3C27A" opacity={0.12} />
@@ -443,7 +482,7 @@ export const SetView: React.FC<{name: SetName; light: Light; clock?: string; t: 
           <rect width={W} height={H} fill="url(#parkSky)" />
           {[px(4), px(22), px(70), px(90)].map((x, i) => <g key={x}><rect x={x - 12} y={FLOOR - 220} width={24} height={220} fill="#3A2A1C" /><circle cx={x} cy={FLOOR - 270} r={110 - i * 8} fill="#2F5A3A" /></g>)}
           <rect y={FLOOR} width={W} height={H - FLOOR} fill="#2C4A2E" />
-          <g stroke={LINE} strokeWidth={3} fill="#4A3426"><rect x={px(42)} y={FLOOR - 122} width={420} height={18} /><rect x={px(42)} y={FLOOR - 200} width={420} height={14} /></g>
+          <ParkBench x0={px(42)} x1={px(42) + 420} />
         </g>
       );
     case 'court':

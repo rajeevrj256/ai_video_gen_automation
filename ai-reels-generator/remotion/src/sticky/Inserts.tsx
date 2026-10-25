@@ -26,7 +26,9 @@ const Hands: React.FC<{tone: string; tap: number; thumb: [number, number]}> = ({
     {/* left hand: fingers wrapping the left edge */}
     <path d={`M${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={INK} strokeWidth={128} fill="none" strokeLinecap="round" />
     <path d={`M${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={tone} strokeWidth={120} fill="none" strokeLinecap="round" />
-    {[0, 1, 2].map((i) => <ellipse key={i} cx={PX - 6} cy={PY + 520 + i * 70} rx={34} ry={28} fill={tone} stroke={INK} strokeWidth={4} />)}
+    {/* the fingers as one hand gripping the phone's edge (three separate knuckles read as three dots) */}
+    <rect x={PX - 52} y={PY + 470} width={84} height={250} rx={40} fill={tone} stroke={INK} strokeWidth={4} />
+    <path d={`M${PX - 14},${PY + 552} q16,4 34,0 M${PX - 14},${PY + 636} q16,4 34,0`} stroke={INK} strokeWidth={3} opacity={0.35} fill="none" strokeLinecap="round" />
     {/* right hand and thumb */}
     <path d={`M${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
     <path d={`M${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={tone} strokeWidth={90} fill="none" strokeLinecap="round" />
@@ -177,8 +179,16 @@ export const CalendarInsert: React.FC<{c: NonNullable<Shot['calendar']>; t: numb
   const cols = 7;
   const cw = 104, ch = 86;
   const x0 = W / 2 - (cols * cw) / 2, y0 = 300;
-  const fresh = Math.min(7, c.checks); // the last week's ticks go on during the shot
-  const drawn = c.checks - fresh + Math.floor(interpolate(t, [0.3, Math.max(0.6, dur * 0.7)], [0, fresh], clamp));
+  // What this month's calendar already showed stays drawn; only the days since then are ticked (or scribbled) during
+  // the shot. Before, every calendar shot ticked from day 1 again. With no earlier calendar, the last week is new.
+  const before = c.before ?? Math.max(0, c.checks - 7);
+  const oldMarks = new Set(c.beforeMarks ?? []);
+  const newMarks = (c.marks ?? []).filter((d) => !oldMarks.has(d));
+  const fresh = Math.max(0, c.checks - before) + newMarks.length;
+  const span = Math.max(0.6, dur * 0.7);
+  const step = fresh ? (span - 0.3) / fresh : 1;
+  const drawn = before + Math.floor(interpolate(t, [0.3, span], [0, Math.max(0, c.checks - before)], clamp));
+  const markAt = (d: number) => 0.3 + (Math.max(0, c.checks - before) + newMarks.indexOf(d)) * step; // after the new ticks
   return (
     <g>
       <rect width={W} height={H} fill="#121317" />
@@ -194,7 +204,11 @@ export const CalendarInsert: React.FC<{c: NonNullable<Shot['calendar']>; t: numb
               <rect x={x + 6} y={y + 6} width={cw - 12} height={ch - 12} rx={8} fill="#E7E2D6" />
               <text x={x + 16} y={y + 30} fontFamily={SANS} fontSize={20} fill="#888">{i + 1}</text>
               {i < drawn && !bad ? <Check x={x + 26} y={y + 14} size={62} color="#2FA35A" strokeWidth={4} /> : null}
-              {bad ? <path d={`M${x + 18},${y + 30} q20,-24 30,6 t30,-4 t20,10 M${x + 16},${y + 52} q24,-20 34,8 t34,-6`} stroke={accent} strokeWidth={8} fill="none" strokeLinecap="round" /> : null}
+              {bad && (oldMarks.has(i + 1) || t >= markAt(i + 1)) ? (
+                <path d={`M${x + 18},${y + 30} q20,-24 30,6 t30,-4 t20,10 M${x + 16},${y + 52} q24,-20 34,8 t34,-6`} stroke={accent} strokeWidth={8}
+                  fill="none" strokeLinecap="round" pathLength={1} strokeDasharray={1}
+                  strokeDashoffset={oldMarks.has(i + 1) ? 0 : interpolate(t, [markAt(i + 1), markAt(i + 1) + 0.35], [1, 0], clamp)} />
+              ) : null}
             </g>
           );
         })}
@@ -224,7 +238,7 @@ export const ObjectInsert: React.FC<{o: NonNullable<Shot['object']>; t: number; 
   return (
     <g>
       <rect width={W} height={H} fill="#121317" />
-      <g transform={`translate(${W / 2},${H / 2}) scale(${pop}) rotate(${k === 'note' ? -3 : -1.5})`}>
+      <g transform={`translate(${W / 2},${H / 2 + (k === 'drawing' ? 40 : 0)}) scale(${pop}) rotate(${k === 'note' ? -3 : -1.5})`}>
         <rect x={-560} y={-360} width={1120} height={720} fill={paper} stroke="#00000022" strokeWidth={6} />
         {k === 'drawing' ? (
           <g>
@@ -252,7 +266,18 @@ export const ObjectInsert: React.FC<{o: NonNullable<Shot['object']>; t: number; 
           </g>
         )}
       </g>
-      {k === 'drawing' ? <g><circle cx={W / 2 - 600} cy={H - 40} r={70} fill={TONES.cream} /><circle cx={W / 2 + 600} cy={H - 40} r={70} fill={TONES.cream} /></g> : null}
+      {k === 'drawing' ? (
+        // held up in two hands: the arms from below and a thumb over each bottom corner (two balls before)
+        <g transform={`translate(${W / 2},${H / 2 + 40}) scale(${pop}) rotate(-1.5)`}>
+          {[-1, 1].map((sd) => (
+            <g key={sd}>
+              <path d={`M${sd * 640},${700} C${sd * 600},${560} ${sd * 520},${460} ${sd * 470},${400}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
+              <path d={`M${sd * 640},${700} C${sd * 600},${560} ${sd * 520},${460} ${sd * 470},${400}`} stroke={TONES.cream} strokeWidth={90} fill="none" strokeLinecap="round" />
+              <rect x={sd * 470 - 26} y={300} width={52} height={96} rx={26} fill={TONES.cream} stroke={INK} strokeWidth={4} transform={`rotate(${sd * -12},${sd * 470},${348})`} />
+            </g>
+          ))}
+        </g>
+      ) : null}
       <rect width={W} height={H} fill={accent} opacity={0} />
     </g>
   );

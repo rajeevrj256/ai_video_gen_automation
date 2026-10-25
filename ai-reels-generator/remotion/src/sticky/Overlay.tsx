@@ -133,7 +133,8 @@ export const Whisper: React.FC<{w: NonNullable<Shot['whisper']>; t: number; dur:
   const out = interpolate(t, [dur - 0.4, dur], [1, 0], clamp);
   return (
     <text x={x} y={y + Math.sin(t * 2) * 3} textAnchor="middle" fontFamily={HAND} fontWeight={700} fontSize={size} fill={accent} opacity={out}
-      style={{filter: `drop-shadow(0 0 8px ${accent})`}} transform={`rotate(-4,${x},${y})`}>
+      style={{filter: `drop-shadow(0 0 6px ${accent})`, paintOrder: 'stroke', stroke: 'rgba(5,5,8,0.85)', strokeWidth: 9, strokeLinejoin: 'round'}}
+      transform={`rotate(-4,${x},${y})`}>
       {w.text.slice(0, n)}
     </text>
   );

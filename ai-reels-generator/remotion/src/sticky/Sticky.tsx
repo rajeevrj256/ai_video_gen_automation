@@ -1,8 +1,8 @@
 import React from 'react';
 import {AbsoluteFill, Sequence, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
-import {Bean, SEAT} from './Bean';
+import {Bean, KID, SEAT} from './Bean';
 import {ShadowView} from './Shadow';
-import {FLOOR, H, SetView, W, px, setInfo} from './Sets';
+import {DESK_TOP, FLOOR, H, SetView, W, px, setInfo} from './Sets';
 import {CalendarInsert, ClockInsert, GraphInsert, Grain, ObjectInsert, PhoneInsert} from './Inserts';
 import {Bubbles, Caption, Hud, Notes, Pills, Stamp, TitleCard, Whisper, useStickyFonts} from './Overlay';
 import type {Actor, Cast, Shot, StickyProps} from './types';
@@ -44,9 +44,13 @@ const placeActor = (a: Actor, shot: Shot, t: number, dur: number) => {
     const k = interpolate(t, [0, dur], [0, 1], clamp);
     x = a.x + (a.to - a.x) * k;
   }
-  const facing = a.facing ?? ((a.pose === 'walk' || a.pose === 'run' || a.pose === 'climb') && a.to !== undefined && a.to < a.x ? 'left' : 'right');
+  // someone moving always faces the way they go (the writer's own facing made them walk backwards)
+  const moving = (a.pose === 'walk' || a.pose === 'run' || a.pose === 'climb') && a.to !== undefined && a.to !== a.x;
+  const facing = moving ? (a.to! < a.x ? 'left' : 'right') : a.facing ?? 'right';
   const xpx = px(x);
-  return {xpx, y: info.floorAt(xpx), seat, facing: facing as 'left' | 'right'};
+  const atDesk = (a.pose === 'type' || a.pose === 'write') && f.desk !== undefined && f.chair !== undefined;
+  return {xpx, y: info.floorAt(xpx), seat, facing: facing as 'left' | 'right',
+    desk: atDesk ? DESK_TOP : undefined, screen: atDesk && !!info.screen};
 };
 
 export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast[]; accent: string; heads?: Record<string, [number, number]>}> = ({shot, t, dur, cast, accent, heads}) => {
@@ -56,8 +60,10 @@ export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast
   const actors = (shot.actors ?? []).filter((a) => byId[a.id]);
   const placed = actors.map((a) => ({a, ...placeActor(a, shot, t, dur)}));
   for (const p of placed) {
-    const k = byId[p.a.id].kid ? 0.66 : 1;
-    if (heads) heads[p.a.id] = [p.xpx, p.y - (p.a.pose === 'lie' || p.a.pose === 'sleep' ? 230 : 330) * k];
+    const k = byId[p.a.id].kid ? KID : 1;
+    const low = p.a.pose === 'lie' || p.a.pose === 'sleep' ? 230 : p.a.pose === 'pushup' ? 170 : p.a.pose === 'curl' || p.a.pose === 'kneel' ? 260 : 330;
+    const ahead = p.a.pose === 'pushup' ? (p.facing === 'left' ? -60 : 60) * k : 0;
+    if (heads) heads[p.a.id] = [p.xpx + ahead, p.y - low * k];
   }
   const sh = shot.shadow;
   const heroX = placed[0]?.xpx ?? W / 2;
@@ -74,7 +80,8 @@ export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast
       ) : null}
       {placed.map((p, i) => (
         <g key={i} transform={`translate(${p.xpx},${p.y})`}>
-          <Bean cast={byId[p.a.id]} actor={{...p.a, facing: p.facing}} t={t} dur={dur} seat={p.seat} grey={grey && byId[p.a.id] !== hero ? true : undefined} />
+          <Bean cast={byId[p.a.id]} actor={{...p.a, facing: p.facing}} t={t} dur={dur} seat={p.seat} grey={grey && byId[p.a.id] !== hero ? true : undefined}
+            desk={p.desk} screen={p.screen} company={placed.length > 1} />
         </g>
       ))}
       {sh && !grey ? <rect width={W} height={H} fill={accent} opacity={0.06} /> : null}
