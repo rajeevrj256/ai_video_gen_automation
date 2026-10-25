@@ -204,6 +204,9 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
     rig.el = toBodyOf(rig, [shL[0] - 24 - 14 * bend, shL[1] * 0.45]); rig.er = toBodyOf(rig, [shR[0] - 14 - 14 * bend, shR[1] * 0.45]);
   }
   const umbrella = actor.prop === 'umbrella' && actor.pose !== 'lie' && actor.pose !== 'sleep';
+  // things carried in one hand hang from that hand (a bag drawn between both hands floated over his middle like a box)
+  const oneHand = ['bag', 'coffee', 'cup', 'pen', 'ball'].includes(actor.prop ?? '')
+    || (actor.prop === 'phone' && ['walk', 'run', 'climb', 'stand'].includes(actor.pose) && actor.pose !== 'phone');
   if (umbrella) { rig.hr = [74, -196]; rig.er = [84, -148]; } // held up beside him (the shaft clear of the face), over the head
   const fill = p.grey ? TONES.grey : TONES[cast.tone] ?? TONES.cream;
   const face: Face = actor.face2 && actor.faceAt !== undefined && t >= actor.faceAt ? actor.face2 : actor.face;
@@ -271,7 +274,7 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
         {umbrella ? <Umbrella at={rig.hr} /> : (
           <PropView prop={actor.prop && actor.prop !== 'none' && !(typing && actor.prop === 'laptop') ? actor.prop
             : (actor.pose === 'phone' || actor.pose === 'reach' ? 'phone' : actor.pose === 'guitar' ? 'guitar' : 'none')}
-            at={actor.pose === 'reach' || phoneUp ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
+            at={actor.pose === 'reach' || phoneUp || oneHand ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
         )}
       </g>
     </g>
@@ -482,7 +485,14 @@ const PropView: React.FC<{prop: Prop; at: P; glow: boolean}> = ({prop, at, glow}
     case 'ball':
       return <g transform={`translate(${x},${y - 6})`}><circle r={22} fill="#E8812E" stroke={INK} strokeWidth={2.4} /><path d="M-22,0 L22,0 M0,-22 L0,22" stroke={INK} strokeWidth={1.6} /></g>;
     case 'bag':
-      return <g transform={`translate(${x},${y + 20})`}><rect x={-22} y={-18} width={44} height={40} rx={6} fill="#5A6B8C" stroke={INK} strokeWidth={2} /></g>;
+      // a tote hanging from the hand by its strap
+      return (
+        <g transform={`translate(${x},${y})`}>
+          <path d="M-12,8 C-14,-10 14,-10 12,8" fill="none" stroke={INK} strokeWidth={4} strokeLinecap="round" />
+          <path d="M-26,8 L26,8 L22,58 C22,64 -22,64 -22,58 Z" fill="#5A6B8C" stroke={INK} strokeWidth={2.4} strokeLinejoin="round" />
+          <path d="M-14,22 L14,22" stroke="#3E4A63" strokeWidth={2} />
+        </g>
+      );
     case 'gift':
       return <g transform={`translate(${x},${y})`}><rect x={-24} y={-24} width={48} height={40} fill="#E15A6E" stroke={INK} strokeWidth={2} /><rect x={-4} y={-24} width={8} height={40} fill="#F6D45A" /></g>;
     case 'laptop':
