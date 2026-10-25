@@ -1,5 +1,5 @@
 import React from 'react';
-import {AbsoluteFill, Sequence, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Sequence, interpolate, random, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Bean, KID, SEAT} from './Bean';
 import {ShadowView} from './Shadow';
 import {DESK_TOP, FLOOR, H, SetView, W, px, setInfo} from './Sets';
@@ -53,6 +53,20 @@ const placeActor = (a: Actor, shot: Shot, t: number, dur: number) => {
     desk: atDesk ? DESK_TOP : undefined, screen: atDesk && !!info.screen};
 };
 
+// Rain over the whole scene: slanted streaks falling at their own speeds (deterministic per streak), a cool veil.
+const Rain: React.FC<{t: number}> = ({t}) => (
+  <g stroke="#B9CBE6" strokeLinecap="round">
+    <rect width={W} height={H} fill="#7F93B5" opacity={0.08} stroke="none" />
+    {Array.from({length: 140}, (_, i) => {
+      const sp = 900 + random(`rs${i}`) * 500;
+      const x0 = random(`rx${i}`) * (W + 300);
+      const y = ((random(`ry${i}`) * (H + 200) + t * sp) % (H + 200)) - 100;
+      const x = x0 - (y + 100) * 0.18;
+      return <line key={i} x1={x} y1={y} x2={x - 7} y2={y + 38} strokeWidth={2} opacity={0.28 + random(`ro${i}`) * 0.3} />;
+    })}
+  </g>
+);
+
 export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast[]; accent: string; heads?: Record<string, [number, number]>}> = ({shot, t, dur, cast, accent, heads}) => {
   const byId = Object.fromEntries(cast.map((c) => [c.id, c]));
   const hero = cast[0];
@@ -84,6 +98,7 @@ export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast
             desk={p.desk} screen={p.screen} company={placed.length > 1} />
         </g>
       ))}
+      {shot.rain ? <Rain t={t} /> : null}
       {sh && !grey ? <rect width={W} height={H} fill={accent} opacity={0.06} /> : null}
       {shot.notes?.length ? <Notes notes={shot.notes} t={t} dur={dur} accent="#E5484D" /> : null}
       {shot.pills?.length ? <Pills pills={shot.pills} around={[heroX, placed[0]?.y ?? FLOOR]} t={t} accent={accent} /> : null}

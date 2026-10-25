@@ -75,6 +75,7 @@ export type Shot = {
   clock?: string; // the time on the alarm clock (in a room, or the clock insert)
   phone?: Phone;
   // before / beforeMarks: what the same month's calendar already showed (drawn at once; only the rest is animated)
+  rain?: boolean; // rain falling over the scene (the shot's sounds have rain)
   calendar?: {month: string; checks: number; marks?: number[]; days?: number; before?: number; beforeMarks?: number[]};
   object?: {kind: 'drawing' | 'note' | 'letter' | 'poster' | 'list' | 'bill'; title?: string; lines?: string[]; who?: string[]; checked?: number};
   graph?: {shape: 'wave' | 'spikes' | 'rise' | 'plateau' | 'dip_rise' | 'fall'; labels?: string[]};

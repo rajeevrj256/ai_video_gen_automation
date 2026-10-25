@@ -83,6 +83,8 @@ def _shot(film: Film, s: FShot, act: str, start: float, dur: float) -> dict:
         out["meter"] = s.meter[:2]
     if s.day:
         out["day"] = s.day
+    if any(snd.sound == "rain" for snd in s.sounds):  # heard rain is seen rain (an umbrella under a dry sky before)
+        out["rain"] = True
     if s.time:
         out["time"] = s.time
     return out
