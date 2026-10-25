@@ -67,12 +67,36 @@ const Rain: React.FC<{t: number}> = ({t}) => (
   </g>
 );
 
+// People never overlap: two people side by side on a bench sat 8 apart (130 px) with their knees inside each other.
+// Everyone not walking keeps a gap (wider when both sit: the knees stick out), pushed apart from the left and then
+// moved back so the group stays where the writer put it. Two seated side by side face each other.
+const SEATED = ['sit', 'sit_bed', 'slump', 'shake', 'guitar', 'type', 'write'];
+const MOVING = ['walk', 'run', 'climb'];
+const spread = (placed: {a: Actor; xpx: number; y: number; facing: 'left' | 'right'}[], shot: Shot) => {
+  const still = placed.filter((p) => !MOVING.includes(p.a.pose)).sort((a, b) => a.xpx - b.xpx);
+  if (still.length < 2) return;
+  const before = still.reduce((s, p) => s + p.xpx, 0) / still.length;
+  for (let i = 1; i < still.length; i++) {
+    const both = SEATED.includes(still[i].a.pose) && SEATED.includes(still[i - 1].a.pose);
+    const gap = both ? 220 : still[i].a.pose === 'pushup' || still[i - 1].a.pose === 'pushup' ? 300 : 170;
+    if (still[i].xpx - still[i - 1].xpx < gap) still[i].xpx = still[i - 1].xpx + gap;
+    if (both && still.length === 2) { still[0].facing = 'right'; still[1].facing = 'left'; }
+  }
+  const after = still.reduce((s, p) => s + p.xpx, 0) / still.length;
+  const info = setInfo(shot.set ?? 'void');
+  for (const p of still) {
+    p.xpx = Math.min(W - 120, Math.max(120, p.xpx + before - after));
+    p.y = info.floorAt(p.xpx);
+  }
+};
+
 export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast[]; accent: string; heads?: Record<string, [number, number]>}> = ({shot, t, dur, cast, accent, heads}) => {
   const byId = Object.fromEntries(cast.map((c) => [c.id, c]));
   const hero = cast[0];
   const grey = shot.grade === 'grey';
   const actors = (shot.actors ?? []).filter((a) => byId[a.id]);
   const placed = actors.map((a) => ({a, ...placeActor(a, shot, t, dur)}));
+  spread(placed, shot);
   for (const p of placed) {
     const k = byId[p.a.id].kid ? KID : 1;
     const low = p.a.pose === 'lie' || p.a.pose === 'sleep' ? 230 : p.a.pose === 'pushup' ? 170 : p.a.pose === 'curl' || p.a.pose === 'kneel' ? 260 : 330;
