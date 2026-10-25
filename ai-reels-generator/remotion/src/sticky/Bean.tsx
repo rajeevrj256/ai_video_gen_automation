@@ -57,7 +57,7 @@ export const rigFor = (pose: Pose, t: number, dur: number, seed: number, seat: n
       // lifted while sin > 0. The first version had it the other way round, a moonwalk.
       const c = Math.cos(ph);
       const arm = run ? 34 : 24;
-      return {...base, rot: run ? 9 : 2, dy: -Math.abs(Math.cos(ph)) * (run ? 9 : 4),
+      return {...base, rot: run ? 10 : 5, dy: -Math.abs(Math.cos(ph)) * (run ? 9 : 4),
         // each foot steps around its own hip, so the legs never cross into an X on the front-facing bean
         fl: [-16 - c * swing * 0.6, -Math.max(0, s) * lift], fr: [16 + c * swing * 0.6, -Math.max(0, -s) * lift],
         kl: run ? [-c * swing * 0.5 + 18, -54] : undefined, kr: run ? [c * swing * 0.5 + 18, -54] : undefined,
@@ -211,7 +211,9 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
   const phoneUp = actor.pose === 'lie' && (actor.prop === 'phone' || !!actor.glow);
   const sleeve = cast.wear === 'hood' ? cast.color : fill; // a hoodie: its sleeves too
   // standing with someone else in the shot: turned a little toward the way he faces (toward them)
-  const turn = actor.pose === 'pushup' ? 28 : actor.pose === 'stand' && p.company ? 10 : FRONT.includes(actor.pose) ? 0 : 16;
+  // walking/running: a near-profile (16 px off centre still read as a face to camera on a body going sideways)
+  const moving = actor.pose === 'walk' || actor.pose === 'run' || actor.pose === 'climb';
+  const turn = moving ? 30 : actor.pose === 'pushup' ? 28 : actor.pose === 'stand' && p.company ? 12 : FRONT.includes(actor.pose) ? 0 : 18;
   const grit = actor.pose === 'pushup' && !['happy', 'smile', 'smug', 'shock', 'cry', 'sad'].includes(face);
   const laptop = typing && (actor.prop === 'laptop' || (deskTop !== undefined && !p.screen)) ? (
     deskTop !== undefined
@@ -288,7 +290,7 @@ const BodyAndHead: React.FC<{fill: string; rig: Rig; cast: Cast; face: Face; act
       <circle cx={HEAD[0]} cy={HEAD[1]} r={HEAD_R} fill={fill} />
     </g>
     <g transform={`rotate(${rig.head},0,-236)`}>
-      <g transform={`translate(${turn},${actor.pose === 'pushup' ? 10 : 0})`}><FaceView face={face} t={t} seed={seed} tear={!!actor.tear} sweat={!!actor.sweat || !!grit} glow={!!actor.glow} grit={grit} asleep={actor.pose === 'sleep'} /></g>
+      <g transform={`translate(${turn},${actor.pose === 'pushup' ? 10 : 0}) scale(${turn >= 28 ? 0.8 : turn >= 15 ? 0.9 : 1},1)`}><FaceView face={face} t={t} seed={seed} tear={!!actor.tear} sweat={!!actor.sweat || !!grit} glow={!!actor.glow} grit={grit} asleep={actor.pose === 'sleep'} /></g>
       <WearView cast={cast} wear={cast.wear} />
       {cast.extra ? <WearView cast={cast} wear={cast.extra} /> : null}
     </g>
