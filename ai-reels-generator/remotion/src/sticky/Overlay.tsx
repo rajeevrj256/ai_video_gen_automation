@@ -34,6 +34,10 @@ export const Hud: React.FC<{meter: Meter; now: number[]; before: number[] | null
   const reset = meter.kind === 'counter' && before && before[0] > 0 && now[0] === 0; // the streak crashed
   return (
     <g fontFamily={SANS} style={{filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.85))'}}>
+      <defs>
+        <radialGradient id="hudBack" cx="0" cy="0" r="1"><stop offset="0" stopColor="#000" stopOpacity={0.5} /><stop offset="1" stopColor="#000" stopOpacity={0} /></radialGradient>
+      </defs>
+      {day || (meter.kind !== 'none' && meter.kind !== 'bar' && now.length) ? <rect x={0} y={0} width={620} height={260} fill="url(#hudBack)" /> : null}
       {day ? <text x={64} y={meter.kind === 'none' ? 66 : 54} fontSize={26} fontWeight={700} letterSpacing={2} fill="#C9CBD3">{day.toUpperCase()}</text> : null}
       {time ? <text x={W - 64} y={66} textAnchor="end" fontSize={26} fontWeight={700} fill="#C9CBD3">{time}</text> : null}
       {meter.kind === 'battery' && now.length ? (() => {
@@ -73,7 +77,7 @@ export const Hud: React.FC<{meter: Meter; now: number[]; before: number[] | null
         </g>
       ) : null}
       {meter.kind === 'dual' && now.length ? (
-        <g transform="translate(64,54)">
+        <g transform={`translate(64,${day ? 98 : 54})`}>
           {meter.labels.slice(0, 2).map((l, i) => (
             <text key={i} x={0} y={i * 34} fontSize={26} fontWeight={700} letterSpacing={2} fill="#C9CBD3">{l.toUpperCase()}{' '}
               <tspan fill={i === 0 ? color : '#F2C230'}>{fmt(val(i))}</tspan></text>
@@ -88,10 +92,22 @@ export const Hud: React.FC<{meter: Meter; now: number[]; before: number[] | null
 
 export const Caption: React.FC<{c: NonNullable<Shot['caption']>; t: number; dur: number}> = ({c, t, dur}) => {
   const lines = c.lines.slice(0, 3);
-  const y0 = c.pos === 'bottom' ? H - 150 - (lines.length - 1) * 58 : c.pos === 'center' ? H / 2 - ((lines.length - 1) * 64) / 2 : 120;
+  const y0 = c.pos === 'bottom' ? H - 92 - (lines.length - 1) * 58 : c.pos === 'center' ? H / 2 - ((lines.length - 1) * 64) / 2 : 120;
   const fadeOut = interpolate(t, [dur - 0.35, dur], [1, 0], clamp);
+  const band = (lines.length - 1) * 58 + 240;
   return (
     <g fontFamily={SANS} textAnchor="middle" opacity={fadeOut}>
+      {c.pos !== 'center' ? (
+        <>
+          <defs>
+            <linearGradient id={`capScrim${c.pos}`} x1="0" y1={c.pos === 'bottom' ? '1' : '0'} x2="0" y2={c.pos === 'bottom' ? '0' : '1'}>
+              <stop offset="0" stopColor="#000" stopOpacity={0.72} /><stop offset="0.6" stopColor="#000" stopOpacity={0.5} /><stop offset="1" stopColor="#000" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <rect x={0} y={c.pos === 'bottom' ? H - band : 0} width={W} height={band} fill={`url(#capScrim${c.pos})`}
+            opacity={interpolate(t, [0, 0.4], [0, 1], clamp)} />
+        </>
+      ) : null}
       {lines.map((l, i) => {
         const at = i * Math.min(1.1, dur * 0.3);
         const o = interpolate(t, [at + 0.1, at + 0.55], [0, 1], clamp);
@@ -111,10 +127,12 @@ export const Caption: React.FC<{c: NonNullable<Shot['caption']>; t: number; dur:
 
 export const Whisper: React.FC<{w: NonNullable<Shot['whisper']>; t: number; dur: number; accent: string}> = ({w, t, dur, accent}) => {
   const n = Math.floor(interpolate(t, [0.15, 0.15 + w.text.length / 16], [0, w.text.length], clamp));
-  const x = (w.x / 100) * W, y = (w.y / 100) * H;
+  const size = Math.max(40, Math.min(58, (W * 0.62) / Math.max(1, w.text.length * 0.42)));
+  const half = (w.text.length * size * 0.42) / 2 + 70;
+  const x = Math.max(half, Math.min(W - half, (w.x / 100) * W)), y = Math.max(150, Math.min(H - 160, (w.y / 100) * H));
   const out = interpolate(t, [dur - 0.4, dur], [1, 0], clamp);
   return (
-    <text x={x} y={y + Math.sin(t * 2) * 3} textAnchor="middle" fontFamily={HAND} fontWeight={700} fontSize={58} fill={accent} opacity={out}
+    <text x={x} y={y + Math.sin(t * 2) * 3} textAnchor="middle" fontFamily={HAND} fontWeight={700} fontSize={size} fill={accent} opacity={out}
       style={{filter: `drop-shadow(0 0 8px ${accent})`}} transform={`rotate(-4,${x},${y})`}>
       {w.text.slice(0, n)}
     </text>
