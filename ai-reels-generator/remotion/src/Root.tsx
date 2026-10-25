@@ -18,10 +18,17 @@ import {Anim} from './anim/Anim';
 import type {AnimProps} from './anim/types';
 import {toonDemoProps} from './toon/demo';
 import type {ToonProps} from './toon/types';
+import {Sticky} from './sticky/Sticky';
+import {stickyDemoProps} from './sticky/demo';
+import type {StickyProps} from './sticky/types';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
 const calculateMetadata: CalculateMetadataFunction<ReelProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+});
+const calculateStickyMetadata: CalculateMetadataFunction<StickyProps> = ({props}) => ({
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
 });
@@ -125,6 +132,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={90}
     defaultProps={animDemoProps}
     calculateMetadata={calculateAnimMetadata}
+  />
+  {/* 16:9 voiceless sticky-animation short film (2.5-4 min): reelgen/sticky/ */}
+  <Composition
+    id="Sticky"
+    component={Sticky}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={stickyDemoProps}
+    calculateMetadata={calculateStickyMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition
