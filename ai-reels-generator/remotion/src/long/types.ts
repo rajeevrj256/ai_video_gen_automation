@@ -6,7 +6,8 @@
 import type {CaptionGroup, Cue, Span} from '../types';
 import type {CineTransition, Grade} from '../cine/types';
 
-export type Item = {label: string; text: string; value: number; display: string};
+export type Tone = '' | 'good' | 'bad' | 'warn' | 'info';
+export type Item = {label: string; text: string; value: number; display: string; tone?: Tone};
 
 export type VisualType =
   | 'title' // big kinetic headline + subline
@@ -23,6 +24,16 @@ export type VisualType =
   | 'picture' // a cinematic AI picture, full frame under the camera move (src = image): the hook's shots
   | 'camera' // you on camera: your own take (src = takes/shotNN.mp4) from `from` seconds (reelgen/shoot.py)
   | 'scene' // 1-4 icon actors acting the line out
+  // The Briefing template (long/brief/): layouts Claude picks per beat (reelgen/briefing.py); the classic look draws them
+  // with its own nearest template.
+  | 'flow' // 2-5 boxes joined by arrows: who -> what -> whom
+  | 'checklist' // 2-4 rows ticked (or crossed) as they are said
+  | 'grid' // a count made visible: rows of one icon, some marked
+  | 'terminal' // a terminal or code window, lines typed in
+  | 'card' // a profile card for one organisation or thing, with a status badge
+  | 'scale' // one value placed on a range
+  | 'dates' // a strip of 3-7 days, the ones that matter marked
+  | 'receipt' // a bill: rows and a total
   | 'meme'; // a meme that makes the line's concept land (Meme.tsx): a format drawn in code, or the user's own file (src)
 
 // The meme formats drawn in code (reelgen/memes.py describes each one to the writer; keep the two lists in step).
@@ -57,6 +68,11 @@ export type Visual = {
   imgH?: number;
   webBoxes?: WebBox[];
   clipSeconds?: number; // a clip template: its length (it loops under the beat, muted)
+  // The Briefing template: a small label above, the headline's words drawn in the accent colour, outlined tags, a tone.
+  kicker?: string;
+  accent?: string;
+  tags?: string[];
+  tone?: Tone;
 };
 
 // One text box of a real meme template, in fractions of its picture; start/end: % of a clip's length it shows for.
@@ -82,6 +98,7 @@ export type Look = {
   plates?: Record<string, string>; // chapter index -> background photo of that chapter's own setting
   hookPlate?: string | null; // the hook's background photo
   platesBaked?: Record<string, string>; // the same photos already blurred, darkened and graded once (chapter index or 'hook')
+  template?: 'classic' | 'briefing'; // the visual template (reelgen/briefing.py); none = classic
 };
 
 export type HookWord = {text: string; start: number; end: number}; // seconds into the shot
@@ -99,6 +116,7 @@ export type HookShot = {
   transition?: CineTransition;
   stamp?: string; // energetic hooks: a rubber stamp after the line (MYTH, WRONG, TRUE...)
   rewind?: boolean; // the 'Ending first' hook: the tape rewinds into this shot
+  kicker?: string; // Bulletin hook: the highlighted status tag; Front page: the paper's caption
 };
 
 export type Hook = {
@@ -111,7 +129,8 @@ export type Hook = {
   drop?: number; // seconds of silence at the end of the hook, before the story starts
   drone?: string | null; // the dark bed under the hook, cut where the silence starts
   subscribe?: boolean; // a subscribe button clicked, silently, in that silence
-  template?: 'cinematic' | 'kinetic' | 'rapid' | 'stakes' | 'myth' | 'mirror' | 'rewind' | 'promise' | 'teaser'; // reelgen/cinehook.py TEMPLATES (cine/Energy.tsx); none = cinematic
+  template?: 'cinematic' | 'kinetic' | 'rapid' | 'stakes' | 'myth' | 'mirror' | 'rewind' | 'promise' | 'teaser' | 'bulletin' | 'frontpage'; // reelgen/cinehook.py TEMPLATES (cine/Energy.tsx); none = cinematic
+  source?: string | null; // Bulletin hook: the source at the foot of the screen (only what the script names)
   subtitles?: boolean; // energetic hooks: the spoken words on screen (kinetic words, captions) only with subtitles on
 };
 
@@ -128,7 +147,8 @@ export type Part = {
 export type Beat = {start: number; duration: number; chapter: number; audio: string | null; visual: Visual};
 
 export type Chapter = {index: number; title: string; start: number; card: number; end?: number; intensity?: number; drop?: boolean;
-  style?: 'blackout' | 'lowerthird' | 'trailer' | 'split' | 'cut'; text?: string}; // card: seconds of the break into it (long/Breaks.tsx)
+  style?: 'blackout' | 'lowerthird' | 'trailer' | 'split' | 'cut'; text?: string;
+  source?: string}; // source: the Briefing header's 'SOURCE: ...' for this chapter (only what the script names) // card: seconds of the break into it (long/Breaks.tsx)
 
 export type LongProps = {
   // The sound pass of a long render (reelgen/video.py): no picture, so a frame costs almost nothing.

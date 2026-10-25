@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import cinehook, tunnel
+from . import briefing, cinehook, tunnel
 from .categories import CATEGORIES, categorize
 from .config import EDITABLE, PROJECT_ROOT, Config, ai_pick, apply_ai, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
@@ -199,6 +199,8 @@ class JobManager:
                 cfg.memes = job["memes"]
             if job.get("hook_template") in ("auto", *cinehook.TEMPLATES):  # cinehook.TEMPLATES: how this video opens
                 cfg.hook_template = job["hook_template"]
+            if job.get("visual_template") in briefing.TEMPLATES:  # how its beats are drawn (classic, briefing)
+                cfg.visual_template = job["visual_template"]
             if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
                 cfg.long_voice_rate = job["voice_rate"]
             if job.get("myvoice"):
@@ -507,6 +509,7 @@ class GenerateRequest(BaseModel):
     story_form: str = "auto"  # long/medium: longform.STORY_FORMS key, or auto
     memes: str = ""  # long/medium: off | some | lots (reelgen/memes.py); empty = the Settings value
     hook_template: str = ""  # long/medium: cinehook.TEMPLATES key or auto; empty = the Settings value
+    visual_template: str = ""  # long/medium: briefing.TEMPLATES key; empty = the Settings value
     ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
@@ -637,6 +640,7 @@ class ScriptVideoRequest(BaseModel):
     screen_text: str = "english"  # words on screen: English (a Hinglish script still speaks Hinglish) or 'script'
     memes: str = ""  # off | some | lots (reelgen/memes.py); empty = the Settings value
     hook_template: str = ""  # cinehook.TEMPLATES key or auto; empty = the Settings value
+    visual_template: str = ""  # briefing.TEMPLATES key; empty = the Settings value
     voice_rate: str = ""  # speaking pace, e.g. '-5%'; empty = Settings > Speaking pace (long and Script videos)
     ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
@@ -1378,7 +1382,8 @@ def create_app(cfg: Config) -> FastAPI:
                            "manual", style, length, captions=body.captions, ai=body.ai,
                            story_form=body.story_form if length != "short" else None,
                            memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None,
-                           hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", *cinehook.TEMPLATES) else None)
+                           hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", *cinehook.TEMPLATES) else None,
+                           visual_template=body.visual_template if length != "short" and body.visual_template in briefing.TEMPLATES else None)
 
     @app.get("/api/stick/voices")
     def stick_voices():
@@ -1662,6 +1667,7 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
                            captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None,
                            hook_template=body.hook_template if body.hook_template in ("auto", *cinehook.TEMPLATES) else None,
+                           visual_template=body.visual_template if body.visual_template in briefing.TEMPLATES else None,
                            voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None,
                            ai=body.ai)
 
@@ -2018,7 +2024,8 @@ def create_app(cfg: Config) -> FastAPI:
                            resume=folders, script_input=job.get("script_input"), stick_input=job.get("stick_input"),
                            voice=job.get("voice"),
                            captions=job.get("captions"), story_form=job.get("story_form"), ai=job.get("ai"),
-                           memes=job.get("memes"), hook_template=job.get("hook_template"), voice_rate=job.get("voice_rate"))
+                           memes=job.get("memes"), hook_template=job.get("hook_template"), voice_rate=job.get("voice_rate"),
+                           visual_template=job.get("visual_template"))
 
     @app.get("/api/automations")
     def list_automations():

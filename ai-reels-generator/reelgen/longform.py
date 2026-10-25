@@ -32,7 +32,7 @@ from .post_copy import clean_tags, save_post_text
 from . import media
 from .models3d import Part, find_model
 from .script_writer import AI_CLICHES, SoundCue
-from . import aimusic, cinehook, memes, memeweb, music, sound_design, variety
+from . import aimusic, briefing, cinehook, memes, memeweb, music, sound_design, variety
 from .sfx import write_cue_sounds, write_sfx
 from . import repeats
 from .trends import collect_trends, load_history, save_history, trends_as_json, Trend
@@ -82,7 +82,7 @@ FACT_FIXES = 2
 LLM_TIMEOUT = 2400  # a 1,300-word script with research at high effort can take well over 15 minutes
 LONG_ATTEMPTS = 2  # a long render takes a long time; one full retry at most
 VISUAL_TYPES = ("title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart", "footage",
-                "model3d", "scene", "meme")
+                "model3d", "scene", "meme", *briefing.BRIEFING_TYPES)
 TEXT_TYPES = ("title", "keyword")  # visuals that are mostly words
 ICON_TYPES = ("scene", "icons")  # generic icon visuals
 SLAM_AT = 0.35  # seconds into a hook shot when its slammed text lands (Slam in long/Cinematic.tsx; older hooks)
@@ -135,6 +135,7 @@ class LItem(BaseModel):
     text: str = Field(description="timeline: what happened (max 6 words). steps: one short detail. Empty otherwise.")
     value: float = Field(description="compare/chart: the real number used for the bar or point. 0 otherwise.")
     display: str = Field(description="compare/chart: how the number is written, e.g. '₹2.4 lakh crore', '46,000'. Empty otherwise.")
+    tone: Literal["", "good", "bad", "warn", "info"] = Field(default="", description="Briefing template only: this item's meaning colour (good = done/safe, bad = threat/wrong, warn = look here, info). Empty otherwise.")
 
 
 class SceneActor(BaseModel):
@@ -147,14 +148,15 @@ class SceneActor(BaseModel):
 
 class LVisual(BaseModel):
     type: Literal["title", "stat", "timeline", "compare", "steps", "icons", "quote", "keyword", "chart",
-                  "footage", "model3d", "scene", "meme"] = Field(
+                  "footage", "model3d", "scene", "meme", *briefing.BRIEFING_TYPES] = Field(
         description="title: a big headline. stat: one striking number. timeline: 2-5 dated moments. compare: "
                     "exactly 2 things side by side. steps: 2-4 steps of how something works. icons: 1-3 icons "
                     "that picture the line. quote: a real, verified quote. keyword: one word or short phrase. "
                     "chart: 3-6 real data points over time. footage: a real video clip of a place or scene, "
                     "full screen. model3d: an object from the story as an animated 3D model. scene: a small "
                     "animated scene of 1-4 icon 'actors' that act the line out (enter, chase, fall, grow...). meme: a "
-                    "meme that makes the line's concept land (only when the instructions turn memes on).")
+                    "meme that makes the line's concept land (only when the instructions turn memes on). flow, checklist, grid, "
+                    "terminal, card, scale, dates, receipt: only when the instructions turn the Briefing template on.")
     headline: str = Field(description="title/keyword: the text (keyword max 3 words). stat: the number exactly as shown, e.g. '₹1.2 lakh'. quote: the quote. icons/timeline/compare/steps/chart: a short heading (max 7 words).")
     sub: str = Field(description="A short supporting line (max 10 words): what the stat is, who said the quote, the chart's unit. Can be empty.")
     items: list[LItem] = Field(description="timeline: 2-5, compare: exactly 2, steps: 2-4, chart: 3-6. Empty for the other types.")
@@ -173,6 +175,10 @@ class LVisual(BaseModel):
     face: Literal[("",) + memes.FACES] = Field(default="", description="meme 'reaction' only: the face. Empty otherwise.")
     file: str = Field(default="", description="meme only: one of the user's own meme files by name, when one fits exactly; empty for a drawn format.")
     web_meme: str = Field(default="", description="meme only, when the instructions list real meme templates: a template's exact name as listed, or 'search: words'. Empty otherwise.")
+    kicker: str = Field(default="", description="Briefing template only: a small mono label above the visual, 2-5 words. Empty otherwise.")
+    accent: str = Field(default="", description="Briefing template only: the 1-2 words of the headline drawn in the accent colour. Empty otherwise.")
+    tags: list[str] = Field(default_factory=list, description="Briefing template only: 0-3 short outlined tags (1-3 words each); a card's first tag is its status badge. Empty otherwise.")
+    tone: Literal["", "good", "bad", "warn", "info"] = Field(default="", description="Briefing template only: the beat's meaning colour. Empty otherwise.")
 
 
 class LBeat(BaseModel):
@@ -194,6 +200,7 @@ class HookShot(BaseModel):
     flash: bool = Field(default=False, description=cinehook.FLASH_HELP)
     stamp: str = Field(default="", description=cinehook.STAMP_HELP)
     rewind: bool = Field(default=False, description=cinehook.REWIND_HELP)
+    kicker: str = Field(default="", description=cinehook.KICKER_HELP)
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects for this shot from the sound list, on a word of its line, or word '*' to land on its label. Booms, whips, glitches and typing are added for the hook automatically: use these for a sound of the story itself. Prefer the user's own files when they fit.")
 
 
@@ -207,6 +214,7 @@ class LChapter(BaseModel):
         default="none", description="A quiet background sound bed for where this chapter takes place, or 'none'.")
     card_text: str = Field(default="", description="The line shown on the break into this chapter: the question this chapter answers or a sharp phrase that pulls the viewer in, max 9 words, in your own words for this story (not the title, not 'Chapter 2'). Empty for the cold open.")
     break_sound: str = Field(default="", description="The sound on the break into this chapter: a sound's name exactly as in the sound list (the user's own file when one fits this story, its mood and this moment; a built-in otherwise), 'none' for silence, or empty to let the editor use the usual sound for the break. Vary it across chapters.")
+    source: str = Field(default="", description="Briefing template only: the outlet(s) and date this chapter's facts come from, as its header shows them ('Reuters · 19 Oct 2026'), only sources actually used. Empty otherwise.")
     backdrop: str = Field(default="", description="The background photo behind this chapter's visuals: a 2-4 word English stock-photo search for the real place, setting or material this chapter is about, concrete and filmable (no named people, brands or logos). Different for every chapter.")
 
 
@@ -236,9 +244,9 @@ class LongScript(BaseModel):
 
 
 def _system(style: str, language: str, minutes: float = 8, meme: str = "off", meme_files: list | None = None,
-            meme_web: str = "", hook_template: str = "cinematic") -> str:
+            meme_web: str = "", hook_template: str = "cinematic", visual_template: str = "classic") -> str:
     """`meme`: off / some / lots (memes.py): the funny-explainer writing and 'meme' visuals; `meme_web`: the real
-    templates the writer may use (memeweb.prompt_block)."""
+    templates the writer may use (memeweb.prompt_block); `visual_template`: briefing.TEMPLATES (classic adds nothing)."""
     sh = shape(minutes)
     funny = meme in memes.EVERY
     kind = ("an original fiction story, clearly presented as a story" if style == "story" else
@@ -341,7 +349,7 @@ model exists. Pick the scene: 'sky' only for things that fly (the model flies le
 front first), 'space' for space objects, 'studio' (a turntable) for everything else. Never in a \
 serious or tragic moment (a crash, a war, a death, a disaster): a toy-like 3D model there is \
 disrespectful. Headline: a short label, or empty.
-{memes.visual_rules(meme, meme_files, meme_web) + chr(10) if funny else ""}
+{memes.visual_rules(meme, meme_files, meme_web) + chr(10) if funny else ""}{briefing.rules() + chr(10) if visual_template == "briefing" else ""}
 Accuracy: only state facts you are confident about or have looked up with web search. Never invent \
 details, dialogue or figures in a true story. Timeless wording: never "today", "this week" or "five \
 days ago"; use dates. No politics or politicians, tragedies, violence, or rumours about real people. \
@@ -389,7 +397,8 @@ def write_long_script(cfg: Config, candidates: list[Trend], minutes: float, feed
 
     prompt += hook_block(cfg)  # the trailer hook's and the cold open's first seconds
     system = _system(cfg.video_style, cfg.long_language, minutes, memes.level(cfg), memes.own_files(cfg),
-                     memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "", cinehook.pick_template(cfg))
+                     memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "", cinehook.pick_template(cfg),
+                     briefing.chosen(cfg))
     script = ask(cfg.ai_backend, cfg.claude_model, system, prompt,
                  LongScript, allow_web=True, effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
     log.info("Long video topic: %s (%s)", script.topic, script.why_chosen)
@@ -479,7 +488,7 @@ def repair_long_script(script: LongScript) -> LongScript:
     (titles allow 6 words), surplus items/actors are trimmed, a hook label over 5 words is
     dropped, a flash shot with a line becomes an ordinary shot. A whole rewrite for one word cost ~500k tokens."""
     s = script.model_copy(deep=True)
-    limits = {"timeline": 5, "compare": 2, "steps": 4, "chart": 6}
+    limits = {"timeline": 5, "compare": 2, "steps": 5, "chart": 6, **{k: hi for k, (_, hi) in briefing.ITEMS.items()}}
 
     def fix(v: LVisual) -> None:
         if v.type == "keyword" and len(v.headline.split()) > 3:
@@ -492,6 +501,7 @@ def repair_long_script(script: LongScript) -> LongScript:
             v.actors = v.actors[:4]
         if v.type == "scene" and not v.actors and v.icons:
             v.type = "icons"
+        v.tags = [t for t in v.tags if t.strip()][:3]
         memes.repair(v)
 
     for h in s.hook:
@@ -581,7 +591,7 @@ def check_long_script(script: LongScript, minutes: float, template: str | None =
                 result.fail(f"Chapter {ci} beat {bi}: keyword '{v.headline}' is more than 3 words.")
             if v.type == "scene" and not 1 <= len(v.actors) <= 4:
                 result.fail(f"Chapter {ci} beat {bi}: a scene needs 1-4 actors, it has {len(v.actors)}.")
-            need = {"timeline": (2, 5), "compare": (2, 2), "steps": (2, 4), "chart": (3, 6)}.get(v.type)
+            need = {"timeline": (2, 5), "compare": (2, 2), "steps": (2, 5), "chart": (3, 6), **briefing.ITEMS}.get(v.type)
             if need and not need[0] <= len(v.items) <= need[1]:
                 result.fail(f"Chapter {ci} beat {bi}: a {v.type} needs {need[0]}-{need[1]} items, it has {len(v.items)}.")
     return result
@@ -600,7 +610,9 @@ def _visual_text(v: LVisual) -> str:
     if v.type == "meme":
         return memes.text(v)
     items = "; ".join(f"{i.label} {i.text} {i.display}".strip() for i in v.items)
-    return f"[{v.type}: {v.headline}" + (f" | {v.sub}" if v.sub else "") + (f" | {items}" if items else "") + "]"
+    extra = " ".join([v.kicker, *v.tags]).strip()  # the Briefing template's labels and tags are on screen too
+    return (f"[{v.type}: {v.headline}" + (f" | {v.sub}" if v.sub else "") + (f" | {items}" if items else "")
+            + (f" | {extra}" if extra else "") + "]")
 
 
 def fact_check_long(script: LongScript, cfg: Config, only: set | None = None) -> VerifyResult:
@@ -716,8 +728,10 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
                                for a, h in zip(audios, script.hook)], [h.flash for h in script.hook],
                               hook_seconds, drop, breath=0.15 if hype else 0.4)
     # A meme shot shows its meme: no AI still is drawn for it (the still used to cover a meme the writer put there).
+    # The bulletin and front-page templates draw the whole screen: no AI still for them either.
     pics = cinehook.pictures(cfg, {i: h.picture for i, h in enumerate(script.hook)
-                                   if ("hook", i) not in overrides and h.visual.type != "meme"},
+                                   if ("hook", i) not in overrides and h.visual.type != "meme"
+                                   and template not in cinehook.SCREEN_TEMPLATES},
                              work, seed, script.youtube_title, progress, reuse=remake,
                              look=cinehook.ENERGY_LOOK if hype else cinehook.CINE_LOOK)
     t = 0.0
@@ -739,6 +753,8 @@ def _build_hook(script: LongScript, cfg: Config, work: Path, look: dict, seed: i
             shot["stamp"] = " ".join(h.stamp.split()[:2]).upper()
         if hype and h.rewind and template == "rewind":
             shot["rewind"] = True
+        if template in cinehook.SCREEN_TEMPLATES and h.kicker.strip():  # the bulletin's status tag, the paper's caption
+            shot["kicker"] = " ".join(h.kicker.split()[:9])
         if sa:
             # The energetic templates draw the line's words themselves, as they are said (no subtitles twice).
             shot["words"] = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words]
@@ -809,7 +825,12 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
     seed = _seed(script)
     new_look = look is None
     look = look or variety.pick_look(cfg, seed)
-    look = _plates(script, cfg, work, dict(look), progress)
+    if new_look:
+        look = {**look, "template": briefing.chosen(cfg)}  # the visual template (a re-make keeps the video's own)
+    if look.get("template") == "briefing":  # its own page: no background photos to find
+        look = dict(look)
+    else:
+        look = _plates(script, cfg, work, dict(look), progress)
     if not look.get("breaks"):  # a re-make keeps its breaks
         last = (variety.recent(cfg)[-1:] or [{}])[0].get("break", "")
         look["breaks"] = break_styles(max(0, len(script.chapters) - 1), seed, last)
@@ -838,7 +859,7 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         card = BREAKS.get(style, CARD_SECONDS) if ci > 0 else 0.0
         chapters.append({"index": ci, "title": chapter.title, "start": round(t, 3), "card": card,
                          "intensity": chapter.intensity, "drop": chapter.drop, "ambience": chapter.ambience,
-                         "style": style, "text": chapter.card_text.strip()})
+                         "style": style, "text": chapter.card_text.strip(), "source": chapter.source.strip()})
         t += card
         if voices is not None:
             audio = voices[ci]
@@ -948,6 +969,8 @@ def build_long(script: LongScript, cfg: Config, work: Path, progress: Progress,
         cues += hook_cues
     elif rehook is not None:  # no hook: a deep boom under the first word
         cues.append(cinehook.opening_boom(work / "sfx", rel, rehook))
+    if hook.get("template") in cinehook.SCREEN_TEMPLATES:  # the bulletin's 'SRC:' line: the first chapter source given
+        hook["source"] = next((c.source.strip() for c in script.chapters if c.source.strip()), "") or None
     props = {
         "title": script.youtube_title,
         "fps": cfg.fps,
@@ -1558,7 +1581,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     minutes = resume.get("minutes") or cfg.long_minutes
     # The hook template is decided once per video (the writer's rules, the checks and the edit all follow it).
     template = resume.get("hook_template") or cinehook.pick_template(cfg)
-    cfg = replace(cfg, long_minutes=minutes, hook_template=template)  # judged by the length it was written for
+    # So is the visual template (briefing.py): a resume under other settings keeps the one it was written for.
+    visual = resume.get("visual_template") or briefing.chosen(cfg)
+    cfg = replace(cfg, long_minutes=minutes, hook_template=template, visual_template=visual)  # judged by the length it was written for
     history_path = cfg.output_dir / "history.json"
     feedback = resume.get("feedback", "")
     if not resume.get("script") and resume.get("stage") and (work / "draft.json").exists():
@@ -1582,7 +1607,7 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
     # changed dropped the script, and the next resume crashed after a finished 11-minute render.
     state = {**resume, "length": "long", "minutes": minutes, "topic": topic, "stamp": stamp,
              "style": cfg.video_style, "candidates": [asdict(c) for c in candidates], "best": resume.get("best"),
-             "manual": manual, "hook_template": template}
+             "manual": manual, "hook_template": template, "visual_template": visual}
     state.pop("usage", None)
 
     def save(**changes) -> None:

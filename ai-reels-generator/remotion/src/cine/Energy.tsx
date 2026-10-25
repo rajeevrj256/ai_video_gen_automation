@@ -5,6 +5,7 @@ import {Layer} from '../Layer';
 import {BOX} from '../long/box';
 import type {Hook, HookShot, HookWord, Look} from '../long/types';
 import {SubscribeCard} from './Cine';
+import {Bulletin, FrontPage, useScreenFonts} from './Screens';
 
 // The energetic hook templates (reelgen/cinehook.py TEMPLATES). The user's cinematic hook came out as dark, slow
 // film stills with a small typed word in a corner, "like a simple slide read out": these open at full energy on
@@ -16,12 +17,13 @@ import {SubscribeCard} from './Cine';
 //   mirror:  each line pops in as a phone notification over the bright picture;
 //   rewind:  how it ends first, then a VHS rewind into the past with a camcorder time stamp;
 //   promise: key words slam in, then the video's points tick onto a checklist;
-//   teaser:  a COMING UP tag over jump-cut pictures, each moment's tag below it.
+//   teaser:  a COMING UP tag over jump-cut pictures, each moment's tag below it;
+//   bulletin, frontpage: the template draws the whole screen (Screens.tsx); a meme shot keeps its picture.
 // The spoken words themselves are drawn only with subtitles on (hook.subtitles).
 // No progress bar across the top: on a phone the user saw it as a stray slider. The silence and the subscribe
 // click at the end stay.
 
-export type HookTemplate = 'cinematic' | 'kinetic' | 'rapid' | 'stakes' | 'myth' | 'mirror' | 'rewind' | 'promise' | 'teaser';
+export type HookTemplate = 'cinematic' | 'kinetic' | 'rapid' | 'stakes' | 'myth' | 'mirror' | 'rewind' | 'promise' | 'teaser' | 'bulletin' | 'frontpage';
 type Render = (shot: HookShot, frames: number) => React.ReactNode;
 
 const HOT = ['#FFD60A', '#FF4D4D', '#4DE8FF', '#7CFF6B'];
@@ -269,11 +271,13 @@ const ComingUp: React.FC<{text: string}> = ({text}) => {
 };
 
 const EnergyShot: React.FC<{s: HookShot; i: number; frames: number; template: HookTemplate; accent: string; render: Render; spoken: boolean;
-  items: string[]; last: boolean; seed: number}> = (p) => {
+  items: string[]; last: boolean; seed: number; n: number; source?: string}> = (p) => {
   const {s, i, frames, template, accent, render, spoken, items, last, seed} = p;
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const meme = s.visual.type === 'meme';
+  if (!meme && template === 'bulletin') return <Bulletin s={s} i={i} n={p.n} frames={frames} source={p.source} />;
+  if (!meme && template === 'frontpage') return <FrontPage s={s} i={i} frames={frames} />;
   // Every shot comes in punched: from close to its frame in a few frames, a shake, a flash (white on the first).
   const inP = spring({frame, fps, config: {damping: 15, mass: 0.5}});
   let scale = 1 + 0.24 * (1 - inP) + (meme ? 0 : 0.07 * Math.min(1, frame / Math.max(1, frames)));
@@ -342,6 +346,7 @@ export const EnergyHook: React.FC<{hook: Hook; look: Look; render: Render}> = ({
   const live = f(hook.duration - drop);
   const template = (hook.template ?? 'kinetic') as HookTemplate;
   const seed = look.seed ?? 1;
+  useScreenFonts();
   return (
     <Layer name={`hook (${template})`} style={{background: '#000'}}>
       {hook.shots.map((s, i) => {
@@ -352,7 +357,7 @@ export const EnergyHook: React.FC<{hook: Hook; look: Look; render: Render}> = ({
           <Sequence key={i} name={`hook ${i + 1} (${template})`} from={f(s.start)} durationInFrames={frames}>
             <EnergyShot s={s} i={i} frames={frames} template={template} accent={accent} render={render} spoken={hook.subtitles === true}
               items={template === 'promise' && i >= 2 && i < hook.shots.length - 1 ? hook.shots.slice(2, i + 1).map((x) => x.text).filter(Boolean) : []}
-              last={i === hook.shots.length - 1} seed={seed} />
+              last={i === hook.shots.length - 1} seed={seed} n={hook.shots.length} source={hook.source ?? undefined} />
           </Sequence>
         );
       })}

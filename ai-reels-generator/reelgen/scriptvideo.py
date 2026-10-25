@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
-from . import cinehook, media, memes, memeweb, variety
+from . import briefing, cinehook, media, memes, memeweb, variety
 from .config import Config
 from .llm import ask
 from .longform import (LLM_TIMEOUT, WORDS_PER_SECOND, HookShot, LBeat, LChapter, LongScript, LVisual, Progress,
@@ -97,13 +97,21 @@ def parse_script(text: str) -> tuple[list[str], list[tuple[int, str]]]:
     lines: list[str] = []
     chapters: list[tuple[int, str]] = []
     for block in re.split(r"\n\s*\n", text.replace("\r\n", "\n").strip()):
-        rows = [r for r in block.split("\n") if r.strip()]
-        while rows and _is_heading(rows[0]):
-            title = _HEADING.sub("", rows[0]).strip(" #:-–—") or rows[0].strip(" #")
-            chapters.append((len(lines), title))
-            rows = rows[1:]
-        if rows:
-            lines += _beats(" ".join(rows))
+        # A heading anywhere in a paragraph starts a chapter there: '## Why it spread' typed straight above its
+        # lines (no blank line between) used to be read out as part of the narration. Only a paragraph's first row
+        # may be an unmarked heading (a short line without end punctuation); further in, only a marked one
+        # ('## ...', 'Chapter 3: ...') counts, so a hard-wrapped line of a few words stays narration.
+        rows: list[str] = []
+        for k, row in enumerate([r for r in block.split("\n") if r.strip()] + [""]):
+            heading = bool(row) and (_is_heading(row) if k == 0 else bool(_HEADING.match(row.strip())))
+            if row and not heading:
+                rows.append(row)
+                continue
+            if rows:
+                lines += _beats(" ".join(rows))
+                rows = []
+            if row:
+                chapters.append((len(lines), _HEADING.sub("", row).strip(" #:-–—") or row.strip(" #")))
     # A heading with no lines after it (or two in a row) marks nothing.
     chapters = [c for i, c in enumerate(chapters) if c[0] < len(lines) and (i + 1 == len(chapters) or chapters[i + 1][0] > c[0])]
     if chapters and chapters[0][0] != 0:
@@ -130,6 +138,7 @@ class BoardShot(BaseModel):
     flash: bool = HookShot.model_fields["flash"]
     stamp: str = HookShot.model_fields["stamp"]
     rewind: bool = HookShot.model_fields["rewind"]
+    kicker: str = HookShot.model_fields["kicker"]
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects of the story itself, on a word of the line or word '*' on its label (booms, whips, glitches and typing are added for the hook automatically).")
 
 
@@ -142,6 +151,7 @@ class BoardChapter(BaseModel):
     ambience: Ambience = LChapter.model_fields["ambience"]
     backdrop: str = LChapter.model_fields["backdrop"]
     break_sound: str = LChapter.model_fields["break_sound"]
+    source: str = LChapter.model_fields["source"]
     card_title: str = Field(default="", description="Only when the words on screen must be English: the chapter's title as its card shows it, in English (the title exactly when it already is English, else a faithful short translation). Otherwise empty.")
 
 
@@ -203,7 +213,7 @@ def _board_system(cfg: Config, english: bool = True) -> str:
     with the writing, research and accuracy parts left out: the words are final. `english`: the words on
     screen are English even when the narration is Hinglish or Hindi."""
     full = _system(cfg.video_style, cfg.long_language, meme=memes.level(cfg), meme_files=memes.own_files(cfg),
-                   meme_web=memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "")
+                   meme_web=memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "", visual_template=briefing.chosen(cfg))
     rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     return f"""You storyboard a finished YouTube video script for an animated motion-graphics video. The \
 script, its hook, title and description are written, fact-checked and approved by the user. Never change, \
@@ -267,7 +277,7 @@ def _hook_shots(board: Storyboard, hook: list[str]) -> list[HookShot]:
     def shot(s: BoardShot, line: str) -> HookShot:
         return HookShot(beat=s.beat, line=line, text=s.text, visual=s.visual, sounds=s.sounds, picture=s.picture,
                         grade=s.grade, transition=s.transition, boom=s.boom, flash=s.flash and not line,
-                        stamp=s.stamp, rewind=s.rewind)
+                        stamp=s.stamp, rewind=s.rewind, kicker=s.kicker)
 
     flashes = 0
     for s in board.hook:
@@ -311,7 +321,7 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
         beats = [LBeat(narration=lines[i], visual=visuals[i + 1].visual if i + 1 in visuals else _fallback_visual(lines[i]),
                        sounds=visuals[i + 1].sounds if i + 1 in visuals else []) for i in range(first, last)]
         extra = ({"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience, "backdrop": c.backdrop,
-                  "break_sound": c.break_sound}
+                  "break_sound": c.break_sound, "source": c.source}
                  if c else {})
         if c and given.screen_text != "script" and c.card_title.strip():
             extra["card_text"] = c.card_title.strip()  # the card in English; your heading stays in the YouTube chapters
@@ -355,7 +365,8 @@ def run_script_video(cfg: Config, given: ScriptInput, progress: Progress = log.i
               "screen_text": given.screen_text}
     state = {"length": "long", "minutes": minutes, "topic": given.title, "stamp": stamp, "style": cfg.video_style,
              "candidates": [{"title": given.title, "source": "your script"}], "attempt": 1, "stage": "scripted",
-             "script": script.model_dump(), "manual": manual, "hook_template": template}  # usage: the loop's own saves
+             "script": script.model_dump(), "manual": manual, "hook_template": template,
+             "visual_template": briefing.chosen(cfg)}  # usage: the loop's own saves
     (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     return _long_loop(replace(cfg, long_minutes=minutes), work, [Trend(title=given.title, source="your script")],
                       given.title, stamp, progress, resume=state)

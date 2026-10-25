@@ -101,6 +101,10 @@ TEMPLATES = {
                 "onto a checklist as they're said."),
     "teaser": ("🎞 Coming up", "A trailer of the video's own best moments, a COMING UP tag and jump cuts, then the big "
                "question."),
+    "bulletin": ("📟 Bulletin", "A green terminal screen: a numbered bulletin tag, each shot's words typed in or its "
+                 "number counted up in big pixel digits, a status flashed in an inverse block, the source at the foot."),
+    "frontpage": ("📰 Front page", "Each shot a newspaper front page: its headline in huge condensed capitals on "
+                  "stained paper, a typed caption strip; the first page spins in, the next ones slide over it."),
     "cinematic": ("🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark "
                   "drone. Slower and moodier."),
 }
@@ -108,7 +112,10 @@ TEMPLATES = {
 # retention hooks: the five above the cinematic one are the openings the guides name again and again (a belief
 # proved wrong, the viewer's own situation, the ending first, a specific promise, a preview of the payoff). They all
 # open at full energy (cine/Energy.tsx); only the words' shape and the overlay differ.
-ENERGETIC = ("kinetic", "rapid", "stakes", "myth", "mirror", "rewind", "promise", "teaser")
+ENERGETIC = ("kinetic", "rapid", "stakes", "myth", "mirror", "rewind", "promise", "teaser", "bulletin", "frontpage")
+# From the user's reference hooks of a news-explainer channel (a green 'emergency bulletin' terminal, a newspaper front
+# page), taken as styles: these draw the whole screen from each shot's text and kicker (cine/Screens.tsx), no picture.
+SCREEN_TEMPLATES = ("bulletin", "frontpage")
 ENERGY_DROP = 0.9  # the breath of silence after an energetic hook (the cinematic one keeps DROP)
 ENERGY_LOOK = ("vivid cinematic photograph, bright punchy colours, high contrast, crisp detail, dynamic angle, "
                "realistic, no text")
@@ -171,7 +178,18 @@ TEMPLATE_TEXT = {
     "promise": "Shots 1-2: text = 1-3 key words, slammed. Each point the video covers: text = a 2-4 word checklist item "
                "(they stack up on screen and tick as they're said).",
     "teaser": "Every shot's text is a 2-4 word tag for the moment it teases (shown under a COMING UP tag).",
+    "bulletin": "The template draws the whole screen, so leave picture empty. Every shot's text is what the terminal "
+                "shows, 1-5 words: a number with its unit ('$50', '1,200+ websites') counted up in pixel digits, or "
+                "a short report line ('Targets: 1,200+ websites'); kicker = its status, 1-4 words flashed in an "
+                "inverse block ('Exploit attempt detected', 'Breached: 100+'), or empty. Both only from the story.",
+    "frontpage": "The template draws the whole screen, so leave picture empty. Every shot's text is a newspaper "
+                 "headline, 3-7 words, in the story's own words (never presented as a real paper's headline unless "
+                 "the script quotes that paper's headline); kicker = the caption strip, only on shots the story "
+                 "dates or sources ('Reported 19 October', or the outlet and date when the script names them), else "
+                 "empty. Never a real newspaper's name as if it printed words it didn't.",
 }
+KICKER_HELP = ("Bulletin and Front page hooks only: the bulletin's status block (1-4 words) or the newspaper's caption "
+               "strip (a source and date the script names); empty otherwise.")
 
 STAMP_HELP = ("Energetic hooks: a rubber stamp slammed across this shot right after its line, 1-2 capital words: MYTH, "
               "WRONG or NOT TRUE only on a line stating a belief the story proves false, TRUE or CONFIRMED on a "
@@ -254,6 +272,8 @@ BOARD_EXTRA = {  # the user's words are final: a template's shape only where the
     "myth": " Give stamp 'MYTH' to a hook line that states a belief the script proves wrong (none if no line does).",
     "rewind": " Set rewind true on the hook line where the hook jumps back in time (none if it never does).",
     "teaser": " Where a hook line teases a moment of the script, use that moment's visual.",
+    "bulletin": " Text and kicker come from the hook line's own words and figures.",
+    "frontpage": " Each headline is the hook line's own words, shortened; a caption only with a source the script names.",
 }
 
 
@@ -423,7 +443,8 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
     sfx_dir = work / "sfx"
     hype = energetic(template)
     # An energetic template has no dark drone and no typed labels: a whoosh on every cut and a hit on every slam.
-    made = synth.write_hook_sounds(sfx_dir, 0.0 if hype else end + 0.5, () if hype else tuple(s.get("text", "") for s in shots))
+    typed = not hype or template == "bulletin"  # the bulletin's terminal types its words too
+    made = synth.write_hook_sounds(sfx_dir, 0.0 if hype else end + 0.5, tuple(s.get("text", "") for s in shots) if typed else ())
     f = {k: rel(p) for k, p in made.items()}
     cues: list[dict] = []
 
@@ -463,6 +484,12 @@ def sound_design(shots: list[dict], end: float, work: Path, rel, files: dict[str
                 cue("hook-whip", start + 0.35, 0.5)
             if template in ("mirror", "promise", "teaser") and s.get("text"):
                 cue("pop", start + 0.12, 0.55)
+            if template == "bulletin" and s.get("text"):
+                cue(f"hook-type-{len(s['text'])}", start + 0.1, 0.5)
+                if s.get("kicker"):
+                    cue("glitch", start + 0.1 + 0.045 * len(s["text"]) + 0.15, 0.45)
+            if template == "frontpage":
+                cue("hook-whip", start + (0.15 if k == 0 else -0.05), 0.6)  # the page spins in, the next slides over
             continue
         kind = s.get("transition") or "cut"
         hit = 1.45 if s.get("flash") else 1.0  # the montage is the climax: its cuts hit harder

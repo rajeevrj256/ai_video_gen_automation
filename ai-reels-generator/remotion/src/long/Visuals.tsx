@@ -35,6 +35,19 @@ export const VisualView: React.FC<{v: Visual; frames: number; accent: string; ro
         return <Keyword v={v} accent={accent} />;
       case 'chart':
         return v.items.length >= 2 ? <Chart v={v} frames={frames} accent={accent} /> : <Stat v={v} accent={accent} />;
+      // The Briefing template's layouts (brief/Brief.tsx), drawn here with the nearest classic template.
+      case 'flow':
+      case 'checklist':
+      case 'receipt':
+      case 'terminal':
+        return v.items.length >= 2 ? <Steps v={{...v, items: v.items.slice(0, 4).map((it) => ({...it, label: it.text ? it.label || it.text : it.label, text: it.label ? it.text : ''}))}} frames={frames} accent={accent} /> : <Title v={v} accent={accent} />;
+      case 'dates':
+        return v.items.length >= 2 ? <Timeline v={{...v, items: v.items.map((it) => ({...it, label: `${it.label} ${it.text}`.trim(), text: ''}))}} frames={frames} accent={accent} /> : <Title v={v} accent={accent} />;
+      case 'scale':
+      case 'grid':
+        return <Stat v={{...v, headline: v.items[v.type === 'scale' ? Math.min(1, v.items.length - 1) : 0]?.display || v.headline, sub: v.sub || v.headline}} accent={accent} />;
+      case 'card':
+        return <Title v={{...v, sub: v.sub || (v.tags ?? []).join(' · ')}} accent={accent} />;
       default:
         return <Title v={v} accent={accent} />;
     }

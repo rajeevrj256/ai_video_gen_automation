@@ -18,6 +18,7 @@ import {NextTag, PartTag} from '../anim/Tags';
 import {EndCard} from './EndCard';
 import type {Face} from '../anim/type';
 import {useCineFonts} from '../cine/Cine';
+import {BRIEF_STILL, BriefBackdrop, BriefBreak, BriefHeader, BriefVisual, isBriefing, palFor, useBriefFonts} from './brief/Brief';
 
 const LONG_FACE: Face = {family: FONT, weight: 900, upper: false, tracking: '0', italic: 'italic', size: 1};
 
@@ -34,10 +35,12 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   if (v.type === 'footage' && v.src) return <Footage v={v} frames={frames} accent={accent} />;
   if (v.type === 'model3d' && (v.src || v.parts?.length)) return <Model3D v={v} frames={frames} accent={accent} />;
   if (v.type === 'camera' && v.src) return <CameraTake v={v} />;
+  const brief = isBriefing(look); // the Briefing template (brief/Brief.tsx): its own page and layouts
+  const back = brief ? <BriefBackdrop pal={palFor(look.seed)} /> : <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />;
   if (v.type === 'meme') {
     return (
       <>
-        <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />
+        {back}
         <MemeView v={v} frames={frames} roomy={roomy} seed={look.seed} />
       </>
     );
@@ -47,9 +50,11 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   }
   return (
     <>
-      <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />
+      {back}
       {v.type === 'scene' && v.actors?.length ? (
         <SceneView v={v} frames={frames} accent={accent} />
+      ) : brief ? (
+        <BriefVisual v={v} frames={frames} pal={palFor(look.seed)} />
       ) : (
         <VisualView v={v} frames={frames} accent={accent} roomy={roomy} />
       )}
@@ -60,12 +65,16 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
 export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false, vertical, partLabel, nextLabel, endCard, title, duration}) => {
   useFonts();
   useCineFonts();
+  useBriefFonts();
   setCurrency(currency);
   setBox(vertical); // 9:16 for the Shorts Studio's motion-graphics Shorts: every visual lays itself out for it
   const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const look = lookOf(rawLook);
   const roomy = captions.length === 0;
+  const brief = isBriefing(look);
+  const pal = palFor(look.seed);
+  const cards = chapters.filter((x) => x.card > 0);
   return (
     <Layer name="long" style={{backgroundColor: COLORS.ink, fontFamily: FONT, overflow: 'hidden'}}>
       {soundOnly ? null : (<>
@@ -89,11 +98,19 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         const accent = paletteFor(b.chapter, look).accent;
         // You on camera: always a hard cut (and none at all between two lines of the same take, which plays on).
         const onCamera = b.visual.type === 'camera';
+        // Briefing: the page holds still (only full-frame media keep their camera) and every beat fades in.
+        const still = brief && BRIEF_STILL.has(b.visual.type);
+        const v = still ? {...b.visual, camera: 'still' as const} : b.visual;
+        const ch = chapters.find((c) => c.index === b.chapter);
         return (
-          <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${b.visual.camera ?? 'push'})`} from={from} durationInFrames={frames}>
-            <Shot v={b.visual} frames={frames} transition={onCamera ? 'cut' : look.transition}>
-              <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
+          <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${v.camera ?? 'push'})`} from={from} durationInFrames={frames}>
+            <Shot v={v} frames={frames} transition={onCamera ? 'cut' : brief ? 'smooth' : look.transition}>
+              <Body v={v} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
             </Shot>
+            {brief && !onCamera && b.visual.type !== 'footage' ? (
+              <BriefHeader pal={pal} label={ch?.title ?? title} source={!!ch?.source}
+                right={ch?.source || `${title.length > 30 ? title.slice(0, 28).trim() + '…' : title} · ${i + 1} / ${beats.length}`} />
+            ) : null}
           </Sequence>
         );
       })}
@@ -102,9 +119,14 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         .filter((c) => c.card > 0)
         .map((c) => (
           <Sequence key={`c${c.index}`} name={`chapter card ${c.index}`} from={f(c.start)} durationInFrames={f(c.card)}>
-            {c.style ? (
+            {brief ? (
+              <>
+                <BriefBackdrop pal={pal} />
+                <BriefBreak chapter={c} chapters={chapters} frames={f(c.card)} pal={pal} />
+              </>
+            ) : c.style ? (
               <ChapterBreak style={c.style} chapter={c} frames={f(c.card)} accent={paletteFor(c.index, look).accent}
-                tint={paletteFor(c.index, look).a} plate={look.plates?.[String(c.index)]} count={chapters.filter((x) => x.card > 0).length} />
+                tint={paletteFor(c.index, look).a} plate={look.plates?.[String(c.index)]} count={cards.length} />
             ) : (
               <>
                 <Backdrop look={look} chapter={c.index} seed={100 + c.index} plate={look.platesBaked?.[String(c.index)] ?? look.plates?.[String(c.index)]} />
@@ -130,7 +152,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
           <NextTag label={nextLabel} accent={look.accents[0]} face={LONG_FACE} />
         </Sequence>
       ) : null}
-      <Grain />
+      {brief ? null : <Grain />}
       </>)}
 
       {/* voice: the hook's lines, then every beat */}

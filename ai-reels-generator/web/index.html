@@ -427,6 +427,8 @@
         <p class="hint">Memes are drawn fresh for each video (two buttons, nope/yep, expanding brain, this is fine...), with everyday examples that make the idea click. Facts stay checked.</p>
         <label for="hookTpl">Hook style</label>
         <select id="hookTpl" data-hook="job"></select>
+        <label for="vizTpl">Look</label>
+        <select id="vizTpl" data-viz="job"></select>
       </div>
       <label>Subtitles</label>
       <div class="segmented" id="cc">
@@ -496,6 +498,8 @@
       <p class="hint">Your words never change: memes only go where your script already sets one up.</p>
       <label for="sv-hooktpl">Hook style</label>
       <select id="sv-hooktpl" data-hook="job"></select>
+      <label for="sv-viztpl">Look</label>
+      <select id="sv-viztpl" data-viz="job"></select>
       <details class="used" id="vtBox">
         <summary>🔊 Try the voice on a line <span class="hint">(hear it before making the video)</span></summary>
         <textarea class="edit" id="vt-text" rows="3" maxlength="2000" placeholder="A line from your script, e.g. Aur ye hume next question tak lekar aata hai."></textarea>
@@ -964,6 +968,8 @@ Plain paragraphs are read by the narrator."></textarea>
         <option value="false">Composed music only (faster)</option></select>
       <label for="s-hook_template">Hook style (long and medium videos, Script Videos, Shoot)</label>
       <select id="s-hook_template" data-hook="settings"></select>
+      <label for="s-visual_template">Look (long and medium videos, Script Videos)</label>
+      <select id="s-visual_template" data-viz="settings"></select>
       <label for="s-memes">Memes &amp; humour (long and medium videos, Script Videos, Shoot, Shorts+ motion graphics)</label>
       <select id="s-memes"><option value="off">🚫 Off: told like a documentary</option>
         <option value="some">😄 Some: explained like a funny friend, a meme now and then</option>
@@ -1554,8 +1560,26 @@ const HOOK_TPL = {
   rewind: ["⏪ Ending first", "Opens on how it ends, then the tape rewinds (VHS lines, a time stamp) and the hook climbs back toward that moment."],
   promise: ["✅ Promise + list", "The most striking fact, then exactly what you'll know by the end: the points tick onto a checklist as they're said."],
   teaser: ["🎞 Coming up", "A trailer of the video's own best moments, a COMING UP tag and jump cuts, then the big question."],
+  bulletin: ["📟 Bulletin", "A green terminal screen: a numbered bulletin tag, each shot's words typed in or its number counted up in big pixel digits, a status flashed in an inverse block, the source at the foot."],
+  frontpage: ["📰 Front page", "Each shot a newspaper front page: its headline in huge condensed capitals on stained paper, a typed caption strip; the first page spins in, the next ones slide over it."],
   cinematic: ["🎞 Cinematic", "The documentary cold open: colour grades, film grain, typed labels, whips and a dark drone. Slower and moodier."],
 };
+// How every beat is drawn (reelgen/briefing.py TEMPLATES; keep the two lists in step).
+const VIZ_TPL = {
+  classic: ["✨ Classic", "Colourful motion graphics over photos of each chapter's place, camera moves, the hook pictures. Every video so far."],
+  briefing: ["📰 Briefing", "A clean news-explainer page: dark grid, a header with the chapter and the source, big condensed headlines with one coloured word, and diagrams that build as they are said (chains of boxes, checklists, progress steps, icon fields, terminals, receipts, dates). Claude picks the layout for every line."],
+};
+function vizPicker(sel) {
+  sel.innerHTML = (sel.dataset.viz === "job" ? '<option value="">⚙️ As in Settings</option>' : "")
+    + Object.entries(VIZ_TPL).map(([k, [n]]) => `<option value="${k}">${n}</option>`).join("");
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  sel.after(hint);
+  const sync = () => { hint.textContent = (VIZ_TPL[sel.value] || ["", ""])[1]; };
+  sel.addEventListener("change", sync);
+  sel.syncViz = sync;
+  sync();
+}
 function hookExample(box, tpl) {  // plays (and, the first time, makes) the example clip of a template
   const line = box.querySelector(".hk-ex-line"), vid = box.querySelector("video");
   const go = async () => {
@@ -2759,6 +2783,7 @@ async function loadSettings() {
   }
   $("#sv-pace").syncPace();
   if ($("#s-hook_template").syncHook) $("#s-hook_template").syncHook();
+  if ($("#s-visual_template").syncViz) $("#s-visual_template").syncViz();
   const ai = { "claude-code": "Claude Code (your login)", api: st.api_key_set ? "Anthropic API key" : "API key — NOT SET",
     missing: "NOT SET UP — install Claude Code and run `claude` once" }[st.backend];
   checkUpdate();
@@ -3297,7 +3322,7 @@ document.querySelectorAll("#sv-cc button").forEach((b) => b.onclick = () => {
 $("#svBtn").onclick = async () => {
   const body = { title: $("#sv-title").value, description: $("#sv-desc").value, hook: $("#sv-hook").value,
                  script: $("#sv-script").value, voice: $("#sv-voice").value || null, captions: svCc,
-                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value, voice_rate: $("#sv-pace").value, hook_template: $("#sv-hooktpl").value };
+                 screen_text: $("#sv-screen").value, memes: $("#sv-memes").value, voice_rate: $("#sv-pace").value, hook_template: $("#sv-hooktpl").value, visual_template: $("#sv-viztpl").value };
   if (!body.title.trim() || !body.script.trim()) { $("#sv-msg").textContent = "The title and the script are needed."; return; }
   $("#svBtn").disabled = true;
   try {
@@ -3316,7 +3341,7 @@ api("/api/settings").then((s) => { setStyle(s.video_style); setCc(s.captions ===
 $("#genBtn").onclick = async () => {
   $("#genBtn").disabled = true;
   try {
-    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value, hook_template: $("#hookTpl").value, ai: aiValue("create") }) });
+    await api("/api/generate", { method: "POST", body: JSON.stringify({ topic: $("#topic").value, count: countValue, style: styleValue, length: lengthValue, captions: ccValue, story_form: $("#storyForm").value, memes: $("#memes").value, hook_template: $("#hookTpl").value, visual_template: $("#vizTpl").value, ai: aiValue("create") }) });
     $("#topic").value = ""; toast("Started"); lastBusy = true; loadJobs();
   } catch (e) { toast(e.message); }
   $("#genBtn").disabled = false;
@@ -3794,6 +3819,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "Escape") closePrompter();
 });
 document.querySelectorAll("select[data-hook]").forEach(hookPicker);
+document.querySelectorAll("select[data-viz]").forEach(vizPicker);
 paceSlider($("#s-long_voice_rate"));
 paceSlider($("#sv-pace"), { blank: "As in Settings", base: () => $("#s-long_voice_rate").value || "+0%" });
 $("#s-long_voice_rate").addEventListener("change", () => $("#sv-pace").syncPace());

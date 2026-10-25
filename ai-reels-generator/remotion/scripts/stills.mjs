@@ -27,7 +27,7 @@ for (const s of job.stills) {
     frame: Math.min(Math.max(0, s.frame), composition.durationInFrames - 1),
     output: s.out,
     imageFormat: s.out.endsWith('.png') ? 'png' : 'jpeg',
-    jpegQuality: 92,
+    ...(s.out.endsWith('.png') ? {} : {jpegQuality: 92}), // Remotion refuses a quality for png
     scale: s.scale ?? 1,
     ...browser,
     chromiumOptions,

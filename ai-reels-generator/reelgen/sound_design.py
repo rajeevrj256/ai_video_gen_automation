@@ -69,6 +69,18 @@ def _visual_events(v: dict, start: float, duration: float) -> list[tuple[str, fl
                 out.append((sound, start + float(a.get("at", 0.3)), 0.32 if sound != "impact" else 0.4))
             if a.get("action") == "multiply":
                 out += [("pop", start + float(a.get("at", 0.3)) + k * 0.12, 0.2) for k in range(1, 4)]
+    elif kind in ("flow", "checklist", "receipt", "dates"):  # the Briefing template's builds (long/brief/Brief.tsx landAt)
+        n = len(items) or 1
+        first, span = (10, max(20, frames * 0.7)) if kind == "checklist" else (6, max(20, frames * (0.42 if kind == "dates" else 0.7)))
+        out += [("pop", start + (first + (span - first) * i / n + (8 if kind == "checklist" else 0)) / FPS, 0.28) for i in range(n)]
+    elif kind == "terminal":
+        out.append(("typing", start + 0.2, 0.18))
+    elif kind == "card":
+        out.append(("pop", start + 14 / FPS, 0.3))
+    elif kind == "scale":
+        out += [("swish", start + 0.25, 0.22), ("ding", start + max(30, frames * 0.5) / FPS, 0.28)]
+    elif kind == "grid":
+        out += [("click", start + 0.2 + i * 0.2, 0.18) for i in range(4)]
     elif kind == "meme":
         out += _meme_events(v, start, duration)
     # The impact's boom and hit sounds were removed at the user's request (silent now).

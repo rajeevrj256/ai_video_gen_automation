@@ -88,6 +88,9 @@ def behaviour() -> None:
         ("scriptvideo.parse_script keeps every word and the chapters", lambda: (
             " ".join(scriptvideo.parse_script(SCRIPT)[0]).split(), [t for _, t in scriptvideo.parse_script(SCRIPT)[1]]),
          (SCRIPT_WORDS, ["Shuruaat", "Patch kya hai"])),
+        ("scriptvideo.parse_script: '## heading' straight above its lines is a chapter, never narration", lambda:
+            scriptvideo.parse_script("## One\nFirst line here.\n## Two\nSecond line,\nwrapped here.\n\nChapter 3: Three\nThird."),
+         (["First line here.", "Second line, wrapped here.", "Third."], [(0, "One"), (1, "Two"), (2, "Three")])),
         ("stickstory.parse_stick_script: 'Narrator:' alone is a label, not a line", lambda: [
             (b["speaker"], b["line"]) for b in stickstory.parse_stick_script(
                 "Narrator:\nThey met in 2005.\n\n**Ben:**\nWait.\n\nHere is what happened:\nIt grew.\n"
@@ -183,7 +186,7 @@ def hook_templates() -> None:
     if ours != theirs:
         fail(f"hook templates differ: cinehook {sorted(ours)}, web/index.html HOOK_TPL {sorted(theirs)}")
     ts = (ROOT / "remotion" / "src" / "long" / "types.ts").read_text(encoding="utf-8")
-    m = re.search(r"template\?: ([^;]+);", ts)
+    m = re.search(r"template\?: ('cinematic'[^;]+);", ts)  # the hook's (Look has its own 'template')
     if not m or set(re.findall(r"'([a-z]+)'", m.group(1))) != ours:
         fail("hook templates differ between cinehook.TEMPLATES and types.ts Hook.template")
     old = {"duration": 30.0, "hook": {"duration": 10.0, "shots": []}, "musicFrom": 10.0,
@@ -196,6 +199,28 @@ def hook_templates() -> None:
         fail(f"rehook.shift_props: the story didn't move with the new hook: {new}")
 
 
+def visual_templates() -> None:
+    """The visual templates are the same in Python (briefing.TEMPLATES), the page (VIZ_TPL) and the editor's Look;
+    the Briefing layouts are in the writer's schema and in types.ts VisualType."""
+    import re
+
+    from . import briefing
+    from .longform import LVisual
+
+    page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    block = re.search(r"const VIZ_TPL = \{(.*?)\n\};", page, re.S)
+    if not block or set(re.findall(r"^\s+([a-z]+): \[", block.group(1), re.M)) != set(briefing.TEMPLATES):
+        fail("visual templates differ: briefing.TEMPLATES and web/index.html VIZ_TPL")
+    ts = (ROOT / "remotion" / "src" / "long" / "types.ts").read_text(encoding="utf-8")
+    m = re.search(r"template\?: ('classic'[^;]+);", ts)
+    if not m or set(re.findall(r"'([a-z]+)'", m.group(1))) != set(briefing.TEMPLATES):
+        fail("visual templates differ between briefing.TEMPLATES and types.ts Look.template")
+    allowed = set(LVisual.model_fields["type"].annotation.__args__)
+    missing = [t for t in briefing.BRIEFING_TYPES if t not in allowed or f"| '{t}'" not in ts]
+    if missing:
+        fail(f"Briefing layouts missing from LVisual.type or types.ts VisualType: {missing}")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -204,6 +229,7 @@ def main() -> int:
     update_helper()
     meme_lists()
     hook_templates()
+    visual_templates()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 
