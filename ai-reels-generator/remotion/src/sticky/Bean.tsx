@@ -207,6 +207,8 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
   };
   const hipL = toWorld(HIP_L), hipR = toWorld(HIP_R);
   const lying = actor.pose === 'lie' || actor.pose === 'sleep';
+  const inBed = lying && seat === SEAT.bed; // under a blanket, only the head out (the user: 'add blanket over the body')
+  const phoneUp = actor.pose === 'lie' && (actor.prop === 'phone' || !!actor.glow);
   const sleeve = cast.wear === 'hood' ? cast.color : fill; // a hoodie: its sleeves too
   // standing with someone else in the shot: turned a little toward the way he faces (toward them)
   const turn = actor.pose === 'pushup' ? 28 : actor.pose === 'stand' && p.company ? 10 : FRONT.includes(actor.pose) ? 0 : 16;
@@ -249,12 +251,15 @@ export const Bean: React.FC<{cast: Cast; actor: Actor; t: number; dur: number; s
           </>
         ) : null}
         <Hose d={limb(SHOULDER_L, rig.hl, rig.el)} fill={sleeve} />
+        {/* in bed both arms rest under the blanket, unless a hand holds the phone up */}
+        {inBed && !phoneUp ? <Hose d={limb(SHOULDER_R, rig.hr, rig.er)} fill={sleeve} /> : null}
         <BodyAndHead fill={fill} rig={rig} cast={cast} face={face} actor={actor} t={t} seed={seed} turn={turn} grit={grit} />
-        <Hose d={limb(SHOULDER_R, rig.hr, rig.er)} fill={sleeve} />
+        {inBed ? <Blanket /> : null}
+        {!inBed || phoneUp ? <Hose d={limb(SHOULDER_R, rig.hr, rig.er)} fill={sleeve} /> : null}
         {umbrella ? <Umbrella at={rig.hr} /> : (
           <PropView prop={actor.prop && actor.prop !== 'none' && !(typing && actor.prop === 'laptop') ? actor.prop
             : (actor.pose === 'phone' || actor.pose === 'reach' ? 'phone' : actor.pose === 'guitar' ? 'guitar' : 'none')}
-            at={actor.pose === 'reach' ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
+            at={actor.pose === 'reach' || phoneUp ? rig.hr : [(rig.hl[0] + rig.hr[0]) / 2, (rig.hl[1] + rig.hr[1]) / 2]} glow={!!actor.glow} />
         )}
       </g>
     </g>
@@ -396,6 +401,18 @@ const WearView: React.FC<{cast: Cast; wear: Cast['wear']}> = ({cast, wear}) => {
       return null;
   }
 };
+
+// ---------- in bed ----------
+
+// The blanket over a body lying in bed, drawn in the body frame (rotated with it: +y runs to the feet, +x faces up):
+// from just under the chin past the feet, a turned-down sheet at the top, a soft fold or two.
+const Blanket: React.FC = () => (
+  <g stroke={INK} strokeWidth={LINE} strokeLinejoin="round">
+    <path d="M-58,-168 C-58,-168 54,-172 62,-166 C70,-120 66,-60 60,-10 C58,30 56,64 50,92 L-58,92 Z" fill="#4E5F8E" />
+    <path d="M-58,-168 L62,-166 C64,-156 64,-148 63,-140 L-58,-142 Z" fill="#E9E4D8" />
+    <path d="M30,-120 C40,-80 38,-40 30,-10 M10,10 C20,40 18,64 12,84" fill="none" stroke="#3B4870" strokeWidth={2.4} />
+  </g>
+);
 
 // ---------- things in hand ----------
 

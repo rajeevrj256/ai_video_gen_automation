@@ -107,6 +107,9 @@ const Pool: React.FC<{x: number; y: number; r: number; color: string; opacity: n
 );
 
 // A red seven-segment alarm clock (the time is story in these films).
+// The width of a time in Digits, in units of its height (a digit 0.55 + its gap, a colon 0.26), less the last gap.
+export const digitsUnits = (text: string) => Array.from(text).reduce((u, ch) => u + (ch === ':' ? 0.264 : 0.694), 0) - 0.144;
+
 export const Digits: React.FC<{text: string; x: number; y: number; h: number; color?: string}> = ({text, x, y, h, color = '#FF3B3B'}) => {
   const SEG: Record<string, string> = {'0': 'abcdef', '1': 'bc', '2': 'abged', '3': 'abgcd', '4': 'fgbc', '5': 'afgcd', '6': 'afgedc', '7': 'abc', '8': 'abcdefg', '9': 'abfgcd'};
   const w = h * 0.55, t = h * 0.12;
@@ -148,7 +151,11 @@ const Nightstand: React.FC<{x: number; clock?: string}> = ({x, clock}) => (
     <rect x={x} y={FLOOR - 150} width={150} height={150} rx={6} fill={FILL} stroke={LINE} strokeWidth={3} />
     <line x1={x + 50} y1={FLOOR - 76} x2={x + 100} y2={FLOOR - 76} stroke={LINE} strokeWidth={3} />
     <rect x={x + 18} y={FLOOR - 214} width={114} height={60} rx={8} fill="#0B0B0E" stroke={LINE} strokeWidth={2.5} />
-    {clock ? <Digits text={clock} x={x + 30} y={FLOOR - 204} h={40} /> : null}
+    {clock ? (() => {
+      // fitted inside the clock's face, centred: '11:48' at a fixed size ran past its right edge
+      const h = Math.min(40, 92 / digitsUnits(clock));
+      return <Digits text={clock} x={x + 18 + (114 - digitsUnits(clock) * h) / 2} y={FLOOR - 214 + (60 - h) / 2} h={h} />;
+    })() : null}
   </g>
 );
 

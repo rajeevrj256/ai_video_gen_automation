@@ -90,6 +90,40 @@ const spread = (placed: {a: Actor; xpx: number; y: number; facing: 'left' | 'rig
   }
 };
 
+// Someone sitting where the set has no seat (the second person at a cafe with one chair, one moved aside on a bench)
+// gets a stool under them at the seat's height: before, they sat on air.
+const needStools = (placed: {a: Actor; xpx: number; y: number; seat: number}[], shot: Shot) => {
+  const f = setInfo(shot.set ?? 'void').furniture;
+  return placed.filter((p) => SEATED.includes(p.a.pose) && p.seat !== SEAT.bed && p.seat !== SEAT.floor).filter((p) => {
+    if (p.seat === SEAT.chair && f.chair !== undefined && Math.abs(p.xpx - px(f.chair)) < 40) return false;
+    if (p.seat === SEAT.couch && f.couch && p.xpx >= px(f.couch[0]) - 30 && p.xpx <= px(f.couch[1]) + 30) return false;
+    return true;
+  }).map((p) => ({x: p.xpx, y: p.y, seat: p.seat}));
+};
+
+const Stool: React.FC<{x: number; y: number; seat: number}> = ({x, y, seat}) => (
+  <g stroke="#C9CDD6" strokeWidth={3} strokeLinecap="round">
+    <line x1={x - 30} y1={y + seat + 8} x2={x - 40} y2={y} />
+    <line x1={x + 30} y1={y + seat + 8} x2={x + 40} y2={y} />
+    <line x1={x - 34} y1={y + seat / 2.2} x2={x + 34} y2={y + seat / 2.2} />
+    <rect x={x - 46} y={y + seat - 4} width={92} height={14} rx={6} fill="#2A2D36" />
+  </g>
+);
+
+// People in a shot together look at each other: everyone not crossing the frame turns toward the nearest other person
+// (the writer's facing left a colleague saying 'morning sam!' with her back to him). Typing or writing faces the desk.
+const faceEachOther = (placed: {a: Actor; xpx: number; facing: 'left' | 'right'}[]) => {
+  if (placed.length < 2) return;
+  for (const p of placed) {
+    if (p.a.pose === 'type' || p.a.pose === 'write') { p.facing = 'right'; continue; }
+    const crossing = MOVING.includes(p.a.pose) && p.a.to !== undefined && p.a.to !== p.a.x;
+    if (crossing || p.a.pose === 'lie' || p.a.pose === 'sleep') continue;
+    const others = placed.filter((o) => o !== p);
+    const near = others.reduce((b, o) => (Math.abs(o.xpx - p.xpx) < Math.abs(b.xpx - p.xpx) ? o : b), others[0]);
+    if (Math.abs(near.xpx - p.xpx) > 1) p.facing = near.xpx < p.xpx ? 'left' : 'right';
+  }
+};
+
 export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast[]; accent: string; heads?: Record<string, [number, number]>}> = ({shot, t, dur, cast, accent, heads}) => {
   const byId = Object.fromEntries(cast.map((c) => [c.id, c]));
   const hero = cast[0];
@@ -97,6 +131,8 @@ export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast
   const actors = (shot.actors ?? []).filter((a) => byId[a.id]);
   const placed = actors.map((a) => ({a, ...placeActor(a, shot, t, dur)}));
   spread(placed, shot);
+  faceEachOther(placed);
+  const stools = needStools(placed, shot);
   for (const p of placed) {
     const k = byId[p.a.id].kid ? KID : 1;
     const low = p.a.pose === 'lie' || p.a.pose === 'sleep' ? 230 : p.a.pose === 'pushup' ? 170 : p.a.pose === 'curl' || p.a.pose === 'kneel' ? 260 : 330;
@@ -116,6 +152,7 @@ export const SceneView: React.FC<{shot: Shot; t: number; dur: number; cast: Cast
           <ShadowView s={sh} t={t} dur={dur} accent={accent} cast={sh.copy ? byId[sh.copy] : undefined} facing={px(sh.x) > heroX ? -1 : 1} />
         </g>
       ) : null}
+      {stools.map((st, i) => <Stool key={`st${i}`} x={st.x} y={st.y} seat={st.seat} />)}
       {placed.map((p, i) => (
         <g key={i} transform={`translate(${p.xpx},${p.y})`}>
           <Bean cast={byId[p.a.id]} actor={{...p.a, facing: p.facing}} t={t} dur={dur} seat={p.seat} grey={grey && byId[p.a.id] !== hero ? true : undefined}

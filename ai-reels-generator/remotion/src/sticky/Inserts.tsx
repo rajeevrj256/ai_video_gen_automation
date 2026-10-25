@@ -3,7 +3,7 @@ import {interpolate, random} from 'remotion';
 import {Check} from 'lucide-react';
 import {iconFor} from '../long/icon';
 import {TONES} from './Bean';
-import {Digits, H, W} from './Sets';
+import {Digits, H, W, digitsUnits} from './Sets';
 import type {Cast, Phone, Shot} from './types';
 
 // The close-ups the reference films cut to: the phone in both hands (chats, a feed, notifications, a dialog), the
@@ -165,7 +165,10 @@ export const ClockInsert: React.FC<{time: string}> = ({time}) => (
     <ellipse cx={W / 2} cy={H / 2} rx={620} ry={330} fill="#3A0E10" opacity={0.35} />
     <rect x={W / 2 - 430} y={H / 2 - 210} width={860} height={420} rx={50} fill="#121216" stroke="rgba(222,226,234,0.7)" strokeWidth={5} />
     <rect x={W / 2 - 60} y={H / 2 - 240} width={120} height={36} rx={14} fill="#121216" stroke="rgba(222,226,234,0.5)" strokeWidth={4} />
-    <Digits text={time} x={W / 2 - 340} y={H / 2 - 130} h={260} />
+    {(() => {
+      const h = Math.min(260, 760 / digitsUnits(time)); // centred in the clock whatever the time ('6:09' sat to the left)
+      return <Digits text={time} x={W / 2 - (digitsUnits(time) * h) / 2} y={H / 2 - h / 2} h={h} />;
+    })()}
     <line x1={W / 2 - 900} y1={H / 2 + 214} x2={W / 2 + 900} y2={H / 2 + 214} stroke="rgba(222,226,234,0.4)" strokeWidth={3} />
   </g>
 );
