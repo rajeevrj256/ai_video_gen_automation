@@ -108,8 +108,9 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
               <Body v={v} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
             </Shot>
             {brief && !onCamera && b.visual.type !== 'footage' ? (
-              <BriefHeader pal={pal} label={ch?.title ?? title} source={!!ch?.source}
-                right={ch?.source || `${title.length > 30 ? title.slice(0, 28).trim() + '…' : title} · ${i + 1} / ${beats.length}`} />
+              // no source on screen (the user: 'remove'): the right side always shows the video and where we are in it
+              <BriefHeader pal={pal} label={ch?.title ?? title} source={false}
+                right={`${title.length > 30 ? title.slice(0, 28).trim() + '…' : title} · ${i + 1} / ${beats.length}`} />
             ) : null}
           </Sequence>
         );
