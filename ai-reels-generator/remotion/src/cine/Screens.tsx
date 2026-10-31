@@ -32,7 +32,28 @@ const numeric = (t: string) => /\d/.test(t) && t.replace(/[^\p{L}\p{N}]/gu, '').
 const G = '#8CFFAE';
 const GLOW = `0 0 6px ${G}, 0 0 22px rgba(80,255,140,0.45)`;
 
-export const Bulletin: React.FC<{s: HookShot; i: number; n: number; frames: number; source?: string}> = ({s, i, n, frames, source}) => {
+// Bulletin screens (the user: 'why every slide on the hook is the same and just changes the text?'): a number gets the
+// readout (counted up over a filling gauge); other lines rotate typed headline -> live log -> target scan, so no two
+// lines in a row look alike. `log` = the earlier shots' words, for the live log.
+export type Screen = 'headline' | 'readout' | 'log' | 'scan';
+const ROTATION: Screen[] = ['headline', 'log', 'scan'];
+// One screen per shot, never the same twice in a row: a number gets the readout unless the shot before had it.
+export const bulletinScreens = (shots: HookShot[]): Screen[] => {
+  const out: Screen[] = [];
+  let k = 0;
+  for (const s of shots) {
+    const text = words(s);
+    const prev = out[out.length - 1];
+    if (numeric(text) && text.length <= 10 && prev !== 'readout') { out.push('readout'); continue; }
+    let pick = ROTATION[k % ROTATION.length];
+    if (pick === prev) pick = ROTATION[++k % ROTATION.length];
+    k++;
+    out.push(pick);
+  }
+  return out;
+};
+
+export const Bulletin: React.FC<{s: HookShot; i: number; n: number; frames: number; source?: string; log?: string[]; screen?: Screen}> = ({s, i, n, frames, log = [], screen: given}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const text = words(s);
@@ -47,6 +68,9 @@ export const Bulletin: React.FC<{s: HookShot; i: number; n: number; frames: numb
   const flick = 0.92 + 0.08 * random(`f${frame}`);
   const cols = BOX.V ? 24 : 52, rows = BOX.V ? 12 : 10;
   const scan = interpolate(frame, [0, frames], [0, 1], clamp);
+  const screen: Screen = given === 'readout' && !num ? 'headline' : given ?? (num ? 'readout' : 'headline');
+  const caret = <span style={{opacity: Math.floor(frame / 8) % 2 ? 0 : 1}}>█</span>;
+  const headSize = Math.min(BOX.V ? 100 : 130, Math.floor((BOX.V ? 2400 : 3600) / Math.max(1, text.length * 0.5)));
   return (
     <div style={{position: 'absolute', inset: 0, background: '#040705', overflow: 'hidden', fontFamily: 'VT323, monospace', color: G, opacity: flick}}>
       <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 45%, rgba(40,90,55,0.35) 0%, rgba(0,0,0,0) 60%)'}} />
@@ -66,34 +90,76 @@ export const Bulletin: React.FC<{s: HookShot; i: number; n: number; frames: numb
         </div>
       </div>
       <div style={{position: 'absolute', left: side, right: side, top: BOX.V ? 360 : 150, borderTop: `2px dashed rgba(140,255,174,0.35)`}} />
-      {/* the words, typed in, or the number in big pixel digits */}
-      <div style={{position: 'absolute', left: side, right: side, top: BOX.V ? 420 : 210, display: 'flex', flexDirection: 'column', gap: 26}}>
-        {num ? (
-          <div style={{fontFamily: 'Silkscreen, monospace', fontSize: Math.min(BOX.V ? 240 : 300, Math.floor((BOX.V ? 940 : 1600) / Math.max(1, text.length * 0.95))),
+      {screen === 'readout' ? (
+        // the number counted up, a gauge filling under it
+        <div style={{position: 'absolute', left: side, right: side, top: BOX.V ? 420 : 200, display: 'flex', flexDirection: 'column', gap: 30}}>
+          <div style={{fontSize: 34, letterSpacing: '0.2em', opacity: 0.7}}>{'>'} READOUT</div>
+          <div style={{fontFamily: 'Silkscreen, monospace', fontSize: Math.min(BOX.V ? 240 : 280, Math.floor((BOX.V ? 940 : 1600) / Math.max(1, text.length * 0.95))),
             lineHeight: 1, textShadow: GLOW, filter: 'blur(0.6px)'}}>{shownNum}</div>
-        ) : (
-          <div style={{fontSize: Math.min(BOX.V ? 100 : 130, Math.floor((BOX.V ? 2400 : 3600) / Math.max(1, text.length * 0.5))), lineHeight: 1.02,
-            textTransform: 'uppercase', textShadow: GLOW, maxWidth: BOX.V ? 960 : 1600}}>
-            {text.slice(0, typed)}<span style={{opacity: Math.floor(frame / 8) % 2 ? 0 : 1}}>█</span>
+          <div style={{display: 'flex', gap: 6}}>
+            {Array.from({length: 30}, (_, k) => (
+              <span key={k} style={{flex: 1, height: 26, background: k / 30 < count ? G : 'rgba(140,255,174,0.1)', boxShadow: k / 30 < count ? GLOW : 'none'}} />
+            ))}
           </div>
-        )}
-        {s.kicker && frame >= statusAt ? (
-          <div style={{alignSelf: 'flex-start', background: G, color: '#06210F', fontSize: BOX.V ? 52 : 66, padding: '2px 20px', textTransform: 'uppercase',
-            boxShadow: '0 0 26px rgba(80,255,140,0.55)', opacity: frame - statusAt < 6 ? (Math.floor((frame - statusAt) / 2) % 2 ? 0.2 : 1) : 1}}>
-            {s.kicker}
+          {s.kicker && frame >= statusAt ? <Kicker text={s.kicker} age={frame - statusAt} /> : null}
+        </div>
+      ) : screen === 'log' ? (
+        // a live log: the earlier lines scrolled up and dimmed, this one typed in at the bottom, flagged NEW
+        <div style={{position: 'absolute', left: side, right: side, top: BOX.V ? 420 : 190, display: 'flex', flexDirection: 'column', gap: 18}}>
+          <div style={{fontSize: 34, letterSpacing: '0.2em', opacity: 0.7}}>{'>'} LIVE FEED</div>
+          {log.slice(-3).map((l, k, all) => (
+            <div key={k} style={{fontSize: BOX.V ? 40 : 46, opacity: 0.28 + 0.12 * k, textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              transform: `translateY(${interpolate(frame, [0, 8], [24, 0], clamp)}px)`}}>
+              [{String(i - all.length + k + 1).padStart(2, '0')}] {l}
+            </div>
+          ))}
+          <div style={{display: 'flex', alignItems: 'baseline', gap: 22}}>
+            <span style={{background: G, color: '#06210F', fontSize: 40, padding: '0 12px', opacity: Math.floor(frame / 10) % 2 ? 0.55 : 1}}>NEW</span>
+            <span style={{fontSize: Math.min(headSize, BOX.V ? 80 : 104), lineHeight: 1.04, textTransform: 'uppercase', textShadow: GLOW}}>{text.slice(0, typed)}{caret}</span>
           </div>
-        ) : null}
-      </div>
+          {s.kicker && frame >= statusAt ? <Kicker text={s.kicker} age={frame - statusAt} /> : null}
+        </div>
+      ) : screen === 'scan' ? (
+        // a radar sweep on one side, the words locked in a target box on the other
+        <div style={{position: 'absolute', left: side, right: side, top: BOX.V ? 420 : 190, display: 'flex', flexDirection: BOX.V ? 'column' : 'row', gap: 60, alignItems: BOX.V ? 'flex-start' : 'center'}}>
+          <svg width={BOX.V ? 420 : 460} height={BOX.V ? 420 : 460} viewBox="-100 -100 200 200" style={{flex: 'none', filter: 'drop-shadow(0 0 6px rgba(80,255,140,0.6))'}}>
+            {[90, 62, 34].map((r) => <circle key={r} r={r} fill="none" stroke={G} strokeOpacity={0.35} strokeWidth={1.2} />)}
+            <path d="M-95,0 L95,0 M0,-95 L0,95" stroke={G} strokeOpacity={0.25} strokeWidth={1} />
+            <g transform={`rotate(${frame * 6})`}><path d="M0,0 L90,0 A90,90 0 0,0 63.6,-63.6 Z" fill={G} fillOpacity={0.18} /><line x1={0} y1={0} x2={90} y2={0} stroke={G} strokeWidth={2} /></g>
+            {[0, 1, 2].map((k) => <circle key={k} cx={Math.cos(k * 2.1 + i) * (30 + k * 20)} cy={Math.sin(k * 2.1 + i) * (30 + k * 20)} r={4} fill={G} opacity={0.5 + 0.5 * Math.sin(frame / 5 + k)} />)}
+          </svg>
+          <div style={{position: 'relative', padding: '26px 34px'}}>
+            {/* target corners closing in on the words */}
+            {[[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => {
+              const close = interpolate(frame, [0, 12], [40, 0], clamp);
+              return <span key={`${x}${y}`} style={{position: 'absolute', width: 34, height: 34, [x ? 'right' : 'left']: -close, [y ? 'bottom' : 'top']: -close,
+                borderColor: G, borderStyle: 'solid', borderWidth: `${y ? 0 : 4}px ${x ? 4 : 0}px ${y ? 4 : 0}px ${x ? 0 : 4}px`}} />;
+            })}
+            <div style={{fontSize: 30, letterSpacing: '0.2em', opacity: 0.7, marginBottom: 12}}>{frame > 12 ? 'TARGET LOCKED' : 'SCANNING…'}</div>
+            <div style={{fontSize: Math.min(headSize, BOX.V ? 86 : 110), lineHeight: 1.04, textTransform: 'uppercase', textShadow: GLOW, maxWidth: BOX.V ? 900 : 1000}}>
+              {text.slice(0, typed)}{caret}
+            </div>
+          </div>
+          {s.kicker && frame >= statusAt ? <div style={{position: 'absolute', left: 0, top: BOX.V ? 900 : 520}}><Kicker text={s.kicker} age={frame - statusAt} /></div> : null}
+        </div>
+      ) : (
+        // the typed headline (the first screen)
+        <div style={{position: 'absolute', left: side, right: side, top: BOX.V ? 420 : 210, display: 'flex', flexDirection: 'column', gap: 26}}>
+          <div style={{fontSize: headSize, lineHeight: 1.02, textTransform: 'uppercase', textShadow: GLOW, maxWidth: BOX.V ? 960 : 1600}}>
+            {text.slice(0, typed)}{caret}
+          </div>
+          {s.kicker && frame >= statusAt ? <Kicker text={s.kicker} age={frame - statusAt} /> : null}
+        </div>
+      )}
       {/* a scan of cells under the words */}
-      <div style={{position: 'absolute', left: side, right: side, bottom: BOX.V ? 640 : 190, display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 6, opacity: 0.85}}>
+      <div style={{display: screen === 'headline' ? 'grid' : 'none', position: 'absolute', left: side, right: side, bottom: BOX.V ? 640 : 190, gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 6, opacity: 0.85}}>
         {Array.from({length: cols * rows}, (_, k) => {
           const col = k % cols;
           const on = random(`c${i}-${k}`) < 0.07 && col / cols < scan * 1.6;
           return <span key={k} style={{height: BOX.V ? 14 : 12, background: on ? G : 'rgba(140,255,174,0.1)', boxShadow: on ? GLOW : 'none'}} />;
         })}
       </div>
-      <div style={{position: 'absolute', left: side, right: side, bottom: BOX.V ? 590 : 120, borderTop: '1px solid rgba(140,255,174,0.35)', paddingTop: 16,
-        fontSize: 32, letterSpacing: '0.05em', opacity: 0.6, textTransform: 'uppercase'}}>{source ? `SRC: ${source}` : ' '}</div>
+      <div style={{position: 'absolute', left: side, right: side, bottom: BOX.V ? 590 : 120, borderTop: '1px solid rgba(140,255,174,0.35)'}} />
       {/* the tube: scanlines, a rolling band, the dark corners */}
       <div style={{position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.38) 0px, rgba(0,0,0,0.38) 2px, transparent 2px, transparent 4px)'}} />
       <div style={{position: 'absolute', left: 0, right: 0, height: 180, top: `${((frame * 6) % (BOX.H + 360)) - 180}px`,
@@ -102,6 +168,12 @@ export const Bulletin: React.FC<{s: HookShot; i: number; n: number; frames: numb
     </div>
   );
 };
+
+// a status flashed in an inverse block
+const Kicker: React.FC<{text: string; age: number}> = ({text, age}) => (
+  <div style={{alignSelf: 'flex-start', background: G, color: '#06210F', fontSize: BOX.V ? 52 : 66, padding: '2px 20px', textTransform: 'uppercase',
+    boxShadow: '0 0 26px rgba(80,255,140,0.55)', opacity: age < 6 ? (Math.floor(age / 2) % 2 ? 0.2 : 1) : 1}}>{text}</div>
+);
 
 // ---------- front page ----------
 

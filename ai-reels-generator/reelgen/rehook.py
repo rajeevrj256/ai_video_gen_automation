@@ -380,7 +380,7 @@ def save_as_new(cfg: Config, folder: Path, key: str, progress: Progress = log.in
 # ---------- what each template looks like (the Script tab, the Create page, Settings) ----------
 
 SAMPLES = "hook-samples"
-SAMPLE_VERSION = 5  # bump when a template changes, so the examples are made again
+SAMPLE_VERSION = 6  # bump when a template changes, so the examples are made again
 SAMPLE = [  # an everyday story every viewer knows; no figure that needs a source
     ("Your salary lands on the first.", "salary lands", "1st",
      {"type": "scene", "actors": [{"icon": "banknote", "action": "drop-in"}, {"icon": "smartphone", "action": "pulse"}]}),

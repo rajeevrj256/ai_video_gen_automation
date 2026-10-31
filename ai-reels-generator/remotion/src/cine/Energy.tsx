@@ -5,7 +5,8 @@ import {Layer} from '../Layer';
 import {BOX} from '../long/box';
 import type {Hook, HookShot, HookWord, Look} from '../long/types';
 import {SubscribeCard} from './Cine';
-import {Bulletin, FrontPage, useScreenFonts} from './Screens';
+import {Bulletin, FrontPage, bulletinScreens, useScreenFonts} from './Screens';
+import type {Screen} from './Screens';
 
 // The energetic hook templates (reelgen/cinehook.py TEMPLATES). The user's cinematic hook came out as dark, slow
 // film stills with a small typed word in a corner, "like a simple slide read out": these open at full energy on
@@ -271,12 +272,12 @@ const ComingUp: React.FC<{text: string}> = ({text}) => {
 };
 
 const EnergyShot: React.FC<{s: HookShot; i: number; frames: number; template: HookTemplate; accent: string; render: Render; spoken: boolean;
-  items: string[]; last: boolean; seed: number; n: number; source?: string}> = (p) => {
+  items: string[]; last: boolean; seed: number; n: number; source?: string; log?: string[]; screen?: Screen}> = (p) => {
   const {s, i, frames, template, accent, render, spoken, items, last, seed} = p;
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const meme = s.visual.type === 'meme';
-  if (!meme && template === 'bulletin') return <Bulletin s={s} i={i} n={p.n} frames={frames} source={p.source} />;
+  if (!meme && template === 'bulletin') return <Bulletin s={s} i={i} n={p.n} frames={frames} log={p.log} screen={p.screen} />;
   if (!meme && template === 'frontpage') return <FrontPage s={s} i={i} frames={frames} />;
   // Every shot comes in punched: from close to its frame in a few frames, a shake, a flash (white on the first).
   const inP = spring({frame, fps, config: {damping: 15, mass: 0.5}});
@@ -357,7 +358,9 @@ export const EnergyHook: React.FC<{hook: Hook; look: Look; render: Render}> = ({
           <Sequence key={i} name={`hook ${i + 1} (${template})`} from={f(s.start)} durationInFrames={frames}>
             <EnergyShot s={s} i={i} frames={frames} template={template} accent={accent} render={render} spoken={hook.subtitles === true}
               items={template === 'promise' && i >= 2 && i < hook.shots.length - 1 ? hook.shots.slice(2, i + 1).map((x) => x.text).filter(Boolean) : []}
-              last={i === hook.shots.length - 1} seed={seed} n={hook.shots.length} source={hook.source ?? undefined} />
+              last={i === hook.shots.length - 1} seed={seed} n={hook.shots.length} source={hook.source ?? undefined}
+              log={hook.shots.slice(0, i).map((x) => (x.text || (x.words ?? []).map((w) => w.text).join(' ')).trim()).filter(Boolean)}
+              screen={template === 'bulletin' ? bulletinScreens(hook.shots)[i] : undefined} />
           </Sequence>
         );
       })}
