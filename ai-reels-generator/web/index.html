@@ -1656,18 +1656,14 @@ function wireScriptInput(id, v) {
     const tpl = (typeof VIZ_TPL !== "undefined" && VIZ_TPL[st.visual_template]) ? VIZ_TPL[st.visual_template][0] : st.visual_template;
     $("#siSettings").textContent = `Settings used: voice ${st.voice || "as in Settings"} · speed ${st.voice_rate || "as in Settings"} · look ${tpl || "classic"} · hook ${st.hook_template || "auto"} · subtitles ${st.captions ? "on" : "off"}${st.memes ? " · memes " + st.memes : ""}`;
   });
-  $("#siGo").addEventListener("click", async () => {
-    if (!data) return;
-    const st = data.settings;
-    $("#siGo").disabled = true; $("#siMsg").textContent = "Starting…";
-    try {
-      await api("/api/script-video", {method: "POST", body: JSON.stringify({
-        title: $("#si-title").value, description: $("#si-desc").value, hook: $("#si-hook").value, script: $("#si-script").value,
-        voice: st.voice && !st.voice.startsWith("your own") ? st.voice : null, captions: st.captions, screen_text: st.screen_text,
-        memes: st.memes || "", hook_template: st.hook_template || "", visual_template: st.visual_template || "", voice_rate: st.voice_rate || ""})});
-      $("#siMsg").textContent = "Started: follow it on the Create tab. The new video appears in the library when it's done.";
-    } catch (e) { $("#siMsg").textContent = "Couldn't start: " + e.message; $("#siGo").disabled = false; }
-  });
+  // what Re-make uses: the edited text, or null when nothing was changed (or the fold was never opened)
+  $("#siBox")._edited = () => {
+    if (!data) return null;
+    const now = {title: $("#si-title").value, description: $("#si-desc").value, hook: $("#si-hook").value, script: $("#si-script").value};
+    const was = data.input;
+    const same = ["title", "description", "hook", "script"].every((k) => (now[k] || "").trim() === (was[k] || "").trim());
+    return same ? null : {...now, settings: data.settings};
+  };
 }
 
 function wireShort(id, v) {
@@ -1803,15 +1799,13 @@ async function openVideo(id) {
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd, cached: v.usage.total.cache_read }, "Claude tokens used for this video") : ""}
     ${v.source === "script" ? `<details id="siBox" class="section-fold">
       <summary><h4 class="section" style="display:inline">📜 Script &amp; hook</h4></summary>
-      <p class="hint">The text this video was made from. Edit anything and press the button: a <b>new video</b> is made from your edited text with this video's own settings (shown below). This video stays as it is.</p>
+      <p class="hint">The text this video was made from. Edit anything, then press <b>Re-make</b> below: with edited text a <b>new video</b> is made from it (with the voice, speed and subtitles chosen there); this video stays as it is.</p>
       <div id="siNote" class="hint"></div>
       <label for="si-title">Title</label><input class="edit" id="si-title">
       <label for="si-desc">Description</label><textarea class="edit" id="si-desc" rows="6"></textarea>
       <label for="si-hook">Hook</label><textarea class="edit" id="si-hook" rows="6"></textarea>
       <label for="si-script">Script</label><textarea class="edit" id="si-script" rows="18"></textarea>
       <p class="hint" id="siSettings"></p>
-      <button id="siGo" style="width:100%;margin-top:8px">🔁 Make again with these changes</button>
-      <div id="siMsg" class="hint"></div>
     </details>` : ""}
     ${v.source === "stick" ? `<h4 class="section">Speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: the same story, pictures, proof photos and music, only the voices recorded again at another speed. No Claude tokens. The video is replaced.</p>
@@ -2037,6 +2031,18 @@ async function openVideo(id) {
   $("#rvGo").onclick = async () => {
     $("#rvGo").disabled = true;
     try {
+      // One Re-make button: an edited script or hook (Script Videos) makes a new video from the edited text with the
+      // voice, speed and subtitles chosen here; otherwise only the voice is recorded again
+      const ed = $("#siBox") && $("#siBox")._edited ? $("#siBox")._edited() : null;
+      if (ed) {
+        const st = ed.settings;
+        await api("/api/script-video", { method: "POST", body: JSON.stringify({ title: ed.title, description: ed.description, hook: ed.hook,
+          script: ed.script, voice: $("#rv-voice").value || null, captions: $("#rv-cc").value === "true", screen_text: st.screen_text,
+          memes: st.memes || "", hook_template: st.hook_template || "", visual_template: st.visual_template || "",
+          voice_rate: $("#rv-pace").value || st.voice_rate || "" }) });
+        toast("Making a new video from your edited script — follow it on the Create page");
+        return;
+      }
       await api(`/api/videos/${encodeURIComponent(id)}/rerender`, { method: "POST",
         body: JSON.stringify({ voice: $("#rv-voice").value, captions: $("#rv-cc").value === "true", pace: $("#rv-pace").value || null }) });
       toast("Re-making the video — follow it on the Create page");
