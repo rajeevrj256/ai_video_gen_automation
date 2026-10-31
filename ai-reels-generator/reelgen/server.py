@@ -1423,10 +1423,12 @@ def create_app(cfg: Config) -> FastAPI:
 
         mixed = mix and hinglish.needs_mixing(voice, [text], least=0)
         # as the video will say it: an English line's numbers in English words (a Multilingual voice reads digits in Hindi)
-        spoken = (hinglish.to_speech([text])[0] if mixed else text if hinglish.is_hindi_voice(voice) else speakable(text))
-        if sarvam.is_sarvam(voice):  # numbers in words in the line's language, as the video's takes do
+        if sarvam.is_sarvam(voice):  # as the video's takes do: numbers in the written line's language, then mixed
             from .numbers import speakable_for
-            spoken = speakable_for(spoken)
+            worded = speakable_for(text)
+            spoken = hinglish.to_speech([worded])[0] if mixed else worded
+        else:
+            spoken = (hinglish.to_speech([text])[0] if mixed else text if hinglish.is_hindi_voice(voice) else speakable(text))
         rate = str(body.get("rate") or "")  # the Script tab's pace; else the long videos' pace setting
         pct = int(re.sub(r"[^\d-]", "", rate if re.fullmatch(r"[+-]\d{1,2}%", rate) else cfg.long_voice_rate) or 0)
         level = str(body.get("delivery") or "normal")

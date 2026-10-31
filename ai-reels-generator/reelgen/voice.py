@@ -172,8 +172,12 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
         mix = (hinglish.needs_mixing(voice, narrations) and hinglish.enabled()) if mixed is None else mixed
         from .numbers import speakable_for
 
-        # numbers in words, in each line's language: Sarvam read "₹5,000" as "rupees five zero zero zero"
-        speak = [speakable_for(t) for t in (hinglish.to_speech(narrations) if mix else narrations)]
+        # numbers in words, in the language the line is WRITTEN in (Sarvam read "₹5,000" as "rupees five zero zero
+        # zero"): a line typed in Roman letters (English or Hinglish) says '2024' as 'twenty twenty-four', a line in
+        # Devanagari in Hindi words. Numbers are put in words before the Hindi words go into Devanagari; done after,
+        # the Devanagari made every Hinglish line count as Hindi and '2024' came out 'do hazaar chaubees'.
+        worded = [speakable_for(t) for t in narrations]
+        speak = hinglish.to_speech(worded) if mix else worded
         temperature, factor = sarvam.delivery(delivery)  # "hook": the hook's own, livelier delivery if chosen
         return _shown_as_written(sarvam.scenes(speak, sarvam.speaker_of(voice), out_dir, min(2.0, sarvam.pace_for(sarvam.speaker_of(voice)) * factor * sarvam_speed),
                                                temperature), narrations, speak)
@@ -227,7 +231,7 @@ def _shown_as_written(scenes: list[SceneAudio], narrations: list[str], speak: li
             continue
         # Numbers read as words ('1,400' -> 'one thousand four hundred', or in Hindi words in a Hindi line):
         # each written word over its spoken words
-        say = speakable_hindi if re.search("[\u0900-\u097F]", said) else speakable
+        say = speakable_hindi if re.search("[\u0900-\u097F]", text) else speakable  # as written, like the voice
         groups = [(w, len(split_words(say(tok)))) for tok in text.split() for w in split_words(tok)]
         if groups and all(n for _, n in groups) and sum(n for _, n in groups) == len(scene.words):
             at, merged = 0, []
