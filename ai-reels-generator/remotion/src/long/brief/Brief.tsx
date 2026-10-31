@@ -53,6 +53,9 @@ const useIn = (delay = 0, damping = 16) => {
 };
 // When item i of n lands: spread over the first ~70% of the beat, so the build follows the line being spoken.
 const landAt = (i: number, n: number, frames: number, start = 6) => Math.round(start + (Math.max(20, frames * 0.7) - start) * (i / Math.max(1, n)));
+// A range that always moves forward: items land at rounded frames, and many items on a short line put two of them on
+// the same frame ([10, 10]), which Remotion refuses ('inputRange must be strictly monotonically increasing').
+const span = (a: number, b: number): [number, number] => [a, Math.max(b, a + 1)];
 const fit = (text: string, max: number, width: number, em = 0.45) => Math.max(18, Math.min(max, Math.floor(width / Math.max(1, text.length * em))));
 
 // ---------- the page ----------
@@ -259,7 +262,7 @@ const Progress: React.FC<{v: Visual; frames: number; pal: Pal}> = ({v, frames, p
         {items.map((it, i) => {
           const on = frame >= ats[i];
           const pop = spring({frame: frame - ats[i], fps: 30, config: {damping: 11, mass: 0.5}});
-          const line = interpolate(frame, [ats[i], ats[i + 1] ?? ats[i] + 12], [0, 1], clamp);
+          const line = interpolate(frame, span(ats[i], ats[i + 1] ?? ats[i] + 12), [0, 1], clamp);
           const color = it.tone === 'bad' ? pal.bad : pal.good;
           return (
             <div key={i} style={{display: 'flex', flexDirection: 'row', alignItems: tall ? 'center' : 'flex-start'}}>
@@ -296,7 +299,7 @@ const Track: React.FC<{v: Visual; frames: number; pal: Pal}> = ({v, frames, pal}
   const ats = items.map((_, i) => landAt(i, items.length, frames));
   const W = 1560;
   const xs = items.map((_, i) => 60 + (W - 120) * (i / Math.max(1, items.length - 1)));
-  const fill = interpolate(frame, [ats[0], ats[ats.length - 1] + 8], [0, 1], clamp);
+  const fill = interpolate(frame, span(ats[0], ats[ats.length - 1] + 8), [0, 1], clamp);
   return (
     <Frame gap={110}>
       {v.headline ? <Head v={v} pal={pal} size={fit(v.headline, 120, 1400, 0.42)} /> : null}
@@ -430,7 +433,7 @@ const Flow: React.FC<{v: Visual; frames: number; pal: Pal}> = ({v, frames, pal})
         {items.map((it, i) => {
           const e = spring({frame: frame - ats[i], fps: 30, config: {damping: 13, mass: 0.5}});
           const color = toneColor(pal, it.tone, i === items.length - 1 ? pal.accent : pal.ink);
-          const arrow = interpolate(frame, [ats[i] + 4, (ats[i + 1] ?? ats[i] + 14)], [0, 1], clamp);
+          const arrow = interpolate(frame, span(ats[i] + 4, ats[i + 1] ?? ats[i] + 14), [0, 1], clamp);
           return (
             <div key={i} style={{display: 'flex', flexDirection: tall ? 'column' : 'row', alignItems: 'center'}}>
               <div style={{width, padding: '22px 26px', border: `2px solid ${color}`, borderRadius: 10, background: pal.card, opacity: Math.min(1, e * 1.5),
