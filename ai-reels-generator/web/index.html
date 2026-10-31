@@ -1640,6 +1640,36 @@ function hookPicker(sel) {
 // ---- Re-create only the hook, as a new separate video (reelgen/rehook.py) ----
 let hookTimer = null;
 // ---- A Short from part of this video, ending on it (reelgen/clipshort.py) ----
+// A Script Video's own text: shown when the fold opens, editable, made again as a new video with this video's settings
+function wireScriptInput(id, v) {
+  let data = null;
+  $("#siBox").addEventListener("toggle", async () => {
+    if (!$("#siBox").open || data) return;
+    $("#siNote").textContent = "Loading…";
+    try {
+      data = await api(`/api/videos/${encodeURIComponent(id)}/script-input`);
+    } catch (e) { $("#siNote").textContent = "Couldn't load the script: " + e.message; return; }
+    const i = data.input, st = data.settings;
+    $("#si-title").value = i.title || ""; $("#si-desc").value = i.description || "";
+    $("#si-hook").value = i.hook || ""; $("#si-script").value = i.script || "";
+    $("#siNote").textContent = i.rebuilt ? "This video was made before the text was kept: this is every spoken line as it was read, under its chapter headings." : "";
+    const tpl = (typeof VIZ_TPL !== "undefined" && VIZ_TPL[st.visual_template]) ? VIZ_TPL[st.visual_template][0] : st.visual_template;
+    $("#siSettings").textContent = `Settings used: voice ${st.voice || "as in Settings"} · speed ${st.voice_rate || "as in Settings"} · look ${tpl || "classic"} · hook ${st.hook_template || "auto"} · subtitles ${st.captions ? "on" : "off"}${st.memes ? " · memes " + st.memes : ""}`;
+  });
+  $("#siGo").addEventListener("click", async () => {
+    if (!data) return;
+    const st = data.settings;
+    $("#siGo").disabled = true; $("#siMsg").textContent = "Starting…";
+    try {
+      await api("/api/script-video", {method: "POST", body: JSON.stringify({
+        title: $("#si-title").value, description: $("#si-desc").value, hook: $("#si-hook").value, script: $("#si-script").value,
+        voice: st.voice && !st.voice.startsWith("your own") ? st.voice : null, captions: st.captions, screen_text: st.screen_text,
+        memes: st.memes || "", hook_template: st.hook_template || "", visual_template: st.visual_template || "", voice_rate: st.voice_rate || ""})});
+      $("#siMsg").textContent = "Started: follow it on the Create tab. The new video appears in the library when it's done.";
+    } catch (e) { $("#siMsg").textContent = "Couldn't start: " + e.message; $("#siGo").disabled = false; }
+  });
+}
+
 function wireShort(id, v) {
   const box = $("#csBox");
   let data = null, first = -1, last = -1;
@@ -1771,6 +1801,18 @@ async function openVideo(id) {
     ${v.usage ? usageHtml({ models: Object.fromEntries(Object.entries(v.usage.steps || {}).filter(([, x]) => x.models).map(([k, x]) => [k, x.models])),
       steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd, cached: v.usage.total.cache_read }, "Claude tokens used for this video") : ""}
+    ${v.source === "script" ? `<details id="siBox" class="section-fold">
+      <summary><h4 class="section" style="display:inline">📜 Script &amp; hook</h4></summary>
+      <p class="hint">The text this video was made from. Edit anything and press the button: a <b>new video</b> is made from your edited text with this video's own settings (shown below). This video stays as it is.</p>
+      <div id="siNote" class="hint"></div>
+      <label for="si-title">Title</label><input id="si-title">
+      <label for="si-desc">Description</label><textarea id="si-desc" rows="3"></textarea>
+      <label for="si-hook">Hook</label><textarea id="si-hook" rows="4"></textarea>
+      <label for="si-script">Script</label><textarea id="si-script" rows="16"></textarea>
+      <p class="hint" id="siSettings"></p>
+      <button id="siGo" style="width:100%;margin-top:8px">🔁 Make again with these changes</button>
+      <div id="siMsg" class="hint"></div>
+    </details>` : ""}
     ${v.source === "stick" ? `<h4 class="section">Speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: the same story, pictures, proof photos and music, only the voices recorded again at another speed. No Claude tokens. The video is replaced.</p>
     <div class="row">
@@ -1973,6 +2015,7 @@ async function openVideo(id) {
     wireHooks(id, v);
   }
   if ($("#csBox")) wireShort(id, v);
+  if ($("#siBox")) wireScriptInput(id, v);
   if ($("#srGo")) {  // a Stick video: another speed (stickstory.remake)
     const made = +$("#sr-speed").value;
     if (v.stick_request && v.stick_request.subtitles) $("#sr-subs").value = v.stick_request.subtitles;

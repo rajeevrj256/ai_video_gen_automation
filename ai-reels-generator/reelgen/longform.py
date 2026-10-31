@@ -1852,6 +1852,9 @@ def _long_loop(cfg: Config, work: Path, candidates: list, topic: str | None, sta
                            "hashtags": [], "youtube_title": manual["title"], "youtube_description": manual["description"],
                            "youtube_chapters": youtube_chapters(props), "youtube_hashtags": [], "youtube_tags": [],
                            "facts_checked": "Checked and approved by you before production."})
+            if kind == "script":  # your text as typed, for the video page's 'Script & hook' (edit and make again)
+                report["script_input"] = {k: manual.get(k, "") for k in ("title", "description", "hook", "script", "screen_text")}
+                report["memes"] = cfg.memes
         else:
             progress("Claude is writing the title, description, chapters and tags")
             try:

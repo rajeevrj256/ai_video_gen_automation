@@ -1335,6 +1335,17 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(404)
         return FileResponse(path)  # supports Range requests, which iPhone video playback needs
 
+    @app.get("/api/videos/{video_id}/script-input")
+    def video_script_input(video_id: str):
+        """A Script Video's own title, description, hook and script, and its settings (to edit and make it again)."""
+        from .scriptvideo import script_input_of
+
+        folder = video_dir(cfg, video_id)
+        try:
+            return script_input_of(folder)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(404, f"No script saved with this video ({exc})")
+
     @app.get("/api/videos/{video_id}/used")
     def video_media_used(video_id: str):
         from .used import media_used

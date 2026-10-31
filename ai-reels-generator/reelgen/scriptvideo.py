@@ -15,6 +15,7 @@ import re
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 from . import briefing, cinehook, media, memes, memeweb, variety
@@ -336,6 +337,36 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
 
 def spoken_text(script: LongScript) -> str:
     return " ".join(b.narration for c in script.chapters for b in c.beats)
+
+
+# ---------- a finished video's own text and settings (the video page's "Script & hook") ----------
+
+def script_input_of(folder: Path) -> dict:
+    """The title, description, hook and script a Script Video was made from, and the settings it was made with, so
+    the video page can show them, let you edit them and make the video again. Videos made before the text was kept
+    get it back from script.json: the spoken lines (every word as you wrote it) under their chapter headings."""
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    given = report.get("script_input")
+    if not given:
+        data = json.loads((folder / "script.json").read_text(encoding="utf-8")) if (folder / "script.json").exists() else {}
+        hook = " ".join((h.get("line") or "").strip() for h in data.get("hook") or [] if (h.get("line") or "").strip())
+        parts = []
+        for ch in data.get("chapters") or []:
+            body = " ".join((b.get("narration") or "").strip() for b in ch.get("beats") or [] if (b.get("narration") or "").strip())
+            if body:
+                parts.append((f"## {ch['title']}\n" if ch.get("title") else "") + body)
+        given = {"title": report.get("youtube_title") or report.get("title", ""), "description": report.get("youtube_description", ""),
+                 "hook": hook, "script": "\n\n".join(parts), "screen_text": "english", "rebuilt": True}
+    look = {}
+    try:
+        look = json.loads((folder / "props.json").read_text(encoding="utf-8")).get("look") or {}
+    except (OSError, ValueError):
+        pass
+    settings = {"voice": report.get("voice") or "", "voice_rate": report.get("voice_rate") or "",
+                "captions": bool(report.get("captions")), "hook_template": report.get("hook_template") or look.get("hookTemplate") or "",
+                "visual_template": look.get("template") or "classic", "memes": report.get("memes") or "",
+                "screen_text": given.get("screen_text") or "english"}
+    return {"input": given, "settings": settings}
 
 
 # ---------- the run ----------
