@@ -140,7 +140,9 @@ class FShot(BaseModel):
     stamp: str = Field(default="", description="A big chalk line: only 'DAY 1.' at the turn (or 'DAY 1.' again at the end).")
     grade: Literal["normal", "grey", "cold", "warm"] = Field(default="normal", description="grey at the low point; cold in the spiral; warm as he heals.")
     transition: Literal["cut", "fade", "black"] = Field(default="cut", description="How this shot comes in: cut mostly, fade for time passing, black into a new act.")
-    camera: Literal["still", "push", "drift"] = "still"
+    camera: Literal["still", "push", "pull", "drift"] = "still"
+    framing: Literal["wide", "medium", "close"] = Field(default="wide", description="scene shots: wide = the whole place (establishing), medium = one person waist-up (actions, talking), close = one person's face and hands (feelings, details). Like a film crew: open a place wide, cut in for the action, close for the feeling.")
+    subject: str = Field(default="", description="medium/close: the cast id the camera frames (else the first actor).")
     meter: list[float] = Field(default_factory=list, description="The meter's value(s) during this shot (one number; two for a 'dual' meter). Set it whenever it changes.")
     day: str = Field(default="", description="The HUD day label once days are counted: 'DAY 23'. Empty before.")
     time: str = Field(default="", description="The HUD clock: '2:03 AM'. Empty when time doesn't matter.")
@@ -316,6 +318,11 @@ above (bean people, line-art sets, inserts, sounds, the shadow, captions) still 
   repeat an earlier part.
 - 'title' = the movie's title exactly; 'tagline' = ['Part N', a short line for this part]; 'summary' = the story so far
   after this part (earlier parts included), 3-5 sentences.
+- SHOOT IT LIKE A FILM: each moment covered from more than one angle, cut together: a WIDE establishing shot when a place
+  first appears, MEDIUM shots (framing 'medium', subject = who acts) for actions and talk, CLOSE shots (framing 'close')
+  for a reaction, a feeling or hands doing something, inserts for objects; cut on the action (the next shot continues the
+  movement), keep the screen direction (someone walking right keeps walking right across cuts), a reaction shot after a
+  surprise, camera 'push' slowly in for tension, 'pull' back to reveal. Never hold one wide view for a whole moment.
 - Length: about {seconds} seconds ({shots} film shots)."""
 
 

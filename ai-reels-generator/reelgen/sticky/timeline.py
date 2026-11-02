@@ -39,7 +39,8 @@ def _shot(film: Film, s: FShot, act: str, start: float, dur: float) -> dict:
     hero = film.cast[0].id
     others = [a.id for a in s.actors if a.id != hero]
     out: dict = {"start": round(start, 3), "duration": dur, "kind": "title" if act == "title" else s.kind, "act": act,
-                 "transition": s.transition, "camera": s.camera, "grade": s.grade}
+                 "transition": s.transition, "camera": s.camera, "grade": s.grade,
+        **({"framing": s.framing, "subject": s.subject or (s.actors[0].id if s.actors else "")} if s.kind == "scene" and s.framing != "wide" else {})}
     if s.kind in ("scene", "face"):
         out.update(set=s.set, light=s.light)
         out["actors"] = [{k: v for k, v in {

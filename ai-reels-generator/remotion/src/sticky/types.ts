@@ -89,7 +89,9 @@ export type Shot = {
   stamp?: string; // a big chalk line: 'DAY 1.'
   grade?: 'normal' | 'grey' | 'cold' | 'warm';
   transition?: 'cut' | 'fade' | 'black';
-  camera?: 'still' | 'push' | 'drift';
+  camera?: 'still' | 'push' | 'pull' | 'drift';
+  framing?: 'wide' | 'medium' | 'close'; // scene shots: how close the camera is to `subject`
+  subject?: string;
   meter?: number[]; // the HUD's value(s) during this shot
   day?: string; // 'DAY 23'
   time?: string; // the HUD clock

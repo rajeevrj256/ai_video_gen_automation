@@ -223,17 +223,24 @@ const ShotView: React.FC<{shot: Shot; p: StickyProps; first: boolean}> = ({shot,
   const dur = shot.duration;
   const heads: Record<string, [number, number]> = {};
   const fadeIn = shot.transition === 'fade' && !first ? interpolate(frame, [0, FADE], [0, 1], clamp) : 1;
-  const push = shot.camera === 'push' ? interpolate(t, [0, dur], [1, 1.06], clamp) : 1;
+  const push = shot.camera === 'push' ? interpolate(t, [0, dur], [1, 1.06], clamp) : shot.camera === 'pull' ? interpolate(t, [0, dur], [1.08, 1], clamp) : 1;
   const drift = shot.camera === 'drift' ? interpolate(t, [0, dur], [-20, 20], clamp) : 0;
   const filter = GRADES[shot.grade ?? 'normal'];
   // Scene shots sit closer than the set's full width, like the reference films: a zoom about the floor line, centred
   // on the actors (kept inside the set's edges). Bubble anchors follow the same zoom.
   const zoomed = shot.kind === 'scene' && shot.set && shot.set !== 'void' && shot.set !== 'stairs';
   const xs = (shot.actors ?? []).map((a) => px(a.to !== undefined ? (a.x + a.to) / 2 : a.x)).concat(shot.shadow ? [px(shot.shadow.x)] : []);
-  const z = zoomed ? (shot.shadow?.size === 'giant' ? 1.05 : ZOOM) : 1;
-  const fx = zoomed ? Math.min(W - W / (2 * z), Math.max(W / (2 * z), xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : W / 2)) : W / 2;
+  // Film framing (movie parts): medium = one person waist-up, close = face and hands, centred on `subject`;
+  // wide = the room. ay = the world height the camera centres on, sy = where it sits on screen.
+  const subj = shot.framing && shot.framing !== 'wide' ? (shot.actors ?? []).find((a) => a.id === shot.subject) ?? (shot.actors ?? [])[0] : undefined;
+  const framed = zoomed && !!subj;
+  const z = framed ? (shot.framing === 'close' ? 3.0 : 1.9) : zoomed ? (shot.shadow?.size === 'giant' ? 1.05 : ZOOM) : 1;
+  const ay = framed ? FLOOR - (shot.framing === 'close' ? 250 : 170) : FLOOR;
+  const sy = framed ? H * (shot.framing === 'close' ? 0.5 : 0.6) : FLOOR;
+  const cx = subj ? px(subj.to !== undefined && subj.to >= 0 ? (subj.x + subj.to) / 2 : subj.x) : xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : W / 2;
+  const fx = zoomed ? Math.min(W - W / (2 * z), Math.max(W / (2 * z), cx)) : W / 2;
   const picture = <ShotPicture shot={shot} t={t} dur={dur} p={p} heads={heads} />;
-  for (const k of Object.keys(heads)) heads[k] = [W / 2 + (heads[k][0] - fx) * z, FLOOR + (heads[k][1] - FLOOR) * z];
+  for (const k of Object.keys(heads)) heads[k] = [W / 2 + (heads[k][0] - fx) * z, sy + (heads[k][1] - ay) * z];
   return (
     <AbsoluteFill style={{opacity: fadeIn}}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{position: 'absolute', inset: 0}}>
@@ -241,7 +248,7 @@ const ShotView: React.FC<{shot: Shot; p: StickyProps; first: boolean}> = ({shot,
           <radialGradient id="stPhoneGlow"><stop offset="0" stopColor="#BFD8FF" stopOpacity={0.4} /><stop offset="1" stopColor="#BFD8FF" stopOpacity={0} /></radialGradient>
         </defs>
         <g style={{filter}} transform={`translate(${W / 2 + drift},${H / 2}) scale(${push}) translate(${-W / 2},${-H / 2})`}>
-          <g transform={`translate(${W / 2},${FLOOR}) scale(${z}) translate(${-fx},${-FLOOR})`}>{picture}</g>
+          <g transform={`translate(${W / 2},${sy}) scale(${z}) translate(${-fx},${-ay})`}>{picture}</g>
         </g>
         {shot.whisper ? <Whisper w={shot.whisper} t={t} dur={dur} accent={p.accent} /> : null}
         {shot.bubbles?.length ? <Bubbles b={shot.bubbles} heads={heads} t={t} dur={dur} /> : null}
