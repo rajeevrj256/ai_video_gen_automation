@@ -24,6 +24,7 @@ QUIET_GAIN = 0.1
 INTENSITY = {"open": 0.3, "loop": 0.45, "low": 0.2, "turn": 0.3, "day1": 0.35, "climb": 0.75, "test": 0.6, "resolve": 0.55,
              "thesis": 0.25, "title": 0.35}
 GENRES = ("lofi", "piano-minimal", "ambient-electronic", "acoustic-folk")
+MOVIE_GENRES = ("cinematic-orchestral", "orchestral-whimsy", "neo-classical", "piano-minimal", "post-rock")  # a movie's score
 WHISPER_VOICE = "en-US-ChristopherNeural"
 
 
@@ -60,7 +61,7 @@ def _capped(x: np.ndarray) -> np.ndarray:
     return x * (EFFECT_RMS / rms) if rms > EFFECT_RMS else x
 
 
-def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress) -> dict[int, Path]:
+def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress, genre: str = "", brief: str = "") -> tuple[dict[int, Path], str]:
     """One track per act: from the AI music model when it's installed (a calm genre the last films didn't use),
     else composed (music.compose) in the act's mood."""
     out = work / "music"
@@ -68,9 +69,10 @@ def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress) -> dict[
     made: dict[int, Path] = {}
     if aimusic.available(cfg):
         recent = set(aimusic.recent_genres(cfg))
-        genre = random.Random(seed).choice([g for g in GENRES if g not in recent] or list(GENRES))
+        # a movie keeps the style its first part had (its theme); a standalone film takes one the last films didn't use
+        genre = genre if genre in aimusic.GENRES else random.Random(seed).choice([g for g in GENRES if g not in recent] or list(GENRES))
         wanted = [aimusic.track(f"act{i:02d}", out / f"act{i:02d}-ai.wav", s["end"] - s["start"] + 2, genre, s["mood"],
-                                INTENSITY.get(s["act"], 0.4), "soft score for a wordless animated short film about an everyday struggle",
+                                INTENSITY.get(s["act"], 0.4), brief or "soft score for a wordless animated short film about an everyday struggle",
                                 seed + i) for i, s in enumerate(sections)]
         for tid, path in aimusic.make(cfg, wanted, work, progress, "Music (AI)").items():
             made[int(tid[3:])] = path
@@ -83,7 +85,7 @@ def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress) -> dict[
         mood = s["mood"] if s["mood"] in music.MOOD_SPECS else "calm"
         made[i] = music.compose(mood, [music.Section(0, seconds, INTENSITY.get(s["act"], 0.4))], seconds, seed * 31 + i,
                                 out / f"act{i:02d}.wav")
-    return made
+    return made, (genre if made and any(p.name.endswith("-ai.wav") for p in made.values()) else "")
 
 
 def _whispers(lines: list[tuple[float, str]], work: Path, progress) -> list[tuple[float, Path]]:
@@ -125,13 +127,13 @@ def _duck(voice: np.ndarray) -> np.ndarray:
 
 
 def mix(cfg, props: dict, cues: list[dict], sections: list[dict], work: Path, out: Path, seed: int,
-        whispers: bool, progress) -> dict:
+        whispers: bool, progress, genre: str = "", brief: str = "") -> dict:
     """Write the soundtrack (WAV) and return what went into it for the report."""
     total = float(props["duration"]) + 0.5
     buf = np.zeros((int(total * RATE), 2), np.float32)  # music
     fx = np.zeros_like(buf)  # sound effects
     voice = np.zeros_like(buf)  # whispers
-    tracks = _tracks(cfg, sections, work, seed, progress)
+    tracks, used_genre = _tracks(cfg, sections, work, seed, progress, genre, brief)
     for i, s in enumerate(sections):
         x = decode(tracks[i], MUSIC_EQ)
         loud = x[np.abs(x).max(axis=1) > 0.01] if len(x) else x
@@ -177,4 +179,4 @@ def mix(cfg, props: dict, cues: list[dict], sections: list[dict], work: Path, ou
     ai = [i for i, p in tracks.items() if p.name.endswith("-ai.wav")]
     return {"music": f"AI music for {len(ai)} of {len(sections)} acts, composed for the rest" if ai else
             f"composed, one track per act ({', '.join(s['mood'] for s in sections)})",
-            "sound_cues": len(cues), "whispers": len(said)}
+            "sound_cues": len(cues), "whispers": len(said), "genre": used_genre}

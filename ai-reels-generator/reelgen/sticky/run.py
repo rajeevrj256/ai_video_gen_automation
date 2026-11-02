@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import subprocess
 import uuid
 from dataclasses import asdict, dataclass
@@ -17,6 +18,7 @@ from . import film as F
 from .mixdown import mix
 from .render import render
 from .timeline import build, repair
+from .mixdown import MOVIE_GENRES
 
 log = logging.getLogger(__name__)
 CHECKPOINT = "sticky-checkpoint.json"
@@ -28,6 +30,8 @@ class StickyRequest:
     topic: str = ""  # the problem; empty = Claude picks one the last films didn't use
     minutes: float = 3.0  # 2.5-4, like the reference films
     whispers: bool = True  # the inner voice's lines whispered (three of the seven references do)
+    movie: str = ""  # 🎬 Movie: the movie's title; this film is its next part (same cast, places, music; story so far)
+    shots: str = ""  # Movie: this part's shots, one per line, in order
 
 
 def _thumb_time(props: dict) -> float:
@@ -57,8 +61,20 @@ def run_sticky(cfg: Config, req: StickyRequest, progress, resume: str | None = N
         ck.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
     film_path = work / "film.json"
+    movie = None
+    if req.movie.strip():
+        movie = F.movie(cfg, req.movie)
+        if not movie.get("genre"):  # the score's style is chosen on part 1 and kept for every part
+            movie["genre"] = random.Random(req.movie).choice(MOVIE_GENRES)
     if film_path.exists():
         film = F.load(film_path)
+        part = state.get("part", 0)
+    elif movie is not None:
+        film, part, movie = F.write_movie_part(cfg, req.movie, req.shots, progress)
+        movie["genre"] = movie.get("genre") or random.Random(req.movie).choice(MOVIE_GENRES)
+        state["part"] = part
+        F.save(film, film_path)
+        save("written")
     else:
         progress(f"Claude is writing the film ({req.minutes:g} min{', about ' + req.topic if req.topic else ''})")
         film = F.write_film(cfg, req.topic.strip(), max(2.0, min(4.5, req.minutes)), progress)
@@ -75,7 +91,10 @@ def run_sticky(cfg: Config, req: StickyRequest, progress, resume: str | None = N
     if not mixed:
         progress("Making the music and the sound design")
         seed = int(uuid.uuid5(uuid.NAMESPACE_DNS, film.title + stamp).int % 100000)
-        mixed = mix(cfg, props, cues, sections, work, soundtrack, seed, req.whispers, progress)
+        brief = (f"cinematic film score for part {state.get('part', 1)} of the wordless animated movie '{film.title}': "
+                 "one theme carried through, emotional, follows the scene" if movie is not None else "")
+        mixed = mix(cfg, props, cues, sections, work, soundtrack, seed, req.whispers, progress,
+                    genre=(movie or {}).get("genre", ""), brief=brief)
         state["mix"] = mixed
         save("mixed")
     pause_point()
@@ -97,7 +116,8 @@ def run_sticky(cfg: Config, req: StickyRequest, progress, resume: str | None = N
     if abs(float(info.get("duration") or 0) - props["duration"]) > 2:
         issues.append(f"The film runs {info.get('duration')} s, the timeline {props['duration']:.1f} s.")
     ck.unlink(missing_ok=True)
-    final = cfg.output_dir / f"{stamp}-{slugify(film.title.strip('. '))}-sticky"
+    name = film.title.strip('. ') + (f" part {state.get('part', 1)}" if movie is not None else "")
+    final = cfg.output_dir / f"{stamp}-{slugify(name)}-sticky"
     move(work, final)
     captions = [line for s in props["shots"] for line in (s.get("caption") or {}).get("lines", [])]
     report = {
@@ -112,6 +132,9 @@ def run_sticky(cfg: Config, req: StickyRequest, progress, resume: str | None = N
         "youtube_title": film.youtube_title[:100], "youtube_description": film.description.strip(),
         "youtube_tags": film.tags, "youtube_hashtags": film.hashtags[:3], "caption": film.description.strip(), "hashtags": film.hashtags,
     }
+    if movie is not None:  # a movie part: remember its cast, places, music style and the story so far for the next part
+        report.update({"movie": film.title.strip(), "part": state.get("part", 1), "story_so_far": film.summary})
+        F.remember_part(cfg, movie, film, final.name, mixed.get("genre") or movie.get("genre", ""))
     (final / "props.json").write_text(json.dumps({**props, "cues": cues, "sections": sections}, ensure_ascii=False), encoding="utf-8")
     report["usage"] = summarize_usage(meter_records())
     (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

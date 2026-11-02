@@ -532,6 +532,8 @@ class StickyBody(BaseModel):
     minutes: float = 3.0
     count: int = 1
     whispers: bool = True
+    movie: str = ""  # 🎬 Movie: the movie's title (this film is its next part)
+    shots: str = ""  # Movie: this part's shots, one per line
     ai: AIPick | None = None
 
 
@@ -1515,8 +1517,22 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/sticky")
     def sticky(body: StickyBody):
         given = {"topic": body.topic.strip()[:400], "minutes": min(4.0, max(2.5, float(body.minutes))), "whispers": bool(body.whispers)}
+        if body.movie.strip():  # a movie part: one film from your shot list, continuing the movie's earlier parts
+            shots = [x for x in body.shots.splitlines() if x.strip()]
+            if len(shots) < 2:
+                raise HTTPException(400, "Write this part's shots, one per line (at least 2).")
+            given.update({"movie": body.movie.strip()[:80], "shots": "\n".join(shots[:80]), "topic": ""})
+            return jobs.submit(f"{given['movie']} (movie part)", 1, "sticky", "story", "sticky", sticky_input=given, captions=False, ai=body.ai)
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
                            sticky_input=given, captions=False, ai=body.ai)
+
+    @app.get("/api/sticky/movies")
+    def sticky_movies():
+        """The movies made so far: title, parts (with the story so far) and cast names, for the Sticky tab."""
+        from .sticky.film import movies
+
+        return [{"title": m["title"], "parts": len(m.get("parts") or []), "cast": [c["name"] for c in m.get("cast") or []],
+                 "story": (m.get("parts") or [{}])[-1].get("summary", ""), "genre": m.get("genre", "")} for m in movies(cfg).values()]
 
     @app.post("/api/stick")
     def stick(body: StickRequestBody):

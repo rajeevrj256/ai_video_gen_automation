@@ -597,6 +597,21 @@ Plain paragraphs are read by the narrator."></textarea>
         everyday struggle (the phone at 2 AM, putting things off, overthinking a text...), a meter on screen that falls and climbs, the inner
         voice drawn as a glowing shadow, a turn that comes from someone else, a montage of days and a two-line ending. Told with pictures, a
         few lines of text and sound design: no narrator. Claude writes the whole film; every film is a new story.</p>
+      <label>Make</label>
+      <div class="segmented" id="syMode"><button data-mode="film" class="on">🎞 A film</button><button data-mode="movie">🎬 A movie part</button></div>
+      <div id="syMovie" hidden>
+        <p class="hint">A movie told in parts with the same characters. Give the movie's title and this part's shots, one per line, in
+          order: who, what happens, where. Claude stages every shot as wordless animation (no voiceover) and remembers the cast and their
+          looks, the places, the music's style and the story so far, so the next part continues it. Each part is 16:9; its length comes
+          from your shots (about 9 s each).</p>
+        <label for="syMovieTitle">Movie title</label>
+        <input class="edit" id="syMovieTitle" list="syMovieList" placeholder="e.g. The Last Bus Home">
+        <datalist id="syMovieList"></datalist>
+        <p class="hint" id="syMovieInfo"></p>
+        <label for="syShots">This part's shots</label>
+        <textarea class="edit" id="syShots" rows="10" placeholder="Leo misses the last bus; the stop is empty and it starts to rain.&#10;He checks his phone: 2% battery.&#10;An old woman at the stop offers him half her umbrella.&#10;They walk in silence; she stops at a bakery and waves goodbye.&#10;Next morning Leo finds the bakery and buys two loaves."></textarea>
+      </div>
+      <div id="syFilm">
       <label for="syTopic">The struggle (optional)</label>
       <textarea class="edit" id="syTopic" rows="2" placeholder="e.g. overthinking a text that wasn't answered / skipping the gym after two good weeks. Leave empty and Claude picks one no earlier film used."></textarea>
       <div class="grid2">
@@ -604,6 +619,7 @@ Plain paragraphs are read by the narrator."></textarea>
           <select id="syMinutes"><option value="2.5">About 2.5 min</option><option value="3" selected>About 3 min</option><option value="3.5">About 3.5 min</option><option value="4">About 4 min</option></select></div>
         <div><label for="syCount">How many</label>
           <select id="syCount"><option>1</option><option>2</option><option>3</option></select></div>
+      </div>
       </div>
       <label for="syWhisper">The inner voice</label>
       <select id="syWhisper"><option value="true" selected>🤫 Whispers its lines (like FOCUS and Stop Overthinking)</option><option value="false">🔇 Silent, words only</option></select>
@@ -3126,9 +3142,35 @@ $("#stBtn").onclick = async () => {
 };
 
 // Sticky Films (reelgen/sticky/): voiceless animated short films about an everyday struggle.
+// 🎬 Movie parts: the same cast, places and music in every part (reelgen/sticky/film.py movies)
+let syMovies = [];
+const syModeIs = () => ($("#syMode .on") || {}).dataset?.mode || "film";
+$("#syMode").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  $("#syMode").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  const movie = syModeIs() === "movie";
+  $("#syMovie").hidden = !movie; $("#syFilm").hidden = movie;
+  if (movie) api("/api/sticky/movies").then((ms) => {
+    syMovies = ms;
+    $("#syMovieList").innerHTML = ms.map((m) => `<option value="${esc(m.title)}">`).join("");
+    syMovieInfo();
+  }).catch(() => {});
+};
+const syMovieInfo = () => {
+  const t = $("#syMovieTitle").value.trim().toLowerCase();
+  const m = syMovies.find((x) => x.title.toLowerCase() === t);
+  $("#syMovieInfo").textContent = !t ? "" : m ? `Part ${m.parts + 1} of this movie. Cast: ${m.cast.join(", ") || "—"}. Story so far: ${m.story || "—"}`
+    : "A new movie: this will be part 1, and its characters are kept for every later part.";
+};
+$("#syMovieTitle").oninput = syMovieInfo;
 $("#syBtn").onclick = async () => {
-  const body = { topic: $("#syTopic").value, minutes: Number($("#syMinutes").value), count: Number($("#syCount").value),
-                 whispers: $("#syWhisper").value === "true", ai: aiValue("sticky") };
+  const movie = syModeIs() === "movie";
+  const body = movie ? { movie: $("#syMovieTitle").value, shots: $("#syShots").value, whispers: $("#syWhisper").value === "true", ai: aiValue("sticky") }
+    : { topic: $("#syTopic").value, minutes: Number($("#syMinutes").value), count: Number($("#syCount").value),
+        whispers: $("#syWhisper").value === "true", ai: aiValue("sticky") };
+  if (movie && (!body.movie.trim() || body.shots.split("\n").filter((x) => x.trim()).length < 2)) {
+    $("#syMsg").textContent = "Give the movie a title and write at least 2 shots, one per line."; return;
+  }
   $("#syBtn").disabled = true;
   try {
     await api("/api/sticky", { method: "POST", body: JSON.stringify(body) });

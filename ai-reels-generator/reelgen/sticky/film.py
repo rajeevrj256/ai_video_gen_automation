@@ -174,6 +174,7 @@ class Film(BaseModel):
     description: str = Field(description="YouTube description: 2-3 sentences that name the feeling, no hashtags.")
     tags: list[str] = Field(description="8-14 search tags.")
     hashtags: list[str] = Field(description="3 hashtags.")
+    summary: str = Field(default="", description="Movie parts only: the story so far after this part, 3-5 sentences (who, what happened, where it stopped). Empty for a standalone film.")
 
 
 TOPICS = [
@@ -297,6 +298,103 @@ def write_film(cfg: Config, topic: str, minutes: float, progress=log.info) -> Fi
         film = ask(cfg.ai_backend, cfg.claude_model, system, prompt + f"\n\nYour first idea was too close to '{near}'. "
                    "Pick a different problem and story.", Film, allow_web=False, effort=cfg.claude_effort, timeout=2400)
     return film
+
+
+# ---------- movies: parts with the same characters, places and music (the tab's 🎬 Movie switch) ----------
+
+MOVIE_RULES = """
+
+THIS IS ONE PART OF A MOVIE, NOT A STANDALONE FILM. The user wrote the movie's title and this part's shots; the rules
+above (bean people, line-art sets, inserts, sounds, the shadow, captions) still apply, but:
+- STORY: stage the user's shots IN THEIR ORDER, every one of them; each becomes 1-3 film shots (a wide shot, a close-up, an
+  insert). Add nothing the shots don't imply except small linking moments. The act shape above is a guide only: use the acts
+  that fit the shots, in order, and end on 'title'. No meter unless the story has one (kind 'none' otherwise).
+- WORDLESS AND CLEAR: no voiceover; the pictures carry the story. Captions only where a viewer would be lost (a time jump,
+  a place, who someone is the first time), max 9 words, at most one in four shots. Bubbles a few words.
+- CONTINUITY: the cast below is fixed: the same ids, names, looks and colours; add a new character only when a shot needs
+  one. Use the places the movie already has when a shot happens there. Continue the story so far; never contradict or
+  repeat an earlier part.
+- 'title' = the movie's title exactly; 'tagline' = ['Part N', a short line for this part]; 'summary' = the story so far
+  after this part (earlier parts included), 3-5 sentences.
+- Length: about {seconds} seconds ({shots} film shots)."""
+
+
+def movie_key(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "movie"
+
+
+def _movies_path(cfg: Config) -> Path:
+    return cfg.output_dir / "sticky_movies.json"
+
+
+def movies(cfg: Config) -> dict:
+    try:
+        return json.loads(_movies_path(cfg).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def movie(cfg: Config, title: str) -> dict:
+    return movies(cfg).get(movie_key(title)) or {"title": title.strip(), "cast": [], "parts": [], "places": [], "genre": "", "accent": ""}
+
+
+def remember_part(cfg: Config, m: dict, film: Film, folder: str, genre: str = "") -> None:
+    """After a part is made: its cast (new characters added, old ones kept), places, music style and story so far."""
+    all_ = movies(cfg)
+    known = {c["id"] for c in m["cast"]}
+    m["cast"] += [c.model_dump() for c in film.cast if c.id not in known]
+    places = {sh.set for a in film.acts for sh in a.shots if sh.kind in ("scene", "face") and sh.set and sh.set != "void"}
+    m["places"] = sorted(set(m.get("places") or []) | places)
+    m["genre"] = m.get("genre") or genre
+    m["accent"] = m.get("accent") or film.accent
+    m["parts"] = [p for p in m["parts"] if p.get("folder") != folder] + [{"part": len(m["parts"]) + 1, "summary": film.summary,
+                                                                          "line": (film.tagline + ["", ""])[1], "folder": folder}]
+    all_[movie_key(m["title"])] = m
+    try:
+        _movies_path(cfg).write_text(json.dumps(all_, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def lock_cast(film: Film, m: dict) -> None:
+    """The movie's characters keep their looks whatever Claude wrote: a known id (or name) gets its saved design back."""
+    saved = {c["id"]: c for c in m["cast"]}
+    by_name = {c["name"].lower(): c for c in m["cast"]}
+    for i, c in enumerate(film.cast):
+        old = saved.get(c.id) or by_name.get(c.name.lower())
+        if old:
+            if old["id"] != c.id:  # same person under a new id: point the shots back at the saved id
+                for a in film.acts:
+                    for sh in a.shots:
+                        for ac in sh.actors:
+                            if ac.id == c.id:
+                                ac.id = old["id"]
+            film.cast[i] = FCast.model_validate(old)
+    if m.get("accent"):
+        film.accent = m["accent"]
+
+
+def write_movie_part(cfg: Config, title: str, shots_text: str, progress=log.info) -> tuple[Film, int, dict]:
+    """One part of a movie from the user's shot list, continuing the parts made before."""
+    m = movie(cfg, title)
+    part = len(m["parts"]) + 1
+    lines = [x.strip(" -•\t") for x in shots_text.splitlines() if x.strip(" -•\t")]
+    seconds = max(45, min(480, len(lines) * 9))
+    shots = max(8, int(seconds / 3.2))
+    system = RULES.format(minutes=f"{seconds / 60:.1f}", shots=shots) + MOVIE_RULES.format(seconds=seconds, shots=shots)
+    cast = "\n".join(f"- {c['id']}: {c['name']}, {c['role']}, {c['tone']} skin, {c['wear']} ({c['color']})" + (", a child" if c.get("kid") else "")
+                     for c in m["cast"]) or "- none yet: design them (they stay for every later part)"
+    story = "\n".join(f"Part {p['part']}: {p['summary']}" for p in m["parts"]) or "This is part 1."
+    places = ", ".join(m.get("places") or []) or "none yet"
+    prompt = (f"Movie: {m['title']}\nThis is part {part}.\n\nCast (fixed):\n{cast}\n\nStory so far:\n{story}\n\n"
+              f"Places the movie has used: {places}\n\nThis part's shots, in order:\n" + "\n".join(f"{i + 1}. {x}" for i, x in enumerate(lines)))
+    progress(f"Claude is staging part {part} of '{m['title']}' ({len(lines)} shots from you, about {seconds // 60}:{seconds % 60:02d})")
+    film = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Film, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+    lock_cast(film, m)
+    film.title = m["title"]
+    film.tagline = [f"Part {part}", (film.tagline + ["", ""])[1]]
+    film.youtube_title = f"{m['title']} | Part {part}"[:100]
+    return film, part, m
 
 
 def save(film: Film, path: Path) -> None:
