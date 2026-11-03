@@ -222,6 +222,7 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
       {CINE.has(tr) ? <CineIn kind={tr as CineTransition} seed={index + 1}>{picture}</CineIn> : picture}
       {shot.onScreen && opening ? <TypedLabel text={shot.onScreen} vertical={props.vertical} subtitles={props.captions} /> : null}
       {shot.onScreen && !opening ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} /> : null}
+      <WhatIf shot={shot} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} />
       {em && em.text && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} vertical={props.vertical} /> : null}
       {tr === 'dip' && early ? <div style={{position: 'absolute', inset: 0, background: '#000', opacity: interpolate(raw, [0, early, early + 10], [0, 1, 0], clamp)}} /> : null}
       {tr === 'flash' ? <div style={{position: 'absolute', inset: 0, background: '#fff', opacity: interpolate(frame, [0, 9], [0.9, 0], clamp)}} /> : null}
@@ -229,6 +230,41 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
       {props.captions && shot.type === 'shot' ? <Caption shot={shot} t={t} vertical={props.vertical} /> : null}
     </Layer>
   );
+};
+
+// What-if overlays: a fact pill at the bottom, a counter box that counts up, a comic stamp.
+const WhatIf: React.FC<{shot: AnimShot; frame: number; fps: number; accent: string; vertical?: boolean}> = ({shot, frame, fps, accent, vertical}) => {
+  const pop = (d: number) => spring({frame: frame - d, fps, config: {damping: 13, stiffness: 160}});
+  const font = 'Bebas Neue, Montserrat, sans-serif';
+  const out: React.ReactNode[] = [];
+  if (shot.stat) {
+    const p = pop(Math.round(fps * 0.4));
+    out.push(<div key="stat" style={{position: 'absolute', left: 0, right: 0, bottom: vertical ? 520 : 70, display: 'flex', justifyContent: 'center', opacity: p}}>
+      <div style={{background: 'rgba(12,12,16,0.82)', border: `3px solid ${accent}`, borderRadius: 14, padding: '10px 30px', fontFamily: font,
+        fontSize: vertical ? 58 : 54, letterSpacing: 2, color: '#fff', transform: `translateY(${(1 - p) * 40}px)`, maxWidth: '84%', textAlign: 'center'}}>{shot.stat}</div></div>);
+  }
+  if (shot.counter) {
+    const p = pop(Math.round(fps * 0.25));
+    const digits = shot.counter.value.replace(/[^0-9]/g, '');
+    const target = digits ? Number(digits) : NaN;
+    const k = interpolate(frame, [fps * 0.3, fps * 1.6], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+    const shown = Number.isFinite(target) && digits.length < 16 ? shot.counter.value.replace(/[0-9][0-9,.]*/, Math.round(target * k).toLocaleString('en-US')) : shot.counter.value;
+    out.push(<div key="ctr" style={{position: 'absolute', top: vertical ? 260 : 48, right: vertical ? 60 : 56, opacity: p, transform: `scale(${0.8 + 0.2 * p})`, transformOrigin: 'top right',
+      background: 'rgba(12,12,16,0.85)', borderRadius: 12, padding: '12px 24px', borderLeft: `8px solid ${accent}`, textAlign: 'right'}}>
+      <div style={{fontFamily: font, fontSize: 30, letterSpacing: 3, color: '#cfd3dc'}}>{shot.counter.label}</div>
+      <div style={{fontFamily: font, fontSize: 72, color: '#fff', lineHeight: 1}}>{shown}</div></div>);
+  }
+  if (shot.stamp) {
+    const d = Math.round(fps * 0.6), p = pop(d);
+    out.push(<div key="stamp" style={{position: 'absolute', left: vertical ? '50%' : '64%', top: vertical ? '30%' : '26%', opacity: frame >= d ? 1 : 0,
+      transform: `translate(-50%,-50%) rotate(-8deg) scale(${0.3 + 0.7 * p})`}}>
+      <svg width={460} height={300} viewBox="0 0 460 300" style={{position: 'absolute', left: -230, top: -150}}>
+        <polygon fill={accent} stroke="#111" strokeWidth={8} points={Array.from({length: 24}, (_, i) => {
+          const a = (i / 24) * Math.PI * 2, r = i % 2 ? 0.62 : 1;
+          return `${230 + Math.cos(a) * 215 * r},${150 + Math.sin(a) * 135 * r}`; }).join(' ')} /></svg>
+      <div style={{position: 'relative', fontFamily: font, fontSize: 92, color: '#111', whiteSpace: 'nowrap', transform: 'translate(-50%,-50%)', left: 0}}>{shot.stamp}</div></div>);
+  }
+  return <>{out}</>;
 };
 
 export const Anim: React.FC<AnimProps> = (props) => {

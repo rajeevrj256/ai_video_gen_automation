@@ -28,6 +28,9 @@ export type AnimShot = {
   emphasis?: {text: string; at: number; end: number} | null; // seconds into the shot
   emphasisFx?: ('text' | 'zoom' | 'shake' | 'flash' | 'pause')[];
   onScreen?: string | null;
+  stat?: string | null;
+  counter?: {label: string; value: string} | null;
+  stamp?: string | null;
   cardText?: string; // title and chapter cards
   chapterNo?: number;
   chapters?: number;

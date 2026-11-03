@@ -66,6 +66,9 @@ ART_STYLES = {
     "3d-animated": ("stylized 3D animated film still, expressive characters, soft global illumination, rich colors", "#F72585"),
     "ink-wash": ("ink wash and watercolor painting, loose expressive brush strokes, muted earthy tones, paper grain", "#8D99AE"),
     "pixel-art": ("detailed 16-bit pixel art scene, crisp pixels, limited vibrant palette, retro game look", "#06D6A0"),
+    "whatif-3d": ("stylized 3D animated film still, soft cinematic light, shallow depth of field, miniature-like detailed sets, "
+                  "people drawn as simple figures with glossy round black heads and two glowing white oval eyes, no mouth or nose, "
+                  "plain clothes", "#FFD23F"),
     "neon-synth": ("neon synthwave illustration, glowing outlines, dark purple night, magenta and cyan light", "#F15BB5"),
 }
 CAMERAS = {"push-in": "the camera slowly pushes in", "pull-out": "the camera slowly pulls back",
@@ -92,6 +95,7 @@ class AnimRequest:
     speed: int = 8
     captions: bool = False
     watermark: str = ""
+    form: str = "story"  # story | whatif (second-person "What if..." film with stat labels, counters and comic stamps)
 
 
 # ---------- what Claude writes ----------
@@ -135,6 +139,12 @@ class AShot(BaseModel):
                            "matters (\"1859\", \"40% LESS\"); mostly empty.")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 effects from the sound list on exact words; "
                                    "most lines get none.")
+    stat: str = Field(default="", description="What-if videos only: a short fact label shown at the bottom, 3-8 words, "
+                      "a real figure the line says (\"96% OF LINE WORKERS ARE MEN\"); mostly empty.")
+    counter_label: str = Field(default="", description="What-if videos only: a running counter's label (\"MEN ON EARTH\"); empty mostly.")
+    counter_value: str = Field(default="", description="The counter's value as said in the line (\"1\", \"100,000,000\"); counts up.")
+    stamp: str = Field(default="", description="What-if videos only: a 1-3 word comic sound word stamped on the picture "
+                       "(THUD, CRACK!, SILENCE); on a funny or sudden moment, about one shot in 8.")
 
 
 class AChapter(BaseModel):
@@ -171,7 +181,30 @@ class AnimScript(BaseModel):
     category: str = Field(default="", description="One of " + ", ".join(CATEGORIES) + ".")
 
 
-def _system(minutes: float, styles: str, recent: str, sounds: str) -> str:
+WHATIF_RULES = """
+This is a WHAT IF video (like 'What if you were the last person on Earth'): the topic is a hypothetical, told to the
+viewer in the second person ("You wake up. The street is silent."), and the story follows what would really happen,
+step by step, with real science and real numbers.
+- Chapters are numbered moments in time ('The Morning After', 'Week One', 'Year Ten'...); the chapter title is short.
+- About 120-130 words a minute, short punchy sentences, dry humour between the hard facts.
+- A NEW concrete place or situation nearly every shot (a kitchen, a highway, a power plant, a supermarket aisle, a map,
+the globe from space): the viewer should see the world change around 'you'. Maps, a globe, a simple chart are fine as
+pictures when a number is about the whole world.
+- 'You' is one recurring character (a figure with a round glossy black head and glowing white eyes, in the style),
+listed first in `characters`; other people look the same but different clothes.
+- Every ~15 seconds a real figure: put it in `stat` as a short label in capitals, or as a `counter_label` +
+`counter_value` when something is counted (people left, days alone, power plants still running). Every figure true
+and in the line itself.
+- `stamp` (THUD, CRACK!, CLICK, SILENCE...) on about one shot in 8, for a sudden or funny moment.
+- The ending lands on a surprising, hopeful or ironic last thought; no call to subscribe.
+"""
+
+
+def _system(minutes: float, styles: str, recent: str, sounds: str, form: str = "story") -> str:
+    return _system_base(minutes, styles, recent, sounds) + (WHATIF_RULES if form == "whatif" else "")
+
+
+def _system_base(minutes: float, styles: str, recent: str, sounds: str) -> str:
     words = int(minutes * 60 * WORDS_PER_SECOND)
     return f"""You write and direct fully animated YouTube videos (16:9, {minutes:g} minutes). Every shot is drawn by an \
 image model from your `scene` and brought to life by a video model from your `motion`, so you are the director, \
@@ -270,7 +303,7 @@ def write_script(cfg: Config, req: AnimRequest, avoid: str = "") -> AnimScript:
 
     prompt += hook_block(cfg)
     sounds = media.prompt_block(cfg) + "\nIn this video `music_track` names one of the user's own tracks only when it fits; otherwise 'generate'."
-    return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, styles, recent, sounds), prompt, AnimScript,
+    return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, styles, recent, sounds, req.form), prompt, AnimScript,
                allow_web=True, effort=cfg.claude_effort, timeout=2400)
 
 
@@ -284,6 +317,7 @@ def _refs(sc: AnimScript) -> dict[str, AShot]:
 
 def _check(cfg: Config, sc: AnimScript, only: set[str] | None = None) -> ScriptCheck:
     rows = [f"{r}{' >>' if only and r in only else ''} {sh.line}" + (f" (on screen: {sh.on_screen})" if sh.on_screen else "")
+            + (f" (stat: {sh.stat})" if sh.stat else "") + (f" (counter: {sh.counter_label} {sh.counter_value})" if sh.counter_label else "")
             for r, sh in _refs(sc).items() if sh.line.strip() and (not only or r in only)]
     system = ("You fact-check an animated documentary. Search the web and open reliable pages. A line is confirmed only if "
               "a source you opened says the same; figures and dates must match. Lines framed as a possibility or a "
@@ -303,7 +337,7 @@ def check_facts(cfg: Config, sc: AnimScript, progress: Progress) -> tuple[AnimSc
         sh = refs.get(c.ref)
         if sh is None or c.verdict == "confirmed":
             continue
-        sh.line, sh.on_screen = c.fix.strip(), ""
+        sh.line, sh.on_screen, sh.stat, sh.counter_label, sh.counter_value = c.fix.strip(), "", "", "", ""
         changed.add(c.ref)
     issues = []
     rewritten = {r for r in changed if refs[r].line}
@@ -487,7 +521,10 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
                 "words": [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in sa.words],
                 "chapter": ci, "image": f"keyframes/s{n:03d}.jpg", "clip": None, "camera": sh.camera, "transition": tr,
                 "importance": imp, "emphasis": emph, "emphasisFx": list(dict.fromkeys(sh.emphasis_fx))[:4] if emph else [],
-                "onScreen": sh.on_screen.strip()[:28] or None}
+                "onScreen": sh.on_screen.strip()[:28] or None, "stat": sh.stat.strip()[:48] or None,
+                "counter": ({"label": sh.counter_label.strip()[:28], "value": sh.counter_value.strip()[:20]}
+                            if sh.counter_label.strip() and sh.counter_value.strip() else None),
+                "stamp": sh.stamp.strip()[:16] or None}
         loud = {"low": 0.5, "medium": 0.6, "high": 0.75, "critical": 0.85}[imp]
         if tr in TRANSITION_SOUND and shots and ci >= 0:  # the cold open's cuts get the hook's own sounds below
             name, vol = TRANSITION_SOUND[tr]

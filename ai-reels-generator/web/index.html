@@ -705,6 +705,9 @@ Plain paragraphs are read by the narrator."></textarea>
         <div><label for="anMinutes">Length</label>
           <select id="anMinutes"><option value="1">About 1 min (test)</option><option value="3">About 3 min</option><option value="6">About 6 min</option><option value="7" selected>About 7 min</option><option value="8">About 8 min</option></select></div>
       </div>
+      <label for="anForm">Kind of video</label>
+      <select id="anForm"><option value="story" selected>📖 Story / explainer</option>
+        <option value="whatif">❓ What if… (you in a hypothetical world: round-head 3D look, stat labels, counters, comic stamps)</option></select>
       <div class="grid2">
         <div><label for="anMotion">Animation</label>
           <select id="anMotion"><option value="full" selected>🎬 Every shot animated (slowest, ~1 day)</option>
@@ -3275,9 +3278,10 @@ api("/api/anim/options").then((o) => {
   $("#anStyle").innerHTML += Object.entries(o.styles).map(([k, v]) => `<option value="${esc(k)}" title="${esc(v)}">${esc(k.replace(/-/g, " "))}</option>`).join("");
 }).catch(() => { $("#anVoice").innerHTML = '<option value="en-US-AndrewMultilingualNeural">Andrew (US)</option>'; });
 try { $("#anMark").value = localStorage.getItem("animMark") || ""; } catch (e) {}
+$("#anForm").onchange = () => { if ($("#anForm").value === "whatif") { $("#anMotion").value = "key"; if ($("#anStyle").value === "auto") $("#anStyle").value = "whatif-3d"; } };
 $("#anBtn").onclick = async () => {
   const body = { topic: $("#anTopic").value, minutes: Number($("#anMinutes").value), style: $("#anStyle").value,
-                 motion: $("#anMotion").value, quality: $("#anQuality").value, upscale: $("#anUpscale").value === "true", voice: $("#anVoice").value,
+                 motion: $("#anMotion").value, form: $("#anForm").value, quality: $("#anQuality").value, upscale: $("#anUpscale").value === "true", voice: $("#anVoice").value,
                  speed: Number($("#anSpeed").value), captions: $("#anCaptions").value === "true", watermark: $("#anMark").value, count: 1 };
   try { localStorage.setItem("animMark", body.watermark); } catch (e) {}
   $("#anBtn").disabled = true;

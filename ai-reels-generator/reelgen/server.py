@@ -606,6 +606,7 @@ class AnimRequestBody(BaseModel):
     minutes: float = 7
     style: str = "auto"
     motion: str = "full"  # full | key | stills
+    form: str = "story"  # story | whatif
     quality: str = "auto"  # auto | fast | standard | high (animated.CLIP_SIZES)
     upscale: bool = True  # sharpen clips and pictures to full HD (AI upscaler)
     voice: str = "en-US-AndrewMultilingualNeural"
@@ -1647,7 +1648,9 @@ def create_app(cfg: Config) -> FastAPI:
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
                  "voice": body.voice if body.voice in _with_my_voice(VOICES) else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
-                 "watermark": body.watermark.strip()[:40]}
+                 "watermark": body.watermark.strip()[:40], "form": body.form if body.form in ("story", "whatif") else "story"}
+        if given["form"] == "whatif" and given["style"] == "auto":
+            given["style"] = "whatif-3d"
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 3)), "anim", "facts", "anim",
                            anim_input=given, captions=given["captions"], ai=body.ai)
 
