@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import random
+import shutil
 import subprocess
 import threading
 import uuid
@@ -95,7 +96,9 @@ class AnimRequest:
     speed: int = 8
     captions: bool = False
     watermark: str = ""
-    form: str = "story"  # story | whatif (second-person "What if..." film with stat labels, counters and comic stamps)
+    form: str = "story"  # story | whatif (second-person "What if..." film) | movie (an original fiction episode)
+    engine: str = "auto"  # auto (Hugging Face cloud when a token is saved, else this computer) | cloud | local
+    series: str = ""  # a movie series name: same characters and the story so far carried into every episode
 
 
 # ---------- what Claude writes ----------
@@ -200,8 +203,97 @@ and in the line itself.
 """
 
 
+MOVIE_RULES = """
+This is an ORIGINAL ANIMATED MOVIE episode (fiction), not a documentary: the user publishes one episode a day as a
+series. Ignore the accuracy and web-search rules above: nothing needs sources, no real people, no real brands.
+- A real story with a main character who wants something, an obstacle, rising stakes, a turn and an ending that
+lands; the cold open is the most gripping moment of this episode, then the story from its start.
+- Narrated like a film's storyteller (third person, warm, a little funny), with the characters' feelings shown in
+the pictures: every shot a clear moment of acting (a look, a gesture, a reaction), a NEW place or angle often.
+- The characters keep their exact designs in every shot (repeat them; the picture model needs them).
+- End on a hook for the next episode (a question, a surprise, a door opening) unless it is the final one.
+- `sources` stays empty; `on_screen` only for a place or time card ('Next morning', 'Day 3').
+"""
+
+
 def _system(minutes: float, styles: str, recent: str, sounds: str, form: str = "story") -> str:
-    return _system_base(minutes, styles, recent, sounds) + (WHATIF_RULES if form == "whatif" else "")
+    return _system_base(minutes, styles, recent, sounds) + {"whatif": WHATIF_RULES, "movie": MOVIE_RULES}.get(form, "")
+
+
+# ---------- movie series: the same cast and the story so far in every episode ----------
+
+SERIES = "anim_series.json"
+
+
+def _series_all(cfg: Config) -> dict:
+    try:
+        return json.loads((cfg.output_dir / SERIES).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def series_list(cfg: Config) -> list[dict]:
+    return [{"name": k, "episodes": len(v.get("episodes", [])), "style": v.get("style", ""),
+             "characters": [c.get("name") for c in v.get("characters", [])]} for k, v in _series_all(cfg).items()]
+
+
+def _series_block(cfg: Config, name: str) -> str:
+    ser = _series_all(cfg).get(name.strip())
+    if not ser:
+        return (f"\n\nThis is EPISODE 1 of a new movie series called \"{name.strip()}\": introduce the main characters "
+                "(2-4) so viewers love them; they will be in every episode, so design them carefully.")
+    eps = ser.get("episodes", [])
+    cast = "\n".join(f"- id {c['id']}, {c['name']} ({c.get('role', '')}): {c['design']}" for c in ser.get("characters", []))
+    story = "\n".join(f"Episode {k + 1}: {e.get('title')}: {e.get('summary', '')}" for k, e in enumerate(eps[-12:]))
+    return (f"\n\nThis is EPISODE {len(eps) + 1} of the movie series \"{name.strip()}\". Keep these characters with "
+            f"exactly these ids, names and designs (you may add 1-2 new ones):\n{cast}\nThe story so far:\n{story}\n"
+            "Continue the story from where the last episode ended; never repeat an episode's plot.")
+
+
+def _lock_series(cfg: Config, sc: "AnimScript", name: str) -> "AnimScript":
+    """The series' saved characters win over whatever Claude wrote for them (by id or name)."""
+    ser = _series_all(cfg).get(name.strip())
+    if not ser:
+        return sc
+    saved = {c["id"]: c for c in ser.get("characters", [])}
+    by_name = {c["name"].lower(): c for c in saved.values()}
+    for c in sc.characters:
+        old = saved.get(c.id) or by_name.get(c.name.lower())
+        if old:
+            c.design = old["design"]
+    return sc
+
+
+def _series_sheets(cfg: Config, name: str) -> Path:
+    from .pipeline import slugify
+    return cfg.output_dir / "anim-series" / slugify(name.strip())
+
+
+def _remember_episode(cfg: Config, name: str, sc: "AnimScript", style: str, work: Path) -> None:
+    with _lock:
+        allser = _series_all(cfg)
+        ser = allser.setdefault(name.strip(), {"characters": [], "episodes": [], "style": style})
+        known = {c["id"] for c in ser["characters"]}
+        ser["characters"] += [c.model_dump() for c in sc.characters if c.id not in known]
+        summary = " ".join(sh.line for sh in sc.chapters[-1].shots[-3:]) if sc.chapters else ""
+        ser["episodes"].append({"title": sc.title, "summary": (sc.subject + ". Ending: " + summary)[:600]})
+        (cfg.output_dir / SERIES).write_text(json.dumps(allser, indent=1, ensure_ascii=False), encoding="utf-8")
+    keep = _series_sheets(cfg, name)
+    keep.mkdir(parents=True, exist_ok=True)
+    for c in sc.characters:  # each character's picture is reused as-is next episode: the same face every day
+        sheet = work / "keyframes" / f"char-{c.id}.jpg"
+        if sheet.exists() and not (keep / sheet.name).exists():
+            shutil.copy(sheet, keep / sheet.name)
+
+
+def _reuse_sheets(cfg: Config, name: str, sc: "AnimScript", work: Path) -> None:
+    keep = _series_sheets(cfg, name)
+    for c in sc.characters:
+        old, new = keep / f"char-{c.id}.jpg", work / "keyframes" / f"char-{c.id}.jpg"
+        if old.exists() and not new.exists():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(old, new)
+            Path(str(new) + ".ok").write_text("ok", encoding="utf-8")
 
 
 def _system_base(minutes: float, styles: str, recent: str, sounds: str) -> str:
@@ -298,13 +390,16 @@ def write_script(cfg: Config, req: AnimRequest, avoid: str = "") -> AnimScript:
     if aimusic.recent_genres(cfg):  # every pipeline's videos: this one's music sounds different
         prompt += ("\n- The last videos' music was " + ", ".join(g.replace("-", " ") for g in aimusic.recent_genres(cfg))
                    + ": describe other genres and instruments for this one.")
-    prompt += "\n- Research budget: at most 8 web searches and 6 opened pages, then write."
+    if req.form != "movie":
+        prompt += "\n- Research budget: at most 8 web searches and 6 opened pages, then write."
+    if req.series.strip():
+        prompt += _series_block(cfg, req.series)
     from .hooks import block as hook_block
 
     prompt += hook_block(cfg)
     sounds = media.prompt_block(cfg) + "\nIn this video `music_track` names one of the user's own tracks only when it fits; otherwise 'generate'."
     return ask(cfg.ai_backend, cfg.claude_model, _system(req.minutes, styles, recent, sounds, req.form), prompt, AnimScript,
-               allow_web=True, effort=cfg.claude_effort, timeout=2400)
+               allow_web=req.form != "movie", effort=cfg.claude_effort, timeout=2400)
 
 
 # ---------- fact-check: every factual line, a true rewrite re-checked once, the rest cut ----------
@@ -362,6 +457,9 @@ def _style_of(sc: AnimScript, req: AnimRequest, cfg: Config, seed: int) -> str:
     """The user's pick; else Claude's, unless one of the last 3 videos used it (then a fresh one)."""
     if req.style in ART_STYLES:
         return req.style
+    saved = _series_all(cfg).get(req.series.strip(), {}).get("style") if req.series.strip() else None
+    if saved in ART_STYLES:  # a series keeps its look every episode
+        return saved
     recent = _recent_styles(cfg)
     if sc.art_style in ART_STYLES and sc.art_style not in recent:
         return sc.art_style
@@ -665,7 +763,7 @@ def check_pictures(cfg: Config, sc: AnimScript, tl: dict, work: Path, ids: list[
 
 
 def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Path, seed: int, state: dict,
-                    progress: Progress, save, check=None, job=None) -> list[dict]:
+                    progress: Progress, save, check=None, job=None, drawer=None) -> list[dict]:
     """Check every picture, redraw the broken ones from easier prompts, check those again (PIC_ROUNDS).
     `check(ids)` and `job(fixes)` replace this pipeline's own (Story Shorts)."""
     check = check or (lambda ids: check_pictures(cfg, sc, tl, work, ids))
@@ -695,17 +793,18 @@ def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Pat
                 f.unlink(missing_ok=True)
         progress(f"Redrawing {len(broken)} picture(s): " + "; ".join(f"{b.id} {b.problem}" for b in broken[:6]))
         save(pic_fixes=fixes, pic_found=found, pic_round=rnd + 1)
-        anim_engine.run_stage("keyframes", job(fixes), work, progress, "Drawing the pictures")
+        (drawer or (lambda j: anim_engine.run_stage("keyframes", j, work, progress, "Drawing the pictures")))(job(fixes))
         ids = [b.id for b in broken]
     save(pic_fixes=fixes, pic_found=found, pic_round=PIC_ROUNDS, pics_checked=True)
     return found
 
 
-def clip_jobs(sc: AnimScript, tl: dict, style: str, req: AnimRequest, work: Path, seed: int) -> tuple[dict, dict]:
+def clip_jobs(sc: AnimScript, tl: dict, style: str, req: AnimRequest, work: Path, seed: int,
+              cloud: bool = False) -> tuple[dict, dict]:
     look = ART_STYLES[style][0]
     plan = [sh for sh in sc.cold_open] + [sh for ch in sc.chapters for sh in ch.shots]
     rows = [x for x in tl["shots"] if x["type"] == "shot"]
-    W, H, longest = CLIP_SIZES[clip_quality(req)]
+    W, H, longest = (1472, 832, 5.0) if cloud else CLIP_SIZES[clip_quality(req)]
     shots = []
     for n, (row, sh) in enumerate(zip(rows, plan)):
         if not _motion_wanted(row, req.motion):
@@ -866,8 +965,23 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         pause_point()
 
-    if not anim_engine.installed():  # every mode draws its pictures with it
-        raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine'")
+    from . import hfcloud
+    cloud = state.get("engine") == "cloud" if state.get("engine") else (
+        req.engine == "cloud" or (req.engine == "auto" and hfcloud.ready()))
+    state["engine"] = "cloud" if cloud else "local"
+    if cloud and not hfcloud.ready():
+        raise RuntimeError("No Hugging Face token saved: paste it in the Anim tab's Hugging Face box")
+    if not cloud and not anim_engine.installed():  # every local mode draws its pictures with it
+        raise RuntimeError("The AI engine isn't installed yet: open the Anim tab and press 'Install the AI engine', "
+                           "or connect Hugging Face")
+    if cloud:
+        progress("Engine: Hugging Face cloud (pictures: %s, clips: %s)" % hfcloud.spaces())
+
+    def draw(job: dict) -> None:
+        if cloud:
+            hfcloud.draw(job, work, progress, pause_point)
+        else:
+            anim_engine.run_stage("keyframes", job, work, progress, "Drawing the pictures")
     if state.get("script"):
         sc = AnimScript.model_validate(state["script"])
         issues, findings = state.get("issues", []), state.get("findings", [])
@@ -875,7 +989,11 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
     else:
         progress("Claude is researching and writing the script and storyboard")
         sc = write_script(cfg, req)
-        if req.topic.strip():
+        if req.series.strip():
+            sc = _lock_series(cfg, sc, req.series)
+        if req.form == "movie":
+            pass
+        elif req.topic.strip():
             twin = repeats.too_close(sc.subject, sc.title, [x for x in repeats.made(cfg) if x.get("kind", "short") in repeats.EVERY])
             if twin:
                 progress(f"Note: a video like this exists already (\"{twin.get('title')}\"); keeping your topic")
@@ -885,7 +1003,10 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         from .hooks import sharpen
         sharpen(cfg, sc.cold_open[:1] or [s for ch in sc.chapters[:1] for s in ch.shots[:1]], sc.title, progress)
         (work / "draft.json").write_text(sc.model_dump_json(indent=1), encoding="utf-8")
-        sc, issues, findings = check_facts(cfg, sc, progress)
+        if req.form == "movie":
+            issues, findings = [], []
+        else:
+            sc, issues, findings = check_facts(cfg, sc, progress)
         save(stage="scripted", script=sc.model_dump(), issues=issues, findings=findings)
     style = state.get("style") or _style_of(sc, req, cfg, seed)
     if state.get("timeline") and all((work / s["audio"]).exists() for s in state["timeline"]["shots"] if s.get("audio")):
@@ -897,20 +1018,23 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         save(stage="voiced", timeline=tl, style=style)
     progress(f"Art style: {style}. {len([s for s in tl['shots'] if s['type'] == 'shot'])} shots, "
              f"{tl['duration'] / 60:.1f} min")
-    anim_engine.run_stage("keyframes", keyframe_job(sc, tl, style, work, seed, state.get("pic_fixes")), work, progress,
-                          "Drawing the pictures")
+    if req.series.strip():
+        _reuse_sheets(cfg, req.series, sc, work)
+    draw(keyframe_job(sc, tl, style, work, seed, state.get("pic_fixes")))
     save(stage="pictures")
     pic_found = state.get("pic_found") or []
     if not state.get("pics_checked") and not any((work / "clips").glob("*.mp4.ok")):  # a redrawn picture's clip
         # would be the old one, so a video resumed after animation began (older checkpoints) keeps its pictures
-        pic_found = _picture_rounds(cfg, sc, tl, style, work, seed, state, progress, save)
-    emb, clipjob = clip_jobs(sc, tl, style, req, work, seed)
-    if clipjob["shots"]:
+        pic_found = _picture_rounds(cfg, sc, tl, style, work, seed, state, progress, save, drawer=draw)
+    emb, clipjob = clip_jobs(sc, tl, style, req, work, seed, cloud)
+    if clipjob["shots"] and cloud:
+        hfcloud.animate(clipjob, work, progress, pause_point)
+    elif clipjob["shots"]:
         q = clip_quality(req)
         progress(f"Clips: {q}, {CLIP_SIZES[q][0]}x{CLIP_SIZES[q][1]}, up to {CLIP_SIZES[q][2]:.0f} s each")
         anim_engine.run_stage("embed", emb, work, progress, "Reading the motion prompts")
         anim_engine.run_stage("clips", clipjob, work, progress, "Animating the shots")
-    up = upscale_job(tl["shots"], style, work) if req.upscale else None
+    up = upscale_job(tl["shots"], style, work) if req.upscale and not cloud and anim_engine.installed() else None
     if up and up["items"]:
         anim_engine.run_stage("upscale", up, work, progress, "Sharpening to full HD")
     save(stage="clips")
@@ -934,8 +1058,8 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
     progress("Verifying video quality")
     info = probe(out)
     issues = list(issues)
-    sources, dropped = verify_sources(sc.sources)
-    if not sources:
+    sources, dropped = verify_sources(sc.sources) if sc.sources else ([], [])
+    if not sources and req.form != "movie":
         issues.append("No source link could be opened; check the facts before posting.")
     if (info.get("width"), info.get("height")) != (1920, 1080):
         issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected 1920x1080.")
@@ -946,6 +1070,8 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
     _remember(cfg, {"title": sc.title, "subject": sc.subject, "style": style, "notes": sc.style_notes,
                     "music": "; ".join(ch.music[:40] for ch in sc.chapters[:3]),
                     "characters": [c.name for c in sc.characters]})
+    if req.series.strip():
+        _remember_episode(cfg, req.series, sc, style, work)
     final = cfg.output_dir / f"{stamp}-{slugify(sc.title)}-anim"
     (work / CHECKPOINT).unlink(missing_ok=True)
     move(work, final)
@@ -966,6 +1092,7 @@ def run_anim(cfg: Config, req: AnimRequest, progress: Progress = log.info, resum
         "seed": seed,
         "upscaled": up["model"] if up and up["items"] else None, "picture_check": pic_found,
         "characters": [c.model_dump() for c in sc.characters],
+        "engine": "Hugging Face cloud" if cloud else "this computer", "series": req.series.strip() or None,
     }
     (final / "script.json").write_text(sc.model_dump_json(indent=2), encoding="utf-8")
     (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")

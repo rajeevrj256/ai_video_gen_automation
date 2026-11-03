@@ -667,6 +667,39 @@ Plain paragraphs are read by the narrator."></textarea>
 
   <section class="view" id="view-anim">
     <div class="panel">
+      <h2>🎬 Animated movie</h2>
+      <p class="hint">Write one idea and get a 4-5 minute animated episode: Claude writes the story, Hugging Face draws every
+        picture (Qwen-Image) and animates every shot (LTX-2.5), then the voice, music and edit are added here. Give it a series
+        name and every episode keeps the same characters and continues the story.</p>
+      <div class="status-list" id="hfStatus">Checking Hugging Face…</div>
+      <div id="hfBox" hidden>
+        <label for="hfToken">Hugging Face token (huggingface.co/settings/tokens, "Read" is enough)</label>
+        <input id="hfToken" type="password" placeholder="hf_..." autocomplete="off">
+        <details><summary class="hint">Your own Spaces (optional)</summary>
+          <div class="grid2">
+            <div><label for="hfImg">Picture Space</label><input id="hfImg" placeholder="Qwen/Qwen-Image-2.1"></div>
+            <div><label for="hfVid">Animation Space</label><input id="hfVid" placeholder="Lightricks/LTX-2.5"></div>
+          </div></details>
+        <button id="hfSave">💾 Save</button>
+      </div>
+      <label for="anSeries">Movie series</label>
+      <div class="grid2">
+        <div><select id="anSeriesPick"><option value="">— One video, no series —</option><option value="__new">➕ Start a new series…</option></select></div>
+        <div><input id="anSeries" placeholder="Series name, e.g. The Last Signal" hidden></div>
+      </div>
+      <p class="hint" id="anSeriesInfo"></p>
+      <label for="anTopic">What happens in this episode? (optional)</label>
+      <textarea class="edit" id="anTopic" rows="2" placeholder="e.g. He finds out he is the only person left in the city. Leave empty and Claude continues the story."></textarea>
+      <div class="grid2">
+        <div><label for="anMinutes">Length</label>
+          <select id="anMinutes"><option value="1">About 1 min (test)</option><option value="3">About 3 min</option><option value="4.5" selected>About 4-5 min</option><option value="7">About 7 min</option></select></div>
+        <div><label for="anVoice">Narrator</label><select id="anVoice"></select></div>
+      </div>
+      <button class="primary" id="anBtn">🎬 Make the episode</button>
+      <p class="hint" id="anMsg"></p>
+    </div>
+    <details class="panel" id="anMore"><summary><b>⚙ More options</b> <span class="hint">(art style, animation, the computer's own AI engine, music test)</span></summary>
+      <div class="panel">
       <h2>AI engine on this computer</h2>
       <p class="hint">Animated videos are drawn, animated and scored by AI models running on your own graphics card: SDXL-Lightning
         (pictures), LTX-Video (motion) and ACE-Step (music). No subscription; the first install downloads PyTorch (about 6 GB) and
@@ -693,20 +726,20 @@ Plain paragraphs are read by the narrator."></textarea>
       <div id="mtList"></div>
     </div>
     <div class="panel">
-      <h2>Animated video</h2>
+      <h2>Other settings</h2>
+      <label for="anEngine">Who makes the pictures and clips</label>
+      <select id="anEngine"><option value="auto" selected>Auto: Hugging Face when connected, else this computer</option>
+        <option value="cloud">☁️ Hugging Face cloud</option><option value="local">💻 This computer's graphics card</option></select>
       <p class="hint">A 6-8 minute 16:9 film where every shot is new AI animation: Claude writes and directs it (fact-checked, sources
         in the description), designs the characters and picks an art style the last videos didn't use; every shot gets its own
         picture and moving clip, every chapter its own music. On a 4 GB card a 7-minute video with every shot animated takes about
         a day: it saves every picture and clip as it goes, so Pause, Stop or a restart lose at most one clip.</p>
-      <label for="anTopic">Topic (optional)</label>
-      <textarea class="edit" id="anTopic" rows="2" placeholder="e.g. How the Great Molasses Flood happened / What lives at the bottom of the ocean. Leave empty and Claude picks one."></textarea>
       <div class="grid2">
         <div><label for="anStyle">Art style</label><select id="anStyle"><option value="auto">🎲 Claude picks (never the last 3)</option></select></div>
-        <div><label for="anMinutes">Length</label>
-          <select id="anMinutes"><option value="1">About 1 min (test)</option><option value="3">About 3 min</option><option value="6">About 6 min</option><option value="7" selected>About 7 min</option><option value="8">About 8 min</option></select></div>
       </div>
       <label for="anForm">Kind of video</label>
-      <select id="anForm"><option value="story" selected>📖 Story / explainer</option>
+      <select id="anForm"><option value="movie" selected>🎬 Movie episode (fiction, same characters every day)</option>
+        <option value="story">📖 True story / explainer (fact-checked)</option>
         <option value="whatif">❓ What if… (you in a hypothetical world: round-head 3D look, stat labels, counters, comic stamps)</option></select>
       <div class="grid2">
         <div><label for="anMotion">Animation</label>
@@ -722,7 +755,6 @@ Plain paragraphs are read by the narrator."></textarea>
       <select id="anUpscale"><option value="true" selected>✨ On: an AI upscaler sharpens every clip and picture to 1920×1080 (a little extra time per clip)</option>
         <option value="false">Off: the editor stretches them (softer)</option></select>
       <div class="grid2">
-        <div><label for="anVoice">Narrator</label><select id="anVoice"></select></div>
         <div><label for="anSpeed">Speaking speed</label>
           <select id="anSpeed"><option value="0">Normal</option><option value="8" selected>A little faster (+8%)</option><option value="15">Fast (+15%)</option></select></div>
       </div>
@@ -731,9 +763,8 @@ Plain paragraphs are read by the narrator."></textarea>
           <select id="anCaptions"><option value="false" selected>🚫 None</option><option value="true">💬 Small subtitles</option></select></div>
         <div><label for="anMark">Channel name on screen (optional)</label><input id="anMark" placeholder="e.g. your channel name"></div>
       </div>
-      <button class="primary" id="anBtn">🎬 Make it</button>
-      <p class="hint" id="anMsg"></p>
     </div>
+    </details>
   </section>
 
   <section class="view" id="view-story">
@@ -1239,7 +1270,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => { loadAnimSetup(); loadMusicTests(); }, story: loadStoryView, shoot: loadShootView }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud()]), story: loadStoryView, shoot: loadShootView }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -3233,7 +3264,6 @@ async function loadAnimSetup() {
     $("#anLog").hidden = !(st.installing || st.error);
     $("#anLog").textContent = (st.log || []).join("\n");
     $("#anLog").scrollTop = 1e9;
-    $("#anBtn").disabled = !st.installed;
     $("#mtBtn").disabled = !st.installed;
     if (st.installing && current === "anim") setTimeout(loadAnimSetup, 3000);
   } catch (e) { $("#anSetup").textContent = "Couldn't check the engine: " + e.message; }
@@ -3278,11 +3308,46 @@ api("/api/anim/options").then((o) => {
   $("#anStyle").innerHTML += Object.entries(o.styles).map(([k, v]) => `<option value="${esc(k)}" title="${esc(v)}">${esc(k.replace(/-/g, " "))}</option>`).join("");
 }).catch(() => { $("#anVoice").innerHTML = '<option value="en-US-AndrewMultilingualNeural">Andrew (US)</option>'; });
 try { $("#anMark").value = localStorage.getItem("animMark") || ""; } catch (e) {}
+// Hugging Face cloud engine + movie series (reelgen/hfcloud.py, animated.series_list).
+let hfReady = false;
+async function loadCloud() {
+  try {
+    const c = await api("/api/anim/cloud");
+    hfReady = c.ready;
+    $("#hfStatus").innerHTML = `<div><span>Hugging Face</span><span>${c.ready ? "✅ Connected" : "Not connected: paste your token below"}</span></div>`
+      + (c.ready ? `<div><span>Pictures · Animation</span><span>${esc(c.image_space)} · ${esc(c.video_space)} <a href="#" id="hfEdit">change</a></span></div>` : "");
+    $("#hfBox").hidden = c.ready;
+    if ($("#hfEdit")) $("#hfEdit").onclick = (e) => { e.preventDefault(); $("#hfBox").hidden = false; };
+    $("#hfImg").placeholder = c.image_space; $("#hfVid").placeholder = c.video_space;
+    const pick = $("#anSeriesPick"), keep = pick.value;
+    pick.innerHTML = '<option value="">— One video, no series —</option>' + c.series.map((x) =>
+      `<option value="${esc(x.name)}">${esc(x.name)} (next: episode ${x.episodes + 1})</option>`).join("") + '<option value="__new">➕ Start a new series…</option>';
+    if ([...pick.options].some((o) => o.value === keep)) pick.value = keep;
+    pick.onchange();
+    window._series = c.series;
+  } catch (e) { $("#hfStatus").textContent = "Couldn't check Hugging Face: " + e.message; }
+}
+$("#anSeriesPick").onchange = () => {
+  const v = $("#anSeriesPick").value, s = (window._series || []).find((x) => x.name === v);
+  $("#anSeries").hidden = v !== "__new";
+  $("#anSeriesInfo").textContent = s ? `Episode ${s.episodes + 1}. Cast: ${s.characters.join(", ")}. Same look and characters as before; the story continues.`
+    : v === "__new" ? "Episode 1: Claude designs the characters, and every next episode keeps them." : "";
+};
+$("#hfSave").onclick = async () => {
+  try {
+    await api("/api/anim/cloud", { method: "PUT", body: JSON.stringify({ token: $("#hfToken").value, image_space: $("#hfImg").value, video_space: $("#hfVid").value }) });
+    $("#hfToken").value = ""; loadCloud();
+  } catch (e) { alert(e.message); }
+};
+loadCloud();
 $("#anForm").onchange = () => { if ($("#anForm").value === "whatif") { $("#anMotion").value = "key"; if ($("#anStyle").value === "auto") $("#anStyle").value = "whatif-3d"; } };
 $("#anBtn").onclick = async () => {
   const body = { topic: $("#anTopic").value, minutes: Number($("#anMinutes").value), style: $("#anStyle").value,
                  motion: $("#anMotion").value, form: $("#anForm").value, quality: $("#anQuality").value, upscale: $("#anUpscale").value === "true", voice: $("#anVoice").value,
-                 speed: Number($("#anSpeed").value), captions: $("#anCaptions").value === "true", watermark: $("#anMark").value, count: 1 };
+                 speed: Number($("#anSpeed").value), captions: $("#anCaptions").value === "true", watermark: $("#anMark").value, count: 1,
+                 engine: $("#anEngine").value,
+                 series: $("#anSeriesPick").value === "__new" ? $("#anSeries").value.trim() : $("#anSeriesPick").value };
+  if ($("#anSeriesPick").value === "__new" && !body.series) { $("#anMsg").textContent = "Give the new series a name."; return; }
   try { localStorage.setItem("animMark", body.watermark); } catch (e) {}
   $("#anBtn").disabled = true;
   try {

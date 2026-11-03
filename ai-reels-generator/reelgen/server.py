@@ -606,7 +606,9 @@ class AnimRequestBody(BaseModel):
     minutes: float = 7
     style: str = "auto"
     motion: str = "full"  # full | key | stills
-    form: str = "story"  # story | whatif
+    form: str = "story"  # story | whatif | movie
+    engine: str = "auto"  # auto | cloud | local
+    series: str = ""
     quality: str = "auto"  # auto | fast | standard | high (animated.CLIP_SIZES)
     upscale: bool = True  # sharpen clips and pictures to full HD (AI upscaler)
     voice: str = "en-US-AndrewMultilingualNeural"
@@ -1581,6 +1583,45 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "toon", "facts", "toon",
                            toon_input=given, captions=given["captions"], ai=body.ai)
 
+    @app.get("/api/anim/cloud")
+    def anim_cloud():
+        from . import hfcloud
+        from .animated import series_list
+        img, vid = hfcloud.spaces()
+        return {"ready": hfcloud.ready(), "image_space": img, "video_space": vid, "series": series_list(cfg)}
+
+    @app.put("/api/anim/cloud")
+    def anim_cloud_save(body: dict):
+        """The Hugging Face token (and optionally your own Space names) go into .env on this computer and the running
+        app; the token is never sent back to the page."""
+        from .config import PROJECT_ROOT
+
+        values = {}
+        tok = str(body.get("token") or "").strip()
+        if tok:
+            if not re.fullmatch(r"hf_[A-Za-z0-9]{20,80}", tok):
+                raise HTTPException(400, "That doesn't look like a Hugging Face token (it starts with hf_)")
+            values["HF_TOKEN"] = tok
+        for key, env_name in (("image_space", "REEL_HF_IMAGE_SPACE"), ("video_space", "REEL_HF_VIDEO_SPACE")):
+            v = str(body.get(key) or "").strip()
+            if v:
+                if not re.fullmatch(r"[\w.\-]+/[\w.\-]+", v):
+                    raise HTTPException(400, f"{v} isn't a Space name like owner/name")
+                values[env_name] = v
+        if body.get("forget"):
+            values["HF_TOKEN"] = ""
+        env = PROJECT_ROOT / ".env"
+        lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
+        lines = [x for x in lines if not any(re.match(rf"\s*{k}\s*=", x) for k in values)]
+        for k, v in values.items():
+            if v:
+                lines.append(f"{k}={v}")
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return anim_cloud()
+
     @app.get("/api/anim/options")
     def anim_options():
         from .animated import ART_STYLES
@@ -1640,16 +1681,24 @@ def create_app(cfg: Config) -> FastAPI:
         from .animated import ART_STYLES, QUALITIES
         from .toon import VOICES
 
-        if not anim_engine.installed():
-            raise HTTPException(400, "Install the AI engine first (the panel above the button).")
+        from . import hfcloud
+
+        engine = body.engine if body.engine in ("auto", "cloud", "local") else "auto"
+        cloud = engine == "cloud" or (engine == "auto" and hfcloud.ready())
+        if cloud and not hfcloud.ready():
+            raise HTTPException(400, "Paste your Hugging Face token in the Hugging Face box first.")
+        if not cloud and not anim_engine.installed():
+            raise HTTPException(400, "Connect Hugging Face (token box above) or install the AI engine (More options).")
         given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
                  "voice": body.voice if body.voice in _with_my_voice(VOICES) else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
-                 "watermark": body.watermark.strip()[:40], "form": body.form if body.form in ("story", "whatif") else "story"}
-        if given["form"] == "whatif" and given["style"] == "auto":
+                 "watermark": body.watermark.strip()[:40], "form": body.form if body.form in ("story", "whatif", "movie") else "story",
+                 "engine": engine, "series": re.sub(r"[^\w \-'&!?.]", "", body.series).strip()[:60]}
+        from .animated import _series_all
+        if given["form"] in ("whatif", "movie") and given["style"] == "auto" and given["series"] not in _series_all(cfg):
             given["style"] = "whatif-3d"
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 3)), "anim", "facts", "anim",
                            anim_input=given, captions=given["captions"], ai=body.ai)
