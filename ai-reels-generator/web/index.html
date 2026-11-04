@@ -1270,7 +1270,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud()]), story: loadStoryView, shoot: loadShootView }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, shoot: loadShootView }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -3303,10 +3303,19 @@ $("#anInstall").onclick = async () => {
   try { await api("/api/anim/setup", { method: "POST" }); } catch (e) { alert(e.message); }
   loadAnimSetup();
 };
-api("/api/anim/options").then((o) => {
-  $("#anVoice").innerHTML = Object.entries(o.voices).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
-  $("#anStyle").innerHTML += Object.entries(o.styles).map(([k, v]) => `<option value="${esc(k)}" title="${esc(v)}">${esc(k.replace(/-/g, " "))}</option>`).join("");
-}).catch(() => { $("#anVoice").innerHTML = '<option value="en-US-AndrewMultilingualNeural">Andrew (US)</option>'; });
+// Narrators and art styles: loaded every time the tab opens (a first try before the PIN login got only the fallback).
+async function loadAnimOptions() {
+  try {
+    const o = await api("/api/anim/options"), keepV = $("#anVoice").value, keepS = $("#anStyle").value;
+    $("#anVoice").innerHTML = Object.entries(o.voices).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
+    $("#anStyle").innerHTML = '<option value="auto">🎲 Claude picks (never the last 3)</option>' + Object.entries(o.styles).map(([k, v]) => `<option value="${esc(k)}" title="${esc(v)}">${esc(k.replace(/-/g, " "))}</option>`).join("");
+    if (keepV && o.voices[keepV]) $("#anVoice").value = keepV;
+    if (keepS && [...$("#anStyle").options].some((x) => x.value === keepS)) $("#anStyle").value = keepS;
+  } catch (e) {
+    if (!$("#anVoice").options.length) $("#anVoice").innerHTML = '<option value="en-US-AndrewMultilingualNeural">Andrew (US)</option>';
+  }
+}
+loadAnimOptions();
 try { $("#anMark").value = localStorage.getItem("animMark") || ""; } catch (e) {}
 // Hugging Face cloud engine + movie series (reelgen/hfcloud.py, animated.series_list).
 let hfReady = false;
