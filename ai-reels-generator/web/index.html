@@ -767,6 +767,33 @@ Plain paragraphs are read by the narrator."></textarea>
     </details>
   </section>
 
+  <section class="view" id="view-divine">
+    <div class="panel">
+      <h2>🔱 Divine Shorts</h2>
+      <p class="hint">Epic, photoreal 9:16 Shorts of moments from Indian mythology: Claude retells the moment faithfully in a few
+        powerful lines, Hugging Face draws every shot and animates it (Qwen-Image + LTX-2.5, on your account's daily GPU
+        minutes), then the voice, music and edit are added here. Needs the Hugging Face token saved on the Anim tab.</p>
+      <div class="status-list" id="dvStatus">Checking Hugging Face…</div>
+      <label for="dvTopic">Which moment?</label>
+      <textarea class="edit" id="dvTopic" rows="2" placeholder="e.g. Shiva drinks the Halahala poison during the churning of the ocean / Hanuman lifts the Dronagiri mountain"></textarea>
+      <div class="chips" id="dvIdeas"></div>
+      <div class="grid2">
+        <div><label for="dvSeconds">Length</label>
+          <select id="dvSeconds"><option value="20">About 20 s</option><option value="30" selected>About 30 s</option><option value="45">About 45 s</option><option value="60">About 1 min</option></select></div>
+        <div><label for="dvLanguage">Narration language</label>
+          <select id="dvLanguage"><option value="hindi" selected>Hindi</option><option value="hinglish">Hinglish</option><option value="english">English</option></select></div>
+      </div>
+      <div class="grid2">
+        <div><label for="dvVoice">Narrator</label><select id="dvVoice"></select></div>
+        <div><label for="dvCaptions">Subtitles</label>
+          <select id="dvCaptions"><option value="false" selected>🚫 None</option><option value="true">💬 Small subtitles</option></select></div>
+      </div>
+      <label for="dvMark">Channel name on screen (optional)</label><input id="dvMark" placeholder="e.g. your channel name">
+      <button class="primary" id="dvBtn">🔱 Make the Short</button>
+      <p class="hint" id="dvMsg"></p>
+    </div>
+  </section>
+
   <section class="view" id="view-story">
     <div class="panel">
       <h2>📱 Shorts Studio</h2>
@@ -1164,6 +1191,7 @@ Plain paragraphs are read by the narrator."></textarea>
   <button data-view="sticky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M8 14c-2 1.5-3 4-3 7h14c0-3-1-5.5-3-7"/><circle cx="10.3" cy="7.6" r=".6"/><circle cx="13.7" cy="7.6" r=".6"/></svg>Sticky</button>
   <button data-view="toon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a8 7 0 0 1 16 0c0 4-3.6 7-8 7-1.2 0-2.3-.2-3.3-.6L4 19l1-3.5A6.6 6.6 0 0 1 4 11z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/><path d="M9.5 13.5c1.4 1 3.6 1 5 0"/></svg>Toon</button>
   <button data-view="anim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5l2 4M12 5l2 4M17 5l2 4"/><path d="M10 12.5v4l3.5-2z"/></svg>Anim</button>
+  <button data-view="divine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M6 6c0 4 2 6 6 6s6-2 6-6"/><path d="M6 6V3M18 6V3"/><path d="M9 22h6"/></svg>Divine</button>
   <button data-view="story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 9.5v5l4-2.5z"/><path d="M10 18h4"/></svg>Shorts+</button>
   <button data-view="shoot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="14" height="11" rx="2"/><path d="M16 11l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.5"/></svg>Shoot</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
@@ -1270,7 +1298,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("#nav").hidden = view === "login";
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, shoot: loadShootView }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -2441,7 +2469,7 @@ function aiValue(key) {
 // The pickers on the tabs, placed above each Make button.
 [["create", "#genBtn", { writes: "script, hook, fixes" }], ["shoot", "#shCreate", { writes: "shot plan", check: false }], ["script", "#svBtn", { writes: "storyboard" }],
  ["stick", "#stBtn", { writes: "episode, storyboard", checkEffort: "low" }], ["sticky", "#syBtn", { writes: "film", check: false }], ["toon", "#toBtn", { writes: "script" }],
- ["anim", "#anBtn", { writes: "script" }], ["story", "#ssBtn", { writes: "story, storyboard" }]].forEach(([key, btn, opts]) => {
+ ["anim", "#anBtn", { writes: "script" }], ["story", "#ssBtn", { writes: "story, storyboard" }], ["divine", "#dvBtn", { writes: "story" }]].forEach(([key, btn, opts]) => {
   const b = document.querySelector(btn);
   if (b) b.insertAdjacentHTML("beforebegin", aiPicker(key, opts));
 });
@@ -3366,6 +3394,33 @@ $("#anBtn").onclick = async () => {
     show("create");
   } catch (e) { $("#anMsg").textContent = "Couldn't start it: " + e.message; }
   finally { $("#anBtn").disabled = false; }
+};
+
+// 🔱 Divine Shorts (/api/divine → storyshorts kind 'divine' on the Hugging Face engine).
+const DV_IDEAS = ["Shiva drinks the Halahala poison", "Hanuman lifts the Dronagiri mountain", "Ganga descends into Shiva's hair",
+  "Krishna lifts Govardhan hill", "Narasimha appears from the pillar", "Vasuki and the churning of the ocean"];
+$("#dvIdeas").innerHTML = DV_IDEAS.map((x) => `<button class="chip" type="button">${esc(x)}</button>`).join("");
+$("#dvIdeas").querySelectorAll("button").forEach((b) => (b.onclick = () => { $("#dvTopic").value = b.textContent; }));
+async function loadDivine() {
+  try {
+    const [c, o] = await Promise.all([api("/api/anim/cloud"), api("/api/anim/options")]);
+    $("#dvStatus").innerHTML = `<div><span>Hugging Face</span><span>${c.ready ? "✅ Connected" : "Not connected: save your token on the Anim tab"}</span></div>`;
+    $("#dvBtn").disabled = !c.ready;
+    const keep = $("#dvVoice").value;
+    $("#dvVoice").innerHTML = '<option value="">Auto (by language)</option>' + Object.entries(o.voices).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
+    if (keep && o.voices[keep]) $("#dvVoice").value = keep;
+  } catch (e) { $("#dvStatus").textContent = "Couldn't check Hugging Face: " + e.message; }
+}
+$("#dvBtn").onclick = async () => {
+  const body = { topic: $("#dvTopic").value, seconds: Number($("#dvSeconds").value), language: $("#dvLanguage").value,
+                 voice: $("#dvVoice").value, captions: $("#dvCaptions").value === "true", watermark: $("#dvMark").value, ai: aiValue("divine") };
+  $("#dvBtn").disabled = true;
+  try {
+    await api("/api/divine", { method: "POST", body: JSON.stringify(body) });
+    $("#dvMsg").textContent = "Started. Follow it on the Create tab.";
+    show("create");
+  } catch (e) { $("#dvMsg").textContent = "Couldn't start it: " + e.message; }
+  finally { $("#dvBtn").disabled = false; }
 };
 
 // Shorts Studio (reelgen/storyshorts.py): 9:16 Shorts, one or a series, any mix of source, kind, voice and look.

@@ -102,7 +102,7 @@ def _to_jpg(src: str, out: Path, w: int, h: int) -> None:
                    check=True, capture_output=True)
 
 
-def draw(job: dict, work: Path, progress: Progress, stop: Callable[[], None]) -> None:
+def draw(job: dict, work: Path, progress: Progress, stop: Callable[[], None], size: tuple[int, int] = (PIC_W, PIC_H)) -> None:
     """The local `keyframes` job (animated.keyframe_job) drawn by Qwen-Image: character sheets first (text only),
     then every shot with its main character's sheet as reference (and the shot before it for `same_place`)."""
     from gradio_client import handle_file
@@ -133,16 +133,16 @@ def draw(job: dict, work: Path, progress: Progress, stop: Callable[[], None]) ->
         def make():
             # The Space needs its two steps in one session: prepare (stores the prompt and pictures), then generate.
             client.predict(gallery, prompt, False, True, "quality", seed, False, api_name="/prepare_request")
-            return client.submit(prompt, False, True, "./generation_logs_paper_case", seed, PIC_H, PIC_W, "",
+            return client.submit(prompt, False, True, "./generation_logs_paper_case", seed, size[1], size[0], "",
                                  api_name="/generate_request")
 
         path = _call(make, f"Picture {it['id']}", stop)
-        _to_jpg(str(path), out, PIC_W, PIC_H)
+        _to_jpg(str(path), out, size[0], size[1])
         _ok(out)
     progress(f"☁️ {len(todo)} pictures drawn in {(time.time() - t0) / 60:.1f} min")
 
 
-def animate(job: dict, work: Path, progress: Progress, stop: Callable[[], None]) -> None:
+def animate(job: dict, work: Path, progress: Progress, stop: Callable[[], None], size: tuple[int, int] = (CLIP_W, CLIP_H)) -> None:
     """The local `clips` job (animated.clip_jobs) animated by LTX-2.5: one clip per picture, its sound removed
     (the edit has its own), plus the `.last.jpg` the editor holds when the line outlasts the clip."""
     from gradio_client import handle_file
@@ -158,13 +158,12 @@ def animate(job: dict, work: Path, progress: Progress, stop: Callable[[], None])
         out = Path(s["out"])
         out.parent.mkdir(parents=True, exist_ok=True)
         seconds = max(1.0, min(LONGEST, round((int(s.get("frames", 49)) - 1) / 24 * 2) / 2))
-        prompt = (f"{s['prompt']} Consistent character, stable face, glowing eyes stay the same, no morphing, "
-                  "smooth cinematic 3D animation.")
+        prompt = f"{s['prompt']} {job.get('finish') or 'Consistent character, stable face, no morphing, smooth cinematic animation.'}"
         progress(f"☁️ Animating shot {n} of {len(todo)} ({s['id']}, {seconds:g} s) on Hugging Face")
         seed = int(s.get("seed", 42)) % 2147483647
 
         def make():
-            return client.submit(prompt, handle_file(s["image"]), CLIP_H, CLIP_W, seconds, seed, "conv", False, False,
+            return client.submit(prompt, handle_file(s["image"]), size[1], size[0], seconds, seed, "conv", False, False,
                                  True, api_name="/run")
 
         result = _call(make, f"Clip {s['id']}", stop)

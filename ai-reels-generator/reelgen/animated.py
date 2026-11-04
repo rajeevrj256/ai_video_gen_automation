@@ -70,6 +70,9 @@ ART_STYLES = {
     "whatif-3d": ("stylized 3D animated film still, soft cinematic light, shallow depth of field, miniature-like detailed sets, "
                   "people drawn as simple figures with glossy round black heads and two glowing white oval eyes, no mouth or nose, "
                   "plain clothes", "#FFD23F"),
+    "divine-epic": ("photorealistic epic mythological film still, hyper-detailed, divine and majestic, golden Himalayan "
+                    "temples, storm clouds and mist, volumetric god rays, dramatic rim light, rich gold and deep blue, "
+                    "8K cinematic, Indian mythology", "#F5B700"),
     "neon-synth": ("neon synthwave illustration, glowing outlines, dark purple night, magenta and cyan light", "#F15BB5"),
 }
 CAMERAS = {"push-in": "the camera slowly pushes in", "pull-out": "the camera slowly pulls back",

@@ -56,11 +56,14 @@ Progress = Callable[[str], None]
 CHECKPOINT = "story-checkpoint.json"
 LANGUAGES = ("english", "hinglish", "hindi")
 VISUALS = ("anim", "key", "pictures", "footage", "graphics")  # graphics: the long videos' motion graphics, 9:16
-KINDS = ("story", "facts", "explainer", "news", "comedy")
+KINDS = ("story", "facts", "explainer", "news", "comedy", "divine")
 TRUE_KINDS = ("facts", "explainer", "news")  # written with web search and fact-checked
 WPS = {"english": 2.7, "hinglish": 2.5, "hindi": 2.4}  # spoken words a second (edge +8%, Sarvam at pace 1)
 MAX_PARTS = 6
 PORTRAIT = (768, 1344)  # SDXL's own 9:16 size
+CLOUD_PICTURE, CLOUD_CLIP = (768, 1344), (832, 1472)  # Hugging Face: Qwen-Image's 9:16 preset, LTX-2.5's limits (64s)
+CLOUD_FINISH = {"divine": "Photoreal epic cinematic motion, majestic and slow, divine light, mist and clouds drifting, "
+                          "faces and bodies stay stable, no morphing."}
 HD_CLIP, HD_PICTURE = (1080, 1920), (1440, 2560)
 FOOTAGE_ACCENTS = ["#FFD23F", "#4CC9F0", "#F72585", "#06D6A0", "#FF9F1C"]
 
@@ -83,6 +86,13 @@ KIND_RULES = {
     "explainer": "A clear explainer: one surprising question answered step by step with real facts, numbers and how it "
                  "works; each part gets one step closer and the full answer lands at the end. Every name, number and date "
                  "is true and confirmed with web search (put the pages you opened in `sources`). No politics, no rumours.",
+    "divine": "A moment from Indian mythology and scripture (the Ramayana, the Mahabharata, the Puranas: Shiva, Vishnu, "
+              "Devi, Ganesha, Hanuman, Krishna...) told as an epic, goosebump-raising Short, faithfully: only what the "
+              "scriptures tell (no invented events; where versions differ, use the best-known one), reverent and grand, "
+              "never mocking, never violent in detail. Few words, huge pictures: a powerful first line, short lines with "
+              "pauses, the divine moment as the climax, a closing line of devotion or awe (e.g. 'Har Har Mahadev'). "
+              "Gods and divine beings are drawn majestically in their traditional forms (attributes, colours, weapons, "
+              "mounts), photoreal and epic; every shot a vast, dramatic picture.",
     "news": "One real news story told so a viewer instantly gets why it matters. Every fact confirmed with web search (pages "
             "in `sources`).",
 }
@@ -110,6 +120,7 @@ class StoryRequest:
     captions: bool = False
     watermark: str = ""
     memes: str = "off"  # the graphics look: off | some | lots (reelgen/memes.py)
+    engine: str = "local"  # local (the AI engine on this computer) | cloud (Hugging Face: reelgen/hfcloud.py)
 
 
 def default_voice(language: str) -> str:
@@ -838,7 +849,7 @@ def clip_size(req: StoryRequest) -> tuple[int, int, float]:
 
 def clip_jobs(series: StorySeries, tls: list[dict], style: str, req: StoryRequest, work: Path, seed: int) -> tuple[dict, dict]:
     look = ART_STYLES[style][0]
-    W, H, longest = clip_size(req)
+    W, H, longest = (*CLOUD_CLIP, 5.0) if req.engine == "cloud" else clip_size(req)
     shots = []
     for n, (row, sh) in enumerate(_plan(series, tls)):
         if not _motion_wanted(row, sh, req.visuals):
@@ -984,7 +995,7 @@ def run_story(cfg: Config, req: StoryRequest, progress: Progress = log.info, res
         (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         pause_point()
 
-    if _ai_pictures(req) and not anim_engine.installed():
+    if _ai_pictures(req) and req.engine != "cloud" and not anim_engine.installed():
         raise RuntimeError("AI pictures need the AI engine: open the Anim tab and press 'Install the AI engine' "
                            "(or pick stock footage)")
     # 1. the story
@@ -1191,23 +1202,39 @@ def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Pa
              + (f"; art style {style}" if _ai_pictures(req) else "; stock footage"))
     # pictures and motion
     pic_found, up = state.get("pic_found") or [], None
+    cloud = req.engine == "cloud"
+    if cloud:
+        from . import hfcloud
+        from .pipeline import pause_point
+
+        progress("Engine: Hugging Face cloud (pictures: %s, clips: %s)" % hfcloud.spaces())
+
+    def draw(job: dict) -> None:
+        if cloud:
+            hfcloud.draw(job, work, progress, pause_point, size=CLOUD_PICTURE)
+        else:
+            anim_engine.run_stage("keyframes", job, work, progress, "Drawing the pictures")
+
     if _ai_pictures(req):
-        anim_engine.run_stage("keyframes", keyframe_job(series, tls, style, work, seed, state.get("pic_fixes")), work,
-                              progress, "Drawing the pictures")
+        draw(keyframe_job(series, tls, style, work, seed, state.get("pic_fixes")))
         save(stage="pictures")
         if not state.get("pics_checked") and not any((work / "clips").glob("*.mp4.ok")):
             pic_found = animated._picture_rounds(
                 cfg, None, {}, style, work, seed, state, progress, save,  # type: ignore[arg-type]
                 check=lambda ids: check_pictures(cfg, series, tls, work, ids),
-                job=lambda fixes: keyframe_job(series, tls, style, work, seed, fixes))
+                job=lambda fixes: keyframe_job(series, tls, style, work, seed, fixes), drawer=draw)
         emb, clipjob = clip_jobs(series, tls, style, req, work, seed)
-        if clipjob["shots"]:
+        if clipjob["shots"] and cloud:
+            clipjob["finish"] = CLOUD_FINISH.get(req.kind, "")
+            progress(f"Clips: {CLOUD_CLIP[0]}x{CLOUD_CLIP[1]} on Hugging Face, {len(clipjob['shots'])} shots")
+            hfcloud.animate(clipjob, work, progress, pause_point, size=CLOUD_CLIP)
+        elif clipjob["shots"]:
             W, H, longest = clip_size(req)
             progress(f"Clips: {W}x{H}, up to {longest:.0f} s each, {len(clipjob['shots'])} of "
                      f"{sum(len(tl['shots']) for tl in tls)} shots")
             anim_engine.run_stage("embed", emb, work, progress, "Reading the motion prompts")
             anim_engine.run_stage("clips", clipjob, work, progress, "Animating the shots")
-        if req.upscale:
+        if req.upscale and not cloud:
             up = animated.upscale_job([s for tl in tls for s in tl["shots"]], style, work, HD_CLIP, HD_PICTURE)
             if up and up["items"]:
                 anim_engine.run_stage("upscale", up, work, progress, "Sharpening to full HD")
