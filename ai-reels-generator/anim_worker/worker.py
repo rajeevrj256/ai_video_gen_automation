@@ -142,6 +142,9 @@ def broken(image) -> bool:
 SDXL_BASE = "stabilityai/stable-diffusion-xl-base-1.0"
 LIGHTNING = ("ByteDance/SDXL-Lightning", "sdxl_lightning_4step_unet.safetensors")
 FP16_VAE = "madebyollin/sdxl-vae-fp16-fix"
+# Photoreal pictures (the Divine look): a whole SDXL fine-tune distilled to 4-6 steps, openrail++. Its own advice:
+# 5 steps, DPM++ SDE Karras, CFG 1-2 (so the negative prompt works).
+PHOTOREAL = "SG161222/RealVisXL_V5.0_Lightning"
 IP_ADAPTER = ("h94/IP-Adapter", "sdxl_models", "ip-adapter-plus_sdxl_vit-h.safetensors", "models/image_encoder")
 
 
@@ -152,6 +155,17 @@ def sdxl_pipeline(job: dict, dtype):
     from safetensors.torch import load_file
 
     base = job.get("base_model") or SDXL_BASE
+    if job.get("model") == "photoreal" and not job.get("tiny"):
+        from diffusers import DPMSolverMultistepScheduler
+
+        loading("the photoreal picture model (RealVisXL Lightning)", 6.9, PHOTOREAL, "unet/diffusion_pytorch_model.fp16.safetensors")
+        kw = {"vae": AutoencoderKL.from_pretrained(FP16_VAE, torch_dtype=dtype)} if dtype == torch.float16 else {}
+        pipe = StableDiffusionXLPipeline.from_pretrained(PHOTOREAL, torch_dtype=dtype, variant="fp16", **kw)
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config, algorithm_type="sde-dpmsolver++",
+                                                                 use_karras_sigmas=True)
+        pipe.vae.enable_tiling()
+        place(pipe, job)
+        return pipe, False
     if job.get("tiny"):  # tests: a tiny random SDXL, no Lightning weights
         pipe = StableDiffusionXLPipeline.from_pretrained(base, torch_dtype=dtype)
     else:
@@ -195,7 +209,7 @@ def keyframes(job: dict) -> None:
         return
     dtype = pick_dtype(job, "sdxl")
     pipe, ip = sdxl_pipeline(job, dtype)
-    i2i = StableDiffusionXLImg2ImgPipeline.from_pipe(pipe)
+    i2i = StableDiffusionXLImg2ImgPipeline.from_pipe(pipe, torch_dtype=dtype)  # else diffusers casts the shared model to fp32: twice the memory
     W, H = job.get("width", 1024), job.get("height", 576)
     steps = job.get("steps", 4)
     blank = Image.new("RGB", (224, 224), (128, 128, 128))
@@ -206,7 +220,8 @@ def keyframes(job: dict) -> None:
             continue
         t0 = time.time()
         g = torch.Generator("cpu").manual_seed(int(it.get("seed", 0)))
-        common = dict(prompt=it["prompt"], negative_prompt=job.get("negative", ""), guidance_scale=0.0, generator=g)
+        common = dict(prompt=it["prompt"], negative_prompt=job.get("negative", ""),
+                      guidance_scale=float(job.get("guidance", 0.0)), generator=g)
         ref = it.get("ref")
         if ip:
             # Each shot takes the look of its main character from that character's sheet (scale 0 = no one).

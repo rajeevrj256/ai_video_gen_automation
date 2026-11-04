@@ -771,10 +771,9 @@ Plain paragraphs are read by the narrator."></textarea>
     <div class="panel">
       <h2>🔱 Divine Shorts</h2>
       <p class="hint">Epic, photoreal 9:16 Shorts of moments from Indian mythology: Claude retells the moment faithfully in a few
-        powerful lines and your laptop draws every shot (the AI engine), then each picture gets a 2.5D camera move through
-        its depth (near things slide past far ones) and effects: mist, god rays, embers, lightning, rain, sparks, a
-        trembling ground. With a Hugging Face token saved (Anim tab) the pictures and real animated clips come from there
-        instead.</p>
+        powerful lines, your laptop draws every shot as a photoreal film frame, the key shots get real AI motion on
+        Hugging Face (a free account's token is enough: about 5 GPU minutes a day), and every other shot gets a 2.5D camera
+        move through its depth with effects (mist, god rays, embers, lightning, rain, sparks, a trembling ground).</p>
       <div class="status-list" id="dvStatus">Checking Hugging Face…</div>
       <label for="dvTopic">Which moment?</label>
       <textarea class="edit" id="dvTopic" rows="2" placeholder="e.g. Shiva drinks the Halahala poison during the churning of the ocean / Hanuman lifts the Dronagiri mountain"></textarea>
@@ -3406,7 +3405,8 @@ $("#dvIdeas").querySelectorAll("button").forEach((b) => (b.onclick = () => { $("
 async function loadDivine() {
   try {
     const [c, o] = await Promise.all([api("/api/anim/cloud"), api("/api/anim/options")]);
-    $("#dvStatus").innerHTML = `<div><span>Made with</span><span>${c.ready ? "☁️ Hugging Face (pictures + animated clips)" : "💻 This computer: AI pictures + 2.5D camera + effects"}</span></div>`;
+    $("#dvStatus").innerHTML = `<div><span>Pictures</span><span>💻 This computer (photoreal model)</span></div>`
+      + `<div><span>Motion</span><span>${c.ready ? "☁️ Key shots: real AI motion on Hugging Face (free daily minutes) · the rest: 2.5D camera + effects" : "2.5D camera + effects · save a free Hugging Face token on the Anim tab for real AI motion on the key shots"}</span></div>`;
     const keep = $("#dvVoice").value;
     $("#dvVoice").innerHTML = '<option value="">Auto (by language)</option>' + Object.entries(o.voices).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
     if (keep && o.voices[keep]) $("#dvVoice").value = keep;

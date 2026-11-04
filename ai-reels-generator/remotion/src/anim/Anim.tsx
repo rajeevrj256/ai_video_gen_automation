@@ -210,11 +210,12 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
   const opening = shot.type === 'shot' && shot.chapter < 0 && Boolean(props.drop); // the cinematic cold open
   const picture = (
     <div style={{position: 'absolute', inset: 0, transform: `scale(${zoomIn * (1 + punch)}) translate(${whip * 900 + shake + quake}px, ${(shake + quake) * 0.4}px) skewX(${whip * -12}deg)`}}>
-      <div style={{position: 'absolute', inset: 0, filter: opening ? gradeFilter(shot.grade) : undefined}}>
+      <div style={{position: 'absolute', inset: 0, filter: opening ? gradeFilter(shot.grade) : props.style === 'divine-epic' ? DIVINE_GRADE : undefined}}>
         {shot.type === 'shot' ? <Visual shot={shot} frame={Math.max(0, frame)} frames={frames} />
           : <Card shot={shot} frame={Math.max(0, frame)} frames={frames} fps={fps} accent={props.accent} face={faceFor(props.style)} />}
       </div>
       {opening ? <GradeWash grade={shot.grade} /> : null}
+      {props.style === 'divine-epic' ? <DivineWash /> : null}
       {/* a soft vignette ties the AI frames together */}
       <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.38) 100%)'}} />
     </div>
@@ -234,6 +235,16 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
     </Layer>
   );
 };
+
+// The Divine look's grade (the reference reels: steel-blue storm shadows, warm gold light, deep contrast).
+const DIVINE_GRADE = 'contrast(1.1) saturate(1.12) brightness(0.96)';
+const DivineWash: React.FC = () => (
+  <>
+    <div style={{position: 'absolute', inset: 0, mixBlendMode: 'soft-light', opacity: 0.55,
+      background: 'linear-gradient(to bottom, rgba(40,70,120,0.9) 0%, rgba(60,80,110,0.25) 45%, rgba(255,170,60,0.55) 100%)'}} />
+    <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 45%, transparent 50%, rgba(5,10,25,0.55) 100%)'}} />
+  </>
+);
 
 // Divine VFX drawn over the picture (the picture itself moves in depth, anim_worker `parallax`). Everything is
 // computed from the frame, never random at render time, so every render is the same.

@@ -1763,7 +1763,9 @@ def create_app(cfg: Config) -> FastAPI:
         clips made on Hugging Face (reelgen/hfcloud.py)."""
         from . import anim_engine, hfcloud, sarvam
 
-        engine = "cloud" if hfcloud.ready() and body.get("engine") != "vfx" else "vfx"
+        # Pictures on this computer (photoreal model), the key shots animated on Hugging Face while a saved token's
+        # free daily minutes last, every other shot a camera move in depth. 'cloud' = pictures there too (PRO).
+        engine = "cloud" if hfcloud.ready() and body.get("engine") == "cloud" else "vfx"
         if engine == "vfx" and not anim_engine.installed():
             raise HTTPException(400, "Install the AI engine first (Anim tab > More options), or connect Hugging Face.")
         topic = str(body.get("topic") or "").strip()[:300]

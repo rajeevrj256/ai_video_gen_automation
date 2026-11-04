@@ -94,7 +94,18 @@ KIND_RULES = {
               "Gods and divine beings are drawn majestically in their traditional forms (attributes, colours, weapons, "
               "mounts), photoreal and epic; every shot a vast, dramatic picture. Give every shot 1-3 `vfx` that fit "
               "it (mist and rays on mountains, embers by fire, lightning in a storm, sparks on a divine reveal, shake on "
-              "the climax), and a slow camera move.",
+              "the climax), and a slow camera move. PICTURES: every `scene` is an epic film frame of a PLACE and a "
+              "MOMENT, never a character portrait. Name the setting first and make it vast (Himalayan peaks, storm "
+              "clouds, the ocean of milk, Lanka's golden walls, a battlefield at dusk, Kailash under the moon), then "
+              "the figure in action from a dramatic angle: an extreme wide shot with a small figure against something "
+              "colossal, a low angle looking up at a giant form, a silhouette against light, an aerial view, over the "
+              "shoulder, or a close-up of eyes, hands, a weapon or a symbol. Never the same framing twice in a row, never "
+              "a figure just standing facing the camera, never a plain background. Write each deity's traditional look "
+              "inside every scene they are in (the picture model remembers nothing: e.g. 'Hanuman, a mighty monkey-faced "
+              "god with a golden crown, red-orange dhoti and a golden mace'); `characters` stays empty. One subject "
+              "and ONE simple, clear action per picture (the image model can't draw two figures interacting or a "
+              "complicated deed: show the moment around it instead, e.g. Hanuman soaring through storm clouds toward a "
+              "glowing mountain, then a close-up of the mountain in his raised hand).",
     "news": "One real news story told so a viewer instantly gets why it matters. Every fact confirmed with web search (pages "
             "in `sources`).",
 }
@@ -758,6 +769,8 @@ def _layout(series: StorySeries, k: int, req: StoryRequest, cfg: Config, work: P
         shown = sh.show.strip() or ("" if english_screen else sh.emphasis.strip())  # never the voice's words in English mode
         emph = {"text": shown[:40], "at": round(lead + span[0], 3), "end": round(lead + span[1], 3)} if span else None
         fx = [f for f in dict.fromkeys(sh.emphasis_fx) if f != "text" or shown][:4] if span else []
+        if req.kind == "divine":  # the reference reels carry no words on the picture: the picture is the story
+            emph, fx = (emph if any(f != "text" for f in fx) else None), [f for f in fx if f != "text"]
         tr = sh.transition if not (sh.transition == last_tr and sh.transition != "cut") else "cut"
         last_tr = tr
         sid = f"p{k + 1}s{i:02d}"
@@ -767,7 +780,8 @@ def _layout(series: StorySeries, k: int, req: StoryRequest, cfg: Config, work: P
                       "chapter": 0 if i else -1, "image": f"keyframes/{sid}.jpg", "clip": None, "camera": sh.camera,
                       "transition": tr if i else "cut", "importance": sh.importance, "emphasis": emph,
                       "emphasisFx": fx,
-                      "onScreen": sh.on_screen.strip()[:28] or None, "query": sh.footage.strip(),
+                      "onScreen": (sh.on_screen.strip()[:28] or None) if req.kind != "divine" else None,
+                      "query": sh.footage.strip(),
                       **({"vfx": list(dict.fromkeys(getattr(sh, "vfx", [])))[:3]} if getattr(sh, "vfx", None) else {})})
         if "lightning" in (getattr(sh, "vfx", None) or []):
             cue("impact", t + duration * 0.35, 0.55)
@@ -798,8 +812,28 @@ def _look(series: StorySeries, style: str) -> str:
     return f"{ART_STYLES[style][0]}, {series.style_notes.strip()}".strip(", ")
 
 
-def keyframe_job(series: StorySeries, tls: list[dict], style: str, work: Path, seed: int, fixes: dict | None = None) -> dict:
+# The Divine look (the user's reference: a photoreal reel of Shiva and Vasuki): vast scenes, never a portrait. The
+# first version gave every shot the main character's sheet as an IP-Adapter reference, and every shot of 'Hanuman lifts
+# Dronagiri' came out as the same figure standing on a plain backdrop, no mountain anywhere.
+DIVINE_NEGATIVE = ("character sheet, plain background, studio backdrop, standing still facing the camera, full body portrait, "
+                   "drawing, anime, cartoon, 3d render, text, letters, watermark, logo, frame, blurry, low quality, "
+                   "deformed, disfigured, bad anatomy, extra limbs, extra fingers, cropped head")
+DIVINE_LOOK = ("photorealistic epic mythological film still, cinematic composition, vast scale, volumetric god rays, "
+               "storm clouds and mist, dramatic rim light, deep blue and gold colour grade, highly detailed, 8k")
+
+
+def keyframe_job(series: StorySeries, tls: list[dict], style: str, work: Path, seed: int, fixes: dict | None = None,
+                 divine: bool = False) -> dict:
     fixes = fixes or {}
+    if divine:  # scene-first, photoreal, no character sheets: every shot its own place and scale
+        items = []
+        for n, (row, sh) in enumerate(_plan(series, tls)):
+            fix = fixes.get(row["id"])
+            items.append({"id": row["id"], "out": str(work / row["image"]),
+                          "seed": seed + 100 + n + (1000 * int(fix.get("round", 1)) if fix else 0),
+                          "prompt": f"{(fix['prompt'] if fix else sh.scene).strip()} {DIVINE_LOOK}"})
+        return {"characters": [], "shots": items, "negative": DIVINE_NEGATIVE, "width": PORTRAIT[0],
+                "height": PORTRAIT[1], "steps": 5, "guidance": 1.5, "model": "photoreal", "ip_adapter": False}
     look = _look(series, style)
     designs = {c.id: c for c in series.characters}
     chars = [{"id": f"char-{c.id}", "out": str(work / "keyframes" / f"char-{c.id}.jpg"), "seed": seed + 7 + j,
@@ -856,6 +890,42 @@ def clip_size(req: StoryRequest) -> tuple[int, int, float]:
     return H, W, longest  # the same pixels, standing up (all multiples of 32)
 
 
+REAL_CLIPS = 8  # at most this many key shots per Short go to Hugging Face (a free account has ~5 GPU minutes a day)
+IMPORTANCE = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def real_clips(clipjob: dict, tls: list[dict], req: StoryRequest, work: Path, progress: Progress) -> int:
+    """With a Hugging Face token saved (a free account works), the most important shots become real AI clips
+    (LTX-2.5) from the laptop's pictures, while the day's free GPU minutes last; when they run out the video simply
+    carries on with camera moves for the rest. Returns how many shots got a real clip."""
+    from . import hfcloud
+    from .pipeline import pause_point
+
+    if not hfcloud.ready() or not clipjob.get("shots"):
+        return 0
+    rows = {s["id"]: s for tl in tls for s in tl["shots"]}
+    order = sorted(clipjob["shots"], key=lambda c: (IMPORTANCE.get(rows.get(c["id"], {}).get("importance"), 2),
+                                                     clipjob["shots"].index(c)))
+    picked = []
+    for c in order[:REAL_CLIPS]:
+        hd = animated._hd(Path(c["image"]))
+        picked.append({**c, "image": str(hd if animated._ready(hd) else c["image"])})
+    progress(f"☁️ Real AI motion for the {len(picked)} key shots on Hugging Face (free daily minutes)")
+    try:
+        hfcloud.animate({"shots": picked, "finish": CLOUD_FINISH.get(req.kind, "")}, work, progress, pause_point,
+                        size=CLOUD_CLIP)
+    except hfcloud.CloudOut as exc:
+        progress(f"☁️ Hugging Face minutes used up for today; the other shots get camera moves ({str(exc)[:80]})")
+    except Exception as exc:  # noqa: BLE001 - the picture still moves with the camera
+        from .pipeline import Paused
+        if isinstance(exc, Paused):
+            raise
+        progress(f"☁️ Hugging Face clips failed ({str(exc)[:120]}); camera moves instead")
+    made = sum(1 for c in picked if animated._ready(Path(c["out"])))
+    progress(f"☁️ {made} of {len(picked)} key shots animated by AI")
+    return made
+
+
 def parallax_job(tls: list[dict], work: Path, seed: int) -> dict:
     """Every shot's picture (its sharpened copy when there is one) moved in depth for its whole length."""
     shots = []
@@ -871,7 +941,7 @@ def parallax_job(tls: list[dict], work: Path, seed: int) -> dict:
 
 def clip_jobs(series: StorySeries, tls: list[dict], style: str, req: StoryRequest, work: Path, seed: int) -> tuple[dict, dict]:
     look = ART_STYLES[style][0]
-    W, H, longest = (*CLOUD_CLIP, 5.0) if req.engine == "cloud" else clip_size(req)
+    W, H, longest = (*CLOUD_CLIP, 5.0) if req.engine in ("cloud", "vfx") else clip_size(req)
     shots = []
     for n, (row, sh) in enumerate(_plan(series, tls)):
         if not _motion_wanted(row, sh, req.visuals):
@@ -1239,13 +1309,13 @@ def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Pa
             anim_engine.run_stage("keyframes", job, work, progress, "Drawing the pictures")
 
     if _ai_pictures(req):
-        draw(keyframe_job(series, tls, style, work, seed, state.get("pic_fixes")))
+        draw(keyframe_job(series, tls, style, work, seed, state.get("pic_fixes"), divine=req.kind == "divine"))
         save(stage="pictures")
         if not state.get("pics_checked") and not any((work / "clips").glob("*.mp4.ok")):
             pic_found = animated._picture_rounds(
                 cfg, None, {}, style, work, seed, state, progress, save,  # type: ignore[arg-type]
                 check=lambda ids: check_pictures(cfg, series, tls, work, ids),
-                job=lambda fixes: keyframe_job(series, tls, style, work, seed, fixes), drawer=draw)
+                job=lambda fixes: keyframe_job(series, tls, style, work, seed, fixes, divine=req.kind == "divine"), drawer=draw)
         emb, clipjob = clip_jobs(series, tls, style, req, work, seed)
         if vfx:
             if req.upscale:  # sharpen the pictures first: the camera moves are made from them at full HD
@@ -1254,7 +1324,9 @@ def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Pa
                     up["items"] = [i for i in up["items"] if i["kind"] == "image"]
                 if up and up["items"]:
                     anim_engine.run_stage("upscale", up, work, progress, "Sharpening the pictures")
-            moves = parallax_job(tls, work, seed)
+            real_clips(clipjob, tls, req, work, progress)  # the key shots really move, while free minutes last
+            moves = parallax_job(tls, work, seed)  # the rest (and any a cloud clip didn't cover): a camera in depth
+            moves["shots"] = [m for m in moves["shots"] if not animated._ready(Path(m["out"]))]
             progress(f"Moving the camera through {len(moves['shots'])} pictures in depth (2.5D)")
             anim_engine.run_stage("parallax", moves, work, progress, "Camera moves")
         elif clipjob["shots"] and cloud:
