@@ -31,6 +31,7 @@ export type AnimShot = {
   stat?: string | null;
   counter?: {label: string; value: string} | null;
   stamp?: string | null;
+  vfx?: ('mist' | 'embers' | 'rays' | 'lightning' | 'rain' | 'snow' | 'sparks' | 'glow' | 'shake')[];
   cardText?: string; // title and chapter cards
   chapterNo?: number;
   chapters?: number;

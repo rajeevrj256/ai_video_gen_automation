@@ -889,7 +889,111 @@ def music(job: dict) -> None:
         say("item", stage="music", n=n, of=len(todo), id=m.get("id", ""), secs=round(time.time() - t0, 1))
 
 
-STAGES = {"keyframes": keyframes, "embed": embed, "clips": clips, "upscale": upscale, "music": music}
+# ---------- 2.5D parallax: a still picture moved like a real camera through its depth (no video model) ----------
+# The user couldn't buy GPU time, and the laptop's video model makes poor motion; this gives every picture a camera
+# that moves *through* it (near things slide more than far ones), computed from a small depth model on any card.
+
+DEPTH_REPO = "depth-anything/Depth-Anything-V2-Small-hf"
+
+
+def _depth_model(device):
+    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+
+    loading("the depth model", 0.1, DEPTH_REPO, "config.json")
+    proc = AutoImageProcessor.from_pretrained(DEPTH_REPO)
+    model = AutoModelForDepthEstimation.from_pretrained(DEPTH_REPO).to(device).eval()
+    return proc, model
+
+
+def _depth(proc, model, image, device):
+    """0 = far .. 1 = near, the picture's size, a little dilated so a near edge never tears."""
+    import torch
+    import torch.nn.functional as F
+
+    with torch.no_grad():
+        inputs = {k: v.to(device) for k, v in proc(images=image, return_tensors="pt").items()}
+        d = model(**inputs).predicted_depth[None]  # 1x1xh'xw', bigger = nearer
+        d = F.interpolate(d.float(), size=(image.height, image.width), mode="bicubic", align_corners=False)[0, 0]
+    lo, hi = torch.quantile(d.flatten()[::97], 0.02), torch.quantile(d.flatten()[::97], 0.98)
+    d = ((d - lo) / (hi - lo + 1e-6)).clamp(0, 1)
+    d = F.max_pool2d(d[None, None], 9, stride=1, padding=4)
+    return F.avg_pool2d(d, 15, stride=1, padding=7)[0, 0]
+
+
+def _move(camera: str, t: float, seed: int) -> tuple[float, float, float]:
+    """(zoom, shift x, shift y) at eased time t; the shift is how far the NEAREST things move (fractions of the
+    frame); far things move a quarter of it."""
+    import math
+
+    e = 0.5 - 0.5 * math.cos(math.pi * t)
+    side = 1 if seed % 2 else -1
+    return {
+        "push-in": (1 + 0.16 * e, 0.0, -0.01 * e), "pull-out": (1.16 - 0.16 * e, 0.0, 0.0),
+        "pan-left": (1.04, 0.07 * e, 0.0), "pan-right": (1.04, -0.07 * e, 0.0),
+        "tilt-up": (1.04, 0.0, 0.06 * e), "tilt-down": (1.04, 0.0, -0.06 * e),
+        "orbit": (1 + 0.06 * e, side * 0.09 * e, -0.01 * e),
+        "handheld": (1.03 + 0.03 * e, 0.012 * math.sin(6.3 * t + seed), 0.01 * math.sin(4.1 * t + seed * 2)),
+    }.get(camera, (1 + 0.08 * e, side * 0.03 * e, 0.0))
+
+
+def parallax(job: dict) -> None:
+    import imageio
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from PIL import Image
+
+    todo = [s for s in job["shots"] if not done(s["out"])]
+    say("start", stage="parallax", total=len(job["shots"]), todo=len(todo))
+    if not todo:
+        return
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    proc, model = _depth_model(device)
+    W, H, fps = int(job["width"]), int(job["height"]), int(job.get("fps", 24))
+    over = 1.10  # the frame is drawn from a slightly bigger picture, so no edge ever shows
+    n = 0
+    for s in todo:
+        t0 = time.time()
+        src = Image.open(s["image"]).convert("RGB")
+        depth = _depth(proc, model, src, device)
+        img = torch.from_numpy(np.asarray(src)).to(device).permute(2, 0, 1)[None].float() / 255
+        # cover-fit both to the output's shape (crop, never stretch)
+        sw, sh = src.size
+        scale = max(W / sw, H / sh)
+        nw, nh = round(sw * scale), round(sh * scale)
+        img = F.interpolate(img, size=(nh, nw), mode="bicubic", align_corners=False).clamp(0, 1)
+        dep = F.interpolate(depth[None, None], size=(nh, nw), mode="bilinear", align_corners=False)
+        top, left = (nh - H) // 2, (nw - W) // 2
+        img, dep = img[..., top:top + H, left:left + W], dep[..., top:top + H, left:left + W]
+        ys, xs = torch.meshgrid(torch.linspace(-1, 1, H, device=device), torch.linspace(-1, 1, W, device=device), indexing="ij")
+        frames = max(2, int(s["frames"]))
+        out = Path(s["out"])
+        tmp = out.with_suffix(".tmp.mp4")
+        writer = imageio.get_writer(str(tmp), format="FFMPEG", fps=fps, codec="libx264", quality=None,
+                                    pixelformat="yuv420p", macro_block_size=8, ffmpeg_params=["-crf", "17", "-preset", "medium"])
+        d = dep[0, 0]
+        last = None
+        try:
+            for i in range(frames):
+                z, dx, dy = _move(s.get("camera", ""), i / (frames - 1), int(s.get("seed", 0)))
+                k = 0.25 + 0.75 * d  # far moves a quarter as much as near
+                zoom = over * (1 + (z - 1) * k)
+                gx = xs / zoom - 2 * dx * k
+                gy = ys / zoom - 2 * dy * k
+                grid = torch.stack([gx, gy], -1)[None]
+                y = F.grid_sample(img, grid, mode="bilinear", padding_mode="border", align_corners=False)
+                last = (y[0].permute(1, 2, 0).clamp(0, 1) * 255).round().byte().cpu().numpy()
+                writer.append_data(last)
+        finally:
+            writer.close()
+        tmp.replace(out)
+        Image.fromarray(last).save(str(out.with_suffix(".last.jpg")), quality=93)
+        mark(out)
+        n += 1
+        say("item", stage="parallax", n=n, of=len(todo), id=s.get("id", ""), secs=round(time.time() - t0, 1))
+
+
+STAGES = {"keyframes": keyframes, "embed": embed, "clips": clips, "upscale": upscale, "music": music, "parallax": parallax}
 
 
 def main() -> int:

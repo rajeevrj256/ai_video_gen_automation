@@ -1761,10 +1761,11 @@ def create_app(cfg: Config) -> FastAPI:
         """🔱 Divine tab: epic mythological Shorts (the user's reference: a photoreal Shiva-and-Vasuki reel). The Shorts
         Studio pipeline with kind 'divine', the photoreal 'divine-epic' style, every shot animated, and the pictures and
         clips made on Hugging Face (reelgen/hfcloud.py)."""
-        from . import hfcloud, sarvam
+        from . import anim_engine, hfcloud, sarvam
 
-        if not hfcloud.ready():
-            raise HTTPException(400, "Connect Hugging Face first: paste your token on the Anim tab.")
+        engine = "cloud" if hfcloud.ready() and body.get("engine") != "vfx" else "vfx"
+        if engine == "vfx" and not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (Anim tab > More options), or connect Hugging Face.")
         topic = str(body.get("topic") or "").strip()[:300]
         if not topic:
             raise HTTPException(400, "Write which moment, e.g. 'Shiva drinks the Halahala poison'.")
@@ -1777,9 +1778,9 @@ def create_app(cfg: Config) -> FastAPI:
         seconds = max(20, min(90, int(body.get("seconds") or 30)))
         given = {"source": "ai", "topic": topic, "kind": "divine", "script": "", "title": "", "parts": 1, "split": "one",
                  "seconds": seconds, "language": language, "screen_text": "english", "visuals": "anim",
-                 "style": "divine-epic", "quality": "auto", "upscale": False, "voice": voice,
+                 "style": "divine-epic", "quality": "auto", "upscale": engine == "vfx", "voice": voice,
                  "speed": max(0, min(40, int(body.get("speed") or 0))), "captions": bool(body.get("captions")),
-                 "watermark": str(body.get("watermark") or "").strip()[:40], "memes": "off", "engine": "cloud"}
+                 "watermark": str(body.get("watermark") or "").strip()[:40], "memes": "off", "engine": engine}
         return jobs.submit(topic[:80], 1, "story", "divine", "storyshorts", story_input=given,
                            captions=given["captions"], ai=AIPick(**body["ai"]) if body.get("ai") else None)
 

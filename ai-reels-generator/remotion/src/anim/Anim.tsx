@@ -199,6 +199,8 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
   const sinceEm = em && t >= em.at ? Math.round((t - em.at) * fps) : null;
   const punch = fx.has('zoom') && sinceEm !== null ? interpolate(sinceEm, [0, 5], [0, 0.1], {...clamp, easing: Easing.out(Easing.back(2))}) : 0;
   const shake = fx.has('shake') && sinceEm !== null && sinceEm < 15 ? Math.sin(raw * 3.1) * 14 * (1 - sinceEm / 15) : 0;
+  // the Divine look's 'shake': the ground trembles for the first second and a half of the shot
+  const quake = shot.vfx?.includes('shake') && frame >= 0 && frame < fps * 1.6 ? Math.sin(raw * 2.7) * 10 * (1 - frame / (fps * 1.6)) : 0;
   // Coming in.
   const tr = shot.transition;
   const into = interpolate(raw, [0, Math.max(1, early)], [0, 1], clamp);
@@ -207,7 +209,7 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
   const whip = tr === 'whip' ? interpolate(frame, [0, 7], [1, 0], {...clamp, easing: Easing.out(Easing.cubic)}) : 0;
   const opening = shot.type === 'shot' && shot.chapter < 0 && Boolean(props.drop); // the cinematic cold open
   const picture = (
-    <div style={{position: 'absolute', inset: 0, transform: `scale(${zoomIn * (1 + punch)}) translate(${whip * 900 + shake}px, ${shake * 0.4}px) skewX(${whip * -12}deg)`}}>
+    <div style={{position: 'absolute', inset: 0, transform: `scale(${zoomIn * (1 + punch)}) translate(${whip * 900 + shake + quake}px, ${(shake + quake) * 0.4}px) skewX(${whip * -12}deg)`}}>
       <div style={{position: 'absolute', inset: 0, filter: opening ? gradeFilter(shot.grade) : undefined}}>
         {shot.type === 'shot' ? <Visual shot={shot} frame={Math.max(0, frame)} frames={frames} />
           : <Card shot={shot} frame={Math.max(0, frame)} frames={frames} fps={fps} accent={props.accent} face={faceFor(props.style)} />}
@@ -222,6 +224,7 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
       {CINE.has(tr) ? <CineIn kind={tr as CineTransition} seed={index + 1}>{picture}</CineIn> : picture}
       {shot.onScreen && opening ? <TypedLabel text={shot.onScreen} vertical={props.vertical} subtitles={props.captions} /> : null}
       {shot.onScreen && !opening ? <OnScreen text={shot.onScreen} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} /> : null}
+      {shot.vfx?.length ? <Vfx kinds={shot.vfx} frame={frame} frames={frames} fps={fps} seed={index + 1} /> : null}
       <WhatIf shot={shot} frame={frame} fps={fps} accent={props.accent} vertical={props.vertical} />
       {em && em.text && fx.has('text') && t >= em.at ? <Emphasis text={em.text} t={t} at={em.at} end={em.end} look={index % 3} accent={props.accent} fps={fps} face={faceFor(props.style)} vertical={props.vertical} /> : null}
       {tr === 'dip' && early ? <div style={{position: 'absolute', inset: 0, background: '#000', opacity: interpolate(raw, [0, early, early + 10], [0, 1, 0], clamp)}} /> : null}
@@ -230,6 +233,94 @@ const ShotView: React.FC<{shot: AnimShot; props: AnimProps; index: number; early
       {props.captions && shot.type === 'shot' ? <Caption shot={shot} t={t} vertical={props.vertical} /> : null}
     </Layer>
   );
+};
+
+// Divine VFX drawn over the picture (the picture itself moves in depth, anim_worker `parallax`). Everything is
+// computed from the frame, never random at render time, so every render is the same.
+const rnd = (n: number) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+const Vfx: React.FC<{kinds: string[]; frame: number; frames: number; fps: number; seed: number}> = ({kinds, frame, frames, fps, seed}) => {
+  const {width: W, height: H} = useVideoConfig();
+  const f = Math.max(0, frame);
+  const t = f / fps;
+  const has = (k: string) => kinds.includes(k);
+  const layers: React.ReactNode[] = [];
+  if (has('rays')) {
+    const sway = Math.sin(t * 0.6 + seed) * 4;
+    layers.push(<div key="rays" style={{position: 'absolute', inset: 0, mixBlendMode: 'screen', opacity: 0.55 + 0.1 * Math.sin(t * 1.3),
+      background: `repeating-conic-gradient(from ${200 + sway}deg at 50% -12%, rgba(255,232,170,0.0) 0deg, rgba(255,232,170,0.22) 3deg, rgba(255,232,170,0.0) 7deg, rgba(255,232,170,0.0) 13deg)`,
+      maskImage: 'linear-gradient(to bottom, black 0%, rgba(0,0,0,0.6) 45%, transparent 85%)', WebkitMaskImage: 'linear-gradient(to bottom, black 0%, rgba(0,0,0,0.6) 45%, transparent 85%)'}} />);
+  }
+  if (has('glow')) {
+    layers.push(<div key="glow" style={{position: 'absolute', inset: 0, mixBlendMode: 'screen',
+      opacity: 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(t * 2.2)),
+      background: 'radial-gradient(ellipse at 50% 42%, rgba(255,214,120,0.55) 0%, rgba(255,180,60,0.15) 35%, transparent 65%)'}} />);
+  }
+  if (has('mist')) {
+    for (let i = 0; i < 4; i++) {
+      const x = ((rnd(seed * 9 + i) * 1.4 - 0.2) * W + t * (18 + 14 * i) * (i % 2 ? -1 : 1));
+      const y = H * (0.45 + 0.14 * i) + Math.sin(t * 0.5 + i) * 12;
+      layers.push(<div key={`mist${i}`} style={{position: 'absolute', left: x - W * 0.6, top: y - H * 0.18, width: W * 1.2, height: H * 0.36,
+        background: 'radial-gradient(ellipse at center, rgba(235,240,255,0.42) 0%, rgba(235,240,255,0.12) 45%, transparent 70%)', filter: 'blur(18px)'}} />);
+    }
+  }
+  const particles = (key: string, n: number, draw: (i: number, x: number, y: number, a: number) => React.ReactNode) => {
+    for (let i = 0; i < n; i++) layers.push(<React.Fragment key={`${key}${i}`}>{draw(i, rnd(seed * 31 + i * 7), rnd(seed * 17 + i * 3), rnd(i * 13 + seed))}</React.Fragment>);
+  };
+  if (has('embers')) {
+    particles('em', 46, (i, rx, ry, ra) => {
+      const speed = 60 + ra * 120;
+      const y = H - ((ry * H + t * speed) % (H * 1.1));
+      const x = rx * W + Math.sin(t * (1 + ra) + i) * 26;
+      const s = 3 + ra * 6;
+      return <div style={{position: 'absolute', left: x, top: y, width: s, height: s, borderRadius: '50%', background: '#ffb347',
+        boxShadow: `0 0 ${s * 3}px ${s}px rgba(255,120,30,0.65)`, opacity: 0.5 + 0.5 * Math.sin(t * 5 + i)}} />;
+    });
+  }
+  if (has('sparks')) {
+    particles('sp', 36, (i, rx, ry, ra) => {
+      const y = (ry * H - t * (25 + ra * 40) + H) % H;
+      const x = rx * W + Math.sin(t * 0.8 + i) * 16;
+      const tw = 0.3 + 0.7 * Math.max(0, Math.sin(t * (2 + ra * 3) + i * 1.7));
+      const s = 2 + ra * 4;
+      return <div style={{position: 'absolute', left: x, top: y, width: s, height: s, borderRadius: '50%', background: '#fff6d8',
+        boxShadow: `0 0 ${s * 4}px ${s * 1.5}px rgba(255,220,140,${0.6 * tw})`, opacity: tw}} />;
+    });
+  }
+  if (has('snow')) {
+    particles('sn', 70, (i, rx, ry, ra) => {
+      const y = (ry * H + t * (50 + ra * 60)) % H;
+      const x = rx * W + Math.sin(t * 0.9 + i) * 30;
+      const s = 3 + ra * 5;
+      return <div style={{position: 'absolute', left: x, top: y, width: s, height: s, borderRadius: '50%', background: 'rgba(255,255,255,0.85)', filter: 'blur(1px)'}} />;
+    });
+  }
+  if (has('rain')) {
+    layers.push(<svg key="rain" width={W} height={H} style={{position: 'absolute', inset: 0, opacity: 0.45}}>
+      {Array.from({length: 90}, (_, i) => {
+        const rx = rnd(seed * 5 + i), ry = rnd(seed * 11 + i * 2);
+        const y = (ry * H + t * 1400) % (H + 80) - 80;
+        const x = rx * W - y * 0.12;
+        return <line key={i} x1={x} y1={y} x2={x - 9} y2={y + 70} stroke="rgba(210,225,255,0.8)" strokeWidth={2} />;
+      })}</svg>);
+  }
+  if (has('lightning')) {
+    const at = Math.round(frames * 0.35);
+    const since = f - at;
+    if (since >= 0 && since < 12) {
+      layers.push(<div key="flash" style={{position: 'absolute', inset: 0, background: '#eef3ff', mixBlendMode: 'screen',
+        opacity: since < 2 ? 0.75 : since < 4 ? 0.2 : since < 6 ? 0.5 : interpolate(since, [6, 12], [0.3, 0], {extrapolateRight: 'clamp'})}} />);
+      if (since < 7) {
+        let x = W * (0.3 + 0.4 * rnd(seed)), y = 0;
+        const pts = [`${x},${y}`];
+        while (y < H * 0.55) { y += 40 + rnd(y + seed) * 60; x += (rnd(x + y) - 0.5) * 110; pts.push(`${x},${y}`); }
+        layers.push(<svg key="bolt" width={W} height={H} style={{position: 'absolute', inset: 0}}>
+          <polyline points={pts.join(' ')} fill="none" stroke="rgba(200,220,255,0.6)" strokeWidth={22} style={{filter: 'blur(10px)'}} />
+          <polyline points={pts.join(' ')} fill="none" stroke="#ffffff" strokeWidth={5} /></svg>);
+      }
+    }
+  }
+  return <>{layers}</>;
 };
 
 // What-if overlays: a fact pill at the bottom, a counter box that counts up, a comic stamp.

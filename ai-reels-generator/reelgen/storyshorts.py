@@ -92,7 +92,9 @@ KIND_RULES = {
               "never mocking, never violent in detail. Few words, huge pictures: a powerful first line, short lines with "
               "pauses, the divine moment as the climax, a closing line of devotion or awe (e.g. 'Har Har Mahadev'). "
               "Gods and divine beings are drawn majestically in their traditional forms (attributes, colours, weapons, "
-              "mounts), photoreal and epic; every shot a vast, dramatic picture.",
+              "mounts), photoreal and epic; every shot a vast, dramatic picture. Give every shot 1-3 `vfx` that fit "
+              "it (mist and rays on mountains, embers by fire, lightning in a storm, sparks on a divine reveal, shake on "
+              "the climax), and a slow camera move.",
     "news": "One real news story told so a viewer instantly gets why it matters. Every fact confirmed with web search (pages "
             "in `sources`).",
 }
@@ -158,6 +160,10 @@ class SVisual(BaseModel):
                          "(no named people, brands or events), e.g. 'rain on window night', 'old man walking alone'.")
     on_screen: str = Field(default="", description="0-4 words for a figure, date or name worth seeing, in the on-screen "
                            "language; mostly empty.")
+    vfx: list[Literal["mist", "embers", "rays", "lightning", "rain", "snow", "sparks", "glow", "shake"]] = Field(
+        default_factory=list, description="Divine Shorts only (else empty): 1-3 effects drawn over the picture: mist "
+        "(drifting clouds), embers (glowing sparks rising), rays (god rays from above), lightning (a strike flashes), rain, "
+        "snow, sparks (divine light particles), glow (a holy light pulse), shake (the ground trembles, a big moment).")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 effects from the sound list on exact words of the "
                                    "line; most lines get none.")
 
@@ -761,7 +767,10 @@ def _layout(series: StorySeries, k: int, req: StoryRequest, cfg: Config, work: P
                       "chapter": 0 if i else -1, "image": f"keyframes/{sid}.jpg", "clip": None, "camera": sh.camera,
                       "transition": tr if i else "cut", "importance": sh.importance, "emphasis": emph,
                       "emphasisFx": fx,
-                      "onScreen": sh.on_screen.strip()[:28] or None, "query": sh.footage.strip()})
+                      "onScreen": sh.on_screen.strip()[:28] or None, "query": sh.footage.strip(),
+                      **({"vfx": list(dict.fromkeys(getattr(sh, "vfx", [])))[:3]} if getattr(sh, "vfx", None) else {})})
+        if "lightning" in (getattr(sh, "vfx", None) or []):
+            cue("impact", t + duration * 0.35, 0.55)
         loud = {"low": 0.5, "medium": 0.6, "high": 0.75, "critical": 0.85}[sh.importance]
         if i and tr in TRANSITION_SOUND:
             name, vol = TRANSITION_SOUND[tr]
@@ -845,6 +854,19 @@ def _motion_wanted(row: dict, sh, visuals: str) -> bool:
 def clip_size(req: StoryRequest) -> tuple[int, int, float]:
     W, H, longest = animated.CLIP_SIZES[animated.clip_quality(req)]  # type: ignore[arg-type]
     return H, W, longest  # the same pixels, standing up (all multiples of 32)
+
+
+def parallax_job(tls: list[dict], work: Path, seed: int) -> dict:
+    """Every shot's picture (its sharpened copy when there is one) moved in depth for its whole length."""
+    shots = []
+    for n, row in enumerate(s for tl in tls for s in tl["shots"]):
+        pic = work / row["image"]
+        hd = animated._hd(pic)
+        shots.append({"id": row["id"], "image": str(hd if animated._ready(hd) else pic),
+                      "out": str(work / "clips" / f"{row['id']}.mp4"), "camera": row.get("camera") or "push-in",
+                      "frames": max(24, min(240, round(float(row["duration"]) * animated.ANIM_FPS) + 2)), "seed": seed + n})
+    (work / "clips").mkdir(parents=True, exist_ok=True)
+    return {"shots": shots, "width": HD_CLIP[0], "height": HD_CLIP[1], "fps": animated.ANIM_FPS}
 
 
 def clip_jobs(series: StorySeries, tls: list[dict], style: str, req: StoryRequest, work: Path, seed: int) -> tuple[dict, dict]:
@@ -1203,6 +1225,7 @@ def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Pa
     # pictures and motion
     pic_found, up = state.get("pic_found") or [], None
     cloud = req.engine == "cloud"
+    vfx = req.engine == "vfx"  # local pictures, then a 2.5D depth camera move per shot (anim_worker `parallax`)
     if cloud:
         from . import hfcloud
         from .pipeline import pause_point
@@ -1224,7 +1247,17 @@ def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Pa
                 check=lambda ids: check_pictures(cfg, series, tls, work, ids),
                 job=lambda fixes: keyframe_job(series, tls, style, work, seed, fixes), drawer=draw)
         emb, clipjob = clip_jobs(series, tls, style, req, work, seed)
-        if clipjob["shots"] and cloud:
+        if vfx:
+            if req.upscale:  # sharpen the pictures first: the camera moves are made from them at full HD
+                up = animated.upscale_job([s for tl in tls for s in tl["shots"]], style, work, HD_CLIP, HD_PICTURE)
+                if up:  # only the pictures: the moves made from them are full HD already
+                    up["items"] = [i for i in up["items"] if i["kind"] == "image"]
+                if up and up["items"]:
+                    anim_engine.run_stage("upscale", up, work, progress, "Sharpening the pictures")
+            moves = parallax_job(tls, work, seed)
+            progress(f"Moving the camera through {len(moves['shots'])} pictures in depth (2.5D)")
+            anim_engine.run_stage("parallax", moves, work, progress, "Camera moves")
+        elif clipjob["shots"] and cloud:
             clipjob["finish"] = CLOUD_FINISH.get(req.kind, "")
             progress(f"Clips: {CLOUD_CLIP[0]}x{CLOUD_CLIP[1]} on Hugging Face, {len(clipjob['shots'])} shots")
             hfcloud.animate(clipjob, work, progress, pause_point, size=CLOUD_CLIP)
@@ -1234,7 +1267,7 @@ def _picture_parts(cfg: Config, req: StoryRequest, series: StorySeries, work: Pa
                      f"{sum(len(tl['shots']) for tl in tls)} shots")
             anim_engine.run_stage("embed", emb, work, progress, "Reading the motion prompts")
             anim_engine.run_stage("clips", clipjob, work, progress, "Animating the shots")
-        if req.upscale and not cloud:
+        if req.upscale and not cloud and not vfx:
             up = animated.upscale_job([s for tl in tls for s in tl["shots"]], style, work, HD_CLIP, HD_PICTURE)
             if up and up["items"]:
                 anim_engine.run_stage("upscale", up, work, progress, "Sharpening to full HD")
