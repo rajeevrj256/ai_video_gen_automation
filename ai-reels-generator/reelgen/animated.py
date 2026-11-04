@@ -216,6 +216,31 @@ the pictures: every shot a clear moment of acting (a look, a gesture, a reaction
 """
 
 
+def narration_language(voice: str) -> str:
+    """english | hindi | hinglish, from the narrator picked: a Hindi voice gets its lines written in Hindi."""
+    v = voice.lower()
+    if "_enhi_" in v:
+        return "hinglish"
+    if v.startswith("hi-in-") or "_hi_" in v:
+        return "hindi"
+    if v.startswith("sarvam:") and not v.startswith("sarvam:svc-"):
+        return "hindi"  # bulbul:v3 speakers
+    return "english"
+
+
+def language_block(voice: str) -> str:
+    lang = narration_language(voice)
+    if lang == "hindi":
+        return ("\n\nLANGUAGE (this replaces 'American English' above): the narrator speaks Hindi. Write every spoken `line` in simple, warm spoken Hindi in "
+                "Devanagari (not shuddh textbook Hindi; numbers in digits). Everything else (scene, motion, music, "
+                "character designs, on_screen, title, description, tags) stays in English.")
+    if lang == "hinglish":
+        return ("\n\nLANGUAGE (this replaces 'American English' above): the narrator speaks Hinglish. Write every spoken `line` in natural Hinglish in Roman "
+                "letters, the way people talk in India (Hindi sentences with everyday English words). Everything else "
+                "(scene, motion, music, designs, on_screen, title, description) stays in English.")
+    return ""
+
+
 def _system(minutes: float, styles: str, recent: str, sounds: str, form: str = "story") -> str:
     return _system_base(minutes, styles, recent, sounds) + {"whatif": WHATIF_RULES, "movie": MOVIE_RULES}.get(form, "")
 
@@ -394,6 +419,7 @@ def write_script(cfg: Config, req: AnimRequest, avoid: str = "") -> AnimScript:
         prompt += "\n- Research budget: at most 8 web searches and 6 opened pages, then write."
     if req.series.strip():
         prompt += _series_block(cfg, req.series)
+    prompt += language_block(req.voice)
     from .hooks import block as hook_block
 
     prompt += hook_block(cfg)
@@ -563,7 +589,8 @@ def timeline(sc: AnimScript, req: AnimRequest, cfg: Config, work: Path, progress
     progress("Recording the voiceover")
     plan: list[tuple[int, AShot]] = [(-1, sh) for sh in sc.cold_open]
     plan += [(ci, sh) for ci, ch in enumerate(sc.chapters) for sh in ch.shots]
-    voice = req.voice if req.voice in VOICES or req.voice.startswith("sarvam:") else "en-US-AndrewMultilingualNeural"
+    voice = (req.voice if req.voice in VOICES or req.voice.startswith(("sarvam:", "hi-IN-"))
+             else "en-US-AndrewMultilingualNeural")
     audio: list = [None] * len(plan)
     i = 0
     while i < len(plan):  # one take per run of lines in the same tone (see toon.TONES)

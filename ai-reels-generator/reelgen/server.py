@@ -1565,6 +1565,18 @@ def create_app(cfg: Config) -> FastAPI:
         name, label = sarvam.my_voice()
         return {name: f"🎙 {label} (your cloned voice)", **voices} if name and sarvam.key() else voices
 
+    def _anim_voices() -> dict:
+        """The Anim tab's narrators: the English voices, Microsoft's Hindi ones, and every Sarvam voice when a key is saved
+        (the user: "add option of all voice sarvam", for a Hindi Ramayan series)."""
+        from . import sarvam
+        from .toon import VOICES
+
+        out = {**VOICES, "hi-IN-MadhurNeural": "Madhur (Hindi, male)", "hi-IN-SwaraNeural": "Swara (Hindi, female)"}
+        if sarvam.key():
+            out.update({f"sarvam:{k}": f"Sarvam – {v}" for k, v in sarvam.V4_VOICES.items()})
+            out.update({f"sarvam:{k}": f"Sarvam – {k.title()} ({g}, Hindi/English)" for k, g in sarvam.SPEAKERS.items()})
+        return _with_my_voice(out)
+
     @app.get("/api/toon/options")
     def toon_options():
         from .toon import FORMS, VOICES
@@ -1627,7 +1639,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .animated import ART_STYLES
         from .toon import VOICES
 
-        return {"styles": {k: v[0] for k, v in ART_STYLES.items()}, "voices": _with_my_voice(VOICES)}
+        return {"styles": {k: v[0] for k, v in ART_STYLES.items()}, "voices": _anim_voices()}
 
     @app.get("/api/anim/setup")
     def anim_setup():
@@ -1693,7 +1705,7 @@ def create_app(cfg: Config) -> FastAPI:
                  "style": body.style if body.style in ART_STYLES else "auto",
                  "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
                  "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
-                 "voice": body.voice if body.voice in _with_my_voice(VOICES) else "en-US-AndrewMultilingualNeural",
+                 "voice": body.voice if body.voice in _anim_voices() else "en-US-AndrewMultilingualNeural",
                  "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
                  "watermark": body.watermark.strip()[:40], "form": body.form if body.form in ("story", "whatif", "movie") else "story",
                  "engine": engine, "series": re.sub(r"[^\w \-'&!?.]", "", body.series).strip()[:60]}
