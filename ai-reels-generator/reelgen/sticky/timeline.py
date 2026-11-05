@@ -15,13 +15,15 @@ def _words(lines) -> int:
     return sum(len(str(x).split()) for x in lines)
 
 
-def hold(s: FShot, act: str) -> float:
-    """How long the shot needs: Claude's length, at least the time to read what is on it."""
+def hold(s: FShot, act: str, short: bool = False) -> float:
+    """How long the shot needs: Claude's length, at least the time to read what is on it. Shorts are read faster (their
+    viewers do; at a film's pace a 45 s Short ran 60 s) and their title card holds 3.5 s."""
     need = s.seconds
+    pace, pad = (3.2, 0.8) if short else (2.6, 1.2)
     if s.caption:
-        need = max(need, _words(s.caption) / 2.6 + (1.8 if s.kind == "card" else 1.2))
+        need = max(need, _words(s.caption) / pace + (pad + 0.5 if s.kind == "card" else pad) + (0 if short or s.kind != "card" else 0.1))
     if s.whisper:
-        need = max(need, len(s.whisper) / 16 + 1.1)
+        need = max(need, len(s.whisper) / 16 + (0.8 if short else 1.1))
     if s.bubbles:
         need = max(need, len(s.bubbles) * 1.0 + _words(b.text for b in s.bubbles) / 3.2 + 0.6)
     if s.kind == "phone" and s.phone and s.phone.mode == "chat":
@@ -31,8 +33,9 @@ def hold(s: FShot, act: str) -> float:
     if s.notes:
         need = max(need, 2.0 + len(s.notes) * 0.25)
     if act == "title":
-        need = max(need, 6.5)
-    return round(min(MAX_SHOT if act != "title" else 8.0, max(1.5, need)), 2)
+        need = max(need, 3.5 if short else 6.5)
+    longest = (5.0 if short else MAX_SHOT) if act != "title" else (4.0 if short else 8.0)
+    return round(min(longest, max(1.5, need)), 2)
 
 
 def _shot(film: Film, s: FShot, act: str, start: float, dur: float) -> dict:
@@ -188,16 +191,43 @@ def _dedupe(cues: list[dict], gap: float = 0.6) -> list[dict]:
     return sorted(kept, key=lambda c: c["at"])
 
 
-def build(film: Film) -> tuple[dict, list[dict], list[dict]]:
+def fit(film: Film, durs: list[list[float]], target: float, tail: float) -> list[list[float]]:
+    """A Short over its length (more than 4%): every shot gives up the time it holds beyond what its words need to be
+    read (the whole shot for one without words), down to 1.5 s (1.2 s in the montage), in proportion. Reading time
+    is never cut."""
+    over = sum(map(sum, durs)) + tail - target * 1.04
+    slack = []
+    for i, a in enumerate(film.acts):
+        if a.act == "title":
+            continue
+        for j, (s, d) in enumerate(zip(a.shots, durs[i])):
+            floor = max(1.2 if a.act == "climb" else 1.5, hold(s.model_copy(update={"seconds": 0}), a.act, True))
+            if d > floor:
+                slack.append((i, j, d - floor))
+    room = sum(r for _, _, r in slack)
+    if over <= 0 or room <= 0:
+        return durs
+    k = min(1.0, over / room)
+    for i, j, r in slack:
+        durs[i][j] = round(durs[i][j] - r * k, 2)
+    return durs
+
+
+def build(film: Film, short: bool = False, target: float = 0.0) -> tuple[dict, list[dict], list[dict]]:
     """(props, cues, sections): the editor's props, every sound cue in film seconds, and one music section per act
-    (with the spans its music drops away)."""
+    (with the spans its music drops away). `short`: a 9:16 Short (props `vertical`, three music sections), held to
+    `target` seconds when it runs over (`fit`)."""
     shots, cues, sections = [], [], []
     t = 0.0
-    for act in film.acts:
+    durs = [[hold(s, act.act, short) for s in act.shots] for act in film.acts]
+    if short and target:
+        titled = any(a.act == "title" and a.shots for a in film.acts)
+        durs = fit(film, durs, target, 0.0 if titled else 3.5)
+    for ai, act in enumerate(film.acts):
         a0 = t
         quiet = []
-        for s in act.shots:
-            dur = hold(s, act.act)
+        for si, s in enumerate(act.shots):
+            dur = durs[ai][si]
             shots.append(_shot(film, s, act.act, t, dur))
             if shots[-1].get("calendar"):
                 _calendars(shots)
@@ -208,9 +238,10 @@ def build(film: Film) -> tuple[dict, list[dict], list[dict]]:
         if t > a0:
             sections.append({"act": act.act, "mood": act.mood, "start": round(a0, 3), "end": round(t, 3), "quiet": quiet})
     if not shots or shots[-1]["kind"] != "title":  # every film ends on its title card
-        shots.append({"start": round(t, 3), "duration": 6.5, "kind": "title", "act": "title", "transition": "fade"})
-        sections.append({"act": "title", "mood": "emotional", "start": round(t, 3), "end": round(t + 6.5, 3), "quiet": []})
-        t += 6.5
+        end = 3.5 if short else 6.5
+        shots.append({"start": round(t, 3), "duration": end, "kind": "title", "act": "title", "transition": "fade"})
+        sections.append({"act": "title", "mood": "emotional", "start": round(t, 3), "end": round(t + end, 3), "quiet": []})
+        t += end
     cues.append({"sound": "chime", "at": round(shots[-1]["start"] + 1.0, 3), "volume": 0.6})
     cues = _dedupe(cues)
     m = film.meter
@@ -219,9 +250,29 @@ def build(film: Film) -> tuple[dict, list[dict], list[dict]]:
         "meter": {"kind": m.kind, "labels": m.labels[:2], "unit": m.unit},
         "cast": [{"id": c.id, "name": c.name, "tone": c.tone, "wear": c.wear, "color": COLOURS[c.color], "kid": c.kid,
                   **({"extra": c.extra} if c.extra != "none" else {})} for c in film.cast],
-        "shots": shots, "fps": FPS, "duration": round(t, 3),
+        "shots": shots, "fps": FPS, "duration": round(t, 3), **({"vertical": True} if short else {}),
     }
-    return props, cues, sections
+    return props, cues, (short_sections(sections) if short else sections)
+
+
+# A Short's music in three parts, not one track per act (ten pieces of 3-5 s each): the struggle, the turn and the climb,
+# the ending. Each part keeps the mood of its longest act and every 'quiet' span in it.
+SHORT_PARTS = (("open", "loop", "low"), ("turn", "day1", "climb"), ("test", "resolve", "thesis", "title"))
+
+
+def short_sections(sections: list[dict]) -> list[dict]:
+    out = []
+    for group in SHORT_PARTS:
+        mine = [x for x in sections if x["act"] in group]
+        if not mine:
+            continue
+        main = max(mine, key=lambda x: x["end"] - x["start"])
+        out.append({"act": main["act"], "mood": main["mood"], "start": min(x["start"] for x in mine),
+                    "end": max(x["end"] for x in mine), "quiet": [q for x in mine for q in x["quiet"]]})
+    out.sort(key=lambda x: x["start"])
+    for a, b in zip(out, out[1:]):  # acts written out of order would make two parts play at once
+        b["start"] = max(b["start"], a["end"])
+    return [x for x in out if x["end"] > x["start"]]
 
 
 def repair(film: Film) -> list[str]:

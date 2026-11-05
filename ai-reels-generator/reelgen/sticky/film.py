@@ -404,6 +404,97 @@ def write_movie_part(cfg: Config, title: str, shots_text: str, progress=log.info
     return film, part, m
 
 
+
+# ---------- Shorts: the same film language in 9:16, 20-60 s, with a recurring hero (the tab's 📱 A Short) ----------
+
+SHORT_RULES = """
+
+THIS IS A 9:16 SHORT (YouTube Shorts, Reels, TikTok) OF {seconds} SECONDS, NOT A 2.5-4 MINUTE FILM. Everything above
+applies (the bean people, the meter, the inner voice, the turn from outside, time you can see, sounds), compressed:
+- THE FIRST SECOND decides if anyone stays: the first shot is the problem in one striking picture (3:17 AM on the clock
+  and his face lit by the phone, a battery at 4%, 99+ pills around him) with a short caption hook (a fact and its
+  twist, or a question). NO black opening card.
+- THE SHAPE in about {shots} shots of 1.5-3 s (the thesis card and the title a little longer): open (1: the hook
+  picture), loop (3-5: the same night, faster each time, the meter falling, the voice winning), low (1), turn (2-3:
+  the outside moment and his realisation in a face close-up), day1 (1: the stamp 'DAY 1.' and the first small act),
+  climb (3-6: a fast montage of days, the meter rising), test (0-2; leave it out when there is no time), resolve (1-2:
+  the callback to the first picture, changed), thesis (1 card, two short lines), title (1). The last picture before
+  the cards echoes the first one, so the Short loops.
+- A TALL PHONE SCREEN shows a narrow slice of a room at its full height: one person per shot most of the time, two
+  only when they meet (standing 10-20 apart in x); framing 'medium' or 'close' (subject = who acts) for actions and
+  feelings, 'wide' only to open a new place; inserts (the phone, the clock, the calendar, a drawing) fill the screen
+  and work very well.
+- WORDS cost time (they must be read): at most {words} words of captions, whispers and bubbles in the whole Short,
+  max 6 words a caption line; whispers max 5 words; most shots carry no words at all.
+- 'youtube_title' ends with ' #shorts' when it fits in 60 characters; 'hashtags' include #shorts.
+- Total {seconds} seconds."""
+
+FIXED_CAST = """
+
+THE CAST IS FIXED: the user's recurring characters, the same in every Short. Use exactly these ids, names and looks
+(the hero first); add someone new only when the story needs them, never change these:
+{cast}"""
+
+
+def _shorts_path(cfg: Config) -> Path:
+    return cfg.output_dir / "sticky_shorts.json"
+
+
+def shorts_hero(cfg: Config) -> list[dict]:
+    """The recurring hero of the user's Sticky Shorts (empty before the first one)."""
+    try:
+        return json.loads(_shorts_path(cfg).read_text(encoding="utf-8")).get("cast") or []
+    except (OSError, ValueError):
+        return []
+
+
+def remember_hero(cfg: Config, film: Film) -> None:
+    try:
+        _shorts_path(cfg).write_text(json.dumps({"cast": [film.cast[0].model_dump()]}, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _cast_lines(cast: list[dict]) -> str:
+    return "\n".join(f"- {c['id']}: {c['name']}, {c.get('role', '')}, {c['tone']} skin, {c['wear']} ({c['color']})"
+                     + (", a child" if c.get("kid") else "") for c in cast)
+
+
+def short_cast(cfg: Config, hero: str) -> list[dict]:
+    """Who the Short is about: '' = the recurring Shorts hero (none yet: Claude designs one), 'new' = a new hero,
+    any other text = the cast of that Sticky movie."""
+    if hero == "new":
+        return []
+    if hero:
+        return movie(cfg, hero).get("cast") or []
+    return shorts_hero(cfg)
+
+
+def write_short(cfg: Config, topic: str, seconds: int, hero: str = "", progress=log.info) -> Film:
+    """One call writes a 9:16 Short; a story too close to an earlier film or Short is written once more."""
+    shots = max(8, int(seconds / 2.3))
+    fixed = short_cast(cfg, hero)
+    system = RULES.format(minutes=f"{seconds / 60:.1f}", shots=shots) + SHORT_RULES.format(seconds=seconds, shots=shots, words=int(seconds * 1.1))
+    if fixed:
+        system += FIXED_CAST.format(cast=_cast_lines(fixed))
+    past = _recent(cfg)
+    made = "\n".join(f"- {p['title']} ({p['problem']})" for p in past[-30:]) or "- none yet"
+    ask_for = (f"Write the Short about: {topic}." if topic else
+               "Choose the problem yourself: a relatable everyday struggle, different from the films already made. "
+               f"Ideas (not a list to copy): {', '.join(TOPICS)}.")
+    prompt = f"{ask_for}\n\nFilms and Shorts already made (never the same story, problem or title again):\n{made}"
+    film = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Film, allow_web=False, effort=cfg.claude_effort, timeout=1800)
+    near = too_close(film, past) if not topic else ""
+    if near:
+        progress(f"That story is too close to '{near}'; writing a different one")
+        film = ask(cfg.ai_backend, cfg.claude_model, system, prompt + f"\n\nYour first idea was too close to '{near}'. "
+                   "Pick a different problem and story.", Film, allow_web=False, effort=cfg.claude_effort, timeout=1800)
+    if fixed:
+        lock_cast(film, {"cast": fixed, "accent": ""})
+    if "#shorts" not in [h.lower() for h in film.hashtags]:
+        film.hashtags = (film.hashtags[:2] + ["#shorts"])
+    return film
+
 def save(film: Film, path: Path) -> None:
     path.write_text(json.dumps(film.model_dump(), ensure_ascii=False, indent=1), encoding="utf-8")
 

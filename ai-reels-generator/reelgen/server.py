@@ -534,6 +534,9 @@ class StickyBody(BaseModel):
     whispers: bool = True
     movie: str = ""  # 🎬 Movie: the movie's title (this film is its next part)
     shots: str = ""  # Movie: this part's shots, one per line
+    format: str = "film"  # film (16:9) | short (9:16)
+    seconds: int = 45  # Short: 20-60
+    hero: str = ""  # Short: '' = the recurring Shorts hero, 'new', or a Sticky movie's title (its cast)
     ai: AIPick | None = None
 
 
@@ -1520,6 +1523,10 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/sticky")
     def sticky(body: StickyBody):
         given = {"topic": body.topic.strip()[:400], "minutes": min(4.0, max(2.5, float(body.minutes))), "whispers": bool(body.whispers)}
+        if body.format == "short":  # a 9:16 Short with the recurring hero (or a movie's cast)
+            given.update({"format": "short", "seconds": max(20, min(60, int(body.seconds))), "hero": body.hero.strip()[:80]})
+            return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
+                               sticky_input=given, captions=False, ai=body.ai)
         if body.movie.strip():  # a movie part: one film from your shot list, continuing the movie's earlier parts
             shots = [x for x in body.shots.splitlines() if x.strip()]
             if len(shots) < 2:
@@ -1528,6 +1535,13 @@ def create_app(cfg: Config) -> FastAPI:
             return jobs.submit(f"{given['movie']} (movie part)", 1, "sticky", "story", "sticky", sticky_input=given, captions=False, ai=body.ai)
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
                            sticky_input=given, captions=False, ai=body.ai)
+
+    @app.get("/api/sticky/hero")
+    def sticky_hero():
+        """The recurring hero of the Sticky Shorts (none before the first Short)."""
+        from .sticky.film import shorts_hero
+
+        return [{"name": c["name"], "wear": c["wear"], "color": c["color"]} for c in shorts_hero(cfg)]
 
     @app.get("/api/sticky/movies")
     def sticky_movies():

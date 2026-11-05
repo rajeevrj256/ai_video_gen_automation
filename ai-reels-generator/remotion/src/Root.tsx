@@ -31,6 +31,8 @@ const calculateMetadata: CalculateMetadataFunction<ReelProps> = ({props}) => ({
 const calculateStickyMetadata: CalculateMetadataFunction<StickyProps> = ({props}) => ({
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Sticky Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
 });
 const calculateStickMetadata: CalculateMetadataFunction<StickProps> = ({props}) => ({
   fps: props.fps,
@@ -133,7 +135,7 @@ export const RemotionRoot: React.FC = () => (
     defaultProps={animDemoProps}
     calculateMetadata={calculateAnimMetadata}
   />
-  {/* 16:9 voiceless sticky-animation short film (2.5-4 min): reelgen/sticky/ */}
+  {/* voiceless sticky-animation short film (2.5-4 min, 16:9) or Short (9:16, `vertical`): reelgen/sticky/ */}
   <Composition
     id="Sticky"
     component={Sticky}

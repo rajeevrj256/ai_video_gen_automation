@@ -21,15 +21,17 @@ const PH = 960;
 const PX = (W - PW) / 2;
 const PY = 150;
 
-const Hands: React.FC<{tone: string; tap: number; thumb: [number, number]}> = ({tone, tap, thumb}) => (
+// `below`: how much further down the arms reach (a 9:16 Short shows the world below the 16:9 frame's bottom edge,
+// where the arms' round ends looked like floating blobs)
+const Hands: React.FC<{tone: string; tap: number; thumb: [number, number]; below?: number}> = ({tone, tap, thumb, below = 0}) => (
   <g>
     {/* left hand: fingers wrapping the left edge */}
-    <path d={`M${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={INK} strokeWidth={128} fill="none" strokeLinecap="round" />
-    <path d={`M${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={tone} strokeWidth={120} fill="none" strokeLinecap="round" />
+    <path d={`M${PX - 160},${H + 40 + below} L${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={INK} strokeWidth={128} fill="none" strokeLinecap="round" />
+    <path d={`M${PX - 160},${H + 40 + below} L${PX - 160},${H + 40} C${PX - 120},${PY + 640} ${PX - 40},${PY + 600} ${PX + 10},${PY + 620}`} stroke={tone} strokeWidth={120} fill="none" strokeLinecap="round" />
     {/* no fingers drawn over the edge: three knuckles read as three dots, a finger shape as a button on the phone */}
     {/* right hand and thumb */}
-    <path d={`M${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
-    <path d={`M${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={tone} strokeWidth={90} fill="none" strokeLinecap="round" />
+    <path d={`M${PX + PW + 220},${H + 60 + below} L${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
+    <path d={`M${PX + PW + 220},${H + 60 + below} L${PX + PW + 220},${H + 60} C${PX + PW + 120},${PY + 760} ${thumb[0] + 60},${thumb[1] + 140 + tap * 8} ${thumb[0]},${thumb[1] + tap * 10}`} stroke={tone} strokeWidth={90} fill="none" strokeLinecap="round" />
   </g>
 );
 
@@ -139,7 +141,7 @@ const Screen: React.FC<{p: Phone; t: number; dur: number; accent: string}> = ({p
   }
 };
 
-export const PhoneInsert: React.FC<{p: Phone; t: number; dur: number; accent: string; hero?: Cast}> = ({p, t, dur, accent, hero}) => {
+export const PhoneInsert: React.FC<{p: Phone; t: number; dur: number; accent: string; hero?: Cast; below?: number}> = ({p, t, dur, accent, hero, below = 0}) => {
   const tone = TONES[hero?.tone ?? 'cream'];
   const tap = p.mode === 'chat' && p.typing ? Math.abs(Math.sin(t * 14)) : p.mode === 'feed' ? Math.abs(Math.sin(t * 3)) : 0;
   const thumb: [number, number] = p.mode === 'chat' ? [PX + PW - 160, PY + PH - 190] : p.mode === 'dialog' ? [PX + PW - 150, PY + 560] : [PX + PW - 120, PY + 640];
@@ -152,7 +154,7 @@ export const PhoneInsert: React.FC<{p: Phone; t: number; dur: number; accent: st
       <defs><clipPath id="phoneClip"><rect x={PX} y={PY} width={PW} height={PH} rx={60} /></clipPath></defs>
       <g clipPath="url(#phoneClip)"><Screen p={p} t={t} dur={dur} accent={accent} /></g>
       <rect x={W / 2 - 60} y={PY + 18} width={120} height={30} rx={15} fill="#0A0A0C" />
-      <Hands tone={tone} tap={tap} thumb={thumb} />
+      <Hands tone={tone} tap={tap} thumb={thumb} below={below} />
     </g>
   );
 };
@@ -230,7 +232,7 @@ const KidFigure: React.FC<{x: number; y: number; color: string; phone?: boolean;
   </g>
 );
 
-export const ObjectInsert: React.FC<{o: NonNullable<Shot['object']>; t: number; dur: number; accent: string}> = ({o, t, dur, accent}) => {
+export const ObjectInsert: React.FC<{o: NonNullable<Shot['object']>; t: number; dur: number; accent: string; below?: number}> = ({o, t, dur, accent, below = 0}) => {
   const pop = interpolate(t, [0, 0.4], [0.92, 1], clamp);
   const k = o.kind;
   const paper = k === 'note' ? '#F7E27A' : '#FBFAF4';
@@ -272,8 +274,8 @@ export const ObjectInsert: React.FC<{o: NonNullable<Shot['object']>; t: number; 
         <g transform={`translate(${W / 2},${H / 2 + 40}) scale(${pop}) rotate(-1.5)`}>
           {[-1, 1].map((sd) => (
             <g key={sd}>
-              <path d={`M${sd * 640},${700} C${sd * 600},${560} ${sd * 520},${460} ${sd * 470},${400}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
-              <path d={`M${sd * 640},${700} C${sd * 600},${560} ${sd * 520},${460} ${sd * 470},${400}`} stroke={TONES.cream} strokeWidth={90} fill="none" strokeLinecap="round" />
+              <path d={`M${sd * 640},${700 + below} L${sd * 640},${700} C${sd * 600},${560} ${sd * 520},${460} ${sd * 470},${400}`} stroke={INK} strokeWidth={98} fill="none" strokeLinecap="round" />
+              <path d={`M${sd * 640},${700 + below} L${sd * 640},${700} C${sd * 600},${560} ${sd * 520},${460} ${sd * 470},${400}`} stroke={TONES.cream} strokeWidth={90} fill="none" strokeLinecap="round" />
               <rect x={sd * 470 - 26} y={300} width={52} height={96} rx={26} fill={TONES.cream} stroke={INK} strokeWidth={4} transform={`rotate(${sd * -12},${sd * 470},${348})`} />
             </g>
           ))}
@@ -320,8 +322,8 @@ export const GraphInsert: React.FC<{g: NonNullable<Shot['graph']>; t: number; du
 
 // ---------- noise for depth ----------
 
-export const Grain: React.FC<{frame: number}> = ({frame}) => (
+export const Grain: React.FC<{frame: number; fw?: number; fh?: number}> = ({frame, fw = W, fh = H}) => (
   <g opacity={0.05}>
-    {Array.from({length: 90}, (_, i) => <rect key={i} x={random(`gx${i}${frame % 6}`) * W} y={random(`gy${i}${frame % 6}`) * H} width={2} height={2} fill="#fff" />)}
+    {Array.from({length: 90}, (_, i) => <rect key={i} x={random(`gx${i}${frame % 6}`) * fw} y={random(`gy${i}${frame % 6}`) * fh} width={2} height={2} fill="#fff" />)}
   </g>
 );

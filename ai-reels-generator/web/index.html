@@ -596,9 +596,10 @@ Plain paragraphs are read by the narrator."></textarea>
       <p class="hint">Voiceless animated short films (2.5-4 min, 16:9) like Day One Films and Monk Mode Films: a round-headed hero with one
         everyday struggle (the phone at 2 AM, putting things off, overthinking a text...), a meter on screen that falls and climbs, the inner
         voice drawn as a glowing shadow, a turn that comes from someone else, a montage of days and a two-line ending. Told with pictures, a
-        few lines of text and sound design: no narrator. Claude writes the whole film; every film is a new story.</p>
+        few lines of text and sound design: no narrator. Claude writes the whole film; every film is a new story. Or a 9:16 Short
+        (30-60 s) in the same style, with the same hero in every Short.</p>
       <label>Make</label>
-      <div class="segmented" id="syMode"><button data-mode="film" class="on">🎞 A film</button><button data-mode="movie">🎬 A movie part</button></div>
+      <div class="segmented" id="syMode"><button data-mode="film" class="on">🎞 Film</button><button data-mode="short">📱 Short 9:16</button><button data-mode="movie">🎬 Movie part</button></div>
       <div id="syMovie" hidden>
         <p class="hint">A movie told in parts with the same characters. Give the movie's title and this part's shots, one per line, in
           order: who, what happens, where. Claude stages every shot as wordless animation (no voiceover) and remembers the cast and their
@@ -615,10 +616,17 @@ Plain paragraphs are read by the narrator."></textarea>
       <label for="syTopic">The struggle (optional)</label>
       <textarea class="edit" id="syTopic" rows="2" placeholder="e.g. overthinking a text that wasn't answered / skipping the gym after two good weeks. Leave empty and Claude picks one no earlier film used."></textarea>
       <div class="grid2">
-        <div><label for="syMinutes">Length</label>
+        <div id="syLenFilm"><label for="syMinutes">Length</label>
           <select id="syMinutes"><option value="2.5">About 2.5 min</option><option value="3" selected>About 3 min</option><option value="3.5">About 3.5 min</option><option value="4">About 4 min</option></select></div>
+        <div id="syLenShort" hidden><label for="sySeconds">Length</label>
+          <select id="sySeconds"><option value="30">30 s</option><option value="45" selected>45 s</option><option value="60">60 s</option></select></div>
         <div><label for="syCount">How many</label>
           <select id="syCount"><option>1</option><option>2</option><option>3</option></select></div>
+      </div>
+      <div id="syHeroBox" hidden>
+        <label for="syHero">Who it's about</label>
+        <select id="syHero"><option value="">✨ A hero Claude designs (kept for your next Shorts)</option></select>
+        <p class="hint">The same round-headed hero in every Short, so viewers know him. Or pick a movie to make a Short with its characters.</p>
       </div>
       </div>
       <label for="syWhisper">The inner voice</label>
@@ -2492,7 +2500,7 @@ function jobCard(j) {
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
   const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
     + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
-      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "sticky" ? " · 🎞 Sticky film" : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📱 Shorts+ (${j.count} part${j.count > 1 ? "s" : ""})` : "");
+      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "sticky" ? (j.sticky_input?.format === "short" ? " · 🎞 Sticky Short (9:16)" : " · 🎞 Sticky film") : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📱 Shorts+ (${j.count} part${j.count > 1 ? "s" : ""})` : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -3211,14 +3219,26 @@ const syModeIs = () => ($("#syMode .on") || {}).dataset?.mode || "film";
 $("#syMode").onclick = (e) => {
   const b = e.target.closest("button"); if (!b) return;
   $("#syMode").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
-  const movie = syModeIs() === "movie";
+  const movie = syModeIs() === "movie", short = syModeIs() === "short";
   $("#syMovie").hidden = !movie; $("#syFilm").hidden = movie;
+  $("#syLenFilm").hidden = short; $("#syLenShort").hidden = !short; $("#syHeroBox").hidden = !short;
+  if (short) syHeroes();
   if (movie) api("/api/sticky/movies").then((ms) => {
     syMovies = ms;
     $("#syMovieList").innerHTML = ms.map((m) => `<option value="${esc(m.title)}">`).join("");
     syMovieInfo();
   }).catch(() => {});
 };
+// 📱 Shorts: the recurring hero (reelgen/sticky/film.py shorts_hero) or a movie's cast
+const syHeroes = () => Promise.all([api("/api/sticky/hero").catch(() => []), api("/api/sticky/movies").catch(() => [])]).then(([hero, ms]) => {
+  const keep = $("#syHero").value;
+  const h = hero[0];
+  $("#syHero").innerHTML = (h ? `<option value="">🔁 ${esc(h.name)}, the hero of your other Shorts (${esc(h.wear)}, ${esc(h.color)})</option>`
+      + `<option value="new">🆕 A new hero (he replaces ${esc(h.name)} in your next Shorts)</option>`
+    : `<option value="">✨ A hero Claude designs (kept for your next Shorts)</option>`)
+    + ms.map((m) => `<option value="${esc(m.title)}">🎬 ${esc(m.title)}: ${esc(m.cast.join(", ") || "its cast")}</option>`).join("");
+  if ([...$("#syHero").options].some((o) => o.value === keep)) $("#syHero").value = keep;
+});
 const syMovieInfo = () => {
   const t = $("#syMovieTitle").value.trim().toLowerCase();
   const m = syMovies.find((x) => x.title.toLowerCase() === t);
@@ -3227,8 +3247,10 @@ const syMovieInfo = () => {
 };
 $("#syMovieTitle").oninput = syMovieInfo;
 $("#syBtn").onclick = async () => {
-  const movie = syModeIs() === "movie";
+  const movie = syModeIs() === "movie", short = syModeIs() === "short";
   const body = movie ? { movie: $("#syMovieTitle").value, shots: $("#syShots").value, whispers: $("#syWhisper").value === "true", ai: aiValue("sticky") }
+    : short ? { format: "short", topic: $("#syTopic").value, seconds: Number($("#sySeconds").value), count: Number($("#syCount").value),
+        hero: $("#syHero").value, whispers: $("#syWhisper").value === "true", ai: aiValue("sticky") }
     : { topic: $("#syTopic").value, minutes: Number($("#syMinutes").value), count: Number($("#syCount").value),
         whispers: $("#syWhisper").value === "true", ai: aiValue("sticky") };
   if (movie && (!body.movie.trim() || body.shots.split("\n").filter((x) => x.trim()).length < 2)) {

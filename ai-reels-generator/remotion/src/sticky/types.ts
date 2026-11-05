@@ -116,4 +116,5 @@ export type StickyProps = {
   duration: number;
   silent?: boolean;
   soundOnly?: boolean;
+  vertical?: boolean; // a 9:16 Short: the camera cuts a tall window out of the 16:9 world (Sticky.tsx `camFor`)
 };
