@@ -11,8 +11,8 @@ when it ends:
 
 Built for small graphics cards (the user's GTX 1650 has 4 GB): models stream in layer by layer from system
 memory (sequential CPU offload) and the VAE decodes in tiles. GTX 16xx cards often turn half precision into
-NaNs (black pictures), so the first item of each stage checks its output and the stage falls back to full
-precision for good (written to the calibration file the job names).
+NaNs (black pictures), so the first item of each stage checks its output (keyframes: every picture) and the
+stage falls back to full precision for good (written to the calibration file the job names).
 
 Every finished item is written next to a `.ok` file and skipped next time, so a crash, a Pause or a closed
 app costs only the item in progress. Progress goes to stdout as lines starting with `@@REEL@@` (JSON). Plain
@@ -137,6 +137,40 @@ def broken(image) -> bool:
     return not np.isfinite(a).all() or a.std() < 2.0
 
 
+def broken_file(path: str | Path) -> bool:
+    """A saved picture that is black or one flat colour (a run before every picture was checked kept them)."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            im.thumbnail((256, 256))
+            return broken(im)
+    except Exception:  # noqa: BLE001 - unreadable: draw it again
+        return True
+
+
+def gtx16() -> bool:
+    """A GeForce GTX 16xx (Turing without tensor cores): half precision often comes out as NaN there."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return False
+    return torch.cuda.get_device_capability(0) == (7, 5) and "GTX 16" in torch.cuda.get_device_name(0)
+
+
+class NaNLatents(RuntimeError):
+    """The picture went NaN during its steps: it would come out black."""
+
+
+def nan_guard(pipe, step, timestep, kw):
+    """Stop a picture at the first step whose latents aren't finite (minutes sooner than a black picture)."""
+    import torch
+
+    if not torch.isfinite(kw["latents"]).all():
+        raise NaNLatents(f"step {step + 1}")
+    return kw
+
+
 # ---------- keyframes: SDXL-Lightning (4 steps) + IP-Adapter ----------
 
 SDXL_BASE = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -197,60 +231,98 @@ def sdxl_pipeline(job: dict, dtype):
     return pipe, ip
 
 
+PLAIN = {"model": None, "guidance": 0.0, "steps": 4, "ip_adapter": False}  # SDXL-Lightning's own settings
+
+
 def keyframes(job: dict) -> None:
+    """Every picture is checked as it is drawn. Black (NaN) output on this card goes down a ladder, each step
+    remembered in the calibration file: half precision -> full precision -> (the photoreal model only) the
+    SDXL-Lightning model that this card already drew with. A black picture is never saved: a run that kept
+    the first check's 'ok' for a new model saved 7 black pictures on the user's GTX 1650 and Claude's picture
+    check then spent 420k tokens and an hour redrawing them black."""
     import torch
     from diffusers import StableDiffusionXLImg2ImgPipeline
     from PIL import Image
 
+    cal = calibration(job)
+    if job.get("model") == "photoreal" and cal.get("photoreal_broken") and not job.get("tiny"):
+        say("note", msg="The photoreal model drew black pictures on this card before: drawing with SDXL-Lightning")
+        job = {**job, **PLAIN}
+    stage = "photoreal" if job.get("model") == "photoreal" else "sdxl"
     items = [*job.get("characters", []), *job.get("shots", [])]
-    todo = [it for it in items if not done(it["out"])]
+    todo = [it for it in items if not done(it["out"]) or broken_file(it["out"])]
     say("start", stage="keyframes", total=len(items), todo=len(todo))
     if not todo:
         return
-    dtype = pick_dtype(job, "sdxl")
+    if gtx16():
+        # Lets GTX 16xx cards run half precision they otherwise turn into NaNs (AUTOMATIC1111 #4407).
+        torch.backends.cudnn.benchmark = True
+    dtype = pick_dtype(job, stage)
     pipe, ip = sdxl_pipeline(job, dtype)
     i2i = StableDiffusionXLImg2ImgPipeline.from_pipe(pipe, torch_dtype=dtype)  # else diffusers casts the shared model to fp32: twice the memory
     W, H = job.get("width", 1024), job.get("height", 576)
     steps = job.get("steps", 4)
     blank = Image.new("RGB", (224, 224), (128, 128, 128))
-    checked = bool(calibration(job).get("sdxl_ok")) or dtype == torch.float32
+    black = ""
     n = 0
-    for it in items:
-        if done(it["out"]):
-            continue
+    for it in todo:
         t0 = time.time()
         g = torch.Generator("cpu").manual_seed(int(it.get("seed", 0)))
         common = dict(prompt=it["prompt"], negative_prompt=job.get("negative", ""),
-                      guidance_scale=float(job.get("guidance", 0.0)), generator=g)
+                      guidance_scale=float(job.get("guidance", 0.0)), generator=g, callback_on_step_end=nan_guard)
         ref = it.get("ref")
         if ip:
             # Each shot takes the look of its main character from that character's sheet (scale 0 = no one).
             pipe.set_ip_adapter_scale(float(it.get("ref_scale", 0.6)) if ref and Path(ref).exists() else 0.0)
             common["ip_adapter_image"] = Image.open(ref).convert("RGB") if ref and Path(ref).exists() else blank
         init = it.get("init")
-        if init and Path(init).exists():  # the same place as the shot before: start from its picture
-            strength = float(it.get("strength", 0.6))
-            image = i2i(image=Image.open(init).convert("RGB").resize((W, H)), strength=strength,
-                        num_inference_steps=max(steps, math.ceil(steps / strength)), **common).images[0]
-        else:
-            image = pipe(width=W, height=H, num_inference_steps=steps, **common).images[0]
-        if not checked:
-            if broken(image):
-                if dtype == torch.float32 or job.get("_retried") or job.get("dtype"):
-                    raise RuntimeError("The pictures come out black even in full precision: check the graphics driver")
-                say("warn", msg="Half precision gave a black picture on this card; switching to full precision")
-                remember(job, "sdxl_fp32", True)
-                del pipe, i2i
-                gc.collect()
-                torch.cuda.empty_cache()
-                return keyframes({**job, "_retried": True, "dtype": "fp32"})  # again in fp32 (nothing saved yet)
-            remember(job, "sdxl_ok", True)
-            checked = True
+        try:
+            if init and Path(init).exists() and not broken_file(init):  # the same place as the shot before
+                strength = float(it.get("strength", 0.6))
+                image = i2i(image=Image.open(init).convert("RGB").resize((W, H)), strength=strength,
+                            num_inference_steps=max(steps, math.ceil(steps / strength)), **common).images[0]
+            else:
+                image = pipe(width=W, height=H, num_inference_steps=steps, **common).images[0]
+        except NaNLatents as exc:
+            black = f"went NaN at {exc}"
+            break
+        if broken(image):
+            black = "came out black"
+            break
+        if n == 0:
+            remember(job, f"{stage}_ok", True)
         Path(it["out"]).parent.mkdir(parents=True, exist_ok=True)
         image.save(it["out"], quality=95)
         mark(it["out"])
         n += 1
         say("item", stage="keyframes", n=n, of=len(todo), id=it.get("id", ""), secs=round(time.time() - t0, 1))
+    if not black:
+        return
+    del pipe, i2i
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return keyframes(after_black(job, stage, dtype, black))
+
+
+def after_black(job: dict, stage: str, dtype, why: str) -> dict:
+    """The next rung of the ladder for a card that drew a black picture (or an error when none is left)."""
+    import torch
+
+    name = "the photoreal model" if stage == "photoreal" else "SDXL-Lightning"
+    tried = set(job.get("_tried", []))
+    if dtype != torch.float32 and f"{stage}-fp32" not in tried:
+        say("warn", msg=f"A picture {why} in half precision with {name} on this card: drawing in full precision")
+        remember(job, f"{stage}_fp32", True)
+        return {**job, "dtype": "fp32", "_tried": [*tried, f"{stage}-fp32"]}
+    if stage == "photoreal":
+        say("warn", msg=f"A picture {why} with the photoreal model even in full precision on this card: "
+                        "drawing with SDXL-Lightning instead")
+        remember(job, "photoreal_broken", True)
+        rest = {k: v for k, v in job.items() if k != "dtype"}
+        return {**rest, **PLAIN, "_tried": [*tried, "photoreal-off"]}
+    raise RuntimeError("The pictures come out black even in full precision on this graphics card: update the "
+                       "NVIDIA driver and try again")
 
 
 # ---------- clips: LTX-Video 2B distilled, image to video ----------

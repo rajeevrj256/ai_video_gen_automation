@@ -792,16 +792,58 @@ def check_pictures(cfg: Config, sc: AnimScript, tl: dict, work: Path, ids: list[
     return [b for b in review.broken if b.id in known and b.prompt.strip()]
 
 
+def blank_pictures(work: Path, ids: list[str] | None = None) -> list[str]:
+    """Pictures that are black or one flat colour (a graphics card's half-precision NaNs, never a prompt problem),
+    found in code so they are never sent to Claude: on the user's GTX 1650 seven black pictures went to the
+    picture check twice (420k tokens, an hour of redrawing, still black)."""
+    from PIL import Image, ImageStat
+
+    out = []
+    for path in sorted((work / "keyframes").glob("*.jpg")):
+        if "." in path.stem or (ids is not None and path.stem not in ids):  # p1s00.hd.jpg, x.last.jpg
+            continue
+        try:
+            with Image.open(path) as im:
+                im = im.convert("L")
+                im.thumbnail((128, 128))
+                flat = ImageStat.Stat(im).stddev[0] < 2.0
+        except Exception:  # noqa: BLE001 - unreadable counts as not drawn
+            flat = True
+        if flat:
+            out.append(path.stem)
+    return out
+
+
 def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Path, seed: int, state: dict,
                     progress: Progress, save, check=None, job=None, drawer=None) -> list[dict]:
     """Check every picture, redraw the broken ones from easier prompts, check those again (PIC_ROUNDS).
-    `check(ids)` and `job(fixes)` replace this pipeline's own (Story Shorts)."""
+    `check(ids)` and `job(fixes)` replace this pipeline's own (Story Shorts). Black pictures are caught in
+    code first and drawn again by the engine (which changes precision or model for this card); still black,
+    the video stops with a clear reason before any Claude call."""
     check = check or (lambda ids: check_pictures(cfg, sc, tl, work, ids))
     job = job or (lambda fixes: keyframe_job(sc, tl, style, work, seed, fixes))
+    draw = drawer or (lambda j: anim_engine.run_stage("keyframes", j, work, progress, "Drawing the pictures"))
     from .pipeline import Paused
 
     fixes: dict = state.get("pic_fixes") or {}
     found: list[dict] = state.get("pic_found") or []
+
+    def no_blank(ids: list[str] | None) -> None:
+        blank = blank_pictures(work, ids)
+        if not blank:
+            return
+        for b in blank:
+            for f in (work / "keyframes" / f"{b}.jpg", work / "keyframes" / f"{b}.jpg.ok"):
+                f.unlink(missing_ok=True)
+        progress(f"{len(blank)} picture(s) came out black: drawing them again in a precision this card can draw")
+        draw(job(fixes))
+        still = blank_pictures(work, blank)
+        if still:
+            raise RuntimeError(f"{len(still)} picture(s) still come out black on this graphics card "
+                               f"({', '.join(still[:6])}). Nothing was sent to Claude. Update the NVIDIA driver, "
+                               "then Resume.")
+
+    no_blank(None)
     ids = None
     for rnd in range(int(state.get("pic_round") or 0), PIC_ROUNDS):
         progress("Checking the pictures for broken people and objects" if ids is None
@@ -823,8 +865,9 @@ def _picture_rounds(cfg: Config, sc: AnimScript, tl: dict, style: str, work: Pat
                 f.unlink(missing_ok=True)
         progress(f"Redrawing {len(broken)} picture(s): " + "; ".join(f"{b.id} {b.problem}" for b in broken[:6]))
         save(pic_fixes=fixes, pic_found=found, pic_round=rnd + 1)
-        (drawer or (lambda j: anim_engine.run_stage("keyframes", j, work, progress, "Drawing the pictures")))(job(fixes))
+        draw(job(fixes))
         ids = [b.id for b in broken]
+        no_blank(ids)
     save(pic_fixes=fixes, pic_found=found, pic_round=PIC_ROUNDS, pics_checked=True)
     return found
 
