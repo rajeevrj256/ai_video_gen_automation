@@ -158,6 +158,81 @@ def gtx16() -> bool:
     return torch.cuda.get_device_capability(0) == (7, 5) and "GTX 16" in torch.cuda.get_device_name(0)
 
 
+
+# SDXL's text encoders read 77 tokens (75 words-pieces between start and end). Our prompts run 150-170 (the
+# scene, then the character, then the art style), so the style and most of the character were cut off: the
+# user's what-if pictures came out as ordinary cartoon people, never the round black heads the style asks for.
+CHUNK = 75
+
+
+def _chunks(tok, text: str, size: int = CHUNK) -> list[str]:
+    """The prompt in pieces of at most `size` tokens, cut between phrases (or words, for a very long phrase)."""
+    import re
+
+    def count(t: str) -> int:
+        return len(tok(t, add_special_tokens=False).input_ids)
+
+    parts: list[str] = []
+    for phrase in (x.strip() for x in re.split(r"(?<=[,.;:])\s+", text or "") if x.strip()):
+        if count(phrase) <= size:
+            parts.append(phrase)
+            continue
+        cur: list[str] = []
+        for word in phrase.split():
+            if cur and count(" ".join([*cur, word])) > size:
+                parts.append(" ".join(cur))
+                cur = []
+            cur.append(word)
+        if cur:
+            parts.append(" ".join(cur))
+    out, cur = [], []
+    for part in parts:
+        if cur and count(" ".join([*cur, part])) > size:
+            out.append(" ".join(cur))
+            cur = []
+        cur.append(part)
+    if cur:
+        out.append(" ".join(cur))
+    return out or [""]
+
+
+def long_embeds(pipe, prompt: str, negative: str, guidance: float) -> dict:
+    """The whole prompt as SDXL embeddings: each piece encoded on its own (with its own start and end tokens) and
+    the pieces joined, as AUTOMATIC1111 does; the pooled embedding from the first piece. The negative gets as many
+    pieces (blank ones added) because guidance stacks the two."""
+    import torch
+
+    cfg = guidance > 1.0
+    pos = _chunks(pipe.tokenizer, prompt)
+    neg = _chunks(pipe.tokenizer, negative) if cfg else []
+    n = max(len(pos), len(neg))
+    pos += [""] * (n - len(pos))
+    neg += [""] * (n - len(neg)) if cfg else []
+    device = pipe._execution_device
+    pe, ne, pooled, npooled = [], [], None, None
+    for i in range(n):
+        e, en, p, pn = pipe.encode_prompt(prompt=pos[i], prompt_2=pos[i], device=device, num_images_per_prompt=1,
+                                          do_classifier_free_guidance=cfg, negative_prompt=neg[i] if cfg else None,
+                                          negative_prompt_2=neg[i] if cfg else None)
+        pe.append(e)
+        if cfg:
+            ne.append(en)
+        if i == 0:
+            pooled, npooled = p, pn
+    out = {"prompt_embeds": torch.cat(pe, 1), "pooled_prompt_embeds": pooled}
+    if cfg:
+        out.update(negative_prompt_embeds=torch.cat(ne, 1), negative_pooled_prompt_embeds=npooled)
+    return out
+
+
+# The character sheet goes in through IP-Adapter's style blocks only (InstantStyle: up_blocks.0.attentions.1):
+# the character's look (head, colours, clothes, materials) without the sheet's pose, framing and plain grey
+# background. At one scale for every block, 7 of the user's 8 what-if shots came out as the sheet again: the same
+# standing figure on grey, no starting blocks, no stadium.
+def ref_scale(scale: float):
+    return {"up": {"block_0": [0.0, scale, 0.0]}} if scale > 0 else 0.0
+
+
 class NaNLatents(RuntimeError):
     """The picture went NaN during its steps: it would come out black."""
 
@@ -231,6 +306,7 @@ def sdxl_pipeline(job: dict, dtype):
     return pipe, ip
 
 
+REF_SCALE = 0.75  # the style blocks only (ref_scale); the whole-model 0.6 copied the sheet's layout
 PLAIN = {"model": None, "guidance": 0.0, "steps": 4, "ip_adapter": False}  # SDXL-Lightning's own settings
 
 
@@ -268,12 +344,13 @@ def keyframes(job: dict) -> None:
     for it in todo:
         t0 = time.time()
         g = torch.Generator("cpu").manual_seed(int(it.get("seed", 0)))
-        common = dict(prompt=it["prompt"], negative_prompt=job.get("negative", ""),
-                      guidance_scale=float(job.get("guidance", 0.0)), generator=g, callback_on_step_end=nan_guard)
+        guidance = float(job.get("guidance", 0.0))
+        common = dict(**long_embeds(pipe, it["prompt"], job.get("negative", ""), guidance),
+                      guidance_scale=guidance, generator=g, callback_on_step_end=nan_guard)
         ref = it.get("ref")
         if ip:
             # Each shot takes the look of its main character from that character's sheet (scale 0 = no one).
-            pipe.set_ip_adapter_scale(float(it.get("ref_scale", 0.6)) if ref and Path(ref).exists() else 0.0)
+            pipe.set_ip_adapter_scale(ref_scale(float(it.get("ref_scale", REF_SCALE)) if ref and Path(ref).exists() else 0.0))
             common["ip_adapter_image"] = Image.open(ref).convert("RGB") if ref and Path(ref).exists() else blank
         init = it.get("init")
         try:

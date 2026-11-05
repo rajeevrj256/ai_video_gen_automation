@@ -160,7 +160,8 @@ class SVisual(BaseModel):
                                   "zoom (punch-in), shake, flash, pause (a beat after the line). None for low lines.")
     scene: str = Field(description="The picture of this moment for the image model, 20-60 words, composed for a tall 9:16 "
                        "phone screen: who/what is in frame doing what, the setting, the shot (close-up / medium / low angle "
-                       "looking up...), light and mood. Never text, signs, labels or screens with writing.")
+                       "looking up...), light and mood. Never text, signs, labels or screens with writing."
+                       " Name only what IS in the picture: never 'no X' or 'without X' (the picture model draws every thing it reads).")
     characters: list[str] = Field(default_factory=list, description="Cast ids in frame (0-2), the main one first.")
     same_place: bool = Field(default=False, description="True when this shot continues in the previous shot's place.")
     motion: str = Field(description="What moves during the clip, 8-30 words: one clear action plus small life.")

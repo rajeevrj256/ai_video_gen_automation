@@ -68,8 +68,8 @@ ART_STYLES = {
     "ink-wash": ("ink wash and watercolor painting, loose expressive brush strokes, muted earthy tones, paper grain", "#8D99AE"),
     "pixel-art": ("detailed 16-bit pixel art scene, crisp pixels, limited vibrant palette, retro game look", "#06D6A0"),
     "whatif-3d": ("stylized 3D animated film still, soft cinematic light, shallow depth of field, miniature-like detailed sets, "
-                  "people drawn as simple figures with glossy round black heads and two glowing white oval eyes, no mouth or nose, "
-                  "plain clothes", "#FFD23F"),
+                  "every person a faceless mannequin whose head is a smooth glossy black sphere with two glowing white oval "
+                  "eye lights, plain clothes", "#FFD23F"),
     "divine-epic": ("photorealistic epic mythological film still, hyper-detailed, divine and majestic, golden Himalayan "
                     "temples, storm clouds and mist, volumetric god rays, dramatic rim light, rich gold and deep blue, "
                     "8K cinematic, Indian mythology", "#F5B700"),
@@ -111,7 +111,8 @@ class ACharacter(BaseModel):
     name: str
     role: str = Field(description="Who they are in the story. Never a real, named person.")
     design: str = Field(description="How they look, for the picture model, 25-60 words: species or age/build, face, hair, "
-                        "clothes with colours, one signature item. Specific and fixed: it is repeated in every shot.")
+                        "clothes with colours, one signature item. Specific and fixed: it is repeated in every shot."
+                        "Name only what IS in the picture: never 'no X' or 'without X' (the picture model draws every thing it reads).")
 
 
 class AShot(BaseModel):
@@ -127,7 +128,8 @@ class AShot(BaseModel):
                        "doing what (pose, expression), the setting, composition (close-up / wide / over-the-shoulder / "
                        "bird's-eye...), lighting and mood. Concrete and visual; a metaphor for anything abstract. At most "
                        "two people near the camera, each fully in frame with the face visible; groups only small in the "
-                       "distance. Never text, signs, labels, numbers, logos or screens with writing (the editor adds words).")
+                       "distance. Never text, signs, labels, numbers, logos or screens with writing (the editor adds words)."
+                       " Name only what IS in the picture: never 'no X' or 'without X' (the picture model draws every thing it reads).")
     characters: list[str] = Field(default_factory=list, description="Cast ids in frame (0-2), the main one first.")
     same_place: bool = Field(default=False, description="True when this shot continues in the same place as the shot "
                              "before (its picture is drawn from that one, so the setting stays the same).")
@@ -205,8 +207,9 @@ and the story follows what would really happen, step by step, with real science 
 - A NEW concrete place or situation nearly every shot (a kitchen, a highway, a power plant, a supermarket aisle, a map,
 the globe from space): the viewer should see the world change around 'you'. Maps, a globe, a simple chart are fine as
 pictures when a number is about the whole world.
-- 'You' is one recurring character (a figure with a round glossy black head and glowing white eyes, in the style),
-listed first in `characters`; other people look the same but different clothes.
+- 'You' is one recurring character (a faceless mannequin whose head is a smooth glossy black sphere with two glowing
+white oval eye lights, in the style), listed first in `characters`; other people look the same but different
+clothes. Describe what IS there, never 'no mouth' or 'no hair': the picture model draws every thing it reads.
 - Every ~15 seconds a real figure: put it in `stat` as a short label in capitals, or as a `counter_label` +
 `counter_value` when something is counted (people left, days alone, power plants still running). Every figure true
 and in the line itself.
