@@ -233,6 +233,36 @@ def ref_scale(scale: float):
     return {"up": {"block_0": [0.0, scale, 0.0]}} if scale > 0 else 0.0
 
 
+def roomy() -> bool:
+    """Room for the photoreal model in full precision (10.3 GB of weights in system memory, streamed through the
+    card): on the user's 16 GB laptop with a 4 GB GTX 1650 it ran the card out of memory (Windows let PyTorch take
+    10.4 GB of shared memory before failing) after 15 minutes."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return True  # the CPU computes in full precision anyway (or REEL_ANIM_DTYPE)
+    vram = torch.cuda.get_device_properties(0).total_memory / 2**30
+    return ram_gb() >= FP32_RAM_GB and vram >= 8
+
+
+def oom(exc: BaseException) -> bool:
+    import torch
+
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or "out of memory" in str(exc).lower()
+
+
+def fit_vae(vae, job: dict) -> None:
+    """Decode in small tiles on small cards: SDXL's decoder tiles at 1024 px by default, so a 768x1344 picture was
+    decoded almost whole (gigabytes in full precision). 512 px on cards under 6 GB, 256 in the low-memory mode."""
+    import torch
+
+    vae.enable_tiling()
+    small = torch.cuda.is_available() and torch.cuda.get_device_properties(0).total_memory / 2**30 < 6
+    size = 256 if job.get("lowmem") else 512 if small else 0
+    if size and hasattr(vae, "tile_sample_min_size"):
+        vae.tile_sample_min_size, vae.tile_latent_min_size = size, size // 8
+
+
 class NaNLatents(RuntimeError):
     """The picture went NaN during its steps: it would come out black."""
 
@@ -272,7 +302,7 @@ def sdxl_pipeline(job: dict, dtype):
         pipe = StableDiffusionXLPipeline.from_pretrained(PHOTOREAL, torch_dtype=dtype, variant="fp16", **kw)
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config, algorithm_type="sde-dpmsolver++",
                                                                  use_karras_sigmas=True)
-        pipe.vae.enable_tiling()
+        fit_vae(pipe.vae, job)
         place(pipe, job)
         return pipe, False
     if job.get("tiny"):  # tests: a tiny random SDXL, no Lightning weights
@@ -301,7 +331,7 @@ def sdxl_pipeline(job: dict, dtype):
             ip = True
         except Exception as exc:  # noqa: BLE001 - pictures still work, characters just drift more
             say("warn", msg=f"IP-Adapter didn't load ({exc}); characters are kept by description only")
-    pipe.vae.enable_tiling()
+    fit_vae(pipe.vae, job)
     place(pipe, job)
     return pipe, ip
 
@@ -321,39 +351,43 @@ def keyframes(job: dict) -> None:
     from PIL import Image
 
     cal = calibration(job)
-    if job.get("model") == "photoreal" and cal.get("photoreal_broken") and not job.get("tiny"):
-        say("note", msg="The photoreal model drew black pictures on this card before: drawing with SDXL-Lightning")
+    if job.get("model") == "photoreal" and not job.get("tiny") and (
+            cal.get("photoreal_broken") or (cal.get("photoreal_fp32") and not roomy() and not job.get("dtype"))):
+        say("note", msg="The photoreal model can't draw on this card (black pictures in half precision, too big in "
+                        "full): drawing with SDXL-Lightning")
         job = {**job, **PLAIN}
+    if cal.get("keyframes_lowmem"):
+        job = {**job, "lowmem": True}
     stage = "photoreal" if job.get("model") == "photoreal" else "sdxl"
     items = [*job.get("characters", []), *job.get("shots", [])]
     todo = [it for it in items if not done(it["out"]) or broken_file(it["out"])]
     say("start", stage="keyframes", total=len(items), todo=len(todo))
     if not todo:
         return
-    if gtx16():
-        # Lets GTX 16xx cards run half precision they otherwise turn into NaNs (AUTOMATIC1111 #4407).
-        torch.backends.cudnn.benchmark = True
+    # Lets GTX 16xx cards run half precision they otherwise turn into NaNs (AUTOMATIC1111 #4407); not in the
+    # low-memory mode (its trial runs can take large work buffers)
+    torch.backends.cudnn.benchmark = gtx16() and not job.get("lowmem")
     dtype = pick_dtype(job, stage)
     pipe, ip = sdxl_pipeline(job, dtype)
     i2i = StableDiffusionXLImg2ImgPipeline.from_pipe(pipe, torch_dtype=dtype)  # else diffusers casts the shared model to fp32: twice the memory
     W, H = job.get("width", 1024), job.get("height", 576)
     steps = job.get("steps", 4)
     blank = Image.new("RGB", (224, 224), (128, 128, 128))
-    black = ""
+    black, short = "", False
     n = 0
     for it in todo:
         t0 = time.time()
         g = torch.Generator("cpu").manual_seed(int(it.get("seed", 0)))
         guidance = float(job.get("guidance", 0.0))
-        common = dict(**long_embeds(pipe, it["prompt"], job.get("negative", ""), guidance),
-                      guidance_scale=guidance, generator=g, callback_on_step_end=nan_guard)
         ref = it.get("ref")
-        if ip:
-            # Each shot takes the look of its main character from that character's sheet (scale 0 = no one).
-            pipe.set_ip_adapter_scale(ref_scale(float(it.get("ref_scale", REF_SCALE)) if ref and Path(ref).exists() else 0.0))
-            common["ip_adapter_image"] = Image.open(ref).convert("RGB") if ref and Path(ref).exists() else blank
         init = it.get("init")
         try:
+            common = dict(**long_embeds(pipe, it["prompt"], job.get("negative", ""), guidance),
+                          guidance_scale=guidance, generator=g, callback_on_step_end=nan_guard)
+            if ip:
+                # Each shot takes the look of its main character from that character's sheet (scale 0 = no one).
+                pipe.set_ip_adapter_scale(ref_scale(float(it.get("ref_scale", REF_SCALE)) if ref and Path(ref).exists() else 0.0))
+                common["ip_adapter_image"] = Image.open(ref).convert("RGB") if ref and Path(ref).exists() else blank
             if init and Path(init).exists() and not broken_file(init):  # the same place as the shot before
                 strength = float(it.get("strength", 0.6))
                 image = i2i(image=Image.open(init).convert("RGB").resize((W, H)), strength=strength,
@@ -362,6 +396,11 @@ def keyframes(job: dict) -> None:
                 image = pipe(width=W, height=H, num_inference_steps=steps, **common).images[0]
         except NaNLatents as exc:
             black = f"went NaN at {exc}"
+            break
+        except (RuntimeError, MemoryError) as exc:
+            if not oom(exc):
+                raise
+            short = True
             break
         if broken(image):
             black = "came out black"
@@ -373,13 +412,31 @@ def keyframes(job: dict) -> None:
         mark(it["out"])
         n += 1
         say("item", stage="keyframes", n=n, of=len(todo), id=it.get("id", ""), secs=round(time.time() - t0, 1))
-    if not black:
+    if not black and not short:
         return
     del pipe, i2i
+    common = None
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    return keyframes(after_black(job, stage, dtype, black))
+    return keyframes(after_oom(job, stage) if short else after_black(job, stage, dtype, black))
+
+
+def after_oom(job: dict, stage: str) -> dict:
+    """The next rung for a card that ran out of memory drawing a picture: the low-memory mode (small decoder tiles,
+    no cuDNN trial runs), then (the photoreal model) SDXL-Lightning, then a clear error."""
+    tried = set(job.get("_tried", []))
+    if not job.get("lowmem") and "lowmem" not in tried:
+        say("warn", msg="The graphics card ran out of memory drawing a picture: drawing again with less memory")
+        remember(job, "keyframes_lowmem", True)
+        return {**job, "lowmem": True, "_tried": [*tried, "lowmem"]}
+    if stage == "photoreal":
+        say("warn", msg="The photoreal model doesn't fit this graphics card's memory: drawing with SDXL-Lightning instead")
+        remember(job, "photoreal_broken", "memory")
+        rest = {k: v for k, v in job.items() if k != "dtype"}
+        return {**rest, **PLAIN, "_tried": [*tried, "photoreal-off"]}
+    raise RuntimeError("The graphics card runs out of memory drawing pictures even with the least memory: close other "
+                       "programs that use it (games, video editors, a browser with many tabs) and press Resume")
 
 
 def after_black(job: dict, stage: str, dtype, why: str) -> dict:
@@ -388,13 +445,14 @@ def after_black(job: dict, stage: str, dtype, why: str) -> dict:
 
     name = "the photoreal model" if stage == "photoreal" else "SDXL-Lightning"
     tried = set(job.get("_tried", []))
-    if dtype != torch.float32 and f"{stage}-fp32" not in tried:
+    # full precision for the photoreal model only on a machine with room for its 10 GB of weights (roomy)
+    if dtype != torch.float32 and f"{stage}-fp32" not in tried and (stage != "photoreal" or roomy()):
         say("warn", msg=f"A picture {why} in half precision with {name} on this card: drawing in full precision")
         remember(job, f"{stage}_fp32", True)
         return {**job, "dtype": "fp32", "_tried": [*tried, f"{stage}-fp32"]}
     if stage == "photoreal":
-        say("warn", msg=f"A picture {why} with the photoreal model even in full precision on this card: "
-                        "drawing with SDXL-Lightning instead")
+        say("warn", msg=f"A picture {why} with the photoreal model on this card"
+                        + (" even in full precision" if dtype == torch.float32 else "") + ": drawing with SDXL-Lightning instead")
         remember(job, "photoreal_broken", True)
         rest = {k: v for k, v in job.items() if k != "dtype"}
         return {**rest, **PLAIN, "_tried": [*tried, "photoreal-off"]}
