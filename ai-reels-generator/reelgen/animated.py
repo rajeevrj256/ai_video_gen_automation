@@ -188,10 +188,19 @@ class AnimScript(BaseModel):
 
 
 WHATIF_RULES = """
-This is a WHAT IF video (like 'What if you were the last person on Earth'): the topic is a hypothetical, told to the
-viewer in the second person ("You wake up. The street is silent."), and the story follows what would really happen,
-step by step, with real science and real numbers.
-- Chapters are numbered moments in time ('The Morning After', 'Week One', 'Year Ten'...); the chapter title is short.
+This is a WHAT IF video (like 'What if you were the last person on Earth' or 'What if your reaction time was 10x
+faster?'): the topic is a hypothetical, told to the viewer in the second person ("You wake up. The street is silent."),
+and the story follows what would really happen, step by step, with real science and real numbers.
+- Pick the chapter shape that fits the topic; the chapter title is short:
+  * a WORLD that changes (the last person on Earth, the internet dies): numbered moments in time ('The Morning After',
+    'Week One', 'Year Ten'...);
+  * YOU with a new ability or limit (10x faster reactions, never sleeping, twice as strong): situations that escalate:
+    the impossible moment first (the cold open: catching a fly, the cup caught before it falls), then how it really
+    works in the body or the physics, a simple test that proves it, everyday life, danger, then one big showdown
+    (a match, a race, a record) as the climax. Show it against a NORMAL person: side by side, or the same moment
+    twice; put the comparison in `stat` ('NORMAL 0.25 S / YOU 0.025 S'). The ability's key moments in slow motion
+    (say 'in extreme slow motion' in `motion`). Keep only what the ability changes: if only the brain is faster, the
+    muscles are not, and the story says so.
 - About 120-130 words a minute, short punchy sentences, dry humour between the hard facts.
 - A NEW concrete place or situation nearly every shot (a kitchen, a highway, a power plant, a supermarket aisle, a map,
 the globe from space): the viewer should see the world change around 'you'. Maps, a globe, a simple chart are fine as
@@ -202,7 +211,7 @@ listed first in `characters`; other people look the same but different clothes.
 `counter_value` when something is counted (people left, days alone, power plants still running). Every figure true
 and in the line itself.
 - `stamp` (THUD, CRACK!, CLICK, SILENCE...) on about one shot in 8, for a sudden or funny moment.
-- The ending lands on a surprising, hopeful or ironic last thought; no call to subscribe.
+- The ending lands on a surprising, hopeful or ironic last thought, or a teaser question about the next, harder challenge ('But what about a 160 km/h fastball?'); never promise another video; no call to subscribe.
 """
 
 
