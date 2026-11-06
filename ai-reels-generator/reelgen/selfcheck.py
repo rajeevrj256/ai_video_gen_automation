@@ -221,6 +221,43 @@ def visual_templates() -> None:
         fail(f"Briefing layouts missing from LVisual.type or types.ts VisualType: {missing}")
 
 
+def lowpoly_lists() -> None:
+    """The low-poly writer offers exactly what the editor draws (story.py Literals = lowpoly/types.ts unions), every
+    set's spots exist in Sets.tsx, and the hero is the same man in Python and in the editor."""
+    import re
+    import typing
+
+    from .lowpoly import story as S
+    from .lowpoly.timeline import chunks
+
+    ts = (ROOT / "remotion" / "src" / "lowpoly" / "types.ts").read_text(encoding="utf-8")
+    for ts_name, py in (("SetName", S.SetName), ("Light", S.LightName), ("Cam", S.CamName), ("Action", S.ActionName),
+                        ("Expr", S.ExprName), ("Spot", S.SpotName), ("Hold", S.HoldName)):
+        block = re.search(rf"export type {ts_name} =(.*?);", ts, re.S)
+        theirs = set(re.findall(r"'([a-z-]+)'", block.group(1))) if block else set()
+        ours = set(typing.get_args(py))
+        if ours != theirs:
+            fail(f"lowpoly {ts_name}: only in story.py {sorted(ours - theirs)}, only in types.ts {sorted(theirs - ours)}")
+    things = re.search(r"kind: ('phone'[^;]+);", ts)
+    if not things or set(re.findall(r"'([a-z]+)'", things.group(1))) != set(typing.get_args(S.ThingName)):
+        fail("lowpoly Thing kinds differ between story.py ThingName and types.ts")
+    sets_ts = (ROOT / "remotion" / "src" / "lowpoly" / "Sets.tsx").read_text(encoding="utf-8")
+    for name, spots in S.SPOTS.items():
+        var = "voidSet" if name == "void" else name
+        body = re.search(rf"const {var}: SetDef = \{{(.*?)\n  wide:", sets_ts, re.S)
+        drawn = set(re.findall(r"(\w+): \{x:", body.group(1))) if body else set()
+        if spots != drawn:
+            fail(f"lowpoly set {name}: story.SPOTS {sorted(spots)} but Sets.tsx has {sorted(drawn)}")
+    man = (ROOT / "remotion" / "src" / "lowpoly" / "Man.tsx").read_text(encoding="utf-8")
+    for key in ("skin", "hair", "top", "trousers"):
+        if f"{key}: '{S.HERO[key]}'" not in man:
+            fail(f"lowpoly hero: {key} {S.HERO[key]} in story.HERO is not the editor's HERO")
+    got = [c[2] for c in chunks([("He", 0, .2), ("pictures", .2, .6), ("a", .6, .7), ("5:30", .7, 1.1), ("run.", 1.1, 1.4),
+                                 ("Tomorrow,", 1.6, 2.0), ("for", 2.0, 2.1), ("real.", 2.1, 2.5)])]
+    if got != ["He pictures a", "5:30 run.", "Tomorrow, for", "real."] and got != ["He pictures a", "5:30 run.", "Tomorrow,", "for real."]:
+        fail(f"lowpoly captions: {got}")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -230,6 +267,7 @@ def main() -> int:
     meme_lists()
     hook_templates()
     visual_templates()
+    lowpoly_lists()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

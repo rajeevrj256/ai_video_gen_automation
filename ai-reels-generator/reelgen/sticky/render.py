@@ -20,7 +20,8 @@ PART_TIMEOUT = 3600
 TRIES = 3
 
 
-def render(props: dict, soundtrack: Path, work: Path, out: Path, progress, crf: int = 18) -> None:
+def render(props: dict, soundtrack: Path, work: Path, out: Path, progress, crf: int = 18, composition: str = "Sticky") -> None:
+    """`composition` lets the low-poly films (reelgen/lowpoly/) use the same part-by-part render."""
     cli = _remotion_cli()
     if not cli:
         raise RuntimeError("Remotion isn't installed (run start.sh / start.bat once).")
@@ -46,7 +47,7 @@ def render(props: dict, soundtrack: Path, work: Path, out: Path, progress, crf: 
         if part.exists() and ok.exists():
             continue
         for tries in range(1, TRIES + 1):
-            cmd = _remotion_cmd(cli, "Sticky", part, props_path, crf, gpu, [f"--frames={a}-{b}", "--muted"],
+            cmd = _remotion_cmd(cli, composition, part, props_path, crf, gpu, [f"--frames={a}-{b}", "--muted"],
                                 max(1, _concurrency() // 2) if tries == TRIES else None)
             t0 = time.time()
             proc = stopper.run(cmd, cwd=REMOTION_DIR, capture_output=True, text=True, encoding="utf-8", errors="replace",

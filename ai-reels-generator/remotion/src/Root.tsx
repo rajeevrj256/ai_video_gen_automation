@@ -21,6 +21,9 @@ import type {ToonProps} from './toon/types';
 import {Sticky} from './sticky/Sticky';
 import {stickyDemoProps} from './sticky/demo';
 import type {StickyProps} from './sticky/types';
+import {LowPoly} from './lowpoly/LowPoly';
+import {lowpolyDemoProps} from './lowpoly/demo';
+import type {LowPolyProps} from './lowpoly/types';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
@@ -32,6 +35,12 @@ const calculateStickyMetadata: CalculateMetadataFunction<StickyProps> = ({props}
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
   width: props.vertical ? 1080 : 1920, // Sticky Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
+});
+const calculateLowPolyMetadata: CalculateMetadataFunction<LowPolyProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Shorts 9:16, films 16:9
   height: props.vertical ? 1920 : 1080,
 });
 const calculateStickMetadata: CalculateMetadataFunction<StickProps> = ({props}) => ({
@@ -145,6 +154,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={stickyDemoProps}
     calculateMetadata={calculateStickyMetadata}
+  />
+  {/* low-poly 3D man, narrated, Short (9:16) or film (16:9): reelgen/lowpoly/ */}
+  <Composition
+    id="LowPoly"
+    component={LowPoly}
+    width={1080}
+    height={1920}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={lowpolyDemoProps}
+    calculateMetadata={calculateLowPolyMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition

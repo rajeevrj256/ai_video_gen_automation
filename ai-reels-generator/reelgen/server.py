@@ -60,9 +60,9 @@ class UpdateBody(BaseModel):
 
 def job_label(job: dict) -> str:
     inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input") or job.get("sticky_input")
-           or job.get("story_input") or job.get("shoot_input") or {})
+           or job.get("lowpoly_input") or job.get("story_input") or job.get("shoot_input") or {})
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
-    kind = ("Sticky film" if job.get("sticky_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
+    kind = ("Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
@@ -251,6 +251,9 @@ class JobManager:
             elif job.get("sticky_input"):  # Sticky Films (reelgen/sticky/), new or resumed: a pipeline of its own
                 from .sticky.run import StickyRequest, run_sticky_job
                 reports = run_sticky_job(cfg, StickyRequest(**job["sticky_input"]), job["count"], progress, job.get("sticky_resume"))
+            elif job.get("lowpoly_input"):  # Low-poly films (reelgen/lowpoly/), new or resumed
+                from .lowpoly.run import LowPolyRequest, run_lowpoly_job
+                reports = run_lowpoly_job(cfg, LowPolyRequest(**job["lowpoly_input"]), job["count"], progress, job.get("lowpoly_resume"))
             elif job.get("toon_input"):  # Toon Explainers (reelgen/toon.py), new or resumed
                 from .toon import ToonRequest, run_toon_job
                 reports = run_toon_job(cfg, ToonRequest(**job["toon_input"]), job["count"], progress, job.get("toon_resume"))
@@ -537,6 +540,20 @@ class StickyBody(BaseModel):
     format: str = "film"  # film (16:9) | short (9:16)
     seconds: int = 45  # Short: 20-60
     hero: str = ""  # Short: '' = the recurring Shorts hero, 'new', or a Sticky movie's title (its cast)
+    ai: AIPick | None = None
+
+
+class LowPolyBody(BaseModel):
+    """Low-poly films (reelgen/lowpoly/): the user's faceted 3D man, narrated; a Short (9:16) or a 3-4 min film."""
+    topic: str = ""
+    format: str = "short"  # short | film
+    seconds: int = 35
+    minutes: float = 3.5
+    vertical: bool = False  # film in 9:16
+    voice: str = ""
+    pace: int = 0
+    watermark: str = "Life of a man"
+    count: int = 1
     ai: AIPick | None = None
 
 
@@ -1536,6 +1553,22 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
                            sticky_input=given, captions=False, ai=body.ai)
 
+    @app.post("/api/lowpoly")
+    def lowpoly(body: LowPolyBody):
+        film = body.format == "film"
+        given = {"topic": body.topic.strip()[:400], "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
+                 "minutes": max(2.5, min(4.5, float(body.minutes))), "vertical": bool(body.vertical) and film,
+                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40]}
+        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "lowpoly", "story", "lowpoly",
+                           lowpoly_input=given, captions=True, ai=body.ai)
+
+    @app.get("/api/lowpoly/cast")
+    def lowpoly_cast():
+        """The people met so far in the low-poly films (the hero is always the same man)."""
+        from .lowpoly.story import saved_cast
+
+        return [{"name": v["name"], "who": v["who"]} for v in saved_cast(cfg).values()]
+
     @app.get("/api/sticky/hero")
     def sticky_hero():
         """The recurring hero of the Sticky Shorts (none before the first Short)."""
@@ -2163,6 +2196,14 @@ def create_app(cfg: Config) -> FastAPI:
                 raise HTTPException(400, "Nothing saved to resume for these films; make them again.")
             return jobs.submit(job["topic"], len(saved) or fresh, "resume", "story", "sticky",
                                sticky_input=job["sticky_input"], sticky_resume=saved or None, captions=False, ai=job.get("ai"))
+        if job.get("lowpoly_input"):  # a low-poly job resumes its own saved videos (lowpoly-checkpoint.json)
+            from .lowpoly.run import unfinished as unfinished_lowpoly
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_lowpoly(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these videos; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", "story", "lowpoly",
+                               lowpoly_input=job["lowpoly_input"], lowpoly_resume=saved or None, captions=True, ai=job.get("ai"))
         if job.get("stick_input"):  # a Stick job resumes its own saved videos (stick-checkpoint.json)
             from .stickstory import unfinished_sticks
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_sticks(cfg) and f not in busy_folders()]
