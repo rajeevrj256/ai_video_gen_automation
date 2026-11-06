@@ -27,7 +27,8 @@ MAX_FASTER = 18  # at most this much faster than asked (percent)
 
 @dataclass
 class LowPolyRequest:
-    topic: str = ""  # the struggle; empty = Claude picks one the last films didn't use
+    topic: str = ""  # the struggle (life) or the user's whole brief (fiction, up to 4,000 letters); empty = Claude picks
+    kind: str = "life"  # life (a small everyday struggle, narrated) | fiction (the user's brief: dialogue, powers, action)
     format: str = "short"  # short (9:16, `seconds`) | film (`minutes`, 16:9 unless `vertical`)
     seconds: int = 35  # Short: 20-60 (the original runs 33 s)
     minutes: float = 3.5  # film: 2.5-4.5
@@ -48,20 +49,34 @@ def _thumb_time(props: dict) -> float:
     return props["duration"] * 0.4
 
 
+def speaker_key(speaker: str) -> str:
+    sp = (speaker or "narrator").strip()
+    return "hero" if sp == "hero" else "narrator" if sp == "narrator" else S._key(sp)
+
+
 def _record(cfg: Config, story: S.Story, req: LowPolyRequest, work: Path, progress, pace: int, take: str = "audio") -> dict[int, dict]:
+    """Every line in its speaker's voice: the narrator's (the one chosen), his own, each person's (S.voices_for); the
+    lines of one voice are recorded together."""
+    from ..verify import probe
     from ..voice import synthesize_scenes
 
     idx = [i for i, s in enumerate(story.shots) if s.line.strip()]
-    voice = req.voice.strip() or DEFAULT_VOICE
+    narrator = req.voice.strip() or DEFAULT_VOICE
+    voices = S.voices_for(story, narrator)
+    groups: dict[str, list[int]] = {}
+    for i in idx:
+        groups.setdefault(voices.get(speaker_key(story.shots[i].speaker), narrator), []).append(i)
     rate = f"{max(-30, min(30, int(pace))):+d}%"
-    progress(f"Recording the narration ({len(idx)} lines, {voice.split(':')[-1]}, {rate})")
-    takes = synthesize_scenes([story.shots[i].line.strip() for i in idx], voice, work / take, cfg.tts_engine, cfg.kokoro_voice, rate)
-    from ..verify import probe
-
+    who = narrator.split(":")[-1] if len(groups) == 1 else f"{len(groups)} voices"
+    progress(f"Recording the {'narration' if len(groups) == 1 else 'voices'} ({len(idx)} lines, {who}, {rate})")
     out = {}
-    for i, take in zip(idx, takes):
-        secs = float(probe(take.path).get("duration") or 0) or (take.words[-1].end if take.words else 1.0)
-        out[i] = {"path": str(take.path), "seconds": round(secs, 3), "words": [[w.text, round(w.start, 3), round(w.end, 3)] for w in take.words]}
+    for n, (voice, items) in enumerate(groups.items()):
+        folder = work / take if len(groups) == 1 else work / take / f"voice{n}"
+        takes = synthesize_scenes([story.shots[i].line.strip() for i in items], voice, folder, cfg.tts_engine, cfg.kokoro_voice, rate)
+        for i, tk in zip(items, takes):
+            secs = float(probe(tk.path).get("duration") or 0) or (tk.words[-1].end if tk.words else 1.0)
+            out[i] = {"path": str(tk.path), "seconds": round(secs, 3), "voice": voice,
+                      "words": [[w.text, round(w.start, 3), round(w.end, 3)] for w in tk.words]}
     return out
 
 
@@ -84,6 +99,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         ck.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
     short = req.format != "film"
+    fiction = req.kind == "fiction"
     vertical = short or bool(req.vertical)
     seconds = max(20, min(60, int(req.seconds)))
     minutes = max(2.5, min(4.5, float(req.minutes)))
@@ -91,9 +107,11 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     if story_path.exists():
         story = S.load(story_path)
     else:
-        progress(f"Claude is writing the {'Short' if short else 'film'} ({f'{seconds} s' if short else f'{minutes:g} min'}"
-                 f"{', about ' + req.topic if req.topic.strip() else ''})")
-        story = S.write(cfg, req.topic.strip(), short=short, seconds=seconds, minutes=minutes, progress=progress)
+        about = req.topic.strip()
+        about = (about[:90] + "...") if len(about) > 90 else about
+        progress(f"Claude is writing the {'fiction ' if fiction else ''}{'Short' if short else 'film'} "
+                 f"({f'{seconds} s' if short else f'{minutes:g} min'}{', about ' + about if about else ''})")
+        story = S.write(cfg, req.topic.strip(), short=short, seconds=seconds, minutes=minutes, progress=progress, kind=req.kind)
         S.lock_cast(cfg, story)
         S.save(story, story_path)
         S.remember(cfg, story)
@@ -130,8 +148,9 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     mixed = state.get("mix") if soundtrack.exists() else None
     if not mixed:
         progress("Making the music and the sound")
-        brief = f"soft score for a narrated low-poly animated short about {story.problem}; {story.music_prompt}"
-        mixed = mix(cfg, props, clips, cues, sections, work, soundtrack, seed, progress, brief)
+        brief = (f"cinematic film score for an animated sci-fi short film: {story.problem}; {story.music_prompt}" if story.kind == "fiction"
+                 else f"soft score for a narrated low-poly animated short about {story.problem}; {story.music_prompt}")
+        mixed = mix(cfg, props, clips, cues, sections, work, soundtrack, seed, progress, brief, fiction=story.kind == "fiction")
         state["mix"] = mixed
         save("mixed")
     pause_point()
@@ -168,7 +187,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "duration_seconds": round(props["duration"], 1), "editor": "remotion (LowPoly)", "captions": look["words"] == "on", "words_on_screen": look["words"],
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
-        "cast": [c.name for c in story.cast], "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),
+        "cast": [c.name for c in story.cast], "story_kind": story.kind,
+        "voices": sorted({a.get("voice", "") for a in audio.values()} - {""}), "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),
         "youtube_tags": story.tags, "youtube_hashtags": story.hashtags[:3], "caption": story.description.strip(),
         "hashtags": story.hashtags,
     }

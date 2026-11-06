@@ -246,6 +246,9 @@ const FaceView: React.FC<{f: Face; design: Design}> = ({f, design}) => {
     switch (f.mouth) {
       case 'o':
         return <mesh geometry={box(0.055, 0.075, 0.02)} material={dark} position={[0, mouthY - 0.01, z - 0.01]} />;
+      case 'open':
+        // talking: a wider, shorter opening than the 'o' of surprise
+        return <mesh geometry={box(0.085, 0.05, 0.02)} material={dark} position={[0, mouthY - 0.005, z - 0.01]} />;
       case 'smile':
       case 'frown': {
         const up = f.mouth === 'smile' ? 1 : -1;
@@ -348,6 +351,26 @@ export const HeldThing: React.FC<{hold: Hold; glow?: boolean}> = ({hold}) => {
   }
 };
 
+// A hard hat (a yellow faceted dome with a brim and a ridge) or a cap (a dome with a visor), over the hair.
+const Hat: React.FC<{kind: 'hardhat' | 'cap'}> = ({kind}) => {
+  const hard = kind === 'hardhat';
+  const m = mat(hard ? '#e8b21f' : '#2e3f5c', {rough: hard ? 0.55 : 0.9});
+  const dome = cached(`dome-${kind}`, () => new THREE.SphereGeometry(D.head * (hard ? 1.13 : 1.08), 10, 5, 0, Math.PI * 2, 0, Math.PI / 2));
+  return (
+    <group position={[0, hard ? 0.08 : 0.07, -0.01]}>
+      <M g={dome} m={m} s={[1, hard ? 0.9 : 0.78, 1.04]} />
+      {hard ? (
+        <>
+          <M g={cached('brim-hard', () => new THREE.CylinderGeometry(D.head * 1.32, D.head * 1.32, 0.03, 12))} m={m} p={[0, 0.005, 0.02]} />
+          <M g={box(0.07, 0.07, D.head * 2.1)} m={m} p={[0, D.head * 1.0, 0]} />
+        </>
+      ) : (
+        <M g={box(0.4, 0.025, 0.26)} m={m} p={[0, 0.0, D.head * 1.05]} r={[0.12, 0, 0]} />
+      )}
+    </group>
+  );
+};
+
 // The whole man. `root` = where his pelvis's spot is (floor, seat or bed surface) and which way he faces.
 export const Man: React.FC<{
   design: Design;
@@ -401,6 +424,7 @@ export const Man: React.FC<{
             <FaceView f={f} design={design} />
             {design.glasses ? <Glasses color="#2f2d2c" /> : null}
             {design.beard ? <M g={box(0.42, 0.16, 0.2)} m={hair} p={[0, -0.24, 0.18]} /> : null}
+            {design.hat && design.hat !== 'none' ? <Hat kind={design.hat} /> : null}
           </group>
         </group>
       </group>

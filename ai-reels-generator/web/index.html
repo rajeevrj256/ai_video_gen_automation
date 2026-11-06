@@ -83,6 +83,11 @@
   .chip { padding: 8px 12px; font-size: 13px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); }
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .segmented { display: flex; gap: 6px; background: var(--panel-2); padding: 4px; border-radius: 12px; }
+  .lp-cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin: 8px 0; }
+  .lp-person { display: flex; gap: 10px; align-items: flex-start; background: var(--panel-2); border-radius: 10px; padding: 8px; }
+  .lp-person > div { flex: 1; min-width: 0; }
+  .lp-person .hint { margin: 2px 0 0; }
+  .lp-person button { background: none; border: none; color: var(--muted, #888); cursor: pointer; padding: 2px 6px; }
   .segmented button { flex: 1; padding: 10px 0; background: none; border-radius: 9px; }
   .segmented button.on { background: var(--accent); color: #111; }
 
@@ -643,11 +648,15 @@ Plain paragraphs are read by the narrator."></textarea>
         every video. A calm narrator tells one small everyday struggle in short sentences, time stamps (11:47 P.M. → 5:30 A.M.) carry the
         story, the words come up two or three at a time, quiet piano underneath, and the last line lands in red. Claude writes and stages
         every shot (his room, the hallway, the street at night, the park at dawn, the office...); anyone else in the story keeps their look
-        in later videos.</p>
+        in later videos. Or choose Fiction and give him your own cinematic story.</p>
+      <label>Kind of story</label>
+      <div class="segmented" id="lpKind"><button data-kind="life" class="on">🏠 Everyday life</button><button data-kind="fiction">🚀 Fiction (your brief)</button></div>
+      <p class="hint" id="lpKindHint"></p>
       <label>Make</label>
       <div class="segmented" id="lpMode"><button data-mode="short" class="on">📱 Short 9:16</button><button data-mode="film">🎞 Short film (3-4 min)</button></div>
-      <label for="lpTopic">The struggle (optional)</label>
-      <textarea class="edit" id="lpTopic" rows="2" placeholder="e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used."></textarea>
+      <label for="lpTopic" id="lpTopicLabel">The struggle (optional)</label>
+      <textarea class="edit" id="lpTopic" rows="2" maxlength="4000" placeholder="e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used."></textarea>
+      <p class="hint" id="lpTopicCount" hidden></p>
       <div class="grid2">
         <div id="lpLenShort"><label for="lpSeconds">Length</label>
           <select id="lpSeconds"><option value="25">25 s</option><option value="35" selected>35 s (like the original)</option><option value="45">45 s</option><option value="60">60 s</option></select></div>
@@ -669,7 +678,23 @@ Plain paragraphs are read by the narrator."></textarea>
       <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select>
       <label for="lpMark">Channel name at the top</label>
       <input class="edit" id="lpMark" value="Life of a man" maxlength="40" placeholder="empty = none">
-      <p class="hint" id="lpCast"></p>
+      <details id="lpCastBox">
+        <summary>👥 Recurring cast: the people every film can use (<span id="lpCastN">0</span>)</summary>
+        <p class="hint">Claude uses these people by name when a story needs someone like them, so they look and sound the same in
+          every film. Anyone new it invents is added here too. The hero is always your man in the red sweater.</p>
+        <div id="lpCast" class="lp-cast"></div>
+        <details id="lpAdd">
+          <summary>➕ Add a person</summary>
+          <div class="grid2">
+            <div><label for="lpPName">Name</label><input class="edit" id="lpPName" maxlength="40" placeholder="e.g. Aunt Rosa"></div>
+            <div><label for="lpPVoice">Voice</label><select id="lpPVoice"></select></div>
+          </div>
+          <label for="lpPWho">Who they are to him</label>
+          <input class="edit" id="lpPWho" maxlength="160" placeholder="e.g. his aunt, runs the bakery downstairs, knows everyone's secrets">
+          <div class="grid2" id="lpPLook"></div>
+          <button id="lpPSave">Save this person</button> <span class="hint" id="lpPMsg"></span>
+        </details>
+      </details>
       <button class="primary" id="lpBtn">✨ Make it</button>
       <p class="hint" id="lpMsg"></p>
     </div>
@@ -3311,6 +3336,73 @@ const LP_VOICES = [["en-US-ChristopherNeural", "Christopher: calm and low (like 
   ["en-US-BrianMultilingualNeural", "Brian: easy-going"], ["en-US-GuyNeural", "Guy"], ["en-US-EricNeural", "Eric"], ["en-US-RogerNeural", "Roger"],
   ["en-GB-RyanNeural", "Ryan (British)"], ["en-GB-ThomasNeural", "Thomas (British)"], ["en-US-AvaMultilingualNeural", "Ava (a woman's voice)"]];
 const lpModeIs = () => ($("#lpMode .on") || {}).dataset?.mode || "short";
+const lpKindIs = () => ($("#lpKind .on") || {}).dataset?.kind || "life";
+// the recurring cast's looks: keep the option lists in step with reelgen/lowpoly/story.py (LPDesign, VOICES)
+const LP_LOOK = {
+  skin: ["pale", "light", "fair", "tan", "brown", "dark"],
+  hair: ["black", "dark-brown", "brown", "auburn", "blonde", "grey", "white", "red"],
+  hair_style: ["short", "curly", "long", "bun", "ponytail", "bald"],
+  top: ["navy", "red", "green", "mustard", "grey", "white", "black", "teal", "purple", "pink", "brown", "beige", "blue", "orange", "olive", "maroon", "denim", "cream"],
+  top_kind: ["sweater", "shirt", "hoodie", "suit", "dress"],
+  trousers: ["grey", "navy", "black", "brown", "beige", "denim", "olive"],
+  hat: ["none", "cap", "hardhat"],
+};
+const LP_LOOK_NAMES = {skin: "Skin", hair: "Hair colour", hair_style: "Hair", top: "Top colour", top_kind: "Top", trousers: "Trousers", hat: "Hat"};
+const LP_PVOICES = [["man", "A man"], ["young-man", "A young man"], ["woman", "A woman"], ["young-woman", "A young woman"], ["older-man", "An older man"],
+  ["older-woman", "An older woman"], ["child", "A child"], ["deep-man", "A deep man's voice"], ["british-man", "A British man"], ["british-woman", "A British woman"]];
+const LP_KIND_HINT = {
+  life: "One small everyday struggle, told by a calm narrator like the original.",
+  fiction: "Your own story: paste your brief (up to 4,000 letters) and Claude writes and directs it as a cinematic film with dialogue in each person's own voice, " +
+    "super strength, speed and jumps, cars, trucks and steel beams, shockwaves, sparks, slow motion, aerial and orbit cameras, and new places (a building site, a highway, a night alley, a lab).",
+};
+const lpFace = (p) => {
+  // a little card picture of the person: their hair, skin, top and hat in the editor's own colours
+  const L = p.look, d = p.design || {};
+  const hair = d.hair_style === "bald" ? "" : d.hair_style === "long" ? `<rect x="13" y="12" width="30" height="26" rx="8" fill="${L.hair}"/>` : `<ellipse cx="28" cy="15" rx="15" ry="9" fill="${L.hair}"/>`;
+  const hat = L.hat === "hardhat" ? `<ellipse cx="28" cy="12" rx="17" ry="8" fill="#e8b21f"/>` : L.hat === "cap" ? `<ellipse cx="28" cy="12" rx="15" ry="7" fill="#2e3f5c"/><rect x="28" y="14" width="16" height="3" fill="#2e3f5c"/>` : "";
+  const glasses = L.glasses ? `<rect x="18" y="20" width="8" height="6" fill="none" stroke="#2f2d2c" stroke-width="1.6"/><rect x="30" y="20" width="8" height="6" fill="none" stroke="#2f2d2c" stroke-width="1.6"/>` : "";
+  const beard = L.beard ? `<path d="M17 28 Q28 42 39 28 L39 31 Q28 46 17 31Z" fill="${L.hair}"/>` : "";
+  return `<svg viewBox="0 0 56 64" width="48" height="54" aria-hidden="true"><rect x="10" y="40" width="36" height="24" rx="5" fill="${L.top}"/>` +
+    `${hair}<circle cx="28" cy="24" r="13" fill="${L.skin}"/><circle cx="23" cy="23" r="1.8" fill="#141416"/><circle cx="33" cy="23" r="1.8" fill="#141416"/>${glasses}${beard}${hat}</svg>`;
+};
+const lpLoadCast = () => api("/api/lowpoly/cast").then((c) => {
+  $("#lpCastN").textContent = c.length;
+  const voice = Object.fromEntries(LP_PVOICES);
+  $("#lpCast").innerHTML = c.map((p) => `<div class="lp-person">${lpFace(p)}<div><b>${esc(p.name)}</b> <span class="hint">${p.from === "yours" ? "· yours" : p.from === "film" ? "· from a film" : ""}</span>` +
+    `<div class="hint">${esc(p.who)}</div><div class="hint">🗣 ${esc(voice[p.voice] || p.voice)}</div></div>` +
+    `<button class="ghost" data-del="${esc(p.name)}" title="Remove from the cast">✕</button></div>`).join("");
+}).catch(() => {});
+$("#lpCast").onclick = async (e) => {
+  const b = e.target.closest("button[data-del]"); if (!b) return;
+  if (!confirm(`Remove ${b.dataset.del} from the recurring cast? Films already made keep them.`)) return;
+  try { await api("/api/lowpoly/cast/" + encodeURIComponent(b.dataset.del), { method: "DELETE" }); lpLoadCast(); } catch (err) { alert(err.message); }
+};
+$("#lpPSave").onclick = async () => {
+  const design = {};
+  Object.keys(LP_LOOK).forEach((k) => { design[k] = $("#lpP-" + k).value; });
+  ["glasses", "beard", "kid"].forEach((k) => { design[k] = $("#lpP-" + k).checked; });
+  const body = { name: $("#lpPName").value, who: $("#lpPWho").value, voice: $("#lpPVoice").value, design };
+  try {
+    await api("/api/lowpoly/cast", { method: "POST", body: JSON.stringify(body) });
+    $("#lpPMsg").textContent = `Saved: ${body.name} can be in the next films.`;
+    $("#lpPName").value = ""; $("#lpPWho").value = "";
+    lpLoadCast();
+  } catch (e) { $("#lpPMsg").textContent = "Couldn't save: " + e.message; }
+};
+const lpKindSet = (kind) => {
+  $("#lpKind").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.kind === kind));
+  const fiction = kind === "fiction";
+  $("#lpKindHint").textContent = LP_KIND_HINT[kind];
+  $("#lpTopicLabel").textContent = fiction ? "Your story brief (optional, up to 4,000 letters)" : "The struggle (optional)";
+  $("#lpTopic").rows = fiction ? 9 : 2;
+  $("#lpTopic").placeholder = fiction ? "Paste your film's brief: the title, what happens, the look and feel you want. Leave empty and Claude invents an original sci-fi story for him."
+    : "e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used.";
+  $("#lpTopicCount").hidden = !fiction;
+  $("#lpTopicCount").textContent = `${$("#lpTopic").value.length} / 4000 letters`;
+  try { localStorage.setItem("lpKind", kind); } catch (e) {}
+};
+$("#lpKind").onclick = (e) => { const b = e.target.closest("button"); if (b) lpKindSet(b.dataset.kind); };
+$("#lpTopic").addEventListener("input", () => { $("#lpTopicCount").textContent = `${$("#lpTopic").value.length} / 4000 letters`; });
 const lpFill = () => {
   if ($("#lpVoice").options.length) return;
   $("#lpVoice").innerHTML = LP_VOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
@@ -3318,9 +3410,12 @@ const lpFill = () => {
   try { const saved = localStorage.getItem("lpVoice"); if (saved && [...$("#lpVoice").options].some((o) => o.value === saved)) $("#lpVoice").value = saved; } catch (e) {}
   try { const m = localStorage.getItem("lpMark"); if (m !== null) $("#lpMark").value = m; } catch (e) {}
   try { const w = localStorage.getItem("lpWords"); if (w && [...$("#lpWords").options].some((o) => o.value === w)) $("#lpWords").value = w; } catch (e) {}
-  api("/api/lowpoly/cast").then((c) => {
-    $("#lpCast").textContent = c.length ? `People from earlier videos (they keep their look): ${c.map((x) => x.name).join(", ")}.` : "";
-  }).catch(() => {});
+  $("#lpPVoice").innerHTML = LP_PVOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
+  $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +
+    opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
+    `<div><label><input type="checkbox" id="lpP-glasses"> Glasses</label> <label><input type="checkbox" id="lpP-beard"> Beard</label> <label><input type="checkbox" id="lpP-kid"> A child</label></div>`;
+  try { lpKindSet(localStorage.getItem("lpKind") === "fiction" ? "fiction" : "life"); } catch (e) { lpKindSet("life"); }
+  lpLoadCast();
 };
 $("#lpMode").onclick = (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -3331,7 +3426,7 @@ $("#lpMode").onclick = (e) => {
 $("#lpBtn").onclick = async () => {
   lpFill();
   const film = lpModeIs() === "film";
-  const body = { format: film ? "film" : "short", topic: $("#lpTopic").value, seconds: Number($("#lpSeconds").value),
+  const body = { kind: lpKindIs(), format: film ? "film" : "short", topic: $("#lpTopic").value, seconds: Number($("#lpSeconds").value),
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
     pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value), ai: aiValue("lowpoly") };
   try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); } catch (e) {}

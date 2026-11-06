@@ -1,6 +1,7 @@
 """The low-poly films' soundtrack, mixed in numpy from the timeline: the narration on its frames, quiet piano under
 it (AI music when the engine is installed, else composed in the story's mood), stepping back while he speaks, and
-the world's sounds (synthesised, reelgen/sticky/sounds.py). The finished video is mastered to -14 LUFS by the
+the world's sounds (synthesised, reelgen/lowpoly/sounds.py). A fiction film gets a cinematic score that follows its
+acts instead of the piano, and its effects sit a little higher. The finished video is mastered to -14 LUFS by the
 render (reelgen/audio.py)."""
 from __future__ import annotations
 
@@ -9,13 +10,15 @@ from pathlib import Path
 
 import numpy as np
 
-from ..sticky import sounds
+from . import sounds
 from ..sticky.mixdown import RATE, _capped, _place, _tracks, decode
 
 MUSIC_RMS = 0.055  # between lines (the voice is levelled to -16 LUFS, ~0.14 RMS): about 8 dB under it
 DUCK = 0.45  # the music under a spoken line (about 15 dB under the voice)
 EFFECT_GAIN = 0.85
 GENRE = "piano-minimal"  # the original's sound: soft felt piano
+FICTION_GENRE = "cinematic-orchestral"  # a fiction film's score
+FICTION_EFFECTS = 1.0  # action needs its crashes heard
 
 
 def _speech_gate(voice: np.ndarray) -> np.ndarray:
@@ -30,7 +33,7 @@ def _speech_gate(voice: np.ndarray) -> np.ndarray:
 
 
 def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[dict], work: Path, out: Path, seed: int,
-        progress, brief: str) -> dict:
+        progress, brief: str, fiction: bool = False) -> dict:
     total = float(props["duration"]) + 0.5
     n = int(total * RATE)
     music = np.zeros((n, 2), np.float32)
@@ -38,7 +41,7 @@ def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[di
     fx = np.zeros_like(music)
     for c in clips:
         _place(voice, decode(Path(c["path"])), float(c["at"]), 1.0)
-    tracks, genre = _tracks(cfg, sections, work, seed, progress, GENRE, brief)
+    tracks, genre = _tracks(cfg, sections, work, seed, progress, FICTION_GENRE if fiction else GENRE, brief)
     for i, s in enumerate(sections):
         x = decode(tracks[i], "highpass=f=60")
         loud = x[np.abs(x).max(axis=1) > 0.01] if len(x) else x
@@ -53,8 +56,10 @@ def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[di
         _place(music, x * env[:, None], s["start"], 1.0)
     files = sounds.write_all(work / "sfx", {c["sound"] for c in cues})
     loaded = {k: _capped(decode(p)) for k, p in files.items()}
+    gain = FICTION_EFFECTS if fiction else EFFECT_GAIN
     for c in cues:
-        _place(fx, loaded[c["sound"]], float(c["at"]), EFFECT_GAIN * float(c.get("volume", 1)), c.get("length"))
+        if c["sound"] in loaded:
+            _place(fx, loaded[c["sound"]], float(c["at"]), gain * float(c.get("volume", 1)), c.get("length"))
     gate = _speech_gate(voice)
     buf = music * (DUCK + (1 - DUCK) * gate)[:, None] + fx * (0.7 + 0.3 * gate)[:, None] + voice
     peak = float(np.abs(buf).max() or 1)

@@ -266,6 +266,52 @@ def lowpoly_lists() -> None:
     seen = {w: [c["text"] for c in build(story, audio, vertical=True, watermark="", seed=1, words=w)[0]["captions"]] for w in ("on", "stamps", "off")}
     if not (len(seen["on"]) >= 3 and seen["stamps"] == ["11:47 P.M."] and seen["off"] == []):
         fail(f"lowpoly words on screen (on / time stamps only / off): {seen}")
+    # fiction: the big things and effects are the editor's own, a power move brings its effects and sounds, the
+    # speaker's mouth moves on their words, the score follows the story, and nobody shares a voice
+    for ts_name, py in (("BigKind", S.BigName), ("BigMotion", S.MotionName), ("FxKind", S.FxName)):
+        block = re.search(rf"export type {ts_name} =(.*?);", ts, re.S)
+        theirs = set(re.findall(r"'([a-z-]+)'", re.sub(r"//[^\n]*", "", block.group(1)))) if block else set()
+        if set(typing.get_args(py)) != theirs:
+            fail(f"lowpoly {ts_name}: story.py {sorted(typing.get_args(py))} but types.ts {sorted(theirs)}")
+    from .lowpoly.sounds import MAKERS
+    from .lowpoly.timeline import ACTION_SOUNDS, FX_SOUNDS, MOTION_SOUNDS
+    wanted = {x for v in list(ACTION_SOUNDS.values()) + list(MOTION_SOUNDS.values()) for x, _ in v} | set(FX_SOUNDS.values())
+    wanted |= set(typing.get_args(S.SoundName))
+    if wanted - set(MAKERS):
+        fail(f"lowpoly sounds with no maker: {sorted(wanted - set(MAKERS))}")
+    page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    for key, field in (("skin", "skin"), ("hair", "hair"), ("hair_style", "hair_style"), ("top", "top"), ("top_kind", "top_kind"),
+                       ("trousers", "trousers"), ("hat", "hat")):
+        m = re.search(rf"\n  {key}: \[([^\]]*)\]", page)
+        got = set(re.findall(r'"([a-z-]+)"', m.group(1))) if m else set()
+        if got != set(typing.get_args(S.LPDesign.model_fields[field].annotation)):
+            fail(f"lowpoly tab LP_LOOK.{key} differs from story.LPDesign.{field}")
+    for c in S.CAST_LIBRARY:
+        S.LPCast(name=c["name"], who=c["who"], design=S.LPDesign(**c["design"]), voice=c["voice"])
+    hero = S.LPActor(who="hero", action="catch", expression="determined", spot="center")
+    sara = S.LPCast(name="Sara", who="a worker", design=S.LPDesign(hat="hardhat"), voice="young-woman")
+    dana = S.LPCast(name="Dana", who="a friend", design=S.LPDesign(), voice="young-woman")
+    fic = S.Story(title="t", problem="p", youtube_title="t", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="calm",
+                  end_mood="calm", music_prompt="m", kind="fiction", cast=[sara, dana],
+                  score=[S.ScorePart(from_shot=1, mood="calm", energy="low"), S.ScorePart(from_shot=2, mood="suspense", energy="high")],
+                  shots=[S.LPShot(line="Watch out!", speaker="Sara", set="construction", light="day", camera="wide",
+                                  actors=[hero, S.LPActor(who="Sara", action="cower", expression="scared", spot="left")],
+                                  big=[S.LPBig(kind="beam", spot="center", motion="caught", at=0.5)]),
+                         S.LPShot(line="", set="alley", light="night", camera="low", pause=1.5,
+                                  actors=[S.LPActor(who="hero", action="land", expression="angry", spot="center")])])
+    S.repair(fic)
+    props, _, cues, sections = build(fic, {0: {"path": "a.wav", "seconds": 0.9, "words": [["Watch", 0, .3], ["out!", .35, .8]]}},
+                                     vertical=False, watermark="", seed=1)
+    sh = props["shots"]
+    if not (sh[0]["actors"][1].get("talk") and sh[0]["actors"][0].get("at") == sh[0]["big"][0].get("at")):
+        fail(f"lowpoly fiction: talk spans or the catch's moment are wrong: {sh[0]['actors']} {sh[0].get('big')}")
+    if not {"shockwave", "crack", "dust", "shake"} <= {f["kind"] for f in sh[1].get("fx", [])}:
+        fail(f"lowpoly fiction: a landing didn't bring its effects: {sh[1].get('fx')}")
+    if not {"impact"} <= {c["sound"] for c in cues} or len(sections) != 2:
+        fail(f"lowpoly fiction: sounds {sorted({c['sound'] for c in cues})} / sections {len(sections)}")
+    vs = S.voices_for(fic, "en-US-ChristopherNeural")
+    if len(set(vs.values())) != len(vs):
+        fail(f"lowpoly voices shared: {vs}")
 
 
 def main() -> int:

@@ -17,7 +17,9 @@ import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, SETS, spotOf, ThingView, type SetDef} from './Sets';
-import type {Action, Actor, Cam, Caption, Design, Hold, LowPolyProps, LPShot} from './types';
+import {bigState, BigView, holderFor, keyMoment, type BigState, type Holder} from './Big';
+import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
+import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, LowPolyProps, LPShot} from './types';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 type V3 = [number, number, number];
@@ -25,7 +27,24 @@ const V = (a: V3) => new THREE.Vector3(...a);
 
 const SEATED = new Set<Action>(['sit', 'type', 'eat', 'shoes', 'get-up', 'read', 'phone', 'head-in-hands', 'slump', 'think', 'drink', 'sigh', 'nod', 'shake-head', 'shrug', 'cry', 'stretch', 'reach']);
 const LYING = new Set<Action>(['lie', 'lie-side', 'lie-phone', 'sit-up']);
-const MOVING = new Set<Action>(['walk', 'run', 'jog']);
+const MOVING = new Set<Action>(['walk', 'run', 'jog', 'dash', 'flee']);
+const moves = (a: Actor) => MOVING.has(a.action) || (a.action === 'carry' && !!a.to);
+export const SLOW = 0.4; // slow motion: the action at this speed
+// the shot's clock for the action (slow motion runs it at SLOW), from the shot's own seconds
+export const actionTime = (shot: LPShot, t: number) => (shot.slowmo ? t * SLOW : t);
+
+// When an actor's key moment is (the catch, the lift, the stop, the jump), in action seconds: his own `at`, else the
+// moment of the big thing he handles, else the shot's first effect.
+const ACT_BIG: Partial<Record<Action, string[]>> = {catch: ['caught', 'hang'], lift: ['lifted', 'held', 'thrown'], throw: ['thrown', 'held'], 'push-stop': ['stop']};
+export const actorAt = (a: Actor, shot: LPShot): number | undefined => {
+  const da = actionTime(shot, shot.duration);
+  if (a.at !== undefined) return actionTime(shot, a.at);
+  const b = (shot.big ?? []).find((x) => ACT_BIG[a.action]?.includes(x.motion));
+  if (b) return keyMoment(scaledBig(b, shot), da);
+  const f = (shot.fx ?? []).find((x) => x.at !== undefined && x.kind !== 'rain' && x.kind !== 'wind');
+  return f ? actionTime(shot, f.at!) : undefined;
+};
+const scaledBig = (b: Big, shot: LPShot): Big => (b.at === undefined ? b : {...b, at: actionTime(shot, b.at)});
 const FACE_CAMS = new Set<Cam>(['face', 'face-top', 'medium', 'detail', 'low', 'front']);
 const AUTO_HOLD: Partial<Record<Action, Hold>> = {phone: 'phone', 'lie-phone': 'phone', drink: 'mug', read: 'book', eat: 'fork'};
 
@@ -51,7 +70,9 @@ const FACING: Record<string, number> = {left: -Math.PI / 2, right: Math.PI / 2, 
 
 // Where an actor is at time t: his spot (and the seat or bed there), his walk, his pose, and the world positions the
 // camera needs (computed with the same rotations the Man applies).
-export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number, cast: Record<string, Design>, others: Placed[] = []): Placed => {
+export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, cast: Record<string, Design>, others: Placed[] = []): Placed => {
+  const t = actionTime(shot, tReal);
+  const dur = actionTime(shot, shot.duration);
   const design = cast[a.who] ?? (a.who === 'hero' ? HERO : HERO);
   const sp = spotOf(set, a.spot);
   let ry = sp.ry;
@@ -73,17 +94,20 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number,
   }
   const turn = FACING[a.facing ?? 'camera'];
   if (turn !== undefined && seat === null && !lying) ry = turn;
+  // stopping a vehicle with his hands: he faces up the road (it comes from there), unless told otherwise
+  if (action === 'push-stop' && !a.facing) ry = set.walk === 'z' ? Math.PI : -Math.PI / 2;
   // two people never on the same spot: the later one moves along the spot (along the couch, beside him)
-  if (!MOVING.has(action) && others.some((o) => Math.hypot(o.root[0] - root[0], o.root[2] - root[2]) < 0.7)) {
+  if (!moves(a) && action !== 'carried' && others.some((o) => Math.hypot(o.root[0] - root[0], o.root[2] - root[2]) < 0.7)) {
     const side = others.length % 2 ? 1 : -1;
     root = [root[0] + Math.cos(ry) * 0.85 * side, root[1], root[2] - Math.sin(ry) * 0.85 * side];
   }
   if (action === 'sit' && seat === null) seat = 0.46; // a chair the set doesn't have: drawn under him
   // a spot that faces into the set (the counter, the mirror, a window) turns him round when the camera wants his face
-  if ((a.facing ?? 'camera') === 'camera' && Math.cos(ry) < -0.5 && !lying && !MOVING.has(action) && FACE_CAMS.has(shot.camera)) ry += Math.PI;
-  if (MOVING.has(action)) {
+  if ((a.facing ?? 'camera') === 'camera' && Math.cos(ry) < -0.5 && !lying && !moves(a) && action !== 'push-stop' && FACE_CAMS.has(shot.camera)) ry += Math.PI;
+  const moving = moves(a);
+  if (moving) {
     const speed = SPEED[action] ?? 1;
-    const dist = speed * shot.duration;
+    const dist = speed * dur;
     let from = V([root[0], 0, root[2]]);
     let to: THREE.Vector3;
     if (a.to) {
@@ -99,10 +123,25 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number,
     const p = from.clone().lerp(to, along / len);
     root = [p.x, 0, p.z];
     ry = Math.atan2(to.x - from.x, to.z - from.z);
-    if (along >= len - 0.01) action = 'stand';
+    if (along >= len - 0.01) action = action === 'carry' ? 'carry' : 'stand';
   }
-  const ps = pose({action, t, dur: shot.duration, seat, k: k * 1.7 + (shot.seed ?? 0)});
+  // carried: lying across the arms of the one who carries him (placed before him), his head to that man's right
+  const carrier = action === 'carried' ? others.find((o) => o.actor.action === 'carry') : undefined;
+  if (carrier) {
+    const f = new THREE.Vector3(Math.sin(carrier.ry), 0, Math.cos(carrier.ry));
+    const right = new THREE.Vector3(f.z, 0, -f.x);
+    const at = new THREE.Vector3(...carrier.root).addScaledVector(f, 0.62).addScaledVector(right, -0.12);
+    root = [at.x, carrier.pose.y + 0.3, at.z];
+    ry = carrier.ry - Math.PI / 2;
+  }
+  const ps = pose({action, t, dur, seat, k: k * 1.7 + (shot.seed ?? 0), at: actorAt(a, shot), moving});
   if (lying) ps.y = 0;
+  if (ps.shift) {
+    // the pose moves the whole body in his own frame (a jump's drift, feet driven back)
+    const f = new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry));
+    const right = new THREE.Vector3(f.z, 0, -f.x);
+    root = [root[0] + right.x * ps.shift[0] + f.x * ps.shift[1], root[1], root[2] + right.z * ps.shift[0] + f.z * ps.shift[1]];
+  }
   // forward kinematics for the head: root -> pelvis (rx, rz) -> torso (lean, twist, side) -> head (its own turn)
   const scale = design.height ?? 1;
   const qRoot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0));
@@ -163,7 +202,7 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
   let camUp = up.clone();
   let aperture = 0.0;
   const H = who.head.clone();
-  const kind = cam === 'face' && lying ? 'face-top' : cam === 'top' && !lying && who.pose.y > 0.5 ? 'top' : cam;
+  const kind = cam === 'face' && lying ? 'face-top' : cam === 'aerial' && !set.outdoor ? 'wide' : cam;
   switch (kind) {
     case 'face': {
       fov = 30;
@@ -272,6 +311,42 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
         pos = look.clone().addScaledVector(new THREE.Vector3(0.3, 0.6, 1).normalize(), d);
       }
       aperture = 1.2;
+      break;
+    }
+    case 'aerial': {
+      // high above, looking down on him and the place, circling slowly
+      fov = aspect < 1 ? 44 : 38;
+      look = who.body.clone();
+      const th = seed * 1.3 + t * 0.12;
+      const r = aspect < 1 ? 6 : 7.5;
+      pos = look.clone().add(new THREE.Vector3(Math.cos(th) * r, 9.5 - 0.8 * p, Math.sin(th) * r));
+      aperture = 0.08;
+      break;
+    }
+    case 'orbit': {
+      // circling round him at his height
+      fov = 36;
+      look = H.clone().add(new THREE.Vector3(0, -0.4, 0));
+      const d = distFor(1.9, 2.5, fov, aspect);
+      const f0 = frontOf(who.faceDir, set.outdoor);
+      const th0 = Math.atan2(f0.x, f0.z);
+      const th = set.outdoor ? th0 + 0.6 - t * 0.42 : th0 + 0.75 * Math.sin(t * 0.4 + 0.6);
+      pos = look.clone().add(new THREE.Vector3(Math.sin(th) * d, 0.2, Math.cos(th) * d));
+      aperture = 0.55;
+      break;
+    }
+    case 'crash-zoom': {
+      // from the room to his face in a third of a second, then held
+      const q = ease((t - 0.12) / 0.3);
+      fov = 34 - 4 * q;
+      const dir = frontOf(who.faceDir, set.outdoor);
+      const far = distFor(3.4, 4.6, 34, aspect);
+      const near = distFor(1.05, 0.95, 30, aspect);
+      look = who.body.clone().add(new THREE.Vector3(0, 0.3, 0)).lerp(H.clone().add(new THREE.Vector3(0, -0.03, 0)), q);
+      pos = look.clone().addScaledVector(dir, far + (near - far) * q).add(new THREE.Vector3(0, 0.15 * (1 - q) - 0.05, 0));
+      const jolt = t > 0.42 ? 0.04 * Math.exp(-(t - 0.42) * 7) * Math.sin(t * 60) : 0;
+      pos.y += jolt;
+      aperture = 0.25 + 0.65 * q;
       break;
     }
     case 'wide':
@@ -385,15 +460,84 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
   );
 };
 
+const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway: '#9d968c', alley: '#77746f', street: '#8f8c88', park: '#a99a7c'};
+
+// Everyone in the shot, in order (the one carried is placed after the one who carries him).
+export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<string, Design>) => {
+  const placed: (Placed | undefined)[] = shot.actors.map(() => undefined);
+  const done: Placed[] = [];
+  for (const late of [false, true]) {
+    shot.actors.forEach((a, k) => {
+      if ((a.action === 'carried') !== late) return;
+      const pl = place(a, k, set, shot, t, cast, done);
+      placed[k] = pl;
+      done.push(pl);
+    });
+  }
+  return placed as Placed[];
+};
+
+const holders = (placed: Placed[]): Holder[] => placed.map((p) => ({action: p.actor.action, root: p.root, ry: p.ry, head: p.head, hand: p.hand, body: p.body}));
+
+// The effects with their start in action seconds, and where each one happens.
+const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undefined, bigs: {b: Big; st: BigState}[], ta: number, da: number) =>
+  (shot.fx ?? []).map((f: Fx, i) => {
+    const at = f.at !== undefined ? actionTime(shot, f.at) : ['rain', 'wind'].includes(f.kind) ? 0 : da * 0.4;
+    const fallen = bigs.find((x) => x.b.motion === 'fall' || x.b.motion === 'crushed');
+    let point: THREE.Vector3;
+    if (f.spot) {
+      const sp = spotOf(set, f.spot);
+      point = new THREE.Vector3(sp.x, 0, sp.z);
+    } else if ((f.kind === 'sparks' || f.kind === 'glass') && bigs.length) {
+      point = bigs[0].st.contact.clone();
+    } else if (['fire', 'smoke'].includes(f.kind) && bigs.length) {
+      point = bigs[0].st.pos.clone().setY(bigs[0].st.pos.y + 0.6);
+    } else if (fallen && ['dust', 'debris', 'crack', 'shockwave'].includes(f.kind)) {
+      point = fallen.st.contact.clone().setY(0);
+    } else if (who) {
+      point = new THREE.Vector3(who.root[0], 0, who.root[2]);
+    } else {
+      point = new THREE.Vector3();
+    }
+    const fast = placed.find((p) => ['dash', 'run', 'flee', 'super-jump'].includes(p.actor.action));
+    const mover = who && ['dash', 'run', 'flee', 'super-jump'].includes(who.actor.action) ? who : fast;
+    const ctx: FxCtx = {
+      at,
+      t: ta,
+      dur: da,
+      point,
+      mover: mover ? {root: mover.root, ry: mover.ry} : undefined,
+      around: who ? new THREE.Vector3(who.root[0], 0, who.root[2]) : new THREE.Vector3(),
+      seed: (shot.seed ?? 1) * 5 + i,
+      dust: DUST[shot.set] ?? '#b8ab98',
+    };
+    return {kind: f.kind, ctx};
+  });
+
 const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect: number}> = ({shot, t, props, aspect}) => {
   const set = SETS[shot.set] ?? SETS.void;
   const look = LOOKS[shot.light] ?? LOOKS.day;
-  const placed: Placed[] = [];
-  shot.actors.forEach((a, k) => placed.push(place(a, k, set, shot, t, props.cast, placed)));
+  const ta = actionTime(shot, t);
+  const da = actionTime(shot, shot.duration);
+  const placed = placeAll(shot, set, t, props.cast);
   const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
+  const people = holders(placed);
+  const bigs = (shot.big ?? []).map((b0, i) => {
+    const b = scaledBig(b0, shot);
+    return {b, st: bigState(b, set, people, ta, da, i), i};
+  });
+  void holderFor;
+  const fx = fxPlan(shot, set, placed, who, bigs, ta, da);
   const plan = who
     ? camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1)
     : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
+  // the camera shakes with the hits: a quick decaying jitter on where it is and where it looks
+  const shake = shakeAt(fx.map((f) => ({kind: f.kind, at: f.ctx.at})), ta);
+  if (shake > 0.001) {
+    const j = new THREE.Vector3(Math.sin(t * 47.3), Math.sin(t * 39.1 + 1.3), Math.sin(t * 31.7 + 2.1)).multiplyScalar(shake);
+    plan.pos.add(j);
+    plan.look.add(j.multiplyScalar(0.6));
+  }
   const things = shot.things ?? [];
   const s = V(set.surface);
   return (
@@ -406,9 +550,23 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       {things.map((th, i) => (
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
       ))}
+      {bigs.map(({b, st, i}) => (
+        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} />
+      ))}
+      {fx.map((f, i) => (
+        <FxView key={`fx${i}`} kind={f.kind} c={f.ctx} />
+      ))}
       {placed.map((pl, i) => (
         <group key={i}>
-          <Man design={pl.design} pose={pl.pose} face={face(pl.actor.expression, t, i + (shot.seed ?? 0))} root={pl.root} ry={pl.ry} hold={pl.hold} seed={pl.actor.who === 'hero' ? 7 : pl.seed} />
+          <Man
+            design={pl.design}
+            pose={pl.pose}
+            face={face(pl.actor.expression, ta, i + (shot.seed ?? 0), (pl.actor.talk ?? []).some(([a, b]) => t >= a && t < b))}
+            root={pl.root}
+            ry={pl.ry}
+            hold={pl.hold}
+            seed={pl.actor.who === 'hero' ? 7 : pl.seed}
+          />
           {pl.actor.covered && LYING.has(pl.actor.action) ? <Blanket pl={pl} /> : null}
           {pl.actor.action === 'sit' && spotOf(set, pl.actor.spot).seat === undefined ? <StoolUnder pl={pl} /> : null}
         </group>
@@ -503,6 +661,9 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
   const fadeOut = shot.fadeOut ? interpolate(local, [shot.duration - shot.fadeOut, shot.duration], [0, 1], clamp) : 0;
   const dip = shot.cut === 'dip' ? interpolate(local, [0, 0.25], [1, 0], clamp) : 0;
   const black = Math.max(fadeIn, fadeOut, dip);
+  const fxAt = (shot.fx ?? []).map((f) => ({kind: f.kind, at: f.at !== undefined ? actionTime(shot, f.at) : actionTime(shot, shot.duration) * 0.4}));
+  const flash = flashAt(fxAt, actionTime(shot, local));
+  const alarm = fxAt.find((f) => f.kind === 'alarm' && actionTime(shot, local) >= f.at) ? (Math.sin(actionTime(shot, local) * 9) > 0 ? 'rgba(255,40,40,0.13)' : 'rgba(40,90,255,0.11)') : '';
   return (
     <AbsoluteFill style={{background: '#000'}}>
       <ThreeCanvas width={width} height={height} shadows gl={{antialias: true}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
@@ -510,6 +671,8 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
       </ThreeCanvas>
       <AbsoluteFill style={{background: 'radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.42) 100%)'}} />
       <Grain frame={frame} />
+      {alarm ? <AbsoluteFill style={{background: alarm, mixBlendMode: 'screen'}} /> : null}
+      {flash > 0.01 ? <AbsoluteFill style={{background: '#fffaf0', opacity: flash}} /> : null}
       <AbsoluteFill style={{background: '#000', opacity: black}} />
       {props.watermark ? (
         <div

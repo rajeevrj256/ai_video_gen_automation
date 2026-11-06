@@ -545,7 +545,8 @@ class StickyBody(BaseModel):
 
 class LowPolyBody(BaseModel):
     """Low-poly films (reelgen/lowpoly/): the user's faceted 3D man, narrated; a Short (9:16) or a 3-4 min film."""
-    topic: str = ""
+    topic: str = ""  # life: the struggle; fiction: the whole brief (up to 4,000 letters)
+    kind: str = "life"  # life | fiction
     format: str = "short"  # short | film
     seconds: int = 35
     minutes: float = 3.5
@@ -556,6 +557,14 @@ class LowPolyBody(BaseModel):
     words: str = "on"  # on (subtitles + time stamps) | stamps (time stamps only) | off
     count: int = 1
     ai: AIPick | None = None
+
+
+class LowPolyPerson(BaseModel):
+    """A person for the low-poly films' recurring cast, designed in the tab."""
+    name: str
+    who: str = ""
+    voice: str = "man"
+    design: dict = {}
 
 
 class StickRequestBody(BaseModel):
@@ -1557,19 +1566,50 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/lowpoly")
     def lowpoly(body: LowPolyBody):
         film = body.format == "film"
-        given = {"topic": body.topic.strip()[:400], "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
+        given = {"topic": body.topic.strip()[:4000], "kind": "fiction" if body.kind == "fiction" else "life",
+                 "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
                  "minutes": max(2.5, min(4.5, float(body.minutes))), "vertical": bool(body.vertical) and film,
                  "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
                  "words": body.words if body.words in ("on", "stamps", "off") else "on"}
-        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "lowpoly", "story", "lowpoly",
+        label = given["topic"].splitlines()[0][:80] if given["topic"] else None
+        return jobs.submit(label, max(1, min(body.count, 5)), "lowpoly", "story", "lowpoly",
                            lowpoly_input=given, captions=given["words"] == "on", ai=body.ai)
 
     @app.get("/api/lowpoly/cast")
     def lowpoly_cast():
-        """The people met so far in the low-poly films (the hero is always the same man)."""
-        from .lowpoly.story import saved_cast
+        """The recurring cast of the low-poly films (the library's people, yours, and everyone met in a film; the hero
+        is always the same man), with each one's look in the editor's colours for the tab's cards."""
+        from .lowpoly.story import LPDesign, editor_design, seed_library
 
-        return [{"name": v["name"], "who": v["who"]} for v in saved_cast(cfg).values()]
+        out = []
+        for v in seed_library(cfg).values():
+            try:
+                look = editor_design(LPDesign(**v.get("design", {})))
+            except Exception:  # noqa: BLE001 - an entry edited by hand
+                continue
+            out.append({"name": v["name"], "who": v.get("who", ""), "voice": v.get("voice", "man"), "look": look,
+                        "design": v.get("design", {}), "from": "yours" if v.get("mine") else "library" if v.get("library") else "film"})
+        return out
+
+    @app.post("/api/lowpoly/cast")
+    def lowpoly_cast_add(body: LowPolyPerson):
+        """Add (or redesign) a recurring person: Claude uses them by name in the next films."""
+        from .lowpoly.story import add_person
+
+        if not body.name.strip():
+            raise HTTPException(400, "Give the person a name.")
+        try:
+            return add_person(cfg, body.name, body.who, body.design, body.voice)
+        except ValueError as exc:
+            raise HTTPException(400, f"That look isn't one the editor can draw: {exc}") from exc
+
+    @app.delete("/api/lowpoly/cast/{name}")
+    def lowpoly_cast_remove(name: str):
+        from .lowpoly.story import remove_person
+
+        if not remove_person(cfg, name):
+            raise HTTPException(404, "No one by that name.")
+        return {"ok": True}
 
     @app.get("/api/sticky/hero")
     def sticky_hero():

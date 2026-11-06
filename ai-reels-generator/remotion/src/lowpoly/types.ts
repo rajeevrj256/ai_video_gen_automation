@@ -15,6 +15,10 @@ export type SetName =
   | 'cafe'
   | 'busstop'
   | 'rooftop'
+  | 'construction' // a building site: steel frame, a crane with a hanging beam, barriers
+  | 'highway' // a wide road with lanes, guard rails, the city beyond
+  | 'alley' // a narrow brick alley at night: dumpster, fire escape, puddles
+  | 'lab' // a white lab with a glowing chamber and screens
   | 'void'; // a plain warm studio floor: for a thought, a title
 
 export type Light = 'night' | 'lamp' | 'dawn' | 'morning' | 'day' | 'evening' | 'dark';
@@ -29,7 +33,10 @@ export type Cam =
   | 'front' // from the front, walking toward the camera
   | 'back' // from behind, over the shoulder at what he faces
   | 'low' // from the floor, looking up
-  | 'detail'; // the object he holds or that the shot is about
+  | 'detail' // the object he holds or that the shot is about
+  | 'aerial' // high above, looking down, circling slowly
+  | 'orbit' // circling round him at his height
+  | 'crash-zoom'; // a fast push in on him, then a hold
 
 export type Action =
   | 'stand'
@@ -63,9 +70,30 @@ export type Action =
   | 'jog' // jogging on the spot / easy run
   | 'pushup'
   | 'read' // a book in both hands
-  | 'cry';
+  | 'cry'
+  // action and fiction
+  | 'lift' // crouch, then raise a big object overhead
+  | 'catch' // arms up, a falling object lands in his hands
+  | 'push-stop' // braced, arms out: a vehicle stops against his hands
+  | 'throw' // from overhead, flings the object away
+  | 'super-jump' // crouch and leap high out of the shot
+  | 'land' // drops from the sky into a one-knee landing
+  | 'dash' // super speed: a blur across the place
+  | 'punch'
+  | 'crush' // squeezes something in his hand
+  | 'look-hands' // stares at his own hands
+  | 'crouch'
+  | 'kneel'
+  | 'carry' // carries a person (an actor 'carried' in the same shot) or a crate
+  | 'carried' // being carried by the 'carry' actor
+  | 'fall' // knocked down
+  | 'flee' // runs away, scared
+  | 'cower' // crouched, arms over the head
+  | 'help-up' // reaches a hand down
+  | 'talk' // talking, a hand moving
+  | 'gasp'; // hands to the mouth
 
-export type Expr = 'neutral' | 'tired' | 'sad' | 'worried' | 'surprised' | 'happy' | 'determined' | 'annoyed' | 'asleep' | 'blank';
+export type Expr = 'neutral' | 'tired' | 'sad' | 'worried' | 'surprised' | 'happy' | 'determined' | 'annoyed' | 'asleep' | 'blank' | 'scared' | 'angry' | 'amazed' | 'pained';
 
 export type Spot = 'center' | 'left' | 'right' | 'bed' | 'chair' | 'desk' | 'door' | 'window' | 'couch' | 'mirror' | 'counter' | 'far';
 
@@ -82,6 +110,7 @@ export type Design = {
   shoes: string;
   beard?: boolean;
   height?: number; // 1 = the hero; a kid 0.7
+  hat?: 'none' | 'hardhat' | 'cap';
 };
 
 export type Actor = {
@@ -93,6 +122,8 @@ export type Actor = {
   facing?: 'camera' | 'left' | 'right' | 'away';
   hold?: Hold;
   covered?: boolean; // in bed under the blanket
+  talk?: [number, number][]; // seconds into the shot when this person is speaking (the mouth moves)
+  at?: number; // seconds into the shot of his key moment (the catch, the jump, the landing, the punch)
 };
 
 export type Thing = {
@@ -101,6 +132,25 @@ export type Thing = {
   glow?: boolean; // a lit screen
   label?: string; // a word on a note, the clock's time, a calendar's day
 };
+
+// Big things in a scene and what they do (seconds `at` into the shot): a car, a falling steel beam, a truck...
+export type BigKind = 'car' | 'bus' | 'truck' | 'beam' | 'crate' | 'boulder' | 'barbell' | 'pipe' | 'door' | 'ball';
+export type BigMotion =
+  | 'still'
+  | 'fall' // drops from high above onto its spot
+  | 'caught' // drops into the hands of the actor who 'catch'es
+  | 'lifted' // raised overhead by the actor who 'lift's
+  | 'held' // already overhead
+  | 'thrown' // flies off from overhead
+  | 'stop' // drives at the actor who 'push-stop's and stops against his hands
+  | 'drive' // drives across the place
+  | 'crushed'
+  | 'hang' // swinging from the crane
+  | 'shake';
+export type Big = {kind: BigKind; spot: Spot; motion: BigMotion; at?: number; color?: string};
+
+export type FxKind = 'shockwave' | 'crack' | 'dust' | 'speed' | 'sparks' | 'debris' | 'glass' | 'smoke' | 'fire' | 'shake' | 'flash' | 'alarm' | 'rain' | 'wind';
+export type Fx = {kind: FxKind; at?: number; spot?: Spot};
 
 export type LPShot = {
   start: number; // seconds
@@ -115,6 +165,9 @@ export type LPShot = {
   fadeOut?: number;
   cut?: 'hard' | 'dip'; // dip = through black
   seed?: number;
+  big?: Big[];
+  fx?: Fx[];
+  slowmo?: boolean; // the action at 0.4x while the words run at speed
 };
 
 export type Caption = {start: number; end: number; text: string; red?: boolean; stamp?: boolean};

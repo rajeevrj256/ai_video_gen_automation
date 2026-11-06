@@ -700,6 +700,313 @@ const voidSet: SetDef = {
   ),
 };
 
+// ---------------------------------------------------------------- places for action and fiction
+
+// Bricks on a canvas (rows offset by half a brick, a seeded shade per brick), repeated along a wall.
+const bricks = new Map<string, THREE.CanvasTexture>();
+const brickTexture = (base: string, seed: number, rx: number, ry: number) => {
+  const key = `${base}|${seed}|${rx}|${ry}`;
+  let t = bricks.get(key);
+  if (!t) {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 256;
+    const g = c.getContext('2d')!;
+    const rand = rng(seed);
+    g.fillStyle = '#3a2f2a';
+    g.fillRect(0, 0, 256, 256);
+    const col = new THREE.Color(base);
+    for (let row = 0; row < 16; row++) {
+      for (let b = -1; b < 5; b++) {
+        const x = b * 64 + (row % 2 ? 32 : 0);
+        const k = 0.8 + rand() * 0.35;
+        g.fillStyle = col.clone().multiplyScalar(k).getStyle();
+        g.fillRect(x + 2, row * 16 + 2, 60, 12);
+      }
+    }
+    t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(rx, ry);
+    t.colorSpace = THREE.SRGBColorSpace;
+    bricks.set(key, t);
+  }
+  return t;
+};
+
+const BrickWall: React.FC<{p: V3; w: number; h: number; ry: number; look: Look; seed: number}> = ({p, w, h, ry, look, seed}) => (
+  <mesh position={p} rotation={[0, ry, 0]} receiveShadow>
+    <planeGeometry args={[w, h]} />
+    <meshStandardMaterial map={brickTexture(shadeOf('#8a4a36', look.shade), seed, w / 3, h / 3)} roughness={0.95} />
+  </mesh>
+);
+
+// A steel girder: an I-beam along x (flanges and a web), in a primer red or steel grey.
+export const Girder: React.FC<{p: V3; len: number; r?: V3; c?: string}> = ({p, len, r, c = '#b5532f'}) => (
+  <group position={p} rotation={r}>
+    <B p={[0, 0.11, 0]} s={[len, 0.04, 0.26]} c={c} />
+    <B p={[0, -0.11, 0]} s={[len, 0.04, 0.26]} c={c} />
+    <B p={[0, 0, 0]} s={[len, 0.22, 0.05]} c={c} />
+  </group>
+);
+
+const Barrier: React.FC<{p: V3; ry?: number}> = ({p, ry = 0}) => (
+  <group position={p} rotation={[0, ry, 0]}>
+    {[-0.9, -0.3, 0.3, 0.9].map((x, i) => (
+      <B key={x} p={[x, 0.85, 0]} s={[0.6, 0.22, 0.06]} c={i % 2 ? '#f2f0ea' : '#e2632a'} />
+    ))}
+    <B p={[-1.1, 0.5, 0]} s={[0.07, 1.0, 0.07]} c="#3a3d44" />
+    <B p={[1.1, 0.5, 0]} s={[0.07, 1.0, 0.07]} c="#3a3d44" />
+    <B p={[-1.1, 0.04, 0]} s={[0.12, 0.08, 0.6]} c="#3a3d44" />
+    <B p={[1.1, 0.04, 0]} s={[0.12, 0.08, 0.6]} c="#3a3d44" />
+  </group>
+);
+
+const construction: SetDef = {
+  spots: {
+    center: {x: 0, z: 0, ry: 0},
+    left: {x: -2.0, z: 0.3, ry: 0},
+    right: {x: 2.0, z: 0.3, ry: 0},
+    far: {x: 0, z: -7, ry: 0},
+    chair: {x: 3.4, z: -1.4, ry: -Math.PI / 2, seat: 0.6},
+    door: {x: -4.2, z: -2.6, ry: Math.PI},
+  },
+  wide: {pos: [4.8, 3.6, 7.5], look: [0, 1.5, -2.5]},
+  sun: [5, 7, 4],
+  outdoor: true,
+  walk: 'x',
+  surface: [3.4, 0.62, -0.7],
+  Draw: ({look, seed}) => {
+    const k = look.shade;
+    const n = night(look);
+    const cols = [-6, -3, 0, 3, 6];
+    const floors = [3.2, 6.4, 9.6, 12.8];
+    return (
+      <group>
+        <Sky look={look} />
+        <B p={[0, -0.05, -10]} s={[140, 0.1, 60]} c={shadeOf('#8a7158', k)} noShadow />
+        <B p={[0, 0.02, -8]} s={[14, 0.12, 6]} c={shadeOf('#a9a59c', k)} />
+        {/* the steel frame of the building going up */}
+        {cols.map((x) => (
+          <B key={x} p={[x, 7, -8]} s={[0.3, 14, 0.3]} c={shadeOf('#b5532f', k)} />
+        ))}
+        {cols.map((x) => (
+          <B key={`b${x}`} p={[x, 7, -10.5]} s={[0.3, 14, 0.3]} c={shadeOf('#9c4527', k)} />
+        ))}
+        {floors.map((y) => (
+          <group key={y}>
+            <Girder p={[0, y, -8]} len={12.4} c={shadeOf('#b5532f', k)} />
+            <Girder p={[0, y, -10.5]} len={12.4} c={shadeOf('#9c4527', k)} />
+            {cols.map((x) => (
+              <Girder key={x} p={[x, y, -9.25]} len={2.5} r={[0, Math.PI / 2, 0]} c={shadeOf('#a84c2b', k)} />
+            ))}
+          </group>
+        ))}
+        <B p={[0, 3.25, -9.25]} s={[12.4, 0.1, 2.5]} c={shadeOf('#8f8b84', k)} />
+        {/* the tower crane: mast, jib over the site, counterweight, the cable down */}
+        <group position={[8, 0, -12]}>
+          <B p={[0, 13, 0]} s={[1.0, 26, 1.0]} c={shadeOf('#e2b21f', k)} />
+          {Array.from({length: 13}, (_, i) => (
+            <B key={i} p={[0, 1 + i * 2, 0.51]} s={[1.0, 0.08, 0.02]} c="#3a3d44" r={[0, 0, 0.9]} />
+          ))}
+          <B p={[-8, 26.3, 0]} s={[22, 0.7, 0.7]} c={shadeOf('#e2b21f', k)} />
+          <B p={[4.5, 25.4, 0]} s={[2.2, 1.6, 1.4]} c="#5a5c62" />
+          <B p={[0.9, 25.0, 0]} s={[1.2, 1.2, 1.2]} c="#e9e4da" />
+          <B p={[-14, 25.95, 0]} s={[0.5, 0.3, 0.5]} c="#3a3d44" />
+        </group>
+        {/* the site office, barriers, a pile of pipes, a stack of crates to sit on */}
+        <group position={[-4.2, 0, -3.4]}>
+          <B p={[0, 1.25, 0]} s={[3.2, 2.5, 1.6]} c={shadeOf('#d8d2c2', k)} />
+          <B p={[0, 1.05, 0.81]} s={[0.8, 2.0, 0.02]} c={shadeOf('#5a6b7a', k)} />
+          <B p={[1.0, 1.6, 0.81]} s={[0.8, 0.6, 0.02]} c={n ? '#ffe2a8' : '#a8c3cf'} glow={n ? 1.2 : 0} />
+        </group>
+        <Barrier p={[-1.5, 0, 2.6]} />
+        <Barrier p={[2.4, 0, 2.6]} />
+        {[0, 1, 2].map((i) => (
+          <Cyl key={i} p={[-6.5 + i * 0.42, 0.21, -1.2]} r1={0.2} r2={0.2} h={2.6} c={shadeOf('#5f6670', k)} rot={[Math.PI / 2, 0, 0]} />
+        ))}
+        <Cyl p={[-6.29, 0.56, -1.2]} r1={0.2} r2={0.2} h={2.6} c={shadeOf('#5f6670', k)} rot={[Math.PI / 2, 0, 0]} />
+        <B p={[3.4, 0.27, -1.4]} s={[0.9, 0.54, 0.9]} c={shadeOf('#a07a4c', k)} />
+        <B p={[3.4, 0.27, -0.6]} s={[0.7, 0.54, 0.7]} c={shadeOf('#8d6a40', k)} />
+        <B p={[5.2, 0.3, 0.6]} s={[1.2, 0.6, 0.8]} c={shadeOf('#8d6a40', k)} />
+        {[-20, -36, 22, 38].map((x, i) => (
+          <Building key={x} p={[x, 8, -30]} s={[12, 16 + (i % 2) * 8, 8]} seed={seed + i} look={look} night={n} />
+        ))}
+      </group>
+    );
+  },
+};
+
+const highway: SetDef = {
+  spots: {
+    center: {x: 0, z: 0.4, ry: 0},
+    left: {x: -2.5, z: 2.1, ry: 0},
+    right: {x: 2.5, z: 2.1, ry: 0},
+    far: {x: 0, z: -2.1, ry: 0},
+    door: {x: 0, z: 5.6, ry: Math.PI},
+  },
+  wide: {pos: [7, 3.4, 10], look: [0, 1.0, 0]},
+  sun: [-6, 7, 5],
+  outdoor: true,
+  walk: 'x',
+  surface: [0, 0, 0],
+  Draw: ({look, seed}) => {
+    const k = look.shade;
+    const n = night(look);
+    const dashes = Array.from({length: 46}, (_, i) => -90 + i * 4);
+    return (
+      <group>
+        <Sky look={look} />
+        <B p={[0, -0.1, 0]} s={[240, 0.1, 80]} c={shadeOf('#5d7a44', k)} noShadow />
+        <B p={[0, -0.04, 0]} s={[240, 0.1, 8.6]} c={shadeOf('#3d3f44', k)} noShadow />
+        {dashes.map((x) => (
+          <group key={x}>
+            <B p={[x, 0.012, 0]} s={[2, 0.02, 0.14]} c={shadeOf('#e9e4c8', k)} noShadow />
+          </group>
+        ))}
+        <B p={[0, 0.012, -4.0]} s={[240, 0.02, 0.12]} c={shadeOf('#e9e4da', k)} noShadow />
+        <B p={[0, 0.012, 4.0]} s={[240, 0.02, 0.12]} c={shadeOf('#e9e4da', k)} noShadow />
+        {/* guard rails on both sides */}
+        {[-4.7, 4.7].map((z) => (
+          <group key={z}>
+            <B p={[0, 0.62, z]} s={[240, 0.24, 0.06]} c={shadeOf('#b9bcc2', k)} />
+            {Array.from({length: 60}, (_, i) => (
+              <B key={i} p={[-118 + i * 4, 0.32, z + (z > 0 ? 0.06 : -0.06)]} s={[0.1, 0.64, 0.1]} c={shadeOf('#8e9198', k)} />
+            ))}
+          </group>
+        ))}
+        {[-40, -10, 20, 50].map((x) => (
+          <group key={x} position={[x, 0, -5.4]}>
+            <Cyl p={[0, 4, 0]} r1={0.08} r2={0.12} h={8} c="#6c6f76" seg={6} />
+            <B p={[0, 8, 1.2]} s={[0.15, 0.12, 2.6]} c="#6c6f76" />
+            <B p={[0, 7.9, 2.4]} s={[0.4, 0.12, 0.6]} c="#fff1d6" glow={n ? 2 : 0.4} />
+          </group>
+        ))}
+        {Array.from({length: 14}, (_, i) => (
+          <Building key={i} p={[-90 + i * 14, 9 + (i % 3) * 4, -60 - (i % 2) * 10]} s={[10, 18 + (i % 3) * 8, 8]} seed={seed + i} look={look} night={n} />
+        ))}
+        <Mountains z={-110} seed={seed} c={shadeOf('#5d6f7a', look.shade * 0.9)} />
+      </group>
+    );
+  },
+};
+
+const alley: SetDef = {
+  lamp: [-1.9, 2.7, -4],
+  spots: {
+    center: {x: 0, z: 0, ry: 0},
+    left: {x: -1.1, z: 0.3, ry: 0},
+    right: {x: 1.1, z: 0.3, ry: 0},
+    far: {x: 0, z: -11, ry: 0},
+    door: {x: -1.8, z: -4, ry: Math.PI / 2},
+    chair: {x: 1.7, z: -1.6, ry: -Math.PI / 2, seat: 0.45},
+  },
+  wide: {pos: [1.5, 3.3, 6.5], look: [0, 1.0, -3.5]},
+  sun: [2, 9, -10],
+  outdoor: true,
+  walk: 'z',
+  surface: [-1.7, 1.25, -2.2],
+  Draw: ({look, seed}) => {
+    const k = look.shade;
+    const n = night(look);
+    return (
+      <group>
+        <Sky look={look} />
+        <B p={[0, -0.05, -10]} s={[5, 0.1, 50]} c={shadeOf('#34363b', k)} noShadow />
+        {/* wet ground: a few dark puddles that catch the light */}
+        {[[0.5, 1.2, 1.1], [-0.6, -3.5, 1.5], [0.8, -8, 1.2]].map(([x, z, w], i) => (
+          <mesh key={i} position={[x, 0.006, z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <circleGeometry args={[w * 0.6, 9]} />
+            <meshStandardMaterial color="#1c2230" roughness={0.12} metalness={0.4} />
+          </mesh>
+        ))}
+        <BrickWall p={[-2.4, 4.5, -10]} w={50} h={9} ry={Math.PI / 2} look={look} seed={seed} />
+        <BrickWall p={[2.4, 4.5, -10]} w={50} h={9} ry={-Math.PI / 2} look={look} seed={seed + 1} />
+        {/* the street at the far end, brighter */}
+        <mesh position={[0, 3, -34]}>
+          <planeGeometry args={[5, 6]} />
+          <meshBasicMaterial color={n ? '#f2c890' : '#dfe6ec'} />
+        </mesh>
+        {/* a door with a lamp over it, a dumpster, bags, crates, the fire escape further down */}
+        <B p={[-2.37, 1.1, -4]} s={[0.06, 2.2, 1.1]} c={shadeOf('#4a3a2e', k)} />
+        <B p={[-2.25, 2.7, -4]} s={[0.25, 0.12, 0.3]} c="#fff1d6" glow={n ? 2.2 : 0.4} />
+        <group position={[-1.7, 0, -1.8]}>
+          <B p={[0, 0.6, 0]} s={[1.1, 1.2, 1.8]} c={shadeOf('#3f6a4a', k)} />
+          <B p={[0.05, 1.24, 0]} s={[1.18, 0.08, 1.86]} c={shadeOf('#2f5238', k)} r={[0, 0, 0.06]} />
+        </group>
+        {[[1.9, 0.0], [1.6, 0.6], [-1.9, 1.4]].map(([x, z], i) => (
+          <mesh key={i} position={[x, 0.22, z]} castShadow receiveShadow>
+            <icosahedronGeometry args={[0.28, 0]} />
+            <primitive object={mat('#1d1f24')} attach="material" />
+          </mesh>
+        ))}
+        <B p={[1.7, 0.22, -1.6]} s={[0.6, 0.44, 0.6]} c={shadeOf('#8d6a40', k)} />
+        {[3.2, 5.6].map((y) => (
+          <group key={y} position={[1.85, y, -9]}>
+            <B p={[0, 0, 0]} s={[1.1, 0.06, 3]} c="#2a2c31" />
+            <B p={[-0.52, 0.5, 0]} s={[0.04, 0.04, 3]} c="#2a2c31" />
+            {[-1.4, -0.7, 0, 0.7, 1.4].map((z) => (
+              <B key={z} p={[-0.52, 0.25, z]} s={[0.03, 0.5, 0.03]} c="#2a2c31" />
+            ))}
+          </group>
+        ))}
+        <B p={[1.85, 4.4, -10.2]} s={[0.5, 0.05, 2.6]} c="#2a2c31" r={[0.75, 0, 0]} />
+      </group>
+    );
+  },
+};
+
+const lab: SetDef = {
+  lamp: [0, 2.8, -0.8],
+  spots: {
+    center: {x: 0, z: 0.4, ry: 0},
+    left: {x: -1.6, z: 0.6, ry: 0},
+    right: {x: 1.6, z: 0.6, ry: 0},
+    desk: {x: -1.5, z: -1.75, ry: Math.PI, seat: 0.5},
+    chair: {x: -1.5, z: -1.75, ry: Math.PI, seat: 0.5},
+    counter: {x: -1.5, z: -1.95, ry: Math.PI},
+    far: {x: 1.7, z: -1.9, ry: 0},
+    door: {x: -2.6, z: 0.9, ry: Math.PI / 2},
+  },
+  wide: {pos: [2.8, 2.9, 3.6], look: [0, 0.9, -1.3]},
+  sun: [3, 6, 3],
+  outdoor: false,
+  walk: 'x',
+  surface: [-1.5, 0.8, -2.55],
+  Draw: ({look}) => {
+    const k = look.shade;
+    return (
+      <group>
+        <Room floor="#cfd4d8" wall="#e8ecee" side="#dde2e5" look={look} />
+        {/* the glowing chamber: a glass tube on a ring, lit from below */}
+        <group position={[1.7, 0, -1.9]}>
+          <Cyl p={[0, 0.1, 0]} r1={0.85} r2={0.9} h={0.2} c="#9aa3ab" seg={12} />
+          <Cyl p={[0, 0.21, 0]} r1={0.7} r2={0.7} h={0.02} c="#7fe7ff" seg={12} glow={1.8} />
+          <mesh position={[0, 1.4, 0]}>
+            <cylinderGeometry args={[0.72, 0.72, 2.4, 14, 1, true]} />
+            <meshStandardMaterial color="#a8eeff" emissive="#5fd6ff" emissiveIntensity={0.35} transparent opacity={0.22} side={THREE.DoubleSide} depthWrite={false} />
+          </mesh>
+          <Cyl p={[0, 2.68, 0]} r1={0.85} r2={0.85} h={0.18} c="#9aa3ab" seg={12} />
+          {[0.8, 1.6, 2.3].map((y) => (
+            <Cyl key={y} p={[0, y, 0]} r1={0.74} r2={0.74} h={0.03} c="#7fe7ff" seg={14} glow={1.2} />
+          ))}
+        </group>
+        {/* the console and its screens on the back wall */}
+        <B p={[-1.5, 0.4, -2.55]} s={[1.9, 0.8, 0.7]} c={shadeOf('#b9c0c6', k)} />
+        <B p={[-1.5, 0.82, -2.45]} s={[1.9, 0.04, 0.6]} c="#3a4048" />
+        {[-2.2, -1.5, -0.8].map((x, i) => (
+          <group key={x}>
+            <B p={[x, 1.7, -2.96]} s={[0.62, 0.42, 0.04]} c="#1b1f26" />
+            <B p={[x, 1.7, -2.935]} s={[0.56, 0.36, 0.01]} c={['#4fb8ff', '#62f0c0', '#4fb8ff'][i]} glow={1.1} />
+          </group>
+        ))}
+        <B p={[2.95, 1.0, 0.4]} s={[0.5, 2.0, 1.4]} c={shadeOf('#c4cace', k)} />
+        <B p={[0, 3.35, -0.8]} s={[2.4, 0.05, 0.5]} c="#f6fbff" glow={1.4} />
+        <B p={[0, 0.015, 0.4]} s={[2.6, 0.02, 0.06]} c="#f2c94c" noShadow />
+      </group>
+    );
+  },
+};
+
 export const SETS: Record<SetName, SetDef> = {
   bedroom,
   hallway,
@@ -713,6 +1020,10 @@ export const SETS: Record<SetName, SetDef> = {
   cafe,
   busstop,
   rooftop,
+  construction,
+  highway,
+  alley,
+  lab,
   void: voidSet,
 };
 

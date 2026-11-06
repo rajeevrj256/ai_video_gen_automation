@@ -18,6 +18,7 @@ export type Pose = {
   armL: Limb;
   armR: Limb;
   hand: 'none' | 'right' | 'both'; // which hand holds the thing
+  shift?: [number, number]; // the whole body moved in his own frame (x right, z forward): a jump's drift, feet sliding back
 };
 
 export const HIP = 0.64; // pelvis over the floor when standing
@@ -59,12 +60,30 @@ const idle = (p: Pose, t: number, k: number) => {
   return p;
 };
 
-export type PoseIn = {action: Action; t: number; dur: number; seat: number | null; k: number};
+export type PoseIn = {action: Action; t: number; dur: number; seat: number | null; k: number; at?: number; moving?: boolean};
 
 // Walking speed in units a second (the editor moves the root along his path at this speed).
-export const SPEED: Partial<Record<Action, number>> = {walk: 1.0, run: 2.6, jog: 1.7};
+export const SPEED: Partial<Record<Action, number>> = {walk: 1.0, run: 2.6, jog: 1.7, dash: 16, flee: 2.8, carry: 0.8};
 
-export function pose({action, t, dur, seat, k}: PoseIn): Pose {
+// A squat, 0 (standing) .. 1 (deep): thighs forward, knees back, the pelvis dropping by what the bend costs.
+const squat = (p: Pose, d: number, wide = 0.25) => {
+  const a = 1.0 * d;
+  p.legL = L(-a, wide, 2 * a);
+  p.legR = L(-a, wide, 2 * a);
+  p.y = HIP - 0.52 * (1 - Math.cos(a));
+  p.lean = 0.4 * d;
+  return p;
+};
+
+const runLegs = (p: Pose, t: number, f: number, amp: number, k: number, knee = 1.4) => {
+  const ph = t * f * PI + k;
+  const sw = Math.sin(ph);
+  p.legL = L(-amp * sw, 0.02, Math.max(0, Math.sin(ph + PI * 0.55)) * knee);
+  p.legR = L(amp * sw, 0.02, Math.max(0, Math.sin(ph - PI * 0.45)) * knee);
+  return sw;
+};
+
+export function pose({action, t, dur, seat, k, at, moving}: PoseIn): Pose {
   const p = base();
   const s = seat ?? 0.48; // a chair when nothing else is there
   switch (action) {
@@ -287,6 +306,207 @@ export function pose({action, t, dur, seat, k}: PoseIn): Pose {
       p.head = [-0.35, 0, 0];
       return p;
     }
+    // ---------------------------------------------------------------- action and fiction
+    case 'lift':
+    case 'catch':
+    case 'throw': {
+      // lift: a squat (to `at`), then the arms carry it overhead; catch: arms up, a dip as it lands at `at`;
+      // throw: overhead, the arms snap forward at `at`
+      const ev = at ?? (action === 'lift' ? 0.5 : 0.8);
+      let up = 1;
+      let dip = 0;
+      if (action === 'lift') {
+        up = ease((t - ev) / 0.9);
+        dip = t < ev ? ease(t / Math.max(0.2, ev)) : 1 - up;
+      } else if (action === 'catch') {
+        const since = t - ev;
+        dip = since > 0 ? Math.exp(-since * 3) * Math.min(1, since * 10) * 0.7 : 0.15;
+      } else {
+        up = t < ev ? 1 : 1 - ease((t - ev) / 0.25);
+      }
+      squat(p, 0.25 + 0.6 * dip, 0.3);
+      p.lean = action === 'throw' && t > ev ? 0.35 : 0.08 * (1 - up) + 0.25 * dip;
+      const arm = mix(-0.75, -2.95, up);
+      p.armL = L(arm, 0.18 * up, mix(-0.3, -0.25, up));
+      p.armR = L(arm, 0.18 * up, mix(-0.3, -0.25, up));
+      if (action === 'throw' && t > ev) {
+        p.armL = L(-1.35, 0.1, -0.1);
+        p.armR = L(-1.35, 0.1, -0.1);
+      }
+      p.side = up > 0.9 && action !== 'throw' ? 0.012 * Math.sin(t * 31) : 0; // the strain
+      p.head = [-0.35 * up, 0, 0];
+      return p;
+    }
+    case 'push-stop': {
+      const ev = at ?? 1.0;
+      const hit = t > ev;
+      p.legL = L(-0.75, 0.05, 1.0);
+      p.legR = L(0.55, 0.05, 0.2);
+      p.y = HIP - 0.1;
+      p.lean = hit ? 0.42 + 0.04 * Math.exp(-(t - ev) * 4) : 0.3;
+      const reach = hit ? -1.38 : -1.2;
+      p.armL = L(reach, 0.14, hit ? -0.2 : -0.6);
+      p.armR = L(reach, 0.14, hit ? -0.2 : -0.6);
+      p.head = [-0.15, 0, 0];
+      // driven back by the blow, the feet sliding, then held
+      p.shift = [0, hit ? -1.1 * (1 - Math.exp(-(t - ev) * 3.5)) : 0];
+      p.side = hit ? 0.015 * Math.sin(t * 29) : 0;
+      return p;
+    }
+    case 'super-jump': {
+      const go = at ?? 0.45;
+      if (t < go) {
+        squat(p, ease(t / go), 0.22);
+        p.armL = L(0.7 * ease(t / go), 0.15, -0.2);
+        p.armR = L(0.7 * ease(t / go), 0.15, -0.2);
+        return p;
+      }
+      const tt = t - go;
+      p.y = HIP + 11 * tt - 2.4 * tt * tt;
+      p.legL = L(-0.9, 0.06, 1.5);
+      p.legR = L(-0.6, 0.06, 1.2);
+      p.armL = L(-2.7, 0.3, -0.2);
+      p.armR = L(-2.7, 0.3, -0.2);
+      p.lean = -0.1;
+      p.head = [-0.4, 0, 0];
+      p.shift = [0, 2.2 * tt];
+      return p;
+    }
+    case 'land': {
+      const hit = at ?? 0.45;
+      if (t < hit) {
+        const q = 1 - t / hit;
+        p.y = HIP + 9 * q * q;
+        p.legL = L(-0.5, 0.15, 0.7);
+        p.legR = L(-0.3, 0.15, 0.5);
+        p.armL = L(-0.2, 1.1, -0.2);
+        p.armR = L(-0.2, 1.1, -0.2);
+        p.head = [0.35, 0, 0];
+        return p;
+      }
+      // the three-point landing: left foot forward, right knee down, right fist on the ground; the head comes up
+      const after = t - hit;
+      p.y = 0.4 + 0.05 * Math.exp(-after * 6);
+      p.legL = L(-1.5, 0.12, 1.55);
+      p.legR = L(0.35, 0.1, 1.55);
+      p.lean = 0.6 - 0.25 * ease((after - 0.8) / 0.8);
+      p.armR = L(-0.15, 0.05, 0);
+      p.armL = L(0.5, 0.55, -0.3);
+      p.head = [mix(0.3, -0.35, ease((after - 0.6) / 0.7)), 0, 0];
+      return p;
+    }
+    case 'dash': {
+      const sw = runLegs(p, t, 5.5, 0.95, k, 1.6);
+      p.armL = L(0.9 * sw, 0.05, -1.4);
+      p.armR = L(-0.9 * sw, 0.05, -1.4);
+      p.y = HIP - 0.06;
+      p.lean = 0.5;
+      p.head = [-0.3, 0, 0];
+      return p;
+    }
+    case 'punch': {
+      const ev = at ?? 0.4;
+      const q = t < ev ? 0 : t < ev + 0.12 ? ease((t - ev) / 0.12) : 1 - ease((t - ev - 0.35) / 0.3);
+      p.legL = L(-0.4, 0.08, 0.35);
+      p.legR = L(0.3, 0.08, 0.15);
+      p.armL = L(-1.25, -0.15, -2.0);
+      p.armR = L(mix(-1.2, -1.58, q), mix(-0.2, -0.05, q), mix(-2.1, 0, q));
+      p.twist = -0.35 * q;
+      p.lean = 0.12 + 0.15 * q;
+      return p;
+    }
+    case 'crush':
+      p.armR = L(-0.75, -0.28, -1.45);
+      p.armL = L(-0.2, 0.05, -0.2);
+      p.head = [0.38, 0, 0];
+      p.side = 0.006 * Math.sin(t * 40);
+      return p;
+    case 'look-hands':
+      if (seat !== null) sitting(p, s);
+      p.armL = L(-0.55, -0.3, -1.35);
+      p.armR = L(-0.55, -0.3, -1.35 + 0.08 * Math.sin(t * 2));
+      p.head = [0.42, 0.05 * Math.sin(t * 0.8), 0];
+      return p;
+    case 'crouch':
+      squat(p, 1, 0.22);
+      p.lean = 0.5;
+      p.armL = L(-0.6, 0.1, -0.4);
+      p.armR = L(-0.6, 0.1, -0.4);
+      p.head = [-0.15, 0, 0];
+      return idle(p, t, k);
+    case 'kneel':
+      p.y = 0.42;
+      p.legL = L(-1.5, 0.1, 1.5);
+      p.legR = L(0.2, 0.1, 1.6);
+      p.lean = 0.12;
+      p.armL = L(-0.6, 0.05, -0.6);
+      p.armR = L(-0.3, 0.1, -0.2);
+      return idle(p, t, k);
+    case 'carry': {
+      if (moving) runLegs(p, t, 1.75, 0.4, k, 0.7);
+      p.armL = L(-1.15, -0.05, -0.75);
+      p.armR = L(-1.15, -0.05, -0.75);
+      p.lean = -0.06;
+      p.head = [0.15, 0, 0];
+      return p;
+    }
+    case 'carried':
+      p.rx = -PI / 2;
+      p.y = 0;
+      p.legL = L(-1.0, 0.05, 1.3);
+      p.legR = L(-0.9, 0.05, 1.2);
+      p.armL = L(-2.4, 0.2, -1.2);
+      p.armR = L(-0.4, 0.1, -0.3);
+      p.head = [-0.2, 0, 0];
+      return p;
+    case 'fall': {
+      const q = ease(t / 0.45);
+      p.rx = -PI / 2 * q;
+      p.y = mix(HIP, 0.2, q);
+      p.armL = L(-0.6 * (1 - q), 0.3 + 0.9 * q, -0.2);
+      p.armR = L(-0.6 * (1 - q), 0.3 + 0.9 * q, -0.2);
+      p.head = [q > 0.9 ? 0.05 : -0.2, 0.25 * q, 0];
+      return p;
+    }
+    case 'flee': {
+      runLegs(p, t, 2.7, 0.8, k, 1.3);
+      const w = 0.35 * Math.sin(t * 9 + k);
+      p.armL = L(-2.4 + w, 0.35, -0.4);
+      p.armR = L(-2.4 - w, 0.35, -0.4);
+      p.y = HIP - 0.03;
+      p.lean = 0.2;
+      p.head = [-0.1, 0.5 * Math.sin(t * 1.7 + k), 0];
+      return p;
+    }
+    case 'cower':
+      squat(p, 1, 0.2);
+      p.lean = 0.65;
+      p.armL = L(-2.45, -0.2, -1.9);
+      p.armR = L(-2.45, -0.2, -1.9);
+      p.head = [0.6, 0, 0];
+      p.side = 0.008 * Math.sin(t * 25);
+      return p;
+    case 'help-up':
+      p.legL = L(-0.6, 0.06, 0.8);
+      p.legR = L(0.2, 0.06, 0.3);
+      p.y = HIP - 0.08;
+      p.lean = 0.55;
+      p.armR = L(-1.0, 0, -0.1);
+      p.armL = L(-0.45, 0.1, -0.7);
+      p.head = [0.25, 0, 0];
+      return p;
+    case 'talk':
+      if (seat !== null) sitting(p, s);
+      p.armR = L(-0.55 + 0.2 * Math.sin(t * 2.6 + k), -0.05, -1.25);
+      p.armL = L(-0.15, 0.08, -0.25);
+      p.head = [0.04 * Math.sin(t * 3.1), 0.08 * Math.sin(t * 0.9 + k), 0];
+      return idle(p, t, k);
+    case 'gasp':
+      p.armL = L(-1.25, -0.38, -2.15);
+      p.armR = L(-1.25, -0.38, -2.15);
+      p.lean = -0.1;
+      p.head = [-0.1, 0, 0];
+      return p;
     case 'stand':
     default:
       if (seat !== null && action !== 'stand') sitting(p, s);
@@ -295,9 +515,9 @@ export function pose({action, t, dur, seat, k}: PoseIn): Pose {
 }
 
 // The face for each feeling: eyelids (0 open .. 1 shut), brows (lift, tilt: + = inner ends up), eye size, the mouth.
-export type Face = {lid: number; brow: number; tilt: number; eye: number; mouth: 'line' | 'o' | 'smile' | 'frown' | 'flat'; look: [number, number]};
+export type Face = {lid: number; brow: number; tilt: number; eye: number; mouth: 'line' | 'o' | 'smile' | 'frown' | 'flat' | 'open'; look: [number, number]};
 
-export function face(e: Expr, t: number, k: number): Face {
+export function face(e: Expr, t: number, k: number, talking = false): Face {
   const blinkAt = (t + k * 1.7) % 3.7;
   const blink = blinkAt < 0.12 ? 1 : 0;
   const lookX = 0.012 * Math.sin(t * 0.5 + k);
@@ -330,9 +550,22 @@ export function face(e: Expr, t: number, k: number): Face {
     case 'blank':
       Object.assign(f, {lid: 0.08, look: [0, 0]});
       break;
+    case 'scared':
+      Object.assign(f, {brow: 0.04, tilt: 0.45, eye: 1.25, mouth: 'o', look: [0.02 * Math.sin(t * 2.3 + k), 0]});
+      break;
+    case 'angry':
+      Object.assign(f, {lid: 0.22, brow: -0.025, tilt: -0.45, mouth: 'flat'});
+      break;
+    case 'amazed':
+      Object.assign(f, {brow: 0.045, eye: 1.3, mouth: 'o', look: [0, 0.01]});
+      break;
+    case 'pained':
+      Object.assign(f, {lid: 0.45, brow: 0.01, tilt: 0.4, mouth: 'flat'});
+      break;
     default:
       break;
   }
+  if (talking) f.mouth = Math.sin(t * 21 + k) > -0.2 ? 'open' : f.mouth === 'o' ? 'o' : 'line'; // the mouth moves with the words
   if (blink) f.lid = 1;
   return f;
 }
