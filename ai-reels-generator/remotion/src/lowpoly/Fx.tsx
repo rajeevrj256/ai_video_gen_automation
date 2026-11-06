@@ -59,6 +59,7 @@ export type FxCtx = {
   around: THREE.Vector3; // the middle of the shot (rain and wind fill the space around it)
   seed: number;
   dust: string; // the ground's dust colour
+  indoor: boolean; // no rain inside a room (the window shows the weather)
 };
 
 const Shockwave: React.FC<{c: FxCtx}> = ({c}) => {
@@ -121,8 +122,8 @@ const Dust: React.FC<{c: FxCtx}> = ({c}) => {
         const v = 1.5 + rand() * 3.5;
         const d = (v * (1 - Math.exp(-2 * tau))) / 2 + 0.3;
         const y = 0.15 + (0.3 + rand() * 0.6) * (1 - Math.exp(-1.5 * tau));
-        const s = 0.2 + (0.45 + rand() * 0.4) * (1 - Math.exp(-1.2 * tau));
-        const o = 0.45 * Math.exp(-0.8 * tau) * Math.min(1, tau * 12);
+        const s = 0.18 + (0.38 + rand() * 0.32) * (1 - Math.exp(-1.2 * tau));
+        const o = 0.32 * Math.exp(-0.9 * tau) * Math.min(1, tau * 12);
         return <P key={i} g={puff()} m={fxMat(c.dust, o)} p={[Math.cos(a) * d, y, Math.sin(a) * d]} s={s} />;
       })}
     </group>
@@ -142,7 +143,7 @@ const Flying: React.FC<{c: FxCtx; glass?: boolean}> = ({c, glass}) => {
         const a = rand() * Math.PI * 2;
         const out = glass ? 2 + rand() * 4 : 1.5 + rand() * 3.5;
         const up = glass ? 1 + rand() * 3 : 3 + rand() * 5;
-        const size = glass ? 0.05 + rand() * 0.06 : 0.07 + rand() * 0.14;
+        const size = glass ? 0.04 + rand() * 0.05 : 0.035 + rand() * 0.075;
         const spin = 4 + rand() * 8;
         // the time it reaches the ground: from + up*T - 6*T^2 = size
         const T = (up + Math.sqrt(up * up + 24 * Math.max(0, from - size))) / 12;
@@ -300,7 +301,7 @@ export const FxView: React.FC<{kind: FxKind; c: FxCtx}> = ({kind, c}) => {
     case 'speed':
       return <Speed c={c} />;
     case 'rain':
-      return <Rain c={c} />;
+      return c.indoor ? null : <Rain c={c} />;
     case 'wind':
       return <Wind c={c} />;
     case 'alarm':

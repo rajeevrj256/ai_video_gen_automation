@@ -46,7 +46,9 @@ export const actorAt = (a: Actor, shot: LPShot): number | undefined => {
 };
 const scaledBig = (b: Big, shot: LPShot): Big => (b.at === undefined ? b : {...b, at: actionTime(shot, b.at)});
 const FACE_CAMS = new Set<Cam>(['face', 'face-top', 'medium', 'detail', 'low', 'front']);
-const AUTO_HOLD: Partial<Record<Action, Hold>> = {phone: 'phone', 'lie-phone': 'phone', drink: 'mug', read: 'book', eat: 'fork'};
+const AUTO_HOLD: Partial<Record<Action, Hold>> = {phone: 'phone', 'lie-phone': 'phone', drink: 'mug', read: 'book', eat: 'fork', crush: 'mug'};
+// people who talk or react turn to the room even at a spot that faces into the set (the counter, the window)
+const TO_ROOM = new Set<Action>(['talk', 'gasp', 'cheer', 'point', 'shrug', 'nod', 'shake-head', 'wave', 'look-hands', 'crush']);
 
 export type Placed = {
   actor: Actor;
@@ -70,7 +72,7 @@ const FACING: Record<string, number> = {left: -Math.PI / 2, right: Math.PI / 2, 
 
 // Where an actor is at time t: his spot (and the seat or bed there), his walk, his pose, and the world positions the
 // camera needs (computed with the same rotations the Man applies).
-export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, cast: Record<string, Design>, others: Placed[] = []): Placed => {
+export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, cast: Record<string, Design>, others: Placed[] = [], toward?: [number, number]): Placed => {
   const t = actionTime(shot, tReal);
   const dur = actionTime(shot, shot.duration);
   const design = cast[a.who] ?? (a.who === 'hero' ? HERO : HERO);
@@ -103,7 +105,16 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   }
   if (action === 'sit' && seat === null) seat = 0.46; // a chair the set doesn't have: drawn under him
   // a spot that faces into the set (the counter, the mirror, a window) turns him round when the camera wants his face
-  if ((a.facing ?? 'camera') === 'camera' && Math.cos(ry) < -0.5 && !lying && !moves(a) && action !== 'push-stop' && FACE_CAMS.has(shot.camera)) ry += Math.PI;
+  if ((a.facing ?? 'camera') === 'camera' && Math.cos(ry) < -0.5 && !lying && !moves(a) && action !== 'push-stop' && (FACE_CAMS.has(shot.camera) || TO_ROOM.has(action))) ry += Math.PI;
+  // with someone else in the shot he turns toward them (fully to help them up; partly when talking, so the camera
+  // still sees his face), unless the shot says which way he faces
+  if (toward && (a.facing ?? 'camera') === 'camera' && seat === null && !lying && !moves(a) && !LONE.has(action)) {
+    const want = Math.atan2(toward[0] - root[0], toward[1] - root[2]);
+    let diff = want - ry;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    const most = FULL_TURN.has(action) ? Math.PI : 0.6;
+    ry += Math.max(-most, Math.min(most, diff));
+  }
   const moving = moves(a);
   if (moving) {
     const speed = SPEED[action] ?? 1;
@@ -462,14 +473,32 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
 
 const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway: '#9d968c', alley: '#77746f', street: '#8f8c88', park: '#a99a7c'};
 
-// Everyone in the shot, in order (the one carried is placed after the one who carries him).
+// Actions that keep their own way (they act on the place, not on the other person) and those that turn right round.
+const LONE = new Set<Action>(['push-stop', 'catch', 'lift', 'throw', 'super-jump', 'land', 'dash', 'punch', 'look-out', 'pushup', 'cower', 'flee', 'carried', 'fall']);
+const FULL_TURN = new Set<Action>(['help-up', 'carry']);
+
+// Everyone in the shot, in order (the one carried is placed after the one who carries him); each turns toward the
+// nearest other person (within 4 m).
 export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<string, Design>) => {
   const placed: (Placed | undefined)[] = shot.actors.map(() => undefined);
   const done: Placed[] = [];
+  const at = shot.actors.map((a) => spotOf(set, a.spot));
+  const toward = (k: number): [number, number] | undefined => {
+    let best: [number, number] | undefined;
+    let dist = 4;
+    at.forEach((s, j) => {
+      const d = Math.hypot(s.x - at[k].x, s.z - at[k].z);
+      if (j !== k && d < dist && d > 0.05) {
+        dist = d;
+        best = [s.x, s.z];
+      }
+    });
+    return best;
+  };
   for (const late of [false, true]) {
     shot.actors.forEach((a, k) => {
       if ((a.action === 'carried') !== late) return;
-      const pl = place(a, k, set, shot, t, cast, done);
+      const pl = place(a, k, set, shot, t, cast, done, toward(k));
       placed[k] = pl;
       done.push(pl);
     });
@@ -510,6 +539,7 @@ const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undef
       around: who ? new THREE.Vector3(who.root[0], 0, who.root[2]) : new THREE.Vector3(),
       seed: (shot.seed ?? 1) * 5 + i,
       dust: DUST[shot.set] ?? '#b8ab98',
+      indoor: !set.outdoor,
     };
     return {kind: f.kind, ctx};
   });

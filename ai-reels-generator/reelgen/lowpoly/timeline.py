@@ -79,6 +79,8 @@ MOTION_SOUNDS = {"fall": (("swoosh", -0.5), ("crash", 0)), "drive": (("flyby", -
 FX_SOUNDS = {"glass": "glass", "sparks": "sparks", "fire": "fire", "rain": "rain", "wind": "wind", "alarm": "siren"}
 LOOPING = {"fire", "rain", "wind", "siren", "sparks"}
 VEHICLE = {"car", "bus", "truck"}
+HEAVY = VEHICLE | {"beam", "boulder", "crate", "pipe"}
+OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley"}
 SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}  # energy -> the music's act (sticky.mixdown.INTENSITY)
 
 
@@ -110,7 +112,9 @@ def moments(s, dur: float) -> tuple[list[float | None], list[float | None]]:
             continue
         k = next((j for j, b in enumerate(s.big) if b.motion in ACT_BIG.get(a.action, ())), None)
         if k is not None and bigs[k] is not None:
-            acts.append(bigs[k] + (0.8 if s.big[k].motion == "hang" else 0.0) if s.big[k].motion != "held" else None)
+            # the beam falls 0.8 s of action time after the cable snaps: 2 s on screen in slow motion
+            fall = 0.8 / (0.4 if s.slowmo else 1.0)
+            acts.append(bigs[k] + (fall if s.big[k].motion == "hang" else 0.0) if s.big[k].motion != "held" else None)
         elif a.action in MOMENT:
             acts.append(MOMENT[a.action] * dur)
         else:
@@ -167,8 +171,11 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         fx = [{"kind": f.kind, "at": round((f.at if f.at is not None else (0 if f.kind in ("rain", "wind") else 0.4)) * dur, 3),
                **({"spot": f.spot} if f.spot else {})} for f in s.fx]
         have = {f["kind"] for f in fx}
+        heavy = {b.kind for b in s.big} & HEAVY
         for actor, at in zip(s.actors, act_at):  # what comes with each action
             for kind in ACTION_FX.get(actor.action, ()):
+                if actor.action in ("catch", "lift") and (not heavy or (kind == "dust" and s.set not in OUTDOOR)):
+                    continue  # a ball or a barbell indoors raises no dust and shakes nothing
                 if kind not in have and (at is not None or kind == "speed"):
                     fx.append({"kind": kind, "at": round(at, 3)})
                     have.add(kind)

@@ -478,6 +478,17 @@ def lock_cast(cfg: Config, story: Story) -> None:
     films."""
     saved = seed_library(cfg)
     changed = False
+    # someone from the recurring cast who acts or speaks in a shot but was left out of the story's cast list comes in
+    # with their saved look (else repair would turn them into a second hero)
+    listed = {_key(c.name) for c in story.cast}
+    named = {a.who for s in story.shots for a in s.actors if a.who != "hero"} | {s.speaker for s in story.shots}
+    for name in sorted(named):
+        k = _key(name)
+        if k in saved and k not in listed:
+            v = saved[k]
+            story.cast.append(LPCast(name=v["name"], who=v.get("who", ""), design=LPDesign(**v["design"]),
+                                     voice=v.get("voice") if v.get("voice") in VOICES else "man"))
+            listed.add(k)
     for c in story.cast:
         k = _key(c.name)
         if not k or k in {"hero", "he", "him"}:

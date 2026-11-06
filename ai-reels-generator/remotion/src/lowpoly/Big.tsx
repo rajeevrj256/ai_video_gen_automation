@@ -75,6 +75,17 @@ const overhead = (h: Holder) => {
   return new THREE.Vector3(h.head.x, top, h.head.z);
 };
 
+// A thing lying where someone stands is moved behind him (deeper into the place), so it never passes through him.
+const aside = (st: BigState, people: Holder[], size: V3) => {
+  const near = people.some((p) => Math.hypot(p.root[0] - st.pos.x, p.root[2] - st.pos.z) < Math.max(size[0], size[2]) / 2 + 0.4);
+  if (near) {
+    const d = Math.min(size[0], size[2]) / 2 + 0.8;
+    st.pos.z -= d;
+    st.contact.z -= d;
+  }
+  return st;
+};
+
 export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: number, k: number): BigState => {
   const size = SIZE[b.kind];
   const sp = spotOf(set, b.spot);
@@ -82,6 +93,13 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
   const st: BigState = {pos: ground.clone(), ry: sp.ry, rx: 0, rz: 0, pivot: [0, 0, 0], squash: [1, 1, 1], contact: ground.clone(), landed: true};
   const who = holderFor(b, people);
   const ev = b.at ?? dur * 0.4;
+  // a beam or a pipe that shakes on a building site hangs from the crane, trembling
+  if (b.motion === 'shake' && (b.kind === 'beam' || b.kind === 'pipe') && set.outdoor) {
+    const hung = bigState({...b, motion: 'hang', at: undefined}, set, people, t, dur, k);
+    hung.rz += 0.05 * Math.sin(t * 31);
+    hung.pos.x += 0.03 * Math.sin(t * 23);
+    return hung;
+  }
   const across = (h: Holder) => h.ry + (size[2] > size[0] ? Math.PI / 2 : 0); // its long side across his shoulders
   switch (b.motion) {
     case 'fall': {
@@ -101,7 +119,7 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
     }
     case 'caught':
     case 'hang': {
-      const hangY = 5.6;
+      const hangY = 4.2; // high over them, still inside a wide shot
       const snap = b.motion === 'hang' ? b.at ?? Infinity : -Infinity;
       const land = b.motion === 'hang' ? snap + 0.8 : ev;
       const target = who ? overhead(who) : ground.clone();
@@ -113,6 +131,7 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
         st.rz = 0.07 * sw;
         st.cable = 30;
         st.landed = false;
+        st.contact = st.pos.clone().add(new THREE.Vector3(0, size[1], 0)); // where the cable holds it
         return st;
       }
       if (t < land) {
@@ -195,7 +214,7 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
     case 'crushed':
       st.squash = [1.08, 0.55, 0.92];
       st.rz = 0.05;
-      return st;
+      return aside(st, people, size);
     case 'shake':
       st.rz = 0.02 * Math.sin(t * 37);
       st.pos.x += 0.02 * Math.sin(t * 29);
@@ -203,7 +222,7 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
     case 'still':
     default:
       void k;
-      return st;
+      return aside(st, people, size);
   }
 };
 
