@@ -31,7 +31,7 @@ class LowPolyRequest:
     kind: str = "life"  # life (a small everyday struggle, narrated) | fiction (the user's brief: dialogue, powers, action)
     format: str = "short"  # short (9:16, `seconds`) | film (`minutes`, 16:9 unless `vertical`)
     seconds: int = 35  # Short: 20-60 (the original runs 33 s)
-    minutes: float = 3.5  # film: 2.5-4.5
+    minutes: float = 3.5  # film: 2.5-15 (over 5: written as an outline, then act by act)
     vertical: bool = False  # film only: 9:16 instead of 16:9
     voice: str = ""  # '' = DEFAULT_VOICE
     pace: int = 0  # speaking speed in percent (-20..+20)
@@ -102,7 +102,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     fiction = req.kind == "fiction"
     vertical = short or bool(req.vertical)
     seconds = max(20, min(60, int(req.seconds)))
-    minutes = max(2.5, min(4.5, float(req.minutes)))
+    minutes = max(2.5, min(15.0, float(req.minutes)))
     story_path = work / "story.json"
     if story_path.exists():
         story = S.load(story_path)
@@ -111,7 +111,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         about = (about[:90] + "...") if len(about) > 90 else about
         progress(f"Claude is writing the {'fiction ' if fiction else ''}{'Short' if short else 'film'} "
                  f"({f'{seconds} s' if short else f'{minutes:g} min'}{', about ' + about if about else ''})")
-        story = S.write(cfg, req.topic.strip(), short=short, seconds=seconds, minutes=minutes, progress=progress, kind=req.kind)
+        story = S.write(cfg, req.topic.strip(), short=short, seconds=seconds, minutes=minutes, progress=progress, kind=req.kind,
+                        save_to=work / "story-parts.json")
         S.lock_cast(cfg, story)
         S.save(story, story_path)
         S.remember(cfg, story)

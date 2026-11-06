@@ -312,6 +312,23 @@ def lowpoly_lists() -> None:
     vs = S.voices_for(fic, "en-US-ChristopherNeural")
     if len(set(vs.values())) != len(vs):
         fail(f"lowpoly voices shared: {vs}")
+    # footsteps land when the feet do: the strides and speeds are the walk cycles' own (poses.ts, LowPoly.tsx)
+    from .lowpoly.timeline import SLOW, SPEED, STRIDE
+    poses = (ROOT / "remotion" / "src" / "lowpoly" / "poses.ts").read_text(encoding="utf-8")
+    speed_ts = dict(re.findall(r"(\w+): ([\d.]+)", re.search(r"export const SPEED[^=]*= \{([^}]*)\}", poses).group(1)))
+    if {k: float(v) for k, v in speed_ts.items()} != SPEED:
+        fail(f"lowpoly footsteps: timeline.SPEED {SPEED} differs from poses.ts SPEED {speed_ts}")
+    walk = re.search(r"const f = action === 'run' \? ([\d.]+) : action === 'jog' \? ([\d.]+) : ([\d.]+);", poses)
+    legs = {a_: float(f_) for a_, f_ in re.findall(r"case '(dash|flee|carry)':[^}]*?runLegs\(p, t, ([\d.]+)", poses, re.S)}
+    want = {"run": float(walk.group(1)), "jog": float(walk.group(2)), "walk": float(walk.group(3)), **legs} if walk else {}
+    if want != STRIDE:
+        fail(f"lowpoly footsteps: timeline.STRIDE {STRIDE} differs from the walk cycles in poses.ts {want}")
+    if f"export const SLOW = {SLOW};" not in (ROOT / "remotion" / "src" / "lowpoly" / "LowPoly.tsx").read_text(encoding="utf-8"):
+        fail("lowpoly footsteps: timeline.SLOW differs from LowPoly.tsx SLOW")
+    from .lowpoly.sounds import BANK, FLOORS
+    for floor, (sets, *_rest) in FLOORS.items():
+        if not all(list(BANK.glob(f"{x}-*.ogg")) for x in sets):
+            fail(f"lowpoly footsteps: the recordings for {floor} ({sets}) are missing from {BANK}")
     # the mix's loudness meter reads the BS.1770 reference tone right, and the music stays down across a short pause
     import numpy as np
 

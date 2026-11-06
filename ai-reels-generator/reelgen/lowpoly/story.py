@@ -525,8 +525,109 @@ def _known(cfg: Config) -> str:
 
 # ---------------------------------------------------------------- writing
 
+# ---------------------------------------------------------------- long films: an outline, then each act
+
+LONG_FROM = 5.0  # minutes: a film this long is written as an outline and then act by act (one answer can't hold 300 shots)
+
+
+class ActPlan(BaseModel):
+    name: str = Field(description="a short working name ('The storm', 'Testing it')")
+    minutes: float = Field(description="how long this act runs")
+    summary: str = Field(description="what happens in it, beat by beat, in 3-6 sentences: who, where, what changes")
+    places: list[SetName] = Field(description="the places it uses")
+    ends_with: str = Field(description="the moment it ends on, which the next act picks up from")
+    mood: Mood = Field(description="the score's mood under it")
+    energy: Literal["low", "medium", "high"]
+
+
+class Outline(BaseModel):
+    title: str = Field(description="2-5 words")
+    problem: str = Field(description="the story in one plain line")
+    youtube_title: str
+    description: str = Field(description="2-3 sentences for the post, plain, no hashtags")
+    tags: list[str]
+    hashtags: list[str]
+    thumbnail_text: str = Field(description="2-4 words")
+    mood: Mood
+    end_mood: Mood
+    music_prompt: str = Field(description="the feeling of the score in a few words; no genre")
+    cast: list[LPCast] = Field(default_factory=list, description="everyone besides him the whole film needs")
+    acts: list[ActPlan] = Field(description="the film's acts in order, their minutes adding up to its length")
+
+
+class ActShots(BaseModel):
+    shots: list[LPShot]
+
+
+def _act_len(fiction: bool, minutes: float) -> tuple[int, int]:
+    """Shots and words for this many minutes."""
+    return (round(minutes * 60 / (3.0 if fiction else 3.3)), int(minutes * 60 * (1.3 if fiction else 1.8)))
+
+
+def write_long(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction: bool, progress=log.info,
+               save_to: Path | None = None) -> Story:
+    """A 6-15 minute film: one call plans it (title, cast, acts with their minutes, places, moods), then one call per act
+    writes that act's shots knowing the whole plan and how the act before it ended. Each finished part is kept in
+    `save_to`, so a stopped or failed run carries on from the next act."""
+    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
+    n_acts = max(4, min(9, round(minutes / 1.7)))
+    shots, words = _act_len(fiction, minutes)
+    whole = (FICTION_FILM if fiction else FILM).format(minutes=f"{minutes:g}", shots=f"{shots - 10}-{shots + 10}", words=words)
+    plan_system = (FICTION if fiction else RULES).format(spots=spots, length=whole) + f"""
+
+THIS FILM IS LONG ({minutes:g} minutes), so plan it first: {n_acts} acts (give or take one) whose minutes add up to
+{minutes:g}. A long film needs more than a long version of a short one: a fuller world (more places, two to six people
+with their own wants), a middle that turns more than once, set-ups paid off later, quiet scenes between the big ones,
+and the ending's line in red. Write the outline only; the shots come next, act by act."""
+    saved = json.loads(save_to.read_text(encoding="utf-8")) if save_to and save_to.exists() else {}
+    if "outline" in saved:
+        outline = Outline.model_validate(saved["outline"])
+    else:
+        progress(f"Planning the {minutes:g}-minute film in acts")
+        outline = ask(cfg.ai_backend, cfg.claude_model, plan_system, f"{ask_for}\n\nAlready made (never the same story or title "
+                      f"again):\n{made}{_known(cfg)}", Outline, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+        saved = {"outline": outline.model_dump(), "acts": []}
+        if save_to:
+            save_to.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    acts: list[list[LPShot]] = [[LPShot.model_validate(x) for x in a] for a in saved.get("acts", [])]
+    plan = "\n".join(f"Act {i + 1} ({a.minutes:g} min, {a.name}): {a.summary} Ends with: {a.ends_with}" for i, a in enumerate(outline.acts))
+    cast = "\n".join(f"- {c.name}: {c.who} ({c.voice} voice)" for c in outline.cast) or "- nobody else"
+    for i, act in enumerate(outline.acts):
+        if i < len(acts):
+            continue
+        a_shots, a_words = _act_len(fiction, act.minutes)
+        length = (f"this act only, about {act.minutes:g} minutes: {max(6, a_shots - 4)}-{a_shots + 4} shots, about {a_words} words")
+        system = (FICTION if fiction else RULES).format(spots=spots, length=length)
+        before = acts[-1][-6:] if acts else []
+        before_text = "\n".join(f"- [{x.set}, {x.camera}] {x.speaker + ': ' if x.line else ''}{x.line or '(silent)'} "
+                                 f"({'; '.join(f'{y.who} {y.action}' for y in x.actors)})" for x in before)
+        first, last = i == 0, i == len(outline.acts) - 1
+        progress(f"Writing act {i + 1} of {len(outline.acts)}: {act.name} ({act.minutes:g} min)")
+        prompt = (f"{ask_for}\n\nTHE FILM: '{outline.title}': {outline.problem}\nThe acts:\n{plan}\n\nThe people (use these names "
+                  f"exactly):\n{cast}\n\nWrite ACT {i + 1} of {len(outline.acts)} now, and only it: {act.summary} It ends with: "
+                  f"{act.ends_with} Places: {', '.join(act.places)}.\n"
+                  + ("This is the first act: it opens on the film's hook.\n" if first else
+                     f"Carry straight on from how act {i} ended:\n{before_text}\n")
+                  + ("This is the last act: it ends on the film's last line, set `red`.\n" if last else
+                     "Not the last act: no `red` line, no ending yet.\n"))
+        part = ask(cfg.ai_backend, cfg.claude_model, system, prompt, ActShots, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+        acts.append(part.shots)
+        if save_to:
+            saved["acts"] = [[x.model_dump() for x in a] for a in acts]
+            save_to.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    all_shots = [x for a in acts for x in a]
+    starts, k = [], 1
+    for a in acts:
+        starts.append(k)
+        k += len(a)
+    score = [ScorePart(from_shot=st, mood=act.mood, energy=act.energy) for st, act in zip(starts, outline.acts)]
+    o = outline.model_dump(exclude={"acts"})
+    o["cast"] = outline.cast
+    return Story(**o, shots=all_shots, score=score, kind="fiction" if fiction else "life")
+
+
 def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: float = 3.5, progress=log.info,
-          kind: str = "life") -> Story:
+          kind: str = "life", save_to: Path | None = None) -> Story:
     fiction = kind == "fiction"
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     if fiction:
@@ -553,6 +654,10 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
     else:
         ask_for = (f"Write it about: {topic}." if topic else
                    "Choose the struggle yourself, different from the ones already made. Ideas (not a list to copy): " + ", ".join(TOPICS) + ".")
+    if not short and minutes > LONG_FROM:
+        story = write_long(cfg, ask_for, made, minutes=minutes, fiction=fiction, progress=progress, save_to=save_to)
+        story.kind = "fiction" if fiction else "life"
+        return story
     prompt = f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
     story = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
     near = too_close(story, past) if not topic else ""

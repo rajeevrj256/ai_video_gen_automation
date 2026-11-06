@@ -653,7 +653,7 @@ Plain paragraphs are read by the narrator."></textarea>
       <div class="segmented" id="lpKind"><button data-kind="life" class="on">🏠 Everyday life</button><button data-kind="fiction">🚀 Fiction (your brief)</button></div>
       <p class="hint" id="lpKindHint"></p>
       <label>Make</label>
-      <div class="segmented" id="lpMode"><button data-mode="short" class="on">📱 Short 9:16</button><button data-mode="film">🎞 Short film (3-4 min)</button></div>
+      <div class="segmented" id="lpMode"><button data-mode="short" class="on">📱 Short 9:16</button><button data-mode="film">🎞 Film (3-15 min)</button></div>
       <label for="lpTopic" id="lpTopicLabel">The struggle (optional)</label>
       <textarea class="edit" id="lpTopic" rows="2" maxlength="4000" placeholder="e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used."></textarea>
       <p class="hint" id="lpTopicCount" hidden></p>
@@ -661,7 +661,7 @@ Plain paragraphs are read by the narrator."></textarea>
         <div id="lpLenShort"><label for="lpSeconds">Length</label>
           <select id="lpSeconds"><option value="25">25 s</option><option value="35" selected>35 s (like the original)</option><option value="45">45 s</option><option value="60">60 s</option></select></div>
         <div id="lpLenFilm" hidden><label for="lpMinutes">Length</label>
-          <select id="lpMinutes"><option value="2.5">About 2.5 min</option><option value="3">About 3 min</option><option value="3.5" selected>About 3.5 min</option><option value="4">About 4 min</option></select></div>
+          <select id="lpMinutes"><option value="2.5">About 2.5 min</option><option value="3">About 3 min</option><option value="3.5" selected>About 3.5 min</option><option value="4">About 4 min</option><option value="7">6-8 min (written act by act)</option><option value="13.5">12-15 min (written act by act)</option></select></div>
         <div><label for="lpCount">How many</label>
           <select id="lpCount"><option>1</option><option>2</option><option>3</option></select></div>
       </div>
@@ -2444,7 +2444,7 @@ const ANIM_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-ch
 const STORY_STEPS = [["Script", /writing the story|storyboarding|Your story/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover|Recording voiceover|faster/],
   ["Pictures", /Drawing the pictures|Checking the|Redrawing|stock footage|background photos/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(|Composing the music/],
   ["Editing", /Editing part/], ["Checks", /Verifying part/]];
-const LOWPOLY_STEPS = [["Writing", /is writing the/], ["Voice", /Recording the narration/], ["Sound", /music and the sound/], ["Editing", /Editing/], ["Checks", /Checking the video/]];
+const LOWPOLY_STEPS = [["Writing", /is writing the/], ["Voice", /Recording the (narration|voices)/], ["Sound", /music and the sound/], ["Editing", /Editing/], ["Checks", /Checking the video/]];
 const stepsOf = (j) => j.length === "lowpoly" ? LOWPOLY_STEPS : j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : j.length === "shoot" ? SHOOT_STEPS : j.length === "sticky" ? STICKY_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused", stopped: "⏹ Stopped: app closed" };
 // Token counts: every Claude step reports input + output + cached tokens.
@@ -3347,7 +3347,7 @@ $("#syBtn").onclick = async () => {
   finally { $("#syBtn").disabled = false; }
 };
 
-// Low-poly films (reelgen/lowpoly/): the user's own 3D man from 'Life of a Man', narrated; a Short or a 3-4 min film.
+// Low-poly films (reelgen/lowpoly/): the user's own 3D man from 'Life of a Man', narrated; a Short or a 3-15 min film.
 const LP_VOICES = [["en-US-ChristopherNeural", "Christopher: calm and low (like the original)"], ["en-US-AndrewMultilingualNeural", "Andrew: warm"],
   ["en-US-BrianMultilingualNeural", "Brian: easy-going"], ["en-US-GuyNeural", "Guy"], ["en-US-EricNeural", "Eric"], ["en-US-RogerNeural", "Roger"],
   ["en-GB-RyanNeural", "Ryan (British)"], ["en-GB-ThomasNeural", "Thomas (British)"], ["en-US-AvaMultilingualNeural", "Ava (a woman's voice)"]];

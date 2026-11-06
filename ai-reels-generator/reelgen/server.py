@@ -1584,7 +1584,7 @@ def create_app(cfg: Config) -> FastAPI:
         film = body.format == "film"
         given = {"topic": body.topic.strip()[:4000], "kind": "fiction" if body.kind == "fiction" else "life",
                  "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
-                 "minutes": max(2.5, min(4.5, float(body.minutes))), "vertical": bool(body.vertical) and film,
+                 "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
                  "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
                  "words": body.words if body.words in ("on", "stamps", "off") else "on"}
         label = given["topic"].splitlines()[0][:80] if given["topic"] else None

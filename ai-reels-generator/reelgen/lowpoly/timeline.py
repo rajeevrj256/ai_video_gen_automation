@@ -84,6 +84,63 @@ OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "a
 SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}  # energy -> the music's act (sticky.mixdown.INTENSITY)
 
 
+# ---------------------------------------------------------------- footsteps where the feet land
+
+# The walk cycles in remotion/src/lowpoly/poses.ts: a leg's swing is sin(t * f * PI + k) (k = actor index * 1.7 + the
+# shot's seed), and a heel lands when a leg is furthest forward: t = ((0.5 + n) - k / PI) / f, a step every 1 / f s.
+STRIDE = {"walk": 1.75, "run": 2.7, "jog": 2.2, "dash": 5.5, "flee": 2.7, "carry": 1.75}  # f in poses.ts
+SPEED = {"walk": 1.0, "run": 2.6, "jog": 1.7, "dash": 16.0, "flee": 2.8, "carry": 0.8}  # = SPEED in poses.ts
+SLOW = 0.4  # = SLOW in LowPoly.tsx
+FLOOR = {"bedroom": "wood", "hallway": "wood", "living": "wood", "cafe": "wood", "office": "carpet", "gym": "rubber",
+         "kitchen": "tile", "bathroom": "tile", "lab": "tile", "street": "concrete", "busstop": "concrete", "rooftop": "concrete",
+         "highway": "concrete", "alley": "wet", "park": "path", "construction": "gravel", "void": "studio"}
+CAMERA_NEAR = {"wide": 0.55, "aerial": 0.4, "top": 0.6, "side": 1.0, "front": 1.0, "back": 0.9, "low": 1.0, "orbit": 0.9,
+               "face": 0.75, "face-top": 0.7, "medium": 0.8, "detail": 0.7, "crash-zoom": 0.8}
+_SPOTS: dict[str, dict[str, tuple[float, float]]] | None = None
+
+
+def set_spots() -> dict[str, dict[str, tuple[float, float]]]:
+    """Every set's spots (x, z) from remotion/src/lowpoly/Sets.tsx, for how far a walk goes."""
+    global _SPOTS
+    if _SPOTS is None:
+        from pathlib import Path
+
+        _SPOTS = {}
+        try:
+            src = (Path(__file__).resolve().parents[2] / "remotion" / "src" / "lowpoly" / "Sets.tsx").read_text(encoding="utf-8")
+        except OSError:
+            return _SPOTS
+        for m in re.finditer(r"const (\w+): SetDef = \{(.*?)\n  wide:", src, re.S):
+            name = "void" if m.group(1) == "voidSet" else m.group(1)
+            _SPOTS[name] = {k: (float(x), float(z)) for k, x, z in re.findall(r"(\w+): \{x: (-?[\d.]+), z: (-?[\d.]+)", m.group(2))}
+    return _SPOTS
+
+
+def step_times(actor, k: int, s, dur: float, seed: int) -> tuple[list[float], float | None]:
+    """When this walker's feet land (seconds into the shot) and when he arrives (None: he walks all shot long). In slow
+    motion the steps come 2.5 times further apart, as the picture does."""
+    import math
+
+    f = STRIDE[actor.action]
+    slow = SLOW if s.slowmo else 1.0
+    end = dur * slow  # in the action's own time
+    arrive = None
+    if actor.to:
+        spots = set_spots().get(s.set, {})
+        a, b = spots.get(actor.spot), spots.get(actor.to)
+        if a and b:
+            arrive = math.hypot(b[0] - a[0], b[1] - a[1]) / SPEED[actor.action]
+            end = min(end, arrive)
+    phase = k * 1.7 + seed
+    first = ((0.5 - phase / math.pi) % 1.0) / f
+    steps = [first + n / f for n in range(int((end - first) * f) + 1) if 0.03 <= first + n / f <= end - 0.02]
+    out = [round(x / slow, 3) for x in steps]
+    if arrive is not None and arrive < dur * slow:
+        out.append(round(arrive / slow + 0.12, 3))  # the last foot coming down beside the other
+        return out, round(arrive / slow, 3)
+    return out, None
+
+
 def _talk(words: list, lead: float) -> list[list[float]]:
     """When a speaker's mouth moves: their words merged where the gap is short (seconds into the shot)."""
     spans: list[list[float]] = []
@@ -216,13 +273,17 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 if s.red and k == len(parts) - 1:
                     c1 = t + dur  # the last red words stay through the fade
                 captions.append({"start": round(max(c0, stamp_end), 3), "end": round(c1, 3), "text": text, **({"red": True} if s.red else {})})
-        # the sounds
-        for actor in s.actors:
-            if actor.action in ("walk", "run", "jog"):
-                cues.append({"sound": "footsteps", "at": round(t + 0.1, 3), "volume": 0.8 if actor.action == "walk" else 1.0,
-                             "length": round(max(0.5, dur - 0.25), 3)})
+        # the sounds: each walker's own footsteps, landing when his feet do
+        near = CAMERA_NEAR.get(s.camera, 0.8)
+        for k, actor in enumerate(s.actors):
+            if actor.action in STRIDE and (actor.action != "carry" or actor.to):
+                steps, arrive = step_times(actor, k, s, dur, shot["seed"])
+                if steps:
+                    cues.append({"sound": "footsteps", "at": round(t, 3), "volume": round(near * (1.0 if k == focus else 0.7), 2),
+                                 "steps": steps, "surface": FLOOR.get(s.set, "concrete"), "pace": actor.action, "slow": bool(s.slowmo),
+                                 "seed": int(shot["seed"]) * 7 + k})
                 if actor.to == "door":
-                    cues.append({"sound": "door", "at": round(t + dur - 0.7, 3), "volume": 0.8})
+                    cues.append({"sound": "door", "at": round(t + (arrive if arrive is not None else dur - 0.7), 3), "volume": 0.8})
             if actor.action == "type":
                 cues.append({"sound": "typing", "at": round(t + 0.2, 3), "volume": 0.6, "length": round(max(0.5, dur - 0.4), 3)})
         if any(th.kind == "alarm" for th in s.things) and not any(x.sound == "alarm" for x in s.sounds):
@@ -241,8 +302,6 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                     cue(sound, t + 0.05, 0.8)
                 elif at is not None:
                     cue(sound, t + at + off, 1.0 if sound in ("impact", "crash") else 0.8, 0.8 if sound == "skid" else None)
-            if actor.action in ("flee", "carry") and actor.to:
-                cue("footsteps", t + 0.1, 0.8, max(0.5, dur - 0.25))
         for b, at in zip(s.big, big_at):
             for sound, off in MOTION_SOUNDS.get(b.motion, ()):
                 if off <= -9:
@@ -264,6 +323,12 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 hit = next((w for w in a["words"] if re.sub(r"[^a-z0-9]", "", w[0].lower()) == want), None)
                 if hit:
                     at = t + lead + hit[1]
+            if snd.sound == "footsteps" and any(x.action in STRIDE for x in s.actors):
+                continue  # the walker's own steps are already there, on his feet
+            if snd.sound == "footsteps":  # someone walking nearby: a few steps on this place's floor
+                cues.append({"sound": "footsteps", "at": round(at, 3), "volume": 0.6, "steps": [round(0.571 * j, 3) for j in range(5)],
+                             "surface": FLOOR.get(s.set, "concrete"), "pace": "walk", "slow": False, "seed": int(shot["seed"]) + 3})
+                continue
             cue = {"sound": snd.sound, "at": round(at, 3), "volume": 0.85}
             if snd.sound == "alarm":
                 cue["length"] = round(min(2.6, max(0.8, dur - (at - t) - 0.1)), 3)

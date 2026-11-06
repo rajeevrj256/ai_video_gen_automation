@@ -162,3 +162,200 @@ def write_all(out_dir: Path, names: set[str]) -> dict[str, Path]:
             _write(path, make(), peak)
         made[name] = path
     return made
+
+
+# ---------------------------------------------------------------- footsteps, one by one, where the feet land
+
+# The first footsteps were one 2-second loop of identical 90 Hz thuds every 0.42 s under every walk, on every floor,
+# while his walk puts a foot down every 0.57 s (the user: "walk sound not look real"). Now each step is made on its
+# own at the moment a foot lands in the animation (timeline.step_times), as a heel strike and the toe rolling off,
+# with the floor's own sound, a little different every time, and a short room echo indoors.
+
+# Real footsteps (ESC-50 recordings, measured beside ours) come in two kinds, and neither has a pitched thump (the first
+# synth's 90-110 Hz sine with a pitch drop is a drum machine's kick: an AudioSet classifier (AST) heard it as 'Drum
+# machine' / 'Music'). On a hard floor a step is one dull 'tock' (most of its energy 150-400 Hz, gone in ~15 ms) with
+# a small second tap ~9 ms after it and the toe touching ~0.1 s later; on loose or rough ground it is a burst of
+# small crunches that builds for ~50 ms into the main impact (a low thud under it) and dies away over ~60 ms.
+
+# per floor: kind 'hard' or 'ground'; the tock's band (Hz) and decay (s); the click on top (band, level); a hollow
+# ring (band, decay, level) for wooden floors; crunch grains (count, band, level); a low thud's level; splash; room echo
+SURFACES = {
+    "wood": dict(kind="hard", tock=((150, 520), 0.014), click=((1200, 4500), 0.25), hollow=((180, 420), 0.03, 0.45),
+                 grains=(0, (0, 0), 0), thud=0.25, splash=0, room=0.3),
+    "tile": dict(kind="hard", tock=((220, 700), 0.01), click=((2000, 7000), 0.5), hollow=None, grains=(2, (3000, 7500), 0.2),
+                 thud=0.15, splash=0, room=0.4),
+    "carpet": dict(kind="hard", tock=((120, 380), 0.018), click=((800, 2500), 0.08), hollow=None, grains=(0, (0, 0), 0),
+                   thud=0.3, splash=0, room=0.08),
+    "rubber": dict(kind="hard", tock=((140, 450), 0.016), click=((1000, 3500), 0.15), hollow=((160, 380), 0.02, 0.2),
+                   grains=(0, (0, 0), 0), thud=0.3, splash=0, room=0.25),
+    "studio": dict(kind="hard", tock=((150, 480), 0.015), click=((1000, 3500), 0.15), hollow=((170, 400), 0.02, 0.2),
+                   grains=(0, (0, 0), 0), thud=0.25, splash=0, room=0.22),
+    "concrete": dict(kind="hard", tock=((180, 600), 0.011), click=((1500, 6500), 0.35), hollow=None, grains=(14, (2000, 7500), 0.25),
+                     thud=0.2, splash=0, room=0.05),
+    "wet": dict(kind="ground", tock=((180, 550), 0.012), click=((1500, 5000), 0.2), hollow=None, grains=(18, (2000, 7000), 0.3),
+                thud=0.35, splash=0.6, room=0.08),
+    "path": dict(kind="ground", tock=((150, 450), 0.014), click=((1000, 4500), 0.15), hollow=None, grains=(45, (1200, 7000), 0.45),
+                 thud=0.6, splash=0, room=0.0),
+    "gravel": dict(kind="ground", tock=((140, 420), 0.014), click=((900, 4000), 0.12), hollow=None, grains=(90, (900, 7500), 0.6),
+                   thud=0.55, splash=0, room=0.0),
+}
+# per way of moving: how hard the foot lands, when the toe touches (s), how much it scuffs, timing looseness (s)
+PACES = {"walk": (1.0, 0.11, 1.0, 0.018), "carry": (1.25, 0.13, 0.8, 0.02), "jog": (1.25, 0.07, 1.15, 0.012),
+         "run": (1.5, 0.05, 1.3, 0.01), "flee": (1.5, 0.05, 1.4, 0.014), "dash": (1.6, 0.03, 1.5, 0.004)}
+
+
+def _sos(kind: str, f):
+    from scipy.signal import butter
+
+    return butter(2, f, kind, fs=RATE, output="sos")
+
+
+def _filt(x: np.ndarray, kind: str, f) -> np.ndarray:
+    from scipy.signal import sosfilt
+
+    hi = RATE / 2 - 100
+    f = [min(v, hi) for v in f] if isinstance(f, (list, tuple)) else min(f, hi)
+    return sosfilt(_sos(kind, f), x)
+
+
+def _burst(rng, n: int, decay: float, kind: str, f, rise: float = 0.0008) -> np.ndarray:
+    """A short noise burst (a tock, a click, a crunch): a quick rise, an exponential tail, filtered; scaled to peak 1."""
+    t = np.arange(n) / RATE
+    x = _filt(rng.standard_normal(n) * np.exp(-t / decay) * np.minimum(t / rise, 1), kind, f)
+    return x / (np.abs(x).max() or 1)
+
+
+def _step(rng, s: dict, weight: float, roll: float, scuff: float, pitch: float, slow: bool) -> np.ndarray:
+    """One footstep, made the way real ones sound: a dull tock with a little click and a second tap on a hard floor, or
+    a burst of crunches building into the impact on loose ground; then the toe. Noise only, nothing pitched."""
+    stretch = 1.8 if slow else 1.0  # slow motion: everything longer and lower
+    pitch = pitch * (0.6 if slow else 1.0)
+    pre = 0.06 * stretch  # room before the impact for a crunch that builds into it
+    m = int(RATE * (0.4 * stretch + pre))
+    out = np.zeros(m)
+
+    def add(at: float, x: np.ndarray, gain: float) -> None:
+        i = int((pre + at * stretch) * RATE)
+        if 0 <= i < m:
+            out[i:i + len(x)] += x[: m - i] * gain
+
+    (t1, t2), td = s["tock"]
+    band = (t1 * pitch, t2 * pitch)
+    add(0, _burst(rng, int(RATE * 0.08 * stretch), td * stretch, "bandpass", band, 0.0015), 1.0)  # the impact
+    add(rng.uniform(0.007, 0.011), _burst(rng, int(RATE * 0.05 * stretch), td * 0.7 * stretch, "bandpass", band), rng.uniform(0.2, 0.4))
+    (c1, c2), cl = s["click"]
+    add(0, _burst(rng, int(RATE * 0.02), 0.0015 * stretch, "bandpass", (c1 * pitch, c2 * pitch)), cl * scuff)
+    if s["hollow"]:
+        (h1, h2), hd, hl = s["hollow"]
+        add(0.001, _burst(rng, int(RATE * 0.1 * stretch), hd * stretch, "bandpass", (h1 * pitch, h2 * pitch), 0.002), hl)
+    if s["thud"]:
+        add(0.002, _burst(rng, int(RATE * 0.15 * stretch), 0.03 * stretch, "lowpass", 150 * pitch, 0.008), s["thud"])
+    count, (g1, g2), gl = s["grains"]
+    for _ in range(int(count * scuff)):  # crunches building into the impact and dying away after it
+        before = rng.random() < 0.45
+        at = -abs(rng.normal(0, 0.022)) if before else abs(rng.normal(0, 0.03))
+        level = gl * rng.uniform(0.2, 1.0) * (np.exp(at / 0.03) if before else np.exp(-at / 0.04))
+        add(at, _burst(rng, int(RATE * 0.006), rng.uniform(0.0006, 0.002), "bandpass", (g1 * pitch, g2 * pitch)), level)
+    toe = roll * rng.uniform(0.85, 1.2)  # the toe touching down
+    add(toe, _burst(rng, int(RATE * 0.05 * stretch), td * 0.8 * stretch, "bandpass", (band[0] * 1.3, band[1] * 1.4)), rng.uniform(0.18, 0.32))
+    if s["splash"]:
+        add(0.002, _burst(rng, int(RATE * 0.15 * stretch), 0.04 * stretch, "bandpass", (2000 * pitch, 7000 * pitch), 0.004), s["splash"] * 0.6)
+        for _ in range(5):
+            add(rng.uniform(0.02, 0.14), _burst(rng, int(RATE * 0.02), 0.004, "bandpass", (2500, 6500)), rng.uniform(0.1, 0.25))
+    out *= weight
+    if s["room"]:  # a room: early reflections, darker than the step
+        dark = _filt(out, "lowpass", 2500)
+        for delay, gain in ((0.013, 0.3), (0.023, 0.22), (0.037, 0.15), (0.058, 0.09), (0.083, 0.05)):
+            d = int(delay * RATE)
+            out[d:] += dark[:-d] * gain * s["room"] * 2.2
+    return out
+
+
+def footsteps(times: list[float], surface: str = "concrete", pace: str = "walk", seed: int = 1, slow: bool = False) -> np.ndarray:
+    """A track of single footsteps at `times` (seconds from its start), each made on its own: the floor's sound, the
+    way of moving, the left foot a little heavier than the right, every step a little different. Mono, at RATE."""
+    s = SURFACES.get(surface, SURFACES["concrete"])
+    weight, roll, scrape, loose = PACES.get(pace, PACES["walk"])
+    rng = np.random.default_rng(seed)
+    if not times:
+        return np.zeros(1)
+    out = np.zeros(int((max(times) + 0.7 * (1.8 if slow else 1)) * RATE))
+    for k, at in enumerate(times):
+        step = _step(rng, s, weight * (1.08 if k % 2 == 0 else 0.93) * 10 ** (rng.uniform(-2.5, 2.5) / 20), roll * rng.uniform(0.85, 1.15),
+                     scrape * rng.uniform(0.7, 1.3), rng.uniform(0.93, 1.07), slow)
+        i = max(0, int((at - 0.06 * (1.8 if slow else 1) + rng.normal(0, loose)) * RATE))  # the impact lands on `at`
+        j = min(len(out), i + len(step))
+        out[i:j] += step[: j - i]
+    return out
+
+
+# ---------------------------------------------------------------- recorded footsteps (CC0)
+
+# Synthesised steps never passed for real ones: after four rebuilds the AudioSet classifier still heard 'Knock' or
+# 'Slap', never 'Walk, footsteps'. So steps are recorded ones (footsteps/, all CC0, see footsteps/CREDITS.txt), one
+# picked per step (never the same twice running), a touch higher or lower and louder or softer each time, coloured for
+# the floor (tiles brighter, carpet and rubber duller, mud on wet stone) and given the room's echo indoors.
+BANK = Path(__file__).with_name("footsteps")
+# floor -> (the recorded sets it uses, a filter on them, room echo, an extra layer and its level)
+FLOORS = {  # chosen by an AudioSet classifier's 'Walk, footsteps' score on a walk of each (see CLAUDE.md)
+    "wood": (("floor",), "", 0.04, None, 0),
+    "studio": (("floor",), "lowpass=f=5000", 0.04, None, 0),
+    "carpet": (("floor",), "lowpass=f=1800", 0.04, None, 0),
+    "rubber": (("floor",), "lowpass=f=2600", 0.04, None, 0),
+    "tile": (("stone", "floor"), "highshelf=f=2500:g=3", 0.25, None, 0),
+    "concrete": (("stone",), "", 0.04, None, 0),
+    "wet": (("stone",), "", 0.08, "mud", 0.6),
+    "path": (("gravel", "sand"), "", 0.0, None, 0),
+    "gravel": (("gravel",), "", 0.0, None, 0),
+}
+_bank: dict[str, list[np.ndarray]] = {}
+
+
+def _recorded(kind: str, af: str = "") -> list[np.ndarray]:
+    key = f"{kind}|{af}"
+    if key not in _bank:
+        from ..sticky.mixdown import decode
+
+        _bank[key] = [decode(p, af).mean(axis=1) if af else decode(p).mean(axis=1) for p in sorted(BANK.glob(f"{kind}-*.ogg"))]
+    return _bank[key]
+
+
+def _respeed(x: np.ndarray, factor: float) -> np.ndarray:
+    """Played `factor` times as fast (higher and shorter above 1, lower and longer below)."""
+    n = max(2, int(len(x) / factor))
+    return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x)
+
+
+def recorded_steps(times: list[float], surface: str = "concrete", pace: str = "walk", seed: int = 1, slow: bool = False) -> np.ndarray | None:
+    """A track of recorded footsteps landing at `times` (seconds from its start); None when the recordings are missing."""
+    sets, af, room, layer, layer_gain = FLOORS.get(surface, FLOORS["concrete"])
+    pool = [x for s_ in sets for x in _recorded(s_, af)]
+    extra = _recorded(layer) if layer else []
+    if not pool or not times:
+        return None
+    weight, _roll, _scuff, loose = PACES.get(pace, PACES["walk"])
+    rng = np.random.default_rng(seed)
+    out = np.zeros(int((max(times) + 1.2 * (2.5 if slow else 1)) * RATE))
+    last = -1
+    for k, at in enumerate(times):
+        pick = int(rng.integers(len(pool)))
+        if pick == last and len(pool) > 1:
+            pick = (pick + 1) % len(pool)
+        last = pick
+        speed = rng.uniform(0.96, 1.04) * (1.03 if pace in ("run", "flee", "dash") else 1.0) * (0.6 if slow else 1.0)
+        step = _respeed(pool[pick], speed)
+        if extra:
+            e = _respeed(extra[int(rng.integers(len(extra)))], speed)
+            n = min(len(step), len(e))
+            step = step.copy()
+            step[:n] += e[:n] * layer_gain
+        gain = min(1.6, weight) * (1.06 if k % 2 == 0 else 0.94) * 10 ** (rng.uniform(-2, 2) / 20)
+        i = max(0, int((at - 0.006 + rng.normal(0, loose)) * RATE))  # each recording starts 6 ms before its impact
+        j = min(len(out), i + len(step))
+        out[i:j] += step[: j - i] * gain
+    if room:  # a room: early reflections, darker than the steps
+        dark = _filt(out, "lowpass", 2500)
+        for delay, g in ((0.013, 0.3), (0.023, 0.22), (0.037, 0.15), (0.058, 0.09), (0.083, 0.05)):
+            d = int(delay * RATE)
+            out[d:] += dark[:-d] * g * room * 2.2
+    return out

@@ -100,6 +100,13 @@ def lufs(x: np.ndarray, keep: np.ndarray | None = None) -> float:
     return float(-0.691 + 10 * np.log10(z.mean())) if len(z) else -120.0
 
 
+def _filt_effect(x: np.ndarray) -> np.ndarray:
+    """EFFECT_EQ in numpy (a 45 Hz high-pass), for sounds made here rather than read from a file."""
+    from scipy.signal import butter, sosfilt
+
+    return sosfilt(butter(2, 45, "highpass", fs=RATE, output="sos"), x, axis=0).astype(np.float32)
+
+
 def _db(v: float) -> float:
     return float(10 ** (v / 20))
 
@@ -173,7 +180,8 @@ def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[di
     music *= (gain * (1 - (1 - under) * talk))[:, None]
 
     # the world's sounds, each at its own loudness under the voice
-    files = sounds.write_all(work / "sfx", {c["sound"] for c in cues})
+    files = sounds.write_all(work / "sfx", {c["sound"] for c in cues if c.get("steps") is None})
+    step_gain = None  # every walk's steps at one level: set by the first walk
     loaded: dict[str, np.ndarray] = {}
     for name, path in files.items():
         x = decode(path, EFFECT_EQ)
@@ -181,6 +189,16 @@ def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[di
         target = lv - UNDER_VOICE.get(name, 10)
         loaded[name] = x * min(8.0, _db(target - lx)) if lx > -60 else x
     for c in cues:
+        if c.get("steps") is not None:  # footsteps: each landing where a foot does, recorded steps on this floor
+            x = sounds.recorded_steps(c["steps"], c.get("surface", "concrete"), c.get("pace", "walk"), int(c.get("seed", 1)), bool(c.get("slow")))
+            if x is None:
+                x = sounds.footsteps(c["steps"], c.get("surface", "concrete"), c.get("pace", "walk"), int(c.get("seed", 1)), bool(c.get("slow")))
+            x = _filt_effect(np.stack([x, x], axis=1).astype(np.float32))
+            if step_gain is None:
+                lx = lufs(x)
+                step_gain = min(8.0, _db(lv - UNDER_VOICE["footsteps"] - lx)) if lx > -60 else 1.0
+            _place(fx, x * step_gain, float(c["at"]), float(c.get("volume", 1)))
+            continue
         x = loaded.get(c["sound"])
         if x is not None:
             _place(beds if c["sound"] in BEDS else fx, x, float(c["at"]), float(c.get("volume", 1)), c.get("length"))
