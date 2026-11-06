@@ -312,6 +312,19 @@ def lowpoly_lists() -> None:
     vs = S.voices_for(fic, "en-US-ChristopherNeural")
     if len(set(vs.values())) != len(vs):
         fail(f"lowpoly voices shared: {vs}")
+    # the mix's loudness meter reads the BS.1770 reference tone right, and the music stays down across a short pause
+    import numpy as np
+
+    from .lowpoly.mix import RATE, lufs, speech_envelope
+    t = np.arange(RATE * 3) / RATE
+    if abs(lufs(np.sin(2 * np.pi * 997 * t)[:, None]) + 3.01) > 0.05:
+        fail("lowpoly mix: the loudness meter misreads a full-scale 997 Hz tone (should be -3.01 LUFS)")
+    v = np.zeros((RATE * 4, 2), np.float32)
+    v[RATE:int(RATE * 1.5)] = 0.2
+    v[int(RATE * 2.2):int(RATE * 2.6)] = 0.2
+    e = speech_envelope(v)
+    if not (e[int(RATE * 1.85)] > 0.99 and e[int(RATE * 0.5)] < 0.01):
+        fail("lowpoly mix: the music should stay down across a 0.7 s pause between lines and be up long before them")
 
 
 def main() -> int:

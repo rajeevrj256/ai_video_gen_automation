@@ -1968,6 +1968,13 @@ async function openVideo(id) {
     </div>
     <p class="hint" id="sr-est"></p>
     <button id="srGo" style="width:100%;margin-top:8px">🎙️ Re-make at this speed</button>` : ""}
+    ${v.source === "lowpoly" ? `<h4 class="section">🔊 Sound</h4>
+    <p class="hint">Mix this video's sound again with the newest levels: the voices clear on top, the music well under them (and lower
+      still while anyone speaks), the wind, rain, fire and siren beds far under. The same voices, music and picture: nothing is recorded,
+      generated or rendered again, no Claude tokens, about a minute. The first version is kept.</p>
+    ${v.sound_levels ? `<p class="hint">Now: voices ${v.sound_levels.voice} LUFS · music ${(v.sound_levels.voice - v.sound_levels.music_between_lines).toFixed(0)} LU under them between lines,
+      ${(v.sound_levels.voice - v.sound_levels.music_under_speech).toFixed(0)} LU while they speak · beds ${(v.sound_levels.voice - v.sound_levels.beds).toFixed(0)} LU under</p>` : ""}
+    <button id="lpRemix" style="width:100%;margin-top:8px">🔊 Re-mix the sound (clearer voices, quieter music and wind)</button>` : ""}
     <div ${["stick", "sticky", "lowpoly", "anim", "storyshorts", "shoot", "clip"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice, speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: another voice, another speaking speed, or subtitles on/off. Only the voice is recorded again and the same slides, memes, pictures and music are re-timed to it: nothing is generated again, no Claude tokens. Recording again also reads numbers in English words (“one lakh”, not “ek lakh”).</p>
@@ -2162,6 +2169,15 @@ async function openVideo(id) {
   }
   if ($("#csBox")) wireShort(id, v);
   if ($("#siBox")) wireScriptInput(id, v);
+  if ($("#lpRemix")) {  // a low-poly video: its sound mixed again (reelgen/lowpoly/run.py remix_sound)
+    $("#lpRemix").onclick = async () => {
+      $("#lpRemix").disabled = true;
+      try {
+        await api(`/api/videos/${encodeURIComponent(id)}/lowpoly-sound`, { method: "POST" });
+        toast("Mixing the sound again — follow it on the Create page");
+      } catch (e) { toast(e.message); $("#lpRemix").disabled = false; }
+    };
+  }
   if ($("#srGo")) {  // a Stick video: another speed (stickstory.remake)
     const made = +$("#sr-speed").value;
     if (v.stick_request && v.stick_request.subtitles) $("#sr-subs").value = v.stick_request.subtitles;
@@ -2502,7 +2518,7 @@ const AI_EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xh
 const modelName = (m) => ((AI_MODELS.find((x) => x[0] === m) || [m, m])[1]).replace(/ \(.*/, "");
 let aiDefaults = { model: "claude-opus-5-5", effort: "high", check_model: "claude-sonnet-5-5", check_effort: "medium" };
 const aiLabel = (a) => `${modelName(a.model)} ${a.effort}` + (a.check_model ? ` · checks: ${modelName(a.check_model)} ${a.check_effort}` : "");
-const NO_CLAUDE = ["rerender", "stick_remake", "myvoice", "anim_hd", "music_replace", "sound_remove", "anim_music", "rehook"];
+const NO_CLAUDE = ["rerender", "stick_remake", "myvoice", "anim_hd", "music_replace", "sound_remove", "anim_music", "rehook", "lowpoly_remix"];
 const aiLine = (j) => j.ai && !NO_CLAUDE.some((k) => j[k]) ? `<div class="hint ai-used">🤖 Claude: ${esc(aiLabel(j.ai))}</div>` : "";
 // opts.check: the job also checks (facts, pictures); opts.checkEffort: this tab's own default for the checker.
 function aiPicker(key, opts = {}) {

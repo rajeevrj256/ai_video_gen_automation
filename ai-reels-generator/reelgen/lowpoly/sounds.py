@@ -84,14 +84,26 @@ def _siren() -> np.ndarray:
     t = _t(4.0)
     f = 700 + 450 * (0.5 - 0.5 * np.cos(2 * np.pi * t / 2.0))
     tone = np.sin(2 * np.pi * np.cumsum(f) / RATE) + 0.3 * np.sin(2 * np.pi * np.cumsum(2 * f) / RATE)
-    return _lowpass(tone, 1800) * 0.8
+    return _lowpass(_lowpass(tone, 1400), 1400) * 0.8  # far off: duller
+
+
+def _loopable(x: np.ndarray, fade: float = 0.4) -> np.ndarray:
+    """A bed that loops without a seam: its last `fade` seconds cross-faded into its start."""
+    k = int(RATE * fade)
+    y = x[:-k].copy()
+    ramp = np.linspace(0, 1, k)
+    y[:k] = y[:k] * ramp + x[-k:] * (1 - ramp)
+    return y
 
 
 def _wind() -> np.ndarray:
-    """Wind gusting: filtered noise whose colour and strength wander (looped)."""
-    t = _t(5.0)
-    gust = 0.55 + 0.45 * np.sin(2 * np.pi * 0.23 * t) * np.sin(2 * np.pi * 0.07 * t + 1)
-    return _lowpass(_noise(39, len(t)), 300 + 500 * gust) * gust
+    """Wind: soft air moving past, gusting slowly (looped). The first version was low-passed noise, a low roar that
+    covered the dialogue ('hawa sound too noisy'); now the band is airy (350 Hz-1.8 kHz), with no rumble under it."""
+    t = _t(8.0)
+    gust = 0.5 + 0.3 * np.sin(2 * np.pi * 0.11 * t) + 0.2 * np.sin(2 * np.pi * 0.29 * t + 1.3)
+    n = _noise(39, len(t))
+    air = n - _lowpass(n, 350)  # nothing under 350 Hz
+    return _loopable(_lowpass(air, 700 + 1100 * gust) * (0.3 + 0.7 * gust))
 
 
 def _fire() -> np.ndarray:
@@ -103,7 +115,7 @@ def _fire() -> np.ndarray:
     for at in rng.uniform(0, 4, 120):
         u = np.clip(t - at, 0, None)
         pops += _noise(int(at * 997) + 42, len(t)) * np.exp(-u * rng.uniform(300, 900)) * (t >= at) * rng.uniform(0.1, 0.6)
-    return roar * 0.9 + pops * 0.5
+    return _loopable(roar * 0.6 + pops * 0.5)
 
 
 def _sparks() -> np.ndarray:
@@ -135,12 +147,17 @@ MAKERS = {
 }
 
 
+# a sound made again since a video was mixed gets a new file name, so a re-mix of an older video picks it up
+VERSION = {"wind": 2, "siren": 2, "fire": 2}
+
+
 def write_all(out_dir: Path, names: set[str]) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     made = {}
     for name in sorted(n for n in names if n in MAKERS):
         make, peak = MAKERS[name]
-        path = out_dir / f"{name}.wav"
+        v = VERSION.get(name, 1)
+        path = out_dir / (f"{name}-v{v}.wav" if v > 1 else f"{name}.wav")
         if not path.exists():
             _write(path, make(), peak)
         made[name] = path

@@ -218,6 +218,9 @@ class JobManager:
                 from .remix import remove_sound
                 r = job["sound_remove"]
                 reports = [remove_sound(cfg, video_dir(cfg, r["id"]), r["name"], progress)]
+            elif job.get("lowpoly_remix"):  # a low-poly video's sound mixed again (reelgen/lowpoly/run.py)
+                from .lowpoly.run import remix_sound
+                reports = [remix_sound(cfg, video_dir(cfg, job["lowpoly_remix"]["id"]), progress)]
             elif job.get("anim_music"):  # a finished video, its music made by ACE-Step again
                 folder = video_dir(cfg, job["anim_music"]["id"])
                 if json.loads((folder / "report.json").read_text(encoding="utf-8")).get("source") == "anim":
@@ -1231,6 +1234,19 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "This video is already being worked on")
         return jobs.submit(f"New music: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
                            anim_music={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/lowpoly-sound")
+    def lowpoly_sound_route(video_id: str):
+        """A low-poly video's sound mixed again with the current levels (voices first, music and beds well under
+        them), under the same picture. No Claude, nothing rendered again."""
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "lowpoly" or not (folder / "props.json").exists():
+            raise HTTPException(400, "Only low-poly videos with their saved timeline can be re-mixed here")
+        if any(j.get("lowpoly_remix", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video's sound is already being mixed")
+        return jobs.submit(f"New sound mix: {report.get('title', video_id)}", 1, "rerender", "story", "lowpoly",
+                           lowpoly_remix={"id": video_id})
 
     @app.post("/api/videos/{video_id}/sounds/remove")
     def remove_sound_route(video_id: str, body: SoundRemoveBody):

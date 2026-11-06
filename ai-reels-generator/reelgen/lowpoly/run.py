@@ -185,6 +185,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "narration": narration, "created_at": stamp, "verified": not issues, "score": None, "issues": issues,
         "checks": {"probe": info}, "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
         "duration_seconds": round(props["duration"], 1), "editor": "remotion (LowPoly)", "captions": look["words"] == "on", "words_on_screen": look["words"],
+        "sound_levels": mixed.get("levels"), "mix_version": mixed.get("mix_version"),
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
         "cast": [c.name for c in story.cast], "story_kind": story.kind,
@@ -197,6 +198,61 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     report["usage"] = summarize_usage(meter_records())
     (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     progress("Done" if not issues else "Done, but it did not pass every check: review before posting")
+    return report
+
+
+def remix_sound(cfg: Config, folder: Path, progress) -> dict:
+    """A finished low-poly video's sound mixed again with the current levels (mix.py), under the same picture: the same
+    voices, music tracks and sound cues from its props.json, nothing recorded, generated or rendered again, no Claude.
+    The first version is kept as reel-original.mp4."""
+    import os
+    import shutil
+    import time
+
+    from ..audio import master
+    from ..verify import probe
+
+    data = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    clips = [{**c, "path": c["path"] if Path(c["path"]).is_absolute() else str(folder / c["path"])} for c in data.get("clips", [])]
+    missing = [c["path"] for c in clips if not Path(c["path"]).exists()]
+    if missing:
+        raise RuntimeError(f"{len(missing)} of its voice files are missing (e.g. {Path(missing[0]).name}), so its sound can't be mixed again")
+    props = {k: v for k, v in data.items() if k not in ("clips", "cues", "sections")}
+    fiction = report.get("story_kind") == "fiction"
+    progress("Mixing the sound again: the voices first, the music and the world's sounds under them")
+    brief = (f"cinematic film score for an animated sci-fi short film: {report.get('topic', '')}" if fiction
+             else f"soft score for a narrated low-poly animated short about {report.get('topic', '')}")
+    wav = folder / "soundtrack.wav"
+    mixed = mix(cfg, props, clips, data.get("cues", []), data.get("sections", []), folder, wav, int(props.get("seed", 1)), progress,
+                brief, fiction=fiction)
+    video, original, tmp = folder / "reel.mp4", folder / "reel-original.mp4", folder / "reel-remix.mp4"
+    if not original.exists():
+        shutil.copy2(video, original)
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(original), "-i", str(wav), "-map", "0:v", "-map", "1:a",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(tmp)], check=True)
+    done = master(tmp)
+    if done:
+        progress(f"Sound mastered: {done['before']:.1f} -> {done['after']:.1f} LUFS")
+    for tries in range(10):  # the page may be playing the old file (Windows holds it open)
+        try:
+            os.replace(tmp, video)
+            break
+        except OSError:
+            if tries == 9:
+                raise
+            time.sleep(1.5)
+    info = probe(video)
+    if not info.get("has_audio") or abs(float(info.get("duration") or 0) - float(report.get("duration_seconds") or 0)) > 2:
+        report.setdefault("issues", []).append("After the sound was mixed again the video's length or sound looks wrong: check it.")
+    lv = mixed["levels"]
+    progress(f"Voices {lv['voice']} LUFS; music {lv['voice'] - lv['music_between_lines']:.0f} LU under them between lines and "
+             f"{lv['voice'] - lv['music_under_speech']:.0f} LU under while they speak; wind, rain and fire beds "
+             f"{lv['voice'] - lv['beds']:.0f} LU under")
+    report.update({"music": mixed["music"], "sound_levels": lv, "mix_version": mixed["mix_version"],
+                   "sound_remixed": datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")})
+    (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    progress("Done: the new sound is under the same picture (the first version is kept as reel-original.mp4)")
     return report
 
 
