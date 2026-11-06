@@ -665,6 +665,8 @@ Plain paragraphs are read by the narrator."></textarea>
         <div><label for="lpPace">Speaking speed</label>
           <select id="lpPace"><option value="-10">Slower (-10%)</option><option value="-5">A bit slower</option><option value="0" selected>Normal</option><option value="5">A bit faster</option><option value="10">Faster (+10%)</option></select></div>
       </div>
+      <label for="lpWords">Subtitles</label>
+      <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select>
       <label for="lpMark">Channel name at the top</label>
       <input class="edit" id="lpMark" value="Life of a man" maxlength="40" placeholder="empty = none">
       <p class="hint" id="lpCast"></p>
@@ -3315,6 +3317,7 @@ const lpFill = () => {
   addMyVoice($("#lpVoice"));
   try { const saved = localStorage.getItem("lpVoice"); if (saved && [...$("#lpVoice").options].some((o) => o.value === saved)) $("#lpVoice").value = saved; } catch (e) {}
   try { const m = localStorage.getItem("lpMark"); if (m !== null) $("#lpMark").value = m; } catch (e) {}
+  try { const w = localStorage.getItem("lpWords"); if (w && [...$("#lpWords").options].some((o) => o.value === w)) $("#lpWords").value = w; } catch (e) {}
   api("/api/lowpoly/cast").then((c) => {
     $("#lpCast").textContent = c.length ? `People from earlier videos (they keep their look): ${c.map((x) => x.name).join(", ")}.` : "";
   }).catch(() => {});
@@ -3330,8 +3333,8 @@ $("#lpBtn").onclick = async () => {
   const film = lpModeIs() === "film";
   const body = { format: film ? "film" : "short", topic: $("#lpTopic").value, seconds: Number($("#lpSeconds").value),
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
-    pace: Number($("#lpPace").value), watermark: $("#lpMark").value, count: Number($("#lpCount").value), ai: aiValue("lowpoly") };
-  try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); } catch (e) {}
+    pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value), ai: aiValue("lowpoly") };
+  try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); } catch (e) {}
   $("#lpBtn").disabled = true;
   try {
     await api("/api/lowpoly", { method: "POST", body: JSON.stringify(body) });

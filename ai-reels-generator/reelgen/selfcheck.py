@@ -256,6 +256,16 @@ def lowpoly_lists() -> None:
                                  ("Tomorrow,", 1.6, 2.0), ("for", 2.0, 2.1), ("real.", 2.1, 2.5)])]
     if got != ["He pictures a", "5:30 run.", "Tomorrow, for", "real."] and got != ["He pictures a", "5:30 run.", "Tomorrow,", "for real."]:
         fail(f"lowpoly captions: {got}")
+    from .lowpoly.timeline import build
+    shot = dict(set="bedroom", light="night", camera="face", actors=[S.LPActor(who="hero", action="lie", expression="tired", spot="bed")])
+    story = S.Story(title="t", problem="p", youtube_title="t", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="calm",
+                    end_mood="calm", music_prompt="m", shots=[S.LPShot(stamp="11:47 P.M.", line="He sets the alarm.", **shot),
+                                                              S.LPShot(line="He means it.", red=True, **shot)])
+    audio = {0: {"path": "a.wav", "seconds": 1.2, "words": [["He", 0, .2], ["sets", .2, .5], ["the", .5, .6], ["alarm", .6, 1.0]]},
+             1: {"path": "b.wav", "seconds": 0.8, "words": [["He", 0, .2], ["means", .2, .5], ["it", .5, .7]]}}
+    seen = {w: [c["text"] for c in build(story, audio, vertical=True, watermark="", seed=1, words=w)[0]["captions"]] for w in ("on", "stamps", "off")}
+    if not (len(seen["on"]) >= 3 and seen["stamps"] == ["11:47 P.M."] and seen["off"] == []):
+        fail(f"lowpoly words on screen (on / time stamps only / off): {seen}")
 
 
 def main() -> int:

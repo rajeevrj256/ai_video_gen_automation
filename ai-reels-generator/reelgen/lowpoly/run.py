@@ -15,7 +15,7 @@ from ..fsutil import move
 from ..video import FFMPEG
 from . import story as S
 from .mix import mix
-from .timeline import build, spoken
+from .timeline import WORDS, build, spoken
 
 log = logging.getLogger(__name__)
 CHECKPOINT = "lowpoly-checkpoint.json"
@@ -36,6 +36,7 @@ class LowPolyRequest:
     pace: int = 0  # speaking speed in percent (-20..+20)
     watermark: str = "Life of a man"  # the channel's name at the top ('' = none)
     dof: bool = True  # depth of field (off renders faster on a slow machine)
+    words: str = "on"  # words on screen: on (subtitles + time stamps, like the original) | stamps (time stamps only) | off
 
 
 def _thumb_time(props: dict) -> float:
@@ -101,7 +102,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     pause_point()
     audio = {int(k): v for k, v in state.get("audio", {}).items()}
     seed = int(uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
-    look = dict(vertical=vertical, watermark=req.watermark.strip(), seed=seed)
+    look = dict(vertical=vertical, watermark=req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on")
     if not audio or not all(Path(v["path"]).exists() for v in audio.values()):
         pace = int(req.pace)
         audio = _record(cfg, story, req, work, progress, pace)
@@ -164,7 +165,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "style": "story", "category": "Life & People", "title": story.title.strip(), "why_chosen": story.problem,
         "narration": narration, "created_at": stamp, "verified": not issues, "score": None, "issues": issues,
         "checks": {"probe": info}, "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
-        "duration_seconds": round(props["duration"], 1), "editor": "remotion (LowPoly)", "captions": True,
+        "duration_seconds": round(props["duration"], 1), "editor": "remotion (LowPoly)", "captions": look["words"] == "on", "words_on_screen": look["words"],
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
         "cast": [c.name for c in story.cast], "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),

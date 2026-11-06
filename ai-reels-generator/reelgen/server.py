@@ -553,6 +553,7 @@ class LowPolyBody(BaseModel):
     voice: str = ""
     pace: int = 0
     watermark: str = "Life of a man"
+    words: str = "on"  # on (subtitles + time stamps) | stamps (time stamps only) | off
     count: int = 1
     ai: AIPick | None = None
 
@@ -1558,9 +1559,10 @@ def create_app(cfg: Config) -> FastAPI:
         film = body.format == "film"
         given = {"topic": body.topic.strip()[:400], "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
                  "minutes": max(2.5, min(4.5, float(body.minutes))), "vertical": bool(body.vertical) and film,
-                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40]}
+                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
+                 "words": body.words if body.words in ("on", "stamps", "off") else "on"}
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "lowpoly", "story", "lowpoly",
-                           lowpoly_input=given, captions=True, ai=body.ai)
+                           lowpoly_input=given, captions=given["words"] == "on", ai=body.ai)
 
     @app.get("/api/lowpoly/cast")
     def lowpoly_cast():

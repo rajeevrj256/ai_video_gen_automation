@@ -57,10 +57,14 @@ def spoken(a: dict) -> float:
     return float(a["seconds"])
 
 
+WORDS = ("on", "stamps", "off")  # words on screen: subtitles + time stamps / time stamps only / nothing
+
+
 def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: str, seed: int,
-          tail: float = TAIL, pauses: float = 1.0) -> tuple[dict, list[dict], list[dict], list[dict]]:
+          tail: float = TAIL, pauses: float = 1.0, words: str = "on") -> tuple[dict, list[dict], list[dict], list[dict]]:
     """props, voice clips [{at, path}], sound cues [{sound, at, volume, length?}], music sections. `tail` and `pauses`
-    let a Short that runs long tighten its breaths."""
+    let a Short that runs long tighten its breaths; `words` turns the subtitles (and the stamps) off."""
+    mode = words if words in WORDS else "on"  # (the loop below has its own `words`: each line's timed words)
     shots, captions, clips, cues = [], [], [], []
     t = 0.0
     cast = {"hero": HERO}
@@ -72,7 +76,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         line = bool(a and s.line.strip())
         length = spoken(a) if line else 0.0
         has_alarm = any(th.kind == "alarm" for th in s.things) or any(x.sound == "alarm" for x in s.sounds)
-        lead = STAMP if s.stamp.strip() else LEAD
+        lead = STAMP if s.stamp.strip() and mode != "off" else LEAD  # a stamp shows alone before its line
         dur = (lead + length + tail if line else SILENT + (0.8 if has_alarm else 0)) + s.pause * pauses
         if i == n - 1:
             dur += FADE_END
@@ -135,6 +139,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     sections = [{"start": 0.0, "end": ending, "mood": story.mood, "act": "loop", "quiet": []}]
     if ending < total:
         sections.append({"start": ending, "end": total, "mood": story.end_mood, "act": "resolve", "quiet": []})
+    shown = captions if mode == "on" else [c for c in captions if c.get("stamp")] if mode == "stamps" else []
     props = {"fps": FPS, "duration": total, "vertical": vertical, "watermark": watermark, "seed": seed, "cast": cast, "shots": shots,
-             "captions": captions, "dof": True}
+             "captions": shown, "dof": True}
     return props, clips, cues, sections
