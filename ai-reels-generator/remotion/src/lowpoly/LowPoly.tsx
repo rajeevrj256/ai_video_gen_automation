@@ -348,7 +348,7 @@ const Post: React.FC<{focus: number; aperture: number}> = ({focus, aperture}) =>
 
 // The lights: sky and ground fill, the key (casting the soft shadows) from the set's window or sun, a cool or warm
 // fill from the other side, and a lamp when the light calls for one.
-const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3}> = ({set, light, target}) => {
+const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: THREE.Vector3}> = ({set, light, target, eye}) => {
   const look = LOOKS[light as keyof typeof LOOKS] ?? LOOKS.day;
   const tgt = useMemo(() => new THREE.Object3D(), []);
   const sun = V(set.sun).normalize();
@@ -376,6 +376,8 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3}> = ({
         shadow-camera-far={40}
       />
       <directionalLight position={fillPos.toArray()} target={tgt} color={look.fill[0]} intensity={look.fill[1]} />
+      {/* a soft light from the camera's side, so his face reads in the dark looks too (lamp-lit rooms lost it) */}
+      <directionalLight position={eye.clone().add(new THREE.Vector3(0, 0.6, 0)).toArray()} target={tgt} color="#fff1e2" intensity={look.shade < 0.8 ? 0.55 : 0.25} />
       {look.lamp > 0 && set.lamp ? (
         <pointLight position={set.lamp} color="#ffb46b" intensity={look.lamp * 3.2} distance={9} decay={1.6} castShadow={false} />
       ) : null}
@@ -399,7 +401,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       <color attach="background" args={[look.sky[1]]} />
       {set.outdoor ? <fogExp2 attach="fog" args={[look.sky[1], look.fog]} /> : null}
       <CamRig plan={plan} exposure={look.exposure} />
-      <Lights set={set} light={shot.light} target={who ? who.body : V(set.wide.look)} />
+      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : V(set.wide.look)} eye={plan.pos} />
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
       {things.map((th, i) => (
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
