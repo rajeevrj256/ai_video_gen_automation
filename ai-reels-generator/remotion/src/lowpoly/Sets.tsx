@@ -456,7 +456,7 @@ const living: SetDef = {
   lamp: [2.6, 1.75, -2.5],
   spots: {
     couch: {x: -2.35, z: -0.8, ry: Math.PI / 2, seat: 0.47},
-    chair: {x: -2.35, z: -0.8, ry: Math.PI / 2, seat: 0.47},
+    chair: {x: -0.1, z: -2.1, ry: 0.3, seat: 0.47},
     center: {x: 0.5, z: 0.4, ry: 0},
     window: {x: 0.3, z: -2.0, ry: Math.PI},
     left: {x: -1.0, z: 0.8, ry: 0},
@@ -480,6 +480,12 @@ const living: SetDef = {
           <B p={[-0.1, 0.62, 0.6]} s={[0.25, 0.35, 0.45]} c={shadeOf('#c46a63', look.shade)} r={[0, 0, 0.2]} />
         </group>
         <Table p={[-1.25, 0, -0.8]} s={[0.7, 0.42, 1.2]} c="#6b4a33" />
+        <group position={[-0.1, 0, -2.1]} rotation={[0, 0.3, 0]}>
+          <B p={[0, 0.24, 0.05]} s={[0.95, 0.45, 0.85]} c={shadeOf('#b08a4a', look.shade)} />
+          <B p={[0, 0.7, -0.38]} s={[0.95, 0.75, 0.2]} c={shadeOf('#b08a4a', look.shade)} />
+          <B p={[-0.43, 0.45, 0.05]} s={[0.16, 0.45, 0.85]} c={shadeOf('#9c7a40', look.shade)} />
+          <B p={[0.43, 0.45, 0.05]} s={[0.16, 0.45, 0.85]} c={shadeOf('#9c7a40', look.shade)} />
+        </group>
         <B p={[3.2, 0.3, -0.8]} s={[0.5, 0.6, 1.8]} c={shadeOf('#3d3a37', look.shade)} />
         <B p={[3.15, 1.25, -0.8]} s={[0.08, 0.85, 1.5]} c="#16171a" />
         <B p={[3.1, 1.25, -0.8]} s={[0.02, 0.75, 1.4]} c="#9cc6ff" glow={tv ? 1.3 : 0.15} r={[0, 0, 0]} />

@@ -89,7 +89,8 @@ class LPActor(BaseModel):
     expression: ExprName
     spot: SpotName
     to: SpotName | None = Field(None, description="walk/run/jog only: the spot he walks to (else he walks across the frame)")
-    facing: Literal["camera", "left", "right", "away"] = "camera"
+    facing: Literal["camera", "left", "right", "away"] = Field("camera", description="camera = the spot's natural way (at the desk toward the screen, otherwise toward the camera); away = his back to the camera, facing the counter, window or door; left/right "
+                                                              "= across the room. Seated and lying people keep their seat's way")
     hold: HoldName = "none"
     covered: bool = Field(False, description="in bed under the blanket")
 

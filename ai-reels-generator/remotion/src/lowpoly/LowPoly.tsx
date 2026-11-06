@@ -45,14 +45,16 @@ export type Placed = {
   seed: number;
 };
 
-const FACING: Record<string, number> = {camera: 0, left: -Math.PI / 2, right: Math.PI / 2, away: Math.PI};
+// facing in the room's own terms: 'camera' keeps the spot's natural way (at the desk, toward the screen), 'away' turns
+// his back to the open side (toward the counter, the window, the door), left/right face across the room
+const FACING: Record<string, number> = {left: -Math.PI / 2, right: Math.PI / 2, away: Math.PI};
 
 // Where an actor is at time t: his spot (and the seat or bed there), his walk, his pose, and the world positions the
 // camera needs (computed with the same rotations the Man applies).
-export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number, cast: Record<string, Design>): Placed => {
+export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number, cast: Record<string, Design>, others: Placed[] = []): Placed => {
   const design = cast[a.who] ?? (a.who === 'hero' ? HERO : HERO);
   const sp = spotOf(set, a.spot);
-  let ry = sp.ry + (FACING[a.facing ?? 'camera'] ?? 0);
+  let ry = sp.ry;
   let root: V3 = [sp.x, 0, sp.z];
   let action = a.action;
   const lying = LYING.has(action);
@@ -68,6 +70,13 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number,
     }
   } else if (lying) {
     root = [sp.x, 0.2, sp.z]; // on the floor
+  }
+  const turn = FACING[a.facing ?? 'camera'];
+  if (turn !== undefined && seat === null && !lying) ry = turn;
+  // two people never on the same spot: the later one moves along the spot (along the couch, beside him)
+  if (!MOVING.has(action) && others.some((o) => Math.hypot(o.root[0] - root[0], o.root[2] - root[2]) < 0.7)) {
+    const side = others.length % 2 ? 1 : -1;
+    root = [root[0] + Math.cos(ry) * 0.85 * side, root[1], root[2] - Math.sin(ry) * 0.85 * side];
   }
   if (action === 'sit' && seat === null) seat = 0.46; // a chair the set doesn't have: drawn under him
   // a spot that faces into the set (the counter, the mirror, a window) turns him round when the camera wants his face
@@ -124,7 +133,7 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, t: number,
 
 // ---------------------------------------------------------------- the cameras
 
-export type CamPlan = {pos: THREE.Vector3; look: THREE.Vector3; up: THREE.Vector3; fov: number; focus: number; aperture: number};
+export type CamPlan = {pos: THREE.Vector3; look: THREE.Vector3; up: THREE.Vector3; fov: number; focus: number; aperture: number; near?: number};
 
 const distFor = (w: number, h: number, fov: number, aspect: number) => {
   const tan = Math.tan(((fov / 2) * Math.PI) / 180);
@@ -222,8 +231,9 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
       fov = 36;
       const fwd = new THREE.Vector3(Math.sin(who.ry), 0, Math.cos(who.ry));
       const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
-      pos = H.clone().addScaledVector(fwd, -1.7 * push).addScaledVector(right, 0.5).add(new THREE.Vector3(0, 0.12, 0));
-      look = H.clone().addScaledVector(fwd, 3).add(new THREE.Vector3(0, -0.4, 0));
+      // high over the shoulder, so a chair or a table behind him stays under the shot
+      pos = H.clone().addScaledVector(fwd, -2.3 * push).addScaledVector(right, 0.75).add(new THREE.Vector3(0, 0.65, 0));
+      look = H.clone().addScaledVector(fwd, 2.0).add(new THREE.Vector3(0, -0.75, 0));
       aperture = 0.45;
       break;
     }
@@ -274,11 +284,20 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
       break;
     }
   }
+  // indoors the camera stays inside the room (behind a wall it looked through the window frame and the counter)
+  if (!set.outdoor && kind !== 'wide') {
+    pos.x = Math.max(-3.2, Math.min(3.2, pos.x));
+    pos.z = Math.max(-2.6, pos.z);
+    pos.y = Math.max(0.25, Math.min(3.2, pos.y));
+  }
   // a breath of handheld sway
   const toward = look.clone().sub(pos);
   const right = new THREE.Vector3().crossVectors(toward, camUp).normalize();
   look.addScaledVector(right, sway * toward.length()).addScaledVector(camUp, 0.5 * sway * toward.length());
-  return {pos, look, up: camUp, fov, focus: pos.distanceTo(kind === 'detail' || kind === 'top' ? look : H), aperture};
+  const focus = pos.distanceTo(kind === 'detail' || kind === 'top' ? look : H);
+  // furniture right in front of the lens (a chair between the camera and him) is left out of the picture
+  const near = kind === 'detail' ? 0.05 : Math.max(0.05, Math.min(1.5, focus * 0.45));
+  return {pos, look, up: camUp, fov, focus, aperture, near};
 };
 
 const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) => {
@@ -288,7 +307,7 @@ const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) =
     camera.position.copy(plan.pos);
     camera.up.copy(plan.up);
     camera.fov = plan.fov;
-    camera.near = 0.05;
+    camera.near = plan.near ?? 0.05;
     camera.far = 400;
     camera.lookAt(plan.look);
     camera.updateProjectionMatrix();
@@ -367,7 +386,8 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3}> = ({
 const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect: number}> = ({shot, t, props, aspect}) => {
   const set = SETS[shot.set] ?? SETS.void;
   const look = LOOKS[shot.light] ?? LOOKS.day;
-  const placed = shot.actors.map((a, k) => place(a, k, set, shot, t, props.cast));
+  const placed: Placed[] = [];
+  shot.actors.forEach((a, k) => placed.push(place(a, k, set, shot, t, props.cast, placed)));
   const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
   const plan = who
     ? camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1)
