@@ -208,11 +208,16 @@ const Glasses: React.FC<{color: string}> = ({color}) => {
   );
 };
 
+// Skin glows a little from within (the reference's faces stay pale and readable in every light, its chins never
+// go black): an emissive lift of the skin's own colour under the light.
+export const SKIN_GLOW = 0.16;
+const skinMat = (c: string) => mat(c, {emissive: c, glow: SKIN_GLOW});
+
 const FaceView: React.FC<{f: Face; design: Design}> = ({f, design}) => {
   const z = D.head * 0.935;
-  const skin = mat(design.skin);
+  const skin = skinMat(design.skin);
   const dark = mat('#141416', {rough: 0.5});
-  const white = mat('#f4f2ee', {rough: 0.5});
+  const white = mat('#f4f2ee', {rough: 0.5, emissive: '#f4f2ee', glow: 0.12});
   const brow = mat(design.hairStyle === 'bald' ? '#5a4030' : design.hair);
   const er = 0.058 * f.eye;
   const eye = (sx: number) => (
@@ -353,7 +358,7 @@ export const Man: React.FC<{
   hold?: Hold;
   seed: number;
 }> = ({design, pose: p, face: f, root, ry, hold = 'none', seed}) => {
-  const skin = mat(design.skin);
+  const skin = skinMat(design.skin);
   const top = mat(design.top);
   const topDark = mat(new THREE.Color(design.top).multiplyScalar(0.82).getStyle());
   const legs = mat(design.trousers);

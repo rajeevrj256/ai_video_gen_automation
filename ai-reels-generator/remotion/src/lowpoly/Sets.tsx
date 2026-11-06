@@ -32,13 +32,13 @@ export type Look = {
 };
 
 export const LOOKS: Record<Light, Look> = {
-  night: {sky: ['#111a30', '#2a3756'], hemi: ['#6c7ca6', '#1d2029', 1.15], key: ['#a9bbee', 2.1], fill: ['#7080b4', 0.5], window: ['#2a3e6a', 1.0], lamp: 0, fog: 0.01, exposure: 1.1, shade: 0.7},
-  lamp: {sky: ['#0b0f1c', '#1b2238'], hemi: ['#5a5f78', '#1a171c', 0.75], key: ['#8a9ad0', 0.7], fill: ['#ffb36b', 0.4], window: ['#17213c', 0.7], lamp: 2.2, fog: 0.012, exposure: 1.12, shade: 0.75},
+  night: {sky: ['#111a30', '#2a3756'], hemi: ['#6c7ca6', '#3a3646', 1.15], key: ['#a9bbee', 2.1], fill: ['#7080b4', 0.5], window: ['#2a3e6a', 1.0], lamp: 0, fog: 0.01, exposure: 1.1, shade: 0.7},
+  lamp: {sky: ['#0b0f1c', '#1b2238'], hemi: ['#5a5f78', '#3e3238', 0.8], key: ['#8a9ad0', 0.7], fill: ['#ffb36b', 0.4], window: ['#17213c', 0.7], lamp: 2.2, fog: 0.012, exposure: 1.12, shade: 0.75},
   dawn: {sky: ['#a98a9c', '#e8ad98'], hemi: ['#f0c0b4', '#4e5a42', 1.0], key: ['#ffbf96', 2.3], fill: ['#a7a7d6', 0.35], window: ['#ffd2b8', 1.3], lamp: 0, fog: 0.008, exposure: 1.0, shade: 0.92},
   morning: {sky: ['#d9c4a8', '#f4dcb8'], hemi: ['#e2c2a0', '#5e4635', 0.85], key: ['#ffd29c', 3.2], fill: ['#a99c94', 0.25], window: ['#fff0d6', 2.2], lamp: 0, fog: 0.008, exposure: 1.0, shade: 1},
   day: {sky: ['#8fb6dd', '#dceaf2'], hemi: ['#e8eef5', '#8a8274', 1.15], key: ['#fff4e2', 2.6], fill: ['#c7d6ea', 0.4], window: ['#f2f8ff', 1.8], lamp: 0, fog: 0.006, exposure: 1.0, shade: 1},
-  evening: {sky: ['#5b4a72', '#f2a66f'], hemi: ['#e8a98a', '#3d3030', 0.8], key: ['#ffad6b', 2.6], fill: ['#7d78b5', 0.35], window: ['#ffc58f', 1.5], lamp: 0.6, fog: 0.014, exposure: 1.0, shade: 0.9},
-  dark: {sky: ['#07090f', '#11151f'], hemi: ['#3a4256', '#0c0d11', 0.4], key: ['#8090b8', 0.45], fill: ['#40466a', 0.15], window: ['#101a30', 0.5], lamp: 0, fog: 0.02, exposure: 1.1, shade: 0.55},
+  evening: {sky: ['#5b4a72', '#f2a66f'], hemi: ['#e8a98a', '#5a4440', 0.85], key: ['#ffad6b', 2.6], fill: ['#7d78b5', 0.35], window: ['#ffc58f', 1.5], lamp: 0.6, fog: 0.014, exposure: 1.0, shade: 0.9},
+  dark: {sky: ['#07090f', '#11151f'], hemi: ['#3a4256', '#26232c', 0.5], key: ['#8090b8', 0.45], fill: ['#40466a', 0.15], window: ['#101a30', 0.5], lamp: 0, fog: 0.02, exposure: 1.1, shade: 0.55},
 };
 
 type V3 = [number, number, number];

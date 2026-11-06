@@ -19,7 +19,7 @@ export const lowpolyDemoProps: LowPolyProps = {
     {start: 19.3, duration: 2.7, set: 'hallway', light: 'morning', camera: 'side', actors: [{who: 'hero', action: 'walk', expression: 'neutral', spot: 'center'}], seed: 8},
     {start: 22.0, duration: 2.7, set: 'bedroom', light: 'morning', camera: 'top', actors: [{who: 'hero', action: 'lie', expression: 'blank', spot: 'bed'}], seed: 9},
     {start: 24.7, duration: 1.6, set: 'bedroom', light: 'morning', camera: 'side', actors: [{who: 'hero', action: 'get-up', expression: 'tired', spot: 'bed'}], seed: 10},
-    {start: 26.3, duration: 6.5, set: 'hallway', light: 'morning', camera: 'face', actors: [{who: 'hero', action: 'stand', expression: 'sad', spot: 'door', facing: 'away'}], fadeOut: 0.8, seed: 11},
+    {start: 26.3, duration: 6.5, set: 'hallway', light: 'morning', camera: 'face', actors: [{who: 'hero', action: 'stand', expression: 'sad', spot: 'door', facing: 'camera'}], fadeOut: 0.8, seed: 11},
   ],
   captions: [
     {start: 0, end: 2.3, text: '11:47 P.M.', stamp: true},

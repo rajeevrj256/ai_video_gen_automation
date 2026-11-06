@@ -377,7 +377,7 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
       />
       <directionalLight position={fillPos.toArray()} target={tgt} color={look.fill[0]} intensity={look.fill[1]} />
       {/* a soft light from the camera's side, so his face reads in the dark looks too (lamp-lit rooms lost it) */}
-      <directionalLight position={eye.clone().add(new THREE.Vector3(0, 0.6, 0)).toArray()} target={tgt} color="#fff1e2" intensity={look.shade < 0.8 ? 0.55 : 0.25} />
+      <directionalLight position={eye.clone().add(new THREE.Vector3(0, 0.6, 0)).toArray()} target={tgt} color="#fff1e2" intensity={look.shade < 0.8 ? 0.8 : 0.35} />
       {look.lamp > 0 && set.lamp ? (
         <pointLight position={set.lamp} color="#ffb46b" intensity={look.lamp * 3.2} distance={9} decay={1.6} castShadow={false} />
       ) : null}
