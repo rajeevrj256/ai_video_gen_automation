@@ -28,7 +28,9 @@ export const SIZE: Record<BigKind, V3> = {
 
 const PAINT = ['#c7473b', '#3d6fa8', '#e2b21f', '#e9e4da', '#3a3d44', '#4f8a5b'];
 const G = 14.7; // gravity, a little more than real so falls read heavy at this scale
-const VEHICLE = new Set<BigKind>(['car', 'bus', 'truck']);
+export const VEHICLE = new Set<BigKind>(['car', 'bus', 'truck']);
+// motions a car, bus or truck does on its own (not in someone's hands): on the road, in a lane clear of everyone
+export const ROAD_MOTIONS = new Set(['drive', 'still', 'crushed', 'shake', 'fall', 'stop']);
 
 // What the editor needs of a person to hold or stop a thing (LowPoly's Placed, minimally).
 export type Holder = {action: string; root: V3; ry: number; head: THREE.Vector3; hand: THREE.Vector3; body: THREE.Vector3; at?: number};
@@ -86,11 +88,18 @@ const aside = (st: BigState, people: Holder[], size: V3) => {
   return st;
 };
 
-export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: number, k: number): BigState => {
+// `road`: for a vehicle that drives, stands, brakes or falls on its own, its place on the road: `lane` across the way
+// it drives (z on a set where walks go along x, else x) and `shift` along it from its spot, chosen once per shot by
+// LowPoly's `vehiclePlans` so it never touches anyone, never has the camera inside it and, standing, hides nobody.
+export type RoadPlace = {lane: number; shift: number};
+export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: number, k: number, road?: RoadPlace): BigState => {
   const size = SIZE[b.kind];
   const sp = spotOf(set, b.spot);
-  const ground = new THREE.Vector3(sp.x, 0, sp.z);
-  const st: BigState = {pos: ground.clone(), ry: sp.ry, rx: 0, rz: 0, pivot: [0, 0, 0], squash: [1, 1, 1], contact: ground.clone(), landed: true};
+  const onLane = road !== undefined;
+  const ground = !road ? new THREE.Vector3(sp.x, 0, sp.z)
+    : set.walk === 'x' ? new THREE.Vector3(sp.x + road.shift, 0, road.lane) : new THREE.Vector3(road.lane, 0, sp.z + road.shift);
+  const st: BigState = {pos: ground.clone(), ry: onLane ? (set.walk === 'x' ? Math.PI / 2 : 0) : sp.ry, rx: 0, rz: 0, pivot: [0, 0, 0], squash: [1, 1, 1],
+    contact: ground.clone(), landed: true};
   const who = holderFor(b, people);
   const ev = b.at ?? dur * 0.4;
   // a beam or a pipe that shakes on a building site hangs from the crane, trembling
@@ -195,13 +204,13 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
         st.contact = new THREE.Vector3(who.root[0], 1.1, who.root[2]).addScaledVector(f, 0.72);
         return st;
       }
-      // no one to stop it: it brakes hard and stops on its spot
-      const dir = new THREE.Vector3(1, 0, 0);
+      // no one to stop it: it brakes hard and stops on its spot (along the road)
+      const dir = set.walk === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
       const a = 7;
       const dt = ev - t;
       const back = dt <= 0 ? 0 : dt < 2 ? 0.5 * a * dt * dt : 14 + 14 * (dt - 2);
       st.pos = ground.clone().addScaledVector(dir, -back);
-      st.ry = Math.PI / 2;
+      st.ry = set.walk === 'z' ? 0 : Math.PI / 2;
       st.rx = dt <= 0 ? 0.05 * Math.exp(dt * 4) : 0.05;
       return st;
     }
@@ -214,7 +223,7 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
     case 'crushed':
       st.squash = [1.08, 0.55, 0.92];
       st.rz = 0.05;
-      return aside(st, people, size);
+      return onLane ? st : aside(st, people, size);
     case 'shake':
       st.rz = 0.02 * Math.sin(t * 37);
       st.pos.x += 0.02 * Math.sin(t * 29);
@@ -222,8 +231,20 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
     case 'still':
     default:
       void k;
-      return aside(st, people, size);
+      return onLane ? st : aside(st, people, size);
   }
+};
+
+// Is this point inside the thing (with a margin)? The camera must never be: it showed the inside of a bus driving by.
+export const insideBig = (b: Big, st: BigState, point: THREE.Vector3, margin = 0.35) => {
+  const [w, h, l] = SIZE[b.kind];
+  const d = point.clone().sub(st.pos);
+  const c = Math.cos(st.ry);
+  const s = Math.sin(st.ry);
+  const lx = d.x * c - d.z * s + st.pivot[0];
+  const lz = d.x * s + d.z * c + st.pivot[2];
+  const ly = d.y + st.pivot[1];
+  return Math.abs(lx) < w / 2 + margin && Math.abs(lz) < l / 2 + margin && ly > -margin && ly < h * st.squash[1] + margin;
 };
 
 // ---------------------------------------------------------------- the models

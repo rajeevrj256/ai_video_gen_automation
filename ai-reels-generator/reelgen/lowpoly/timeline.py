@@ -102,8 +102,15 @@ CAMERA_NEAR = {"wide": 0.55, "aerial": 0.4, "top": 0.6, "side": 1.0, "front": 1.
 _SPOTS: dict[str, dict[str, tuple[float, float]]] | None = None
 
 
-def set_spots() -> dict[str, dict[str, tuple[float, float]]]:
-    """Every set's spots (x, z) from remotion/src/lowpoly/Sets.tsx, for how far a walk goes."""
+# = SEATED and LYING in LowPoly.tsx: who sits on (or lies in) a seat spot's seat; anyone else there stands at its `stand`
+SEATED_ACTIONS = {"sit", "type", "eat", "shoes", "get-up", "read", "phone", "head-in-hands", "slump", "think", "drink", "sigh",
+                  "nod", "shake-head", "shrug", "cry", "stretch", "reach"}
+LYING_ACTIONS = {"lie", "lie-side", "lie-phone", "sit-up"}
+
+
+def set_spots() -> dict[str, dict[str, tuple[float, float, float, float]]]:
+    """Every set's spots from remotion/src/lowpoly/Sets.tsx, for how far a walk goes: (x, z, stand x, stand z), the
+    stand being where someone who isn't sitting stands at a seat spot (the spot itself elsewhere)."""
     global _SPOTS
     if _SPOTS is None:
         from pathlib import Path
@@ -115,7 +122,11 @@ def set_spots() -> dict[str, dict[str, tuple[float, float]]]:
             return _SPOTS
         for m in re.finditer(r"const (\w+): SetDef = \{(.*?)\n  wide:", src, re.S):
             name = "void" if m.group(1) == "voidSet" else m.group(1)
-            _SPOTS[name] = {k: (float(x), float(z)) for k, x, z in re.findall(r"(\w+): \{x: (-?[\d.]+), z: (-?[\d.]+)", m.group(2))}
+            spots = {}
+            for k, x, z, rest in re.findall(r"(\w+): \{x: (-?[\d.]+), z: (-?[\d.]+)([^}]*)\}", m.group(2)):
+                st = re.search(r"stand: \[(-?[\d.]+), (-?[\d.]+)\]", rest)
+                spots[k] = (float(x), float(z), *((float(st.group(1)), float(st.group(2))) if st else (float(x), float(z))))
+            _SPOTS[name] = spots
     return _SPOTS
 
 
@@ -132,10 +143,18 @@ def step_times(actor, k: int, s, dur: float, seed: int) -> tuple[list[float], fl
         spots = set_spots().get(s.set, {})
         a, b = spots.get(actor.spot), spots.get(actor.to)
         if a and b:
-            # someone standing or sitting there: he stops in front of them (LowPoly.tsx `lanes`, STOP_SHORT)
-            taken = any(o is not actor and o.spot == actor.to and o.action not in STRIDE for o in s.actors)
-            short = (STOP_SEATED if actor.to in SEAT_SPOTS else STOP_SHORT) if taken else 0.0
-            arrive = max(0.0, math.hypot(b[0] - a[0], b[1] - a[1]) - short) / SPEED[actor.action]
+            # he sets off from where he stands (a seat spot's standing place); someone sitting or standing where he
+            # goes: he stops in front of them (LowPoly.tsx `layoutFor`, STOP_SHORT), else at the spot's standing place
+            occ = next((o for o in s.actors if o is not actor and o.spot == actor.to and o.action not in STRIDE), None)
+            if occ is not None:
+                down = occ.action in SEATED_ACTIONS or occ.action in LYING_ACTIONS or occ.action == "sit"
+                ox, oz = (b[0], b[1]) if down else (b[2], b[3])
+                if actor.to == "bed" and down and occ.action not in LYING_ACTIONS:
+                    oz = -0.45  # sitting on the bed's edge (LowPoly.tsx `place`)
+                short = STOP_SEATED if actor.to in SEAT_SPOTS else STOP_SHORT
+                arrive = max(0.0, math.hypot(ox - a[2], oz - a[3]) - short) / SPEED[actor.action]
+            else:
+                arrive = math.hypot(b[2] - a[2], b[3] - a[3]) / SPEED[actor.action]
             end = min(end, arrive)
     phase = k * 1.7 + seed
     first = ((0.5 - phase / math.pi) % 1.0) / f

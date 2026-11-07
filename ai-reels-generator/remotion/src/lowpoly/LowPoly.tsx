@@ -17,7 +17,7 @@ import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, SETS, spotOf, ThingView, type SetDef} from './Sets';
-import {bigState, BigView, holderFor, keyMoment, type BigState, type Holder} from './Big';
+import {bigState, BigView, holderFor, insideBig, keyMoment, ROAD_MOTIONS, SIZE, VEHICLE, type BigState, type Holder, type RoadPlace} from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
 import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, LowPolyProps, LPShot} from './types';
 
@@ -107,6 +107,12 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   } else if (lying) {
     root = [sp.x, 0.2, sp.z]; // on the floor
   }
+  // not sitting at a seat spot (standing at the bench, lying on the floor by the couch, walking off from the chair): at
+  // the spot's standing place, never inside the seat (the user's hero stood inside the bus stop's bench)
+  const inBed = a.spot === 'bed' && sp.bed !== undefined && (lying || seat !== null || action === 'sit');
+  if (sp.stand && seat === null && action !== 'sit' && !inBed && action !== 'carried') root = [sp.stand[0], root[1], sp.stand[1]];
+  // stopping a vehicle with his bare hands happens on the road, where it drives (not on the pavement or in the shelter)
+  if (action === 'push-stop' && set.road !== undefined && set.walk === 'x') root = [root[0], root[1], set.road];
   const turn = FACING[a.facing ?? 'camera'];
   if (turn !== undefined && seat === null && !lying) ry = turn;
   // stopping a vehicle with his hands: he faces up the road (it comes from there), unless told otherwise
@@ -134,7 +140,8 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
       to = V([lane.to[0], 0, lane.to[1]]); // in front of the person standing or sitting where he goes
     } else if (a.to) {
       const b = spotOf(set, a.to);
-      to = V([b.x + off[0], 0, b.z + off[1]]);
+      const [bx, bz] = b.stand ?? [b.x, b.z]; // to a free seat spot: he arrives at its standing place
+      to = V([bx + off[0], 0, bz + off[1]]);
     } else {
       const dir = set.walk === 'x' ? new THREE.Vector3(a.facing === 'left' ? -1 : 1, 0, 0) : new THREE.Vector3(0, 0, a.facing === 'away' ? -1 : 1);
       from = from.clone().addScaledVector(dir, -dist * (set.walk === 'z' ? 0.6 : 0.5));
@@ -438,7 +445,10 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
     default: {
       fov = aspect < 1 ? 46 : 38;
       pos = V(set.wide.pos);
-      look = V(set.wide.look).lerp(who.aim ? who.body.clone().lerp(who.aim, 0.5) : who.body, 0.45);
+      // toward the subject and everyone else in the shot (in a tall frame a second person fell outside it)
+      const others = all.filter((p) => p !== who).map((p) => p.body);
+      const group = others.length ? others.reduce((sum, v) => sum.add(v), who.body.clone().multiplyScalar(2)).multiplyScalar(1 / (others.length + 2)) : who.body;
+      look = V(set.wide.look).lerp(who.aim ? who.body.clone().lerp(who.aim, 0.5) : group, others.length ? 0.6 : 0.45);
       if (who.aim) {
         // the room's own view, moved sideways when one of the two would stand in front of the other (the son who
         // walked up to his dad on the couch hid him)
@@ -458,6 +468,25 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
         pos = best;
       }
       pos.lerp(look, 0.06 * p);
+      if (others.length) {
+        // everyone whole in the picture: the lens opens until the widest person (side to side, head to feet) fits
+        const fwd = look.clone().sub(pos).normalize();
+        const side = new THREE.Vector3().crossVectors(fwd, up).normalize();
+        const upv = new THREE.Vector3().crossVectors(side, fwd).normalize();
+        let needH = 0;
+        let needV = 0;
+        for (const pl of all) {
+          for (const pt of [pl.head.clone().add(new THREE.Vector3(0, 0.45, 0)), new THREE.Vector3(pl.root[0], 0, pl.root[2])]) {
+            const d = pt.clone().sub(pos);
+            const depth = Math.max(0.5, d.dot(fwd));
+            needH = Math.max(needH, (Math.abs(d.dot(side)) + 0.4) / depth);
+            needV = Math.max(needV, (Math.abs(d.dot(upv)) + 0.15) / depth);
+          }
+        }
+        const need = Math.max(needV, needH / aspect); // as tan of half the vertical angle
+        const have = Math.tan(((fov / 2) * Math.PI) / 180);
+        if (need > have) fov = Math.min(72, (2 * Math.atan(need) * 180) / Math.PI);
+      }
       aperture = 0.15;
       break;
     }
@@ -617,7 +646,9 @@ export const layoutFor = (shot: LPShot, set: SetDef, cast: Record<string, Design
       if (a.to) {
         // someone standing or sitting where he goes: he stops in front of them, facing them
         const b = spotOf(set, a.to);
-        const there = paths.find((p, j) => p && j !== k && !moves(actors[j]) && Math.hypot(p[SAMPLES][0] - b.x, p[SAMPLES][1] - b.z) < GAP);
+        // (sitting there, or standing at the seat's standing place)
+        const near = (q: [number, number]) => Math.min(Math.hypot(q[0] - b.x, q[1] - b.z), b.stand ? Math.hypot(q[0] - b.stand[0], q[1] - b.stand[1]) : Infinity);
+        const there = paths.find((p, j) => p && j !== k && !moves(actors[j]) && near(p[SAMPLES]) < GAP);
         if (there) {
           const occ = there[SAMPLES];
           const d = Math.hypot(occ[0] - start[0], occ[1] - start[1]);
@@ -749,6 +780,103 @@ const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undef
     return {kind: f.kind, ctx};
   });
 
+// Where each car, bus or truck that acts on its own goes in a shot, worked out once (the user's bus drove along the
+// bus stop's pavement, through the shelter and the people, and a camera standing in its way showed its inside): on the
+// road where the set has one; then the first lane (a metre at a time across the road) and, for one standing still, the
+// first place along it where at no moment of the shot it comes within reach of anyone, has the camera inside it or,
+// standing, hides a person from the camera. A car someone stops with his hands is his and comes at him.
+const VPLANS = new WeakMap<LPShot, (RoadPlace | undefined)[]>();
+const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, aspect: number) => {
+  const got = VPLANS.get(shot);
+  if (got) return got;
+  const bigs = shot.big ?? [];
+  const stopper = shot.actors.some((a) => a.action === 'push-stop');
+  const want = bigs.map((b) => VEHICLE.has(b.kind) && ROAD_MOTIONS.has(b.motion) && !(b.motion === 'stop' && stopper));
+  let out: (RoadPlace | undefined)[] = bigs.map(() => undefined);
+  if (want.some(Boolean)) {
+    const {paths} = layoutFor(shot, set, cast);
+    const views: {cam: THREE.Vector3; heads: THREE.Vector3[]}[] = [];
+    for (let i = 0; i <= 8; i++) {
+      const t = (shot.duration * i) / 8;
+      const placed = placeAll(shot, set, t, cast);
+      const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
+      if (who) views.push({cam: camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1).pos, heads: placed.map((p) => p.head)});
+    }
+    const xRoad = set.walk === 'x'; // the road runs along x (else along z)
+    out = bigs.map((b, k) => {
+      if (!want[k]) return undefined;
+      const sp = spotOf(set, b.spot);
+      const road = set.road !== undefined && xRoad;
+      const base = road ? set.road! : xRoad ? sp.z : sp.x;
+      const at = xRoad ? sp.x : sp.z;
+      const [w, h, l] = SIZE[b.kind];
+      const passes = b.motion === 'drive' || b.motion === 'stop'; // it comes along the whole road
+      const lanes = (road ? [0, 1, 2, 3, 4, 5, 6] : [0, -1, 1, -2, 2, -3, 3, -4, 4]).map((d) => base + d);
+      const shifts = passes ? [0] : [0, -1, 1, -2, 2].map((m) => m * (l / 2 + 1.4));
+      const across = (v: {x: number; z: number}) => (xRoad ? v.z : v.x);
+      const along = (v: {x: number; z: number}) => (xRoad ? v.x : v.z);
+      let fallback: RoadPlace | undefined;
+      for (const lane of lanes) {
+        for (const shift of shifts) {
+          const c = at + shift;
+          const near = (v: {x: number; z: number}, m: number) => Math.abs(across(v) - lane) < w / 2 + m && (passes || Math.abs(along(v) - c) < l / 2 + m);
+          if (paths.some((pp) => pp && pp.some((q) => near({x: q[0], z: q[1]}, 0.5)))) continue; // through someone
+          if (views.some((v) => v.cam.y < h + 0.35 && near(v.cam, 0.35))) continue; // the camera inside it
+          const place: RoadPlace = {lane, shift};
+          if (passes) return place; // driving past the lens or in front of people for a moment is fine
+          fallback ??= place;
+          const st = bigState(b, set, [], 0, shot.duration, k, place);
+          const hides = views.some((v) => v.heads.some((hd) => [0.25, 0.4, 0.55, 0.7, 0.85].some((f) => insideBig(b, st, v.cam.clone().lerp(hd, f), 0.05))));
+          if (!hides) return place;
+        }
+      }
+      return fallback ?? {lane: base, shift: 0};
+    });
+  }
+  VPLANS.set(shot, out);
+  return out;
+};
+
+// How far the camera must move toward what it looks at so that at no moment of the shot is it inside a vehicle or a
+// boulder (0 almost always), worked out once per shot from 13 moments.
+const PULLS = new WeakMap<LPShot, number>();
+const pullOf = (shot: LPShot, set: SetDef, cast: Record<string, Design>, aspect: number) => {
+  const got = PULLS.get(shot);
+  if (got !== undefined) return got;
+  let pull = 0;
+  const solid = (shot.big ?? []).map((b) => VEHICLE.has(b.kind) || b.kind === 'boulder');
+  if (solid.some(Boolean)) {
+    const lanes = vehiclePlans(shot, set, cast, aspect);
+    const da = actionTime(shot, shot.duration);
+    for (let i = 0; i <= 12; i++) {
+      const t = (shot.duration * i) / 12;
+      const placed = placeAll(shot, set, t, cast);
+      const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
+      if (!who) continue;
+      const plan = camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1);
+      const people = holders(placed);
+      const states = (shot.big ?? []).map((b0, k) => {
+        const b = scaledBig(b0, shot);
+        return {b, st: bigState(b, set, people, actionTime(shot, t), da, k, lanes[k])};
+      }).filter((_, k) => solid[k]);
+      const toLook = plan.look.clone().sub(plan.pos);
+      const D = toLook.length();
+      toLook.normalize();
+      const blocked = (d: number) => states.some(({b, st}) => insideBig(b, st, plan.pos.clone().addScaledVector(toLook, d)));
+      if (!blocked(pull)) continue;
+      const most = Math.min(D - 0.6, plan.pos.distanceTo(who.head) - 1.1); // never into the face it films
+      for (let d = pull + 0.15; d < most; d += 0.15) {
+        if (!blocked(d)) {
+          pull = d;
+          break;
+        }
+      }
+    }
+  }
+  PULLS.set(shot, pull);
+  return pull;
+};
+
 const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect: number}> = ({shot, t, props, aspect}) => {
   const set = SETS[shot.set] ?? SETS.void;
   const look = LOOKS[shot.light] ?? LOOKS.day;
@@ -757,15 +885,25 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   const placed = placeAll(shot, set, t, props.cast);
   const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
   const people = holders(placed);
+  const lanes = vehiclePlans(shot, set, props.cast, aspect);
   const bigs = (shot.big ?? []).map((b0, i) => {
     const b = scaledBig(b0, shot);
-    return {b, st: bigState(b, set, people, ta, da, i), i};
+    return {b, st: bigState(b, set, people, ta, da, i, lanes[i]), i};
   });
   void holderFor;
   const fx = fxPlan(shot, set, placed, who, bigs, ta, da);
   const plan = who
     ? camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1)
     : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
+  // never inside a bus driving by: the camera moves toward what it looks at, for the whole shot, with a wider lens
+  const pull = who ? pullOf(shot, set, props.cast, aspect) : 0;
+  if (pull > 0) {
+    const toLook = plan.look.clone().sub(plan.pos);
+    const D = toLook.length();
+    plan.pos.addScaledVector(toLook.normalize(), pull);
+    plan.fov = Math.min(75, (2 * Math.atan(Math.tan(((plan.fov / 2) * Math.PI) / 180) * (D / Math.max(0.5, D - pull))) * 180) / Math.PI);
+    plan.focus = Math.max(0.3, plan.focus - pull);
+  }
   // the camera shakes with the hits: a quick decaying jitter on where it is and where it looks
   const shake = shakeAt(fx.map((f) => ({kind: f.kind, at: f.ctx.at})), ta);
   if (shake > 0.001) {

@@ -308,7 +308,9 @@ his hand: hold a mug, a phone), 'look-hands' (stares at his own hands). Everyone
 scared), 'cower' (crouched, arms over the head), 'fall' (knocked down), 'help-up' (a hand down to someone), 'kneel', \
 'crouch', 'carry' (carries a person who is 'carried' in the same shot, the carrier listed first; with `to` he walks).
 - Big things ('big'): car, bus, truck, beam (steel girder), crate, boulder, barbell, pipe, door, ball, with a motion \
-and `at`. Effects ('fx'): shockwave, crack, dust, speed, sparks, debris, glass, smoke, fire, shake, flash, alarm (red \
+and `at`. Cars, buses and trucks drive and stand on the road ('street' and 'busstop' have one in front of the \
+pavement, on 'highway' the spots are the road); people wait on the pavement, out of their way; the man who stops one \
+with his hands steps onto the road, filmed from the 'side' or 'wide'. Effects ('fx'): shockwave, crack, dust, speed, sparks, debris, glass, smoke, fire, shake, flash, alarm (red \
 and blue emergency light), rain, wind. The editor already adds the usual ones to an action (a landing cracks the \
 ground with a shockwave and dust and shakes the camera; a stopped truck throws sparks; a dash leaves streaks), so add \
 only what else the moment needs (fire and smoke after a crash, rain for mood, glass when a window breaks).
@@ -771,6 +773,7 @@ def repair(story: Story) -> list[str]:
 
 GESTURES = {"point", "help-up", "wave", "carry"}  # an action at another person: both must be in the picture
 ONE_FACE = {"face", "face-top", "front", "detail", "top", "low", "crash-zoom"}  # cameras that show only the subject
+IN_FRONT = {"face", "front", "low", "crash-zoom", "detail"}  # cameras placed in front of the subject's face
 
 
 def who_key(name: str) -> str:
@@ -796,6 +799,12 @@ def _stage(story: Story, s: LPShot) -> list[str]:
     if subject not in here:
         subject = spk if spk in here else "hero" if "hero" in here else who_key(s.actors[0].who)
     s.subject = names.get(subject, "hero")
+    # stopping a car or bus with his hands: a camera in front of him stands where it stops (the editor's camera ended
+    # up inside the bus); from the side
+    stops = [a for a in s.actors if a.action == "push-stop"]
+    if stops and who_key(stops[0].who) == subject and s.camera in IN_FRONT:
+        notes.append(f"'{s.camera}' on a man stopping a vehicle stood where it stops: 'side'")
+        s.camera = "side"
     if len(here) < 2:
         return notes
     if spk in here:  # a line said to someone: they look at each other

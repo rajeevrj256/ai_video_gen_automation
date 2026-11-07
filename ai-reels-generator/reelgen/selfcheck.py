@@ -332,6 +332,15 @@ def lowpoly_lists() -> None:
     if (f"export const STOP_SHORT = {STOP_SHORT};" not in lp_tsx or f"export const STOP_SEATED = {STOP_SEATED};" not in lp_tsx
             or not seats_ts or set(re.findall(r"'([\w-]+)'", seats_ts.group(1))) != SEAT_SPOTS):
         fail("lowpoly: timeline STOP_SHORT / STOP_SEATED / SEAT_SPOTS differ from LowPoly.tsx")
+    # who sits on a seat spot and where everyone else stands at one (the user's hero stood inside the bus stop's bench)
+    from .lowpoly.timeline import LYING_ACTIONS, SEATED_ACTIONS, set_spots
+    for name, mine in (("SEATED", SEATED_ACTIONS), ("LYING", LYING_ACTIONS)):
+        theirs = re.search(rf"const {name} = new Set<Action>\(\[([^\]]*)\]\)", lp_tsx)
+        if not theirs or set(re.findall(r"'([\w-]+)'", theirs.group(1))) != mine:
+            fail(f"lowpoly: timeline {name}_ACTIONS differs from LowPoly.tsx {name}")
+    seats = [(st, k, v) for st, sp in set_spots().items() for k, v in sp.items() if k in SEAT_SPOTS]
+    if not seats or any(v[:2] == v[2:] for _st, _k, v in seats) or set_spots()["busstop"]["chair"][2:] != (0.0, -0.85):
+        fail(f"lowpoly: a seat spot without a standing place in Sets.tsx: {[(a, b) for a, b, v in seats if v[:2] == v[2:]]}")
     # who looks at whom (the user's son had to point AT his dad on the chair, the camera showing both)
     lib = {c["name"]: c for c in S.CAST_LIBRARY}
     cast = [S.LPCast(name=n, who=lib[n]["who"], design=S.LPDesign(**lib[n]["design"]), voice=lib[n]["voice"])
@@ -350,6 +359,14 @@ def lowpoly_lists() -> None:
         fail(f"lowpoly staging: pointing at his dad gave subject {s1.subject}, camera {s1.camera}, look {s1.actors[0].look_at}")
     if (s2.subject, s2.actors[0].look_at, s2.actors[1].look_at) != ("Kai", "Kai", "hero"):
         fail(f"lowpoly staging: a line said to someone gave {s2.subject}, {[a.look_at for a in s2.actors]}")
+    stop = S.Story(title="t", problem="", youtube_title="", description="", tags=[], hashtags=[], thumbnail_text="",
+                   mood="calm", end_mood="calm", music_prompt="", shots=[S.LPShot(
+                       line="", set="busstop", light="day", camera="front", actors=[
+                           S.LPActor(who="hero", action="push-stop", expression="angry", spot="center")],
+                       big=[S.LPBig(kind="bus", spot="center", motion="stop", at=0.4)])], kind="fiction")
+    S.repair(stop)
+    if stop.shots[0].camera != "side":
+        fail(f"lowpoly staging: a man stopping a bus kept the '{stop.shots[0].camera}' camera, which stands where the bus stops")
     shot1 = build(staged, {}, vertical=False, watermark="", seed=1)[0]["shots"][0]
     if shot1["focus"] != 0 or shot1["actors"][0].get("look") != "his dad":
         fail(f"lowpoly staging: props lost the subject or the look: {shot1['focus']}, {shot1['actors'][0]}")

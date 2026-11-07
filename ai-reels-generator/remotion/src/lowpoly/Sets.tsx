@@ -7,13 +7,16 @@ import * as THREE from 'three';
 import {facetedBall, mat, rng} from './Man';
 import type {Light, SetName, Spot} from './types';
 
-export type SpotDef = {x: number; z: number; ry: number; seat?: number; bed?: number};
+// `stand`: where someone who isn't sitting stands at a seat spot (in front of a bench or bed, beside a chair at a
+// table or desk); without it a man standing 'at the bench' stood inside it. Kept in step with timeline.set_spots.
+export type SpotDef = {x: number; z: number; ry: number; seat?: number; bed?: number; stand?: [number, number]};
 export type SetDef = {
   spots: Partial<Record<Spot, SpotDef>>;
   wide: {pos: [number, number, number]; look: [number, number, number]};
   sun: [number, number, number]; // where the key light comes from (a point the light shines from, toward the origin)
   outdoor: boolean;
   walk: 'x' | 'z'; // the way a walk goes when the shot gives no destination
+  road?: number; // z of the traffic lane (walk 'x' sets with a road): cars and buses drive and stand there, never on the pavement
   surface: [number, number, number]; // where things are put
   lamp?: [number, number, number]; // where a lamp's light comes from when one is on
   Draw: React.FC<{look: Look; seed: number}>;
@@ -278,13 +281,13 @@ const night = (look: Look) => look.shade < 0.8;
 const bedroom: SetDef = {
   lamp: [0.95, 1.0, -2.55],
   spots: {
-    bed: {x: -0.6, z: -1.45, ry: 0, bed: 0.55, seat: 0.55},
+    bed: {x: -0.6, z: -1.45, ry: 0, bed: 0.55, seat: 0.55, stand: [-0.6, 0.15]},
     center: {x: 0.6, z: 0.5, ry: 0},
     left: {x: -1.6, z: 0.6, ry: 0},
     right: {x: 1.8, z: 0.2, ry: 0},
     window: {x: 2.5, z: -1.0, ry: Math.PI / 2},
     door: {x: -2.6, z: 1.0, ry: Math.PI / 2},
-    chair: {x: -0.6, z: -0.35, ry: 0, seat: 0.55},
+    chair: {x: -0.6, z: -0.35, ry: 0, seat: 0.55, stand: [-0.6, 0.3]},
   },
   wide: {pos: [2.9, 3.0, 3.4], look: [-0.5, 0.5, -1.3]},
   sun: [6, 4.5, -0.4],
@@ -311,7 +314,7 @@ const hallway: SetDef = {
   spots: {
     door: {x: 0, z: -2.1, ry: Math.PI},
     center: {x: 0.3, z: 0.2, ry: 0},
-    chair: {x: -2.2, z: -0.9, ry: Math.PI / 2, seat: 0.47},
+    chair: {x: -2.2, z: -0.9, ry: Math.PI / 2, seat: 0.47, stand: [-1.55, -0.9]},
     left: {x: -1.2, z: 0.4, ry: 0},
     right: {x: 1.4, z: 0.3, ry: 0},
   },
@@ -345,6 +348,7 @@ const street: SetDef = {
   sun: [3, 6, 6],
   outdoor: true,
   walk: 'x',
+  road: 2.8,
   surface: [0, 0, -0.4],
   Draw: ({look, seed}) => {
     const n = night(look);
@@ -379,7 +383,7 @@ const street: SetDef = {
 };
 
 const park: SetDef = {
-  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -0.5, z: 0, ry: 0}, right: {x: 0.5, z: 0, ry: 0}, chair: {x: 2.0, z: -1.0, ry: -Math.PI / 2, seat: 0.45}, far: {x: 0, z: -12, ry: 0}},
+  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -0.5, z: 0, ry: 0}, right: {x: 0.5, z: 0, ry: 0}, chair: {x: 2.0, z: -1.0, ry: -Math.PI / 2, seat: 0.45, stand: [1.35, -1.0]}, far: {x: 0, z: -12, ry: 0}},
   wide: {pos: [3.5, 3.2, 6], look: [0, 0.8, -3]},
   sun: [-3, 5, -20],
   outdoor: true,
@@ -423,12 +427,12 @@ const kitchen: SetDef = {
   lamp: [0, 2.1, -1.8],
   spots: {
     counter: {x: 0.2, z: -1.95, ry: Math.PI},
-    chair: {x: -1.45, z: -0.2, ry: Math.PI / 2, seat: 0.48},
+    chair: {x: -1.45, z: -0.2, ry: Math.PI / 2, seat: 0.48, stand: [-1.45, 0.5]},
     center: {x: 0.9, z: 0.6, ry: 0},
     left: {x: -1.5, z: 0.9, ry: 0},
     right: {x: 1.9, z: 0.4, ry: 0},
     window: {x: 0.2, z: -1.95, ry: Math.PI},
-    desk: {x: -1.45, z: -0.2, ry: Math.PI / 2, seat: 0.48},
+    desk: {x: -1.45, z: -0.2, ry: Math.PI / 2, seat: 0.48, stand: [-1.45, 0.5]},
   },
   wide: {pos: [2.9, 2.9, 3.4], look: [-0.4, 0.6, -1.2]},
   sun: [-1, 5, -6],
@@ -455,8 +459,8 @@ const kitchen: SetDef = {
 const living: SetDef = {
   lamp: [2.6, 1.75, -2.5],
   spots: {
-    couch: {x: -2.35, z: -0.8, ry: Math.PI / 2, seat: 0.47},
-    chair: {x: -0.1, z: -2.1, ry: 0.3, seat: 0.47},
+    couch: {x: -2.35, z: -0.8, ry: Math.PI / 2, seat: 0.47, stand: [-1.7, -0.8]},
+    chair: {x: -0.1, z: -2.1, ry: 0.3, seat: 0.47, stand: [0.09, -1.48]},
     center: {x: 0.5, z: 0.4, ry: 0},
     window: {x: 0.3, z: -2.0, ry: Math.PI},
     left: {x: -1.0, z: 0.8, ry: 0},
@@ -501,8 +505,8 @@ const living: SetDef = {
 const office: SetDef = {
   lamp: [1.3, 1.5, -1.2],
   spots: {
-    desk: {x: 0.3, z: -1.2, ry: Math.PI / 2, seat: 0.5},
-    chair: {x: 0.3, z: -1.2, ry: Math.PI / 2, seat: 0.5},
+    desk: {x: 0.3, z: -1.2, ry: Math.PI / 2, seat: 0.5, stand: [0.3, -0.5]},
+    chair: {x: 0.3, z: -1.2, ry: Math.PI / 2, seat: 0.5, stand: [0.3, -0.5]},
     center: {x: -0.6, z: 0.5, ry: 0},
     window: {x: -1.5, z: -2.0, ry: Math.PI},
     left: {x: -1.8, z: 0.6, ry: 0},
@@ -567,7 +571,7 @@ const bathroom: SetDef = {
 };
 
 const gym: SetDef = {
-  spots: {center: {x: 0, z: -0.4, ry: 0}, chair: {x: -1.6, z: -1.4, ry: 0, seat: 0.45}, left: {x: -1.4, z: 0.4, ry: 0}, right: {x: 1.4, z: 0.4, ry: 0}, mirror: {x: 0.6, z: -1.9, ry: Math.PI}},
+  spots: {center: {x: 0, z: -0.4, ry: 0}, chair: {x: -1.6, z: -1.4, ry: 0, seat: 0.45, stand: [-1.6, -0.75]}, left: {x: -1.4, z: 0.4, ry: 0}, right: {x: 1.4, z: 0.4, ry: 0}, mirror: {x: 0.6, z: -1.9, ry: Math.PI}},
   wide: {pos: [2.9, 2.8, 3.6], look: [-0.3, 0.7, -1.3]},
   sun: [5, 6, 2],
   outdoor: false,
@@ -594,7 +598,7 @@ const gym: SetDef = {
 const cafe: SetDef = {
   lamp: [0, 2.0, -1.2],
   spots: {
-    chair: {x: -1.35, z: -0.6, ry: Math.PI / 2, seat: 0.48},
+    chair: {x: -1.35, z: -0.6, ry: Math.PI / 2, seat: 0.48, stand: [-1.35, 0.1]},
     counter: {x: 0.8, z: -1.6, ry: Math.PI},
     center: {x: 0.4, z: 0.6, ry: 0},
     left: {x: -1.6, z: 0.7, ry: 0},
@@ -629,11 +633,12 @@ const cafe: SetDef = {
 };
 
 const busstop: SetDef = {
-  spots: {chair: {x: 0, z: -1.5, ry: 0, seat: 0.46}, center: {x: 1.4, z: -0.5, ry: 0}, left: {x: -1.6, z: -0.5, ry: 0}, right: {x: 2.4, z: -0.4, ry: -Math.PI / 2}},
+  spots: {chair: {x: 0, z: -1.5, ry: 0, seat: 0.46, stand: [0, -0.85]}, center: {x: 1.4, z: -0.5, ry: 0}, left: {x: -1.6, z: -0.5, ry: 0}, right: {x: 2.4, z: -0.4, ry: -Math.PI / 2}},
   wide: {pos: [3.2, 2.6, 5.0], look: [0, 1.0, -1.5]},
   sun: [5, 6, -3],
   outdoor: true,
   walk: 'x',
+  road: 2.8,
   surface: [0.7, 0.47, -1.5],
   Draw: ({look, seed}) => {
     const n = night(look);
@@ -660,7 +665,7 @@ const busstop: SetDef = {
 };
 
 const rooftop: SetDef = {
-  spots: {center: {x: 0, z: -1.6, ry: Math.PI}, left: {x: -1.4, z: -0.5, ry: 0}, right: {x: 1.4, z: -0.5, ry: 0}, chair: {x: 0, z: -2.05, ry: 0, seat: 0.9}},
+  spots: {center: {x: 0, z: -1.6, ry: Math.PI}, left: {x: -1.4, z: -0.5, ry: 0}, right: {x: 1.4, z: -0.5, ry: 0}, chair: {x: 0, z: -2.05, ry: 0, seat: 0.9, stand: [0, -1.4]}},
   wide: {pos: [3, 2.6, 4.2], look: [0, 1.0, -2.5]},
   sun: [-4, 4, -12],
   outdoor: true,
@@ -686,7 +691,7 @@ const rooftop: SetDef = {
 };
 
 const voidSet: SetDef = {
-  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -1.2, z: 0, ry: 0}, right: {x: 1.2, z: 0, ry: 0}, chair: {x: 0, z: 0, ry: 0, seat: 0.46}},
+  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -1.2, z: 0, ry: 0}, right: {x: 1.2, z: 0, ry: 0}, chair: {x: 0, z: 0, ry: 0, seat: 0.46, stand: [0, 0.65]}},
   wide: {pos: [2.6, 2.6, 4.2], look: [0, 0.9, 0]},
   sun: [4, 6, 3],
   outdoor: false,
@@ -767,7 +772,7 @@ const construction: SetDef = {
     left: {x: -2.0, z: 0.3, ry: 0},
     right: {x: 2.0, z: 0.3, ry: 0},
     far: {x: 0, z: -7, ry: 0},
-    chair: {x: 3.4, z: -1.4, ry: -Math.PI / 2, seat: 0.6},
+    chair: {x: 3.4, z: -1.4, ry: -Math.PI / 2, seat: 0.6, stand: [2.75, -1.4]},
     door: {x: -4.2, z: -2.6, ry: Math.PI},
   },
   wide: {pos: [4.8, 3.6, 7.5], look: [0, 1.5, -2.5]},
@@ -898,7 +903,7 @@ const alley: SetDef = {
     right: {x: 1.1, z: 0.3, ry: 0},
     far: {x: 0, z: -11, ry: 0},
     door: {x: -1.8, z: -4, ry: Math.PI / 2},
-    chair: {x: 1.7, z: -1.6, ry: -Math.PI / 2, seat: 0.45},
+    chair: {x: 1.7, z: -1.6, ry: -Math.PI / 2, seat: 0.45, stand: [1.05, -1.6]},
   },
   wide: {pos: [1.5, 3.3, 6.5], look: [0, 1.0, -3.5]},
   sun: [2, 9, -10],
@@ -961,8 +966,8 @@ const lab: SetDef = {
     center: {x: 0, z: 0.4, ry: 0},
     left: {x: -1.6, z: 0.6, ry: 0},
     right: {x: 1.6, z: 0.6, ry: 0},
-    desk: {x: -1.5, z: -1.75, ry: Math.PI, seat: 0.5},
-    chair: {x: -1.5, z: -1.75, ry: Math.PI, seat: 0.5},
+    desk: {x: -1.5, z: -1.75, ry: Math.PI, seat: 0.5, stand: [-0.8, -1.75]},
+    chair: {x: -1.5, z: -1.75, ry: Math.PI, seat: 0.5, stand: [-0.8, -1.75]},
     counter: {x: -1.5, z: -1.95, ry: Math.PI},
     far: {x: 1.7, z: -1.9, ry: 0},
     door: {x: -2.6, z: 0.9, ry: Math.PI / 2},
