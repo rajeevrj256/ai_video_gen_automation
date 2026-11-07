@@ -62,7 +62,9 @@ const idle = (p: Pose, t: number, k: number) => {
 
 // `steer`: the front wheels' turn of the vehicle he drives (his hands turn the wheel with it); `air`: off the ground
 // after leaping from a vehicle (tucked, or spread in free fall once `fall` is set)
-export type PoseIn = {action: Action; t: number; dur: number; seat: number | null; k: number; at?: number; moving?: boolean; steer?: number; air?: 'leap' | 'fall'};
+// `press`: how far his right foot is down on a pedal (0..1) and which (`pedal`): the cut-in to his foot before the car
+// lurches or brakes
+export type PoseIn = {action: Action; t: number; dur: number; seat: number | null; k: number; at?: number; moving?: boolean; steer?: number; air?: 'leap' | 'fall'; press?: number; pedal?: 'gas' | 'brake'};
 
 // Walking speed in units a second (the editor moves the root along his path at this speed).
 export const SPEED: Partial<Record<Action, number>> = {walk: 1.0, run: 2.6, jog: 1.7, dash: 16, flee: 2.8, carry: 0.8};
@@ -85,7 +87,7 @@ const runLegs = (p: Pose, t: number, f: number, amp: number, k: number, knee = 1
   return sw;
 };
 
-export function pose({action, t, dur, seat, k, at, moving, steer = 0, air}: PoseIn): Pose {
+export function pose({action, t, dur, seat, k, at, moving, steer = 0, air, press = 0, pedal = 'gas'}: PoseIn): Pose {
   const p = base();
   const s = seat ?? 0.48; // a chair when nothing else is there
   switch (action) {
@@ -516,7 +518,9 @@ export function pose({action, t, dur, seat, k, at, moving, steer = 0, air}: Pose
       sitting(p, s);
       const w = Math.max(-0.6, Math.min(0.6, steer * 1.6));
       p.legL = L(-1.45, 0.05, 0.3); // legs out long, as in a low sports car (feet inside its body)
-      p.legR = L(-1.45, 0.05, 0.3);
+      // the right foot over the accelerator, or moved across onto the brake, and pushed down
+      const over = pedal === 'brake' ? ease(Math.min(1, press * 3)) : 0;
+      p.legR = L(-1.45 + 0.09 * press, 0.05 - 0.37 * over, 0.3 - 0.22 * press);
       p.armL = L(-1.08 - 0.3 * w, 0.12, -0.62 + 0.15 * w);
       p.armR = L(-1.08 + 0.3 * w, 0.12, -0.62 - 0.15 * w);
       p.lean = 0.04;

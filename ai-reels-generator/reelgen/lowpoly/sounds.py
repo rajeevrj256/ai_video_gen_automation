@@ -154,6 +154,25 @@ def _engine() -> np.ndarray:
     return _loopable(_lowpass(x * 0.5 + air, 3200) * shift)
 
 
+def _rev() -> np.ndarray:
+    """The foot slammed on the accelerator: the V8's note leaps from idle to the top of its revs in a third of a second
+    and holds there as it pulls away, with the intake's rush; a crackle as it settles. 140-500 Hz, no sub boom."""
+    t = _t(1.4)
+    rpm = 1100 + 5600 * (1 - np.exp(-np.maximum(0, t - 0.03) / 0.12)) - 900 * np.clip((t - 0.7) / 0.7, 0, 1)
+    f = rpm / 60 * 4
+    phase = 2 * np.pi * np.cumsum(f) / RATE
+    x = sum(a * np.sin(k * phase + k * 0.7) for k, a in ((0.5, 0.6), (1, 1.0), (1.5, 0.4), (2, 0.55), (3, 0.3), (4, 0.16)))
+    pulse = 0.6 + 0.4 * np.maximum(0, np.sin(phase))
+    air = _lowpass(_noise(50, len(t)), 2600) * pulse * (0.25 + 0.35 * np.clip((t - 0.03) / 0.15, 0, 1))
+    rng = np.random.default_rng(51)
+    pops = np.zeros_like(t)
+    for at in rng.uniform(0.95, 1.3, 5):
+        i = int(at * RATE)
+        pops[i:i + 160] += rng.uniform(0.3, 0.6) * np.exp(-np.arange(min(160, len(t) - i)) / 30)
+    env = np.minimum(t / 0.02, 1) * np.minimum((1.4 - t) / 0.25, 1)
+    return _lowpass(x * 0.5 + air, 3400) * env + _lowpass(pops * _noise(52, len(t)), 3000)
+
+
 def _jet() -> np.ndarray:
     """A jet going over (looped): a broad roar and a high turbine whine."""
     t = _t(6.0)
@@ -176,7 +195,7 @@ def _propeller() -> np.ndarray:
 
 MAKERS = {
     **sticky.MAKERS,
-    "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45),
+    "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45), "rev": (_rev, 0.6),
     "impact": (sfx._impact, 0.75), "crash": (_crash, 0.7), "glass": (_glass, 0.5), "crack": (_crack, 0.6), "creak": (_creak, 0.45),
     "skid": (_skid, 0.45), "siren": (_siren, 0.3), "wind": (_wind, 0.35), "fire": (_fire, 0.35), "sparks": (_sparks, 0.35),
     "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "rumble": (lambda: sfx._rumble(1.6), 0.55),

@@ -144,7 +144,8 @@ const profile = (b: Big, travel: Travel, t: number, at: number, dur: number, alt
   }
   switch (b.motion) {
     case 'race':
-      p.keys = [[0, 20], [Math.max(0.5, dur), 34]];
+      // the foot goes down (the cut-in to the pedal) and it surges
+      p.keys = [[0, 15], [0.75, 16], [Math.max(1, dur), 36]];
       p.lat = 0.18 * Math.sin(t * 0.7 + k);
       break;
     case 'drift':
@@ -188,6 +189,10 @@ const profile = (b: Big, travel: Travel, t: number, at: number, dur: number, alt
   }
   return p;
 };
+
+// The wheel yanked just before a drift or a spin (action seconds from its moment), held through it, let go after.
+const yankOf = (motion: string, tau: number) =>
+  motion === 'drift' || motion === 'spin' ? (motion === 'spin' ? -0.75 : -0.55) * (tau < 0 ? E((tau + 0.5) / 0.4) : 1 - E((tau - 0.5) / 0.7)) : 0;
 
 // A vehicle under way at time t: along the set's road (or its walk), at its spot at its moment (a jump at the roof's
 // edge), never further than the set reaches; a second one in a shot follows behind in the next lane.
@@ -240,7 +245,8 @@ export const ridePath = (b: Big, set: SetDef, t: number, dur: number, k: number,
     speed: Math.abs(v),
     heading,
     wheel: (travelled(pr.keys, t) * fit) / 0.31,
-    steer: -0.6 * pr.yaw + (b.motion === 'drive' ? 0.25 * Math.sin(t * 0.8 + k) : 0),
+    // before a drift or a spin he yanks the wheel (the cut-in to his hands comes first, then the slide)
+    steer: Math.max(-0.75, Math.min(0.75, -0.4 * pr.yaw + yankOf(b.motion, t - at) + (b.motion === 'drive' ? 0.25 * Math.sin(t * 0.8 + k) : 0))),
     air: pr.air,
     yawOff: pr.yaw,
   };
@@ -645,7 +651,16 @@ const CarWheel: React.FC<{p: V3; turn: number; steer: number; caliper: string}> 
     </group>
   );
 };
-const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, turn = 0, steer = 0}) => {
+// the pedals at the driver's feet: the accelerator under his right foot, the brake inboard of it, hinged at the top
+const Pedal: React.FC<{x: number; w: number; h: number; press: number}> = ({x, w, h, press}) => (
+  <group position={[x, 0.62, 0.36]} rotation={[0.55 - 0.42 * press, 0, 0]}>
+    <Box p={[0, -0.06, 0]} s={[0.025, 0.12, 0.025]} c="#2a2b30" />
+    <Box p={[0, -0.12 - h / 2, 0.01]} s={[w, h, 0.025]} c="#9aa0a8" />
+    {[0, 1, 2].map((r) => <Box key={r} p={[0, -0.12 - h * 0.2 - r * h * 0.3, 0.025]} s={[w * 0.85, 0.008, 0.008]} c="#1d1e22" />)}
+  </group>
+);
+export type Pedals = {gas: number; brake: number};
+const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pedals}> = ({c, turn = 0, steer = 0, pedals}) => {
   const paint = paintMat(c);
   const dark = mat('#141518');
   const L = CAR_L / 2;
@@ -707,7 +722,10 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, tur
       ))}
       {/* inside: carpet, two leather bucket seats, the centre tunnel with the gear lever, a dashboard with its lit
           dials and screen, the steering wheel where his hands are */}
-      <Box p={[0, 0.315, -0.13]} s={[CAR_W - 0.2, 0.03, 1.42]} c="#141417" />
+      {/* (the body's rounded edges grow its outline by 0.07: the cabin's floor is at 0.37, its front wall at z 0.51;
+          carpet on both, so the footwell is dark round his feet and the pedals) */}
+      <Box p={[0, 0.38, -0.13]} s={[CAR_W - 0.2, 0.025, 1.28]} c="#141417" />
+      <Box p={[0, 0.6, 0.5]} s={[CAR_W - 0.2, 0.46, 0.02]} c="#141417" />
       {[-0.4, 0.4].map((x) => (
         <group key={`s${x}`}>
           <Box p={[x, 0.35, -0.32]} s={[0.48, 0.1, 0.5]} c={LEATHER} />
@@ -725,16 +743,28 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, tur
         <primitive object={mat('#2a2b2f', {rough: 0.35})} attach="material" />
       </mesh>
       <Box p={[0, 0.79, 0.45]} s={[CAR_W - 0.2, 0.15, 0.34]} c="#17181b" />
+      <Pedal x={-0.5} w={0.06} h={0.16} press={pedals?.gas ?? 0} />
+      <Pedal x={-0.36} w={0.1} h={0.09} press={pedals?.brake ?? 0} />
       <Box p={[-0.4, 0.87, 0.33]} s={[0.36, 0.1, 0.02]} c="#6fc6ff" glow={0.7} r={[-0.3, 0, 0]} />
       <Box p={[0.04, 0.88, 0.4]} s={[0.26, 0.15, 0.02]} c="#4f86c6" glow={0.6} r={[-0.3, 0, 0]} />
-      <group position={[-0.4, 0.78, 0.08]} rotation={[-0.5, 0, steer * 2.2]}>
+      {/* the steering wheel on its column, which runs forward and down into the dashboard (the user: "why steering
+          move toward the character, it must be attached to car": it hung in the air, its top leaning at him) */}
+      <group position={[-0.4, 0.78, 0.08]} rotation={[0.5, 0, steer * 2.2]}>
         <mesh>
           <torusGeometry args={[0.19, 0.026, 6, 18]} />
           <primitive object={dark} attach="material" />
         </mesh>
         <Box p={[0, -0.04, 0]} s={[0.3, 0.04, 0.03]} c="#141518" />
-        <Box p={[0, 0, -0.04]} s={[0.07, 0.07, 0.07]} c="#202125" />
+        <Box p={[0, 0, -0.03]} s={[0.08, 0.08, 0.06]} c="#202125" />
       </group>
+      <group position={[-0.4, 0.78, 0.08]} rotation={[0.5, 0, 0]}>
+        <mesh position={[0, 0, 0.19]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.035, 0.05, 0.38, 8]} />
+          <primitive object={dark} attach="material" />
+        </mesh>
+        <Box p={[0, 0, 0.27]} s={[0.12, 0.11, 0.22]} c="#17181b" />
+      </group>
+      <Box p={[-0.4, 0.7, 0.5]} s={[0.56, 0.12, 0.2]} c="#17181b" />
       {[-0.86, 0.86].map((x) =>
         [-WHEEL_Z, WHEEL_Z].map((z) => <CarWheel key={`${x}${z}`} p={[x, WHEEL_R, z]} turn={turn} steer={z > 0 ? steer : 0} caliper={caliper} />),
       )}
@@ -824,14 +854,14 @@ export const MadeModel: React.FC<{m: Made; spin: number}> = ({m, spin}) => (
   </group>
 );
 
-export const BigModel: React.FC<{kind: BigKind; color?: string; seed: number; open?: boolean; turn?: number; steer?: number; made?: Made}> = ({kind, color, seed, open = false, turn = 0, steer = 0, made}) => {
+export const BigModel: React.FC<{kind: BigKind; color?: string; seed: number; open?: boolean; turn?: number; steer?: number; made?: Made; pedals?: Pedals}> = ({kind, color, seed, open = false, turn = 0, steer = 0, made, pedals}) => {
   const c = color || PAINT[Math.abs(seed) % PAINT.length];
   void open; // (a car is always the closed coupe now; whoever drives is seen through its glass)
   switch (kind) {
     case 'made':
       return made ? <MadeModel m={made} spin={turn} /> : null;
     case 'car':
-      return <SportsCar c={color || SPORT_PAINT[Math.abs(seed) % SPORT_PAINT.length]} turn={turn} steer={steer} />;
+      return <SportsCar c={color || SPORT_PAINT[Math.abs(seed) % SPORT_PAINT.length]} turn={turn} steer={steer} pedals={pedals} />;
     case 'bus':
       return <Bus c={color || '#e2b21f'} />;
     case 'truck':
@@ -916,7 +946,7 @@ const Trail: React.FC<{puffs: {p: THREE.Vector3; age: number}[]}> = ({puffs}) =>
   </group>
 );
 
-export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boolean; t?: number; night?: boolean; children?: React.ReactNode}> = ({b, st, seed, open = false, t = 0, night = false, children}) => {
+export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boolean; t?: number; night?: boolean; pedals?: Pedals; children?: React.ReactNode}> = ({b, st, seed, open = false, t = 0, night = false, pedals, children}) => {
   const size = sizeOf(b);
   const made = madeOf(b);
   // wheels turn with the distance; a designed thing's propellers and rotors spin fast whenever it is under way
@@ -926,7 +956,7 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boole
       <group position={st.pos} rotation={new THREE.Euler(st.rx, st.ry, st.rz, 'YXZ')}>
         <group position={[-st.pivot[0], -st.pivot[1], -st.pivot[2]]} scale={st.squash}>
           <group scale={MODEL_SCALE[b.kind] ?? 1}>
-            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} />
+            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} />
           </group>
           {night && b.kind === 'car' ? (
             <>

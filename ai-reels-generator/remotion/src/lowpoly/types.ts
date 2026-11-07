@@ -46,7 +46,9 @@ export type Cam =
   | 'heli' // from a helicopter, high behind and to the side
   | 'drone' // straight down on it
   | 'cockpit' // on the dashboard, on the driver's or pilot's face
-  | 'bumper'; // low at its front corner along its flank (on a plane: the wing tip)
+  | 'bumper' // low at its front corner along its flank (on a plane: the wing tip)
+  | 'pedal' // down in the footwell: his foot on the accelerator or the brake
+  | 'wheel'; // close on his hands on the steering wheel
 
 export type Action =
   | 'stand'
@@ -219,6 +221,9 @@ export type LPShot = {
   big?: Big[];
   fx?: Fx[];
   slowmo?: boolean; // the action at 0.4x while the words run at speed
+  // a split-second cut-in inside the shot, as in an action film: his foot hitting the accelerator or the brake, or his
+  // hands yanking the wheel, then back to the shot's own camera on what it does (seconds into the shot; `on` = the car)
+  insert?: {cam: 'pedal' | 'wheel'; from: number; to: number; pedal?: 'gas' | 'brake'; on: number};
 };
 
 export type Caption = {start: number; end: number; text: string; red?: boolean; stamp?: boolean};

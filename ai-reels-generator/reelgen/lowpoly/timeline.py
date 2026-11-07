@@ -83,6 +83,15 @@ HEAVY = VEHICLE | {"beam", "boulder", "crate", "pipe"}
 OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley"}
 SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}
 JUMP_TIME = 1.25  # = the jump's time in the air in Big.tsx (profile 'jump', T)  # energy -> the music's act (sticky.mixdown.INTENSITY)
+# Split-second cut-ins inside a shot where he drives a car (LowPoly.tsx `planFor`/`pressAt`, Big.tsx `yankOf`): his foot
+# slams the accelerator before it races off or jumps, moves across and stamps on the brake before it stops, his hands
+# yank the wheel before a drift or a spin; then back to the shot's camera on what the car does. Each is
+# (camera, pedal, when it starts and ends: 'go' = from the shot's start, else action seconds before the moment).
+CUT_IN = {"race": ("pedal", "gas", "go", 0.75), "jump": ("pedal", "gas", 0.75, 0.15), "stop": ("pedal", "brake", 0.6, 0.04),
+          "drift": ("wheel", None, 0.6, 0.04), "spin": ("wheel", None, 0.6, 0.04)}
+CUT_IN_CAMS = {"pedal", "wheel"}
+CUT_IN_MIN = 0.3  # seconds: a cut-in shorter than this is a flicker, so there is none
+RACE_SURGE = 0.75  # = race's speed keys in Big.tsx: the foot goes down, then it surges from this action second
 
 
 # ---------------------------------------------------------------- footsteps where the feet land
@@ -99,7 +108,7 @@ FLOOR = {"bedroom": "wood", "hallway": "wood", "living": "wood", "cafe": "wood",
          "kitchen": "tile", "bathroom": "tile", "lab": "tile", "street": "concrete", "busstop": "concrete", "rooftop": "concrete",
          "highway": "concrete", "alley": "wet", "park": "path", "construction": "gravel", "void": "studio"}
 CAMERA_NEAR = {"wide": 0.55, "aerial": 0.4, "top": 0.6, "side": 1.0, "front": 1.0, "back": 0.9, "low": 1.0, "orbit": 0.9,
-               "face": 0.75, "face-top": 0.7, "medium": 0.8, "detail": 0.7, "crash-zoom": 0.8}
+               "face": 0.75, "face-top": 0.7, "medium": 0.8, "detail": 0.7, "crash-zoom": 0.8, "pedal": 0.6, "wheel": 0.6}
 _SPOTS: dict[str, dict[str, tuple[float, float]]] | None = None
 
 
@@ -205,6 +214,39 @@ def moments(s, dur: float) -> tuple[list[float | None], list[float | None]]:
     return acts, bigs
 
 
+def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_race: bool) -> dict | None:
+    """The split-second cut-in for this shot (seconds into it), or None: only a built-in car someone drives ('drive', `on`
+    it), never when this shot or the one before is itself on the pedal or the wheel or the shot before cut in the same
+    way, and a race only as it sets off (not every shot of a chase)."""
+    if s.camera in CUT_IN_CAMS or (prev and (prev.get("camera") in CUT_IN_CAMS)):
+        return None
+    slow = 1 / SLOW if s.slowmo else 1.0
+    for k, (b, at) in enumerate(zip(s.big, big_at)):
+        if b.kind != "car" or b.motion not in CUT_IN:
+            continue
+        if not any(x.action == "drive" and x.on == k + 1 for x in s.actors):
+            continue
+        cam, pedal, a, z = CUT_IN[b.motion]
+        if prev and (prev.get("insert") or {}).get("cam") == cam:
+            continue
+        if a == "go":
+            if prev_race:
+                continue
+            start, end = 0.12, RACE_SURGE * slow
+        else:
+            if at is None:
+                continue
+            start, end = at - a * slow, at - z * slow
+        start, end = max(0.1, start), min(end, dur - 0.4)
+        if end - start < CUT_IN_MIN:
+            continue
+        d = {"cam": cam, "from": round(start, 3), "to": round(end, 3), "on": k}
+        if pedal:
+            d["pedal"] = pedal
+        return d
+    return None
+
+
 def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: str, seed: int,
           tail: float = TAIL, pauses: float = 1.0, words: str = "on") -> tuple[dict, list[dict], list[dict], list[dict]]:
     """props, voice clips [{at, path}], sound cues [{sound, at, volume, length?}], music sections. `tail` and `pauses`
@@ -216,6 +258,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     for c in story.cast:
         cast[_key(c.name)] = editor_design(c.design)
     n = len(story.shots)
+    prev_race = False  # the shot before had him racing his car (a chase's next shot gets no second foot on the pedal)
     for i, s in enumerate(story.shots):
         a = audio.get(i)
         line = bool(a and s.line.strip())
@@ -283,6 +326,11 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 have.add("glass")
         if big:
             shot["big"] = big
+        ins = cut_in(s, dur, big_at, shots[-1] if shots else None, prev_race)
+        if ins:
+            shot["insert"] = ins
+        prev_race = any(b.kind == "car" and b.motion == "race" and any(x.action == "drive" and x.on == k + 1 for x in s.actors)
+                        for k, b in enumerate(s.big))
         if fx:
             shot["fx"] = fx
         if s.slowmo:
@@ -369,6 +417,14 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                     cue("swoosh", t + at, 0.75)
                 if s.camera in ("pass-by", "wide") or (not s.actors and s.camera == "wide"):
                     cue("flyby", t + max(0.0, at - 0.7), 0.95)
+        # the cut-in's own sounds: the engine revving as the foot goes down, a stamp on the brake, the wheel yanked
+        if ins:
+            if ins["cam"] == "pedal" and ins.get("pedal") == "gas":
+                cue("rev", t + ins["from"] + 0.1, 0.95)
+            elif ins["cam"] == "pedal":
+                cue("thud", t + ins["from"] + 0.15, 0.5)
+            else:  # the hands go over at the yank (Big.tsx `yankOf`: 0.5 action seconds before the slide)
+                cue("swoosh", t + ins["from"] + 0.1 * (1 / SLOW if s.slowmo else 1.0) + 0.05, 0.45)
         # the rush of air round someone falling free or standing on something moving fast
         if any(x.action in ("skydive", "jump-off", "brace") for x in s.actors):
             cue("wind", t + 0.02, 0.9, max(0.6, dur - 0.05))

@@ -26,7 +26,7 @@ SetName = Literal["bedroom", "hallway", "street", "park", "kitchen", "living", "
                   "construction", "highway", "alley", "lab", "sky", "void"]
 LightName = Literal["night", "lamp", "dawn", "morning", "day", "evening", "dark"]
 CamName = Literal["face", "face-top", "top", "medium", "wide", "side", "front", "back", "low", "detail", "aerial", "orbit", "crash-zoom",
-                  "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper"]
+                  "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper", "pedal", "wheel"]
 ActionName = Literal[
     "stand", "walk", "run", "sit", "sit-floor", "lie", "lie-side", "lie-phone", "phone", "type", "reach", "sit-up", "get-up", "shoes",
     "head-in-hands", "slump", "stretch", "sigh", "nod", "shake-head", "shrug", "think", "drink", "eat", "look-out", "wave", "point",
@@ -342,6 +342,11 @@ at the wheel and 'back' is his point of view over his shoulder down the road. Cu
 'heli' or 'pass-by', then 'chase', 'cockpit' on his face, 'bumper' or 'tracking' as it drifts or jumps, 'lead' as it \
 comes at us, a 'pass-by' whoosh; short shots (1.5-3 s), never the same camera twice running, `slowmo` on the jump or \
 the leap.
+- Cut-ins come by themselves: in a shot where he drives a car that races off, jumps, brakes ('stop'), drifts or spins, \
+the editor cuts for a split second to his foot slamming the accelerator or the brake, or to his hands yanking the \
+wheel, then back to your camera on what the car does. So give those shots a camera that shows the car (chase, \
+tracking, bumper, pass-by, lead, heli), not his face. 'pedal' (his foot on the pedal) and 'wheel' (his hands on the \
+wheel) as a whole shot only for a short tense beat on its own (1-1.5 s), never twice running.
 
 THINGS THE EDITOR HASN'T GOT: when the brief needs a vehicle or a big object that isn't in the list (a plane, a jet, \
 an enemy's plane, a helicopter, a motorbike, a boat, a spaceship, a tank, a drone), design it in `made` and use it in \

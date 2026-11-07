@@ -445,6 +445,35 @@ def lowpoly_vehicles() -> None:
     names = [c["sound"] for c in cues]
     if "engine" not in names or "propeller" not in names or "wind" not in names:
         fail(f"lowpoly vehicles: no engine, propeller or wind under the shots ({sorted(set(names))})")
+    # the split-second cut-ins: foot on the accelerator as a race sets off (not again in the chase's next shot), on the
+    # brake before a stop, hands on the wheel before a drift, never in a shot that is itself on the pedal
+    from .lowpoly.timeline import RACE_SURGE
+
+    race = re.search(r"case 'race':\s*(?://[^\n]*\s*)*p\.keys = \[\[0, [0-9.]+\], \[([0-9.]+),", big)
+    if not race or float(race.group(1)) != RACE_SURGE:
+        fail(f"lowpoly vehicles: a race surges at {race and race.group(1)} in Big.tsx, timeline.RACE_SURGE {RACE_SURGE}")
+    car = lambda m, at=None: [S.LPBig(kind="car", motion=m, at=at)]
+    drv = lambda: [hero(action="drive", on=1)]
+    st2 = S.Story(title="t", problem="p", youtube_title="t", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="calm",
+                  end_mood="calm", music_prompt="m", kind="fiction", shots=[
+                      S.LPShot(line="", set="highway", light="day", camera="chase", pause=2, actors=drv(), big=car("race")),
+                      S.LPShot(line="", set="highway", light="day", camera="tracking", pause=2, actors=drv(), big=car("race")),
+                      S.LPShot(line="", set="highway", light="day", camera="bumper", pause=2, actors=drv(), big=car("drift", 0.6)),
+                      S.LPShot(line="", set="street", light="night", camera="pass-by", pause=2, actors=drv(), big=car("stop", 0.6)),
+                      S.LPShot(line="", set="street", light="night", camera="pedal", pause=2, actors=drv(), big=car("stop", 0.6)),
+                      S.LPShot(line="", set="highway", light="day", camera="chase", pause=2, actors=[], big=car("drift", 0.6))])
+    S.repair(st2)
+    props, _, cues, _ = build(st2, {}, vertical=False, watermark="", seed=1)
+    ins = [x.get("insert") for x in props["shots"]]
+    got = [(i or {}).get("cam", "") + ("/" + i["pedal"] if i and i.get("pedal") else "") for i in ins]
+    if got != ["pedal/gas", "", "wheel", "pedal/brake", "", ""]:
+        fail(f"lowpoly vehicles: cut-ins {got}, wanted a gas pedal, none, the wheel, the brake, none (a pedal shot), none (nobody driving)")
+    for i in (2, 3):
+        x, sh = ins[i], props["shots"][i]
+        if x and not (0.1 <= x["from"] < x["to"] < sh["big"][0]["at"] < sh["duration"]):
+            fail(f"lowpoly vehicles: shot {i + 1}'s cut-in {x} doesn't come before its moment {sh['big'][0]['at']}")
+    if "rev" not in [c["sound"] for c in cues]:
+        fail("lowpoly vehicles: no rev as the foot goes down on the accelerator")
 
 
 def lowpoly_boards() -> None:

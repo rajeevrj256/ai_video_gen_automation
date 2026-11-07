@@ -37,6 +37,7 @@ import {
   vehicleMatrix,
   type BigState,
   type Holder,
+  type Pedals,
   type RoadPlace,
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
@@ -391,7 +392,8 @@ const placeOn = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, 
     if (mate) ry = Math.atan2(mate[0] - root[0], mate[2] - root[2]); // two on a wing face each other
   }
   // (the pose's seat is in his own units: his hips land just above the seat's top whatever his size)
-  const ps = pose({action, t, dur, seat: seat === null ? null : seat / sc, k: kk, at: ev, steer: ride.st.steer ?? 0});
+  const pd = action === 'drive' ? pressAt(shot, tReal, ride.k) : {gas: 0, brake: 0};
+  const ps = pose({action, t, dur, seat: seat === null ? null : seat / sc, k: kk, at: ev, steer: ride.st.steer ?? 0, press: Math.max(pd.gas, pd.brake), pedal: pd.brake > 0 ? 'brake' : 'gas'});
   return {...toWorld(kin(a, action, k, shot, design, ps, root, ry), ride.m, ride.k), inside: shrink < 1};
 };
 
@@ -770,7 +772,8 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
 // straight down from a drone (drone), from the dashboard on the driver's face (cockpit), low at its front corner
 // along its flank (bumper), circling it as it goes (orbit). They shake with its speed, punch in at its moment (the
 // drift, the jump, the spin) and tilt a little when they are low and fast.
-export const VEHICLE_CAMS = new Set<Cam>(['chase', 'lead', 'tracking', 'pass-by', 'heli', 'cockpit', 'bumper', 'drone']);
+export const VEHICLE_CAMS = new Set<Cam>(['chase', 'lead', 'tracking', 'pass-by', 'heli', 'cockpit', 'bumper', 'drone', 'pedal', 'wheel']);
+const INSIDE_CAMS = new Set<Cam>(['cockpit', 'pedal', 'wheel']); // inside the car: they work parked too
 // a person's camera on someone riding a vehicle under way, as the vehicle's own shot (face, medium, back, orbit and
 // crash-zoom stay on him: they go with him)
 const RIDER_CAM: Partial<Record<Cam, Cam>> = {wide: 'pass-by', side: 'tracking', front: 'lead', aerial: 'heli', low: 'bumper', detail: 'cockpit', top: 'drone'};
@@ -784,9 +787,11 @@ const ALONE_CAM: Partial<Record<Cam, Cam>> = {
   'crash-zoom': 'lead',
   detail: 'bumper',
   cockpit: 'chase',
+  pedal: 'bumper',
+  wheel: 'chase',
 };
 // a vehicle's camera with no vehicle to follow: the matching camera on the person
-const ON_FOOT: Record<string, Cam> = {chase: 'back', lead: 'front', tracking: 'side', 'pass-by': 'wide', heli: 'aerial', cockpit: 'face', bumper: 'low', drone: 'top'};
+const ON_FOOT: Record<string, Cam> = {chase: 'back', lead: 'front', tracking: 'side', 'pass-by': 'wide', heli: 'aerial', cockpit: 'face', bumper: 'low', drone: 'top', pedal: 'low', wheel: 'detail'};
 const MOMENT_MOTIONS = new Set(['drift', 'spin', 'jump', 'roll', 'stop', 'dive', 'climb', 'bank']);
 
 // The camera a shot really uses, given who it is on: a vehicle's own cameras when its subject is in a moving vehicle
@@ -794,11 +799,52 @@ const MOMENT_MOTIONS = new Set(['drift', 'spin', 'jump', 'roll', 'stop', 'dive',
 export const camOf = (cam: Cam, who: Placed | undefined, ride: Ride | undefined): Cam => {
   if (ride && !who) return ALONE_CAM[cam] ?? (VEHICLE_CAMS.has(cam) || cam === 'orbit' ? cam : 'chase');
   if (ride && ride.under) return VEHICLE_CAMS.has(cam) ? cam : RIDER_CAM[cam] ?? cam;
-  if (ride) return VEHICLE_CAMS.has(cam) ? (cam === 'cockpit' ? 'cockpit' : ON_FOOT[cam]) : cam;
+  if (ride) return VEHICLE_CAMS.has(cam) ? (INSIDE_CAMS.has(cam) ? cam : ON_FOOT[cam]) : cam;
   return VEHICLE_CAMS.has(cam) ? ON_FOOT[cam] : cam;
 };
 
+// The cut-ins of an action film's driving scene (the user: "pressing brake/acceleration by char legs for fraction of
+// second just like action films and then move angle to car or road by what happened", "if sudden car movement like
+// drifting first show car steering then actions"): down in the footwell on his foot as it hits the accelerator or the
+// brake, or over the dashboard on his hands yanking the wheel. Placed in the car's own frame from his seat.
+const insertPlan = (kind: 'pedal' | 'wheel', r: Ride, who: Placed | undefined, aspect: number, t: number, seed: number): CamPlan => {
+  const lr = who?.local?.root ?? ([-0.4, 0, -0.3] as V3);
+  const at = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(r.m);
+  const q = new THREE.Quaternion();
+  r.m.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+  const tall = aspect < 1;
+  const pedal = kind === 'pedal';
+  // the pedal: low by the door sill, looking forward and in across his shoe at the pedals (Big.tsx `Pedal`: x -0.5 and
+  // -0.36, hinged at y 0.62, z 0.36), as the films do; in front of his feet the camera was inside the bonnet
+  const pos = pedal ? at(lr[0] - 0.36, 0.6, 0.0) : at(lr[0] + 0.46, 0.98, lr[2] + 0.66);
+  const look = pedal ? at(-0.43, 0.44, 0.3) : at(lr[0], 0.8, lr[2] + 0.36);
+  // the road through the car: a fine shake with its speed
+  const jig = 0.004 * Math.min(1, (r.st.speed ?? 0) / 25);
+  pos.add(new THREE.Vector3(Math.sin(t * 57 + seed), Math.sin(t * 49 + seed * 2), Math.sin(t * 61 + seed * 3)).multiplyScalar(jig));
+  return {pos, look, up: new THREE.Vector3(0, 1, 0).applyQuaternion(q), fov: pedal ? (tall ? 66 : 54) : tall ? 60 : 50, focus: pos.distanceTo(look), aperture: 1.0, near: 0.02};
+};
+
+// How far the driver's foot is down on each pedal of car k: in the shot's cut-in to the pedal (the brake for a hard
+// stop, else the accelerator), or through a whole 'pedal' shot.
+export const pressAt = (shot: LPShot, t: number, k: number): Pedals => {
+  const ins = shot.insert;
+  let p = 0;
+  let brake = false;
+  if (ins && ins.cam === 'pedal' && ins.on === k) {
+    p = ease((t - ins.from - 0.05) / 0.16);
+    brake = ins.pedal === 'brake';
+  } else if (shot.camera === 'pedal') {
+    p = ease((t - 0.25) / 0.16);
+    brake = shot.big?.[k]?.motion === 'stop';
+  }
+  return brake ? {gas: 0, brake: p} : {gas: p, brake: 0};
+};
+
 const rideCam = (cam: Cam, r: Ride, who: Placed | undefined, set: SetDef, shot: LPShot, aspect: number, t: number, seed: number): CamPlan => {
+  if (cam === 'pedal' || cam === 'wheel') {
+    if (who && who.inside) return insertPlan(cam, r, who, aspect, t, seed);
+    return rideCam('chase', r, who, set, shot, aspect, t, seed);
+  }
   const dur = shot.duration;
   const ta = actionTime(shot, t);
   const da = actionTime(shot, dur);
@@ -981,15 +1027,21 @@ export const planFor = (shot: LPShot, set: SetDef, placed: Placed[], rides: (Rid
   const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
   // (someone who leaps off a vehicle in this shot is filmed as himself the whole shot, not as the vehicle)
   const ride = who ? (who.ride !== undefined && who.actor.action !== 'jump-off' ? rides[who.ride] : undefined) : rides.find((r) => r?.under) ?? rides.find(Boolean);
-  const cam = camOf(shot.camera, who, ride);
   const seed = shot.seed ?? 1;
+  // the cut-in: for its fraction of a second the camera is on his foot or his hands, then back
+  const ins = shot.insert;
+  if (ins && t >= ins.from && t < ins.to && rides[ins.on]) {
+    const driver = placed.find((p) => p.ride === ins.on && p.actor.action === 'drive' && p.inside);
+    if (driver) return {plan: insertPlan(ins.cam, rides[ins.on]!, driver, aspect, t, seed), who: driver, ride: rides[ins.on], cam: ins.cam as Cam, insert: true};
+  }
+  const cam = camOf(shot.camera, who, ride);
   const plan: CamPlan =
     ride && (VEHICLE_CAMS.has(cam) || (!who && cam === 'orbit'))
       ? rideCam(cam, ride, who, set, shot, aspect, t, seed)
       : who
         ? camFor(cam, who, placed, set, aspect, t, shot.duration, seed)
         : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
-  return {plan, who, ride, cam};
+  return {plan, who, ride, cam, insert: cam === 'pedal' || cam === 'wheel'};
 };
 
 const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) => {
@@ -1449,7 +1501,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
     return {b, st: rides[i]?.st ?? bigState(b, set, people, ta, da, i, lanes[i]), i};
   });
   void holderFor;
-  const {plan, who, ride} = planFor(shot, set, placed, rides, aspect, t);
+  const {plan, who, ride, insert} = planFor(shot, set, placed, rides, aspect, t);
   const fx = fxPlan(shot, set, placed, who, bigs, ta, da, ride ?? rides.find((r) => r?.under));
   // someone seated in it: an open roadster (the driver seen at the wheel), else a coupe
   const seated = new Set(placed.filter((p) => p.ride !== undefined && p.pose.y < 0.75 && ['drive', 'ride'].includes(p.actor.action)).map((p) => p.ride!));
@@ -1482,7 +1534,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
       ))}
       {bigs.map(({b, st, i}) => (
-        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} />
+        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} pedals={pressAt(shot, t, i)} />
       ))}
       {fx.map((f, i) => (
         <FxView key={`fx${i}`} kind={f.kind} c={f.ctx} />
@@ -1515,6 +1567,8 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
           </group>
         );
       })}
+      {/* down in the footwell or close on the wheel: a soft light from beside the lens, or it is all shadow */}
+      {insert ? <pointLight position={plan.pos.toArray()} color="#fff0dc" intensity={1.6} distance={1.6} decay={1.2} /> : null}
       {props.dof !== false ? <Post focus={plan.focus} aperture={plan.aperture} /> : null}
     </>
   );
