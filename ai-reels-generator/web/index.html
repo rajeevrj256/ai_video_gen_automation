@@ -264,6 +264,7 @@
   .review-big button { padding: 12px 0; font-size: 15px; }
   button.ok { background: var(--ok); color: #111; } button.no { background: #e5484d; color: #fff; }
   .card .accepted { font-size: 11px; color: var(--ok); }
+  .card .posted { font-size: 11px; color: var(--accent); }
   .card .postbadge { position: absolute; top: 8px; right: 52px; font-size: 11px; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.6); }
   .card.wide .postbadge { right: 70px; }
   .libitem .lic { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
@@ -445,6 +446,7 @@
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
         <button class="chip" data-ok="todo">🕓 To review</button><button class="chip" data-ok="accepted">👍 Accepted</button>
+        <button class="chip" data-ok="posted">📤 Posted</button><button class="chip" data-ok="unposted">Not posted yet</button>
       </div></details>
       <details class="fgroup" open><summary>Sort <span class="fnow" id="fnowSort">By date</span></summary><div class="chips">
         <button class="chip" data-sort="new">🕒 Newest first</button><button class="chip" data-sort="old">Oldest first</button><button class="chip on" data-sort="day">📅 By date</button>
@@ -1477,9 +1479,29 @@ const cardHtml = (v) => `
       <span class="badge ${v.verified ? "ok-bg" : "warn-bg"}">${v.verified ? "✓ " + (v.score ?? "") : "Check"}</span>
       <span class="dur">${v.format === "long" ? "🎬 " + mmss(v.duration_seconds || 0) : Math.round(v.duration_seconds || 0) + "s"}</span>
       ${v.youtube_description && !v.post_text_error ? '<span class="postbadge" title="Title, description and hashtags ready">📝</span>' : ""}
-      <div class="meta">${v.review ? '<span class="accepted">✓ Accepted</span> ' : ""}${esc(v.title)}${v.usage ? `<div class="vtok" style="margin:2px 0 0">🪙 ${fmtTok(v.usage.total.tokens)} tokens</div>` : ""}
+      <div class="meta">${v.posted ? '<span class="posted">📤 Posted</span> ' : ""}${v.review ? '<span class="accepted">✓ Accepted</span> ' : ""}${esc(v.title)}${v.usage ? `<div class="vtok" style="margin:2px 0 0">🪙 ${fmtTok(v.usage.total.tokens)} tokens</div>` : ""}
         ${v.review ? "" : `<div class="review"><button class="ok" data-review="accept" title="Keep it">✓ Accept</button><button class="no" data-review="reject" title="Delete it">✕ Reject</button></div>`}</div>
     </div>`;
+// 📤 Posted: saving a video (to post it) marks it posted, for every kind of video; the video page can take it off.
+const postedHtml = (id, p) => p ? `<p class="hint">📤 Posted: saved ${esc((p.at || "").replace("T", " "))}${p.times > 1 ? ` (saved ${p.times} times, last ${esc((p.last || "").replace("T", " "))})` : ""}
+    <button class="mini" data-unpost="${esc(id)}">↩ Not posted</button></p>` : `<p class="hint">Saving the video marks it 📤 Posted.</p>`;
+async function markPosted(id, file, posted = true) {
+  try {
+    const r = await api(`/api/videos/${encodeURIComponent(id)}/posted`, { method: "POST", body: JSON.stringify({ posted, file: file || "reel.mp4" }) });
+    const v = library.find((x) => x.id === id);
+    if (v) { if (r.posted) v.posted = r.posted; else delete v.posted; }
+    const line = $("#postedLine");
+    if (line) line.innerHTML = postedHtml(id, r.posted);
+    if ($("#view-videos").classList.contains("active")) renderLibrary();
+    toast(posted ? "Saved and marked 📤 Posted" : "No longer marked posted");
+  } catch (e) { toast(e.message === "Not Found" ? "Restart the app first: it was updated and doesn't know this yet" : "Couldn't mark it posted: " + e.message); }
+}
+document.addEventListener("click", (e) => {
+  const save = e.target.closest("a[data-post]");
+  if (save) markPosted(save.dataset.post, save.dataset.file);  // the download itself goes on as usual
+  const undo = e.target.closest("[data-unpost]");
+  if (undo) markPosted(undo.dataset.unpost, "", false);
+});
 // Accept marks the video accepted; Reject deletes it (after asking). Shown until one is picked.
 async function reviewVideo(id, decision) {
   const v = library.find((x) => x.id === id);
@@ -1498,7 +1520,8 @@ function renderLibrary() {
     ...(v.hashtags || []), ...(v.youtube_tags || [])].join(" ").toLowerCase();
   const match = (v) => (!q || q.split(/\s+/).every((w) => text(v).includes(w)))
     && (!libLen || lenOf(v) === libLen)
-    && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : String(+!!v.verified) === libOk))
+    && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : libOk === "posted" ? !!v.posted
+      : libOk === "unposted" ? !v.posted : String(+!!v.verified) === libOk))
     && (!libType || (libType === "ai" ? !["stick", "sticky", "lowpoly", "script", "toon", "anim", "storyshorts", "shoot", "clip"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
@@ -2111,7 +2134,7 @@ async function openVideo(id) {
     </div>` : ""}
     <button id="myVoice" style="width:100%;margin-top:8px">🎤 Record my own voice</button>
     ${v.my_voice ? `<div class="hint">🎤 ${esc(v.my_voice.summary)} · <a href="#" id="playMine">play the version with your voice</a> ·
-      <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4">save it</a></div>` : ""}
+      <a href="/media/${encodeURIComponent(id)}/reel-myvoice.mp4" download="${esc(id)}-myvoice.mp4" data-post="${esc(id)}" data-file="reel-myvoice.mp4">save it</a></div>` : ""}
     </div>
     ${v.source === "anim" ? `<h4 class="section">Picture quality</h4>
     <p class="hint">${v.upscaled === "anime" ? "Sharpened with the anime upscaler, which gives soft clips a flat, painted look. The general upscaler keeps more detail."
@@ -2135,9 +2158,10 @@ async function openVideo(id) {
     <button id="thumbPlan" style="width:100%;margin-top:8px">🎨 ${v.thumbnail_design && v.thumbnail_design.plan ? "Design a new thumbnail" : "Design thumbnail"}</button>
     <div id="thumbBox">${v.thumbnail_design && v.thumbnail_design.plan ? thumbSteps(v.thumbnail_design.plan, v.format) : ""}</div>
     <div class="actions">
-      <a href="${src}" download="${esc(id)}.mp4"><button>⬇ Save video</button></a>
+      <a href="${src}" download="${esc(id)}.mp4" data-post="${esc(id)}" data-file="${src.includes("reel-myvoice") ? "reel-myvoice.mp4" : "reel.mp4"}"><button>⬇ Save video</button></a>
       <button class="danger" id="deleteVideo">Delete</button>
     </div>
+    <div id="postedLine">${postedHtml(id, v.posted)}</div>
     ${v.review ? `<p class="hint">✓ Accepted ${esc((v.review.at || "").replace("T", " "))}</p>` : `<div class="actions review-big">
       <button class="ok" id="acceptVideo">✓ Accept</button><button class="no" id="rejectVideo">✕ Reject (delete)</button></div>`}
     ${v.post_text_error ? `<div class="errbox">⚠️ Writing the post text failed, so this is only the rough draft: ${esc(v.post_text_error)}</div>`
@@ -2391,7 +2415,7 @@ async function vsLoad() {
   $("#vsResult").innerHTML = r && d.has_video ? `<div class="verdict ${r.good_lines === r.lines.length ? "ok" : "warn"}">
       ${esc(r.summary)}${r.transcribed ? "" : " (install faster-whisper to check the words too)"} · ${r.duration_seconds}s</div>
       <div class="vs-btns"><button id="vsWatch">▶ Watch the version with my voice</button>
-      <a href="/media/${encodeURIComponent(VS.id)}/reel-myvoice.mp4" download="${esc(VS.id)}-myvoice.mp4"><button>⬇ Save it</button></a>
+      <a href="/media/${encodeURIComponent(VS.id)}/reel-myvoice.mp4" download="${esc(VS.id)}-myvoice.mp4" data-post="${esc(VS.id)}" data-file="reel-myvoice.mp4"><button>⬇ Save it</button></a>
       <button id="vsOrig">↺ Original video</button></div>` : "";
   if ($("#vsWatch")) {
     $("#vsWatch").onclick = () => { const v = $("#vsVideo"); v.src = "/media/" + encodeURIComponent(VS.id) + "/reel-myvoice.mp4?" + r.made; v.muted = false; v.volume = 1; v.play(); };

@@ -734,6 +734,12 @@ class ReviewBody(BaseModel):
     decision: str  # accept | reject
 
 
+class PostedBody(BaseModel):
+    """📤 Posted: saving a video from its page marks it posted (every pipeline's videos); `posted: false` undoes it."""
+    posted: bool = True
+    file: str = "reel.mp4"  # which version was saved (reel.mp4, reel-myvoice.mp4)
+
+
 class LoginRequest(BaseModel):
     pin: str
 
@@ -1417,6 +1423,22 @@ def create_app(cfg: Config) -> FastAPI:
         report["review"] = {"decision": "accepted", "at": datetime.now().isoformat(timespec="seconds")}
         path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         return {"ok": True, "review": report["review"]}
+
+    @app.post("/api/videos/{video_id}/posted")
+    def posted_video(video_id: str, body: PostedBody):
+        """The user saved this video to post it (the ⬇ Save buttons call this): marked posted, with when and which file;
+        saving it again keeps the first time and counts the saves. `posted: false` takes the mark off."""
+        path = video_dir(cfg, video_id) / "report.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        now = datetime.now().isoformat(timespec="seconds")
+        if body.posted:
+            old = report.get("posted") or {}
+            report["posted"] = {"at": old.get("at", now), "last": now, "file": body.file if body.file in MEDIA_FILES else "reel.mp4",
+                                "times": int(old.get("times", 0)) + 1}
+        else:
+            report.pop("posted", None)
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "posted": report.get("posted")}
 
     @app.delete("/api/videos/{video_id}")
     def delete_video(video_id: str):
