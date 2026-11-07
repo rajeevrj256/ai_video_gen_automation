@@ -248,6 +248,20 @@ def _ask_once(backend: str, model: str, system: str, prompt: str, schema: type[T
     return _ask_api(model, system, prompt, schema, images or [], effort)
 
 
+def wrap_lines(text: str, width: int = 1500) -> str:
+    """Every line at most `width` characters, broken at the last space before it (else at `width`); shorter lines and
+    the text's own line breaks are kept as they are."""
+    out = []
+    for line in text.split("\n"):
+        while len(line) > width:
+            cut = line.rfind(" ", width // 2, width)
+            cut = cut if cut > 0 else width
+            out.append(line[:cut])
+            line = line[cut:].lstrip(" ")
+        out.append(line)
+    return "\n".join(out)
+
+
 def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], images: list[Path],
                      allow_web: bool, cwd: Path | None, effort: str = "", timeout: int = 900) -> T:
     claude = find_claude()
@@ -279,9 +293,12 @@ def _ask_claude_code(model: str, system: str, prompt: str, schema: type[T], imag
 
     system_file = temp_file(system)
     if len(prompt) + len(schema_json) + 2000 > 30000:
-        prompt_file = temp_file(prompt)
+        # Claude's Read tool cuts very long lines, so a long pasted paragraph (a low-poly story brief has no length
+        # limit) is broken into lines first; it reads the file in pieces when it is longer than one read.
+        prompt_file = temp_file(wrap_lines(prompt))
         prompt = (f"Your full task is in the UTF-8 text file {prompt_file}. Read the whole file with the "
-                  "Read tool first, then do exactly what it asks.")
+                  "Read tool first (all of it: if one read doesn't reach the end, read on from where it stopped), "
+                  "then do exactly what it asks.")
         if "Read" not in tools:
             tools.append("Read")
     cmd = [

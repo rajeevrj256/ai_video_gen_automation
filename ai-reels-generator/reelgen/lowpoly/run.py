@@ -28,7 +28,7 @@ MAX_FASTER = 18  # at most this much faster than asked (percent)
 
 @dataclass
 class LowPolyRequest:
-    topic: str = ""  # the struggle (life) or the user's whole brief (fiction, up to 4,000 letters); empty = Claude picks
+    topic: str = ""  # the struggle (life) or the user's whole brief (fiction, any length); empty = Claude picks
     kind: str = "life"  # life (a small everyday struggle, narrated) | fiction (the user's brief: dialogue, powers, action)
     format: str = "short"  # short (9:16, `seconds`) | film (`minutes`, 16:9 unless `vertical`)
     seconds: int = 35  # Short: 20-60 (the original runs 33 s)

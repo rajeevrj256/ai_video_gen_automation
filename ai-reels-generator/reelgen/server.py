@@ -548,7 +548,7 @@ class StickyBody(BaseModel):
 
 class LowPolyBody(BaseModel):
     """Low-poly films (reelgen/lowpoly/): the user's faceted 3D man, narrated; a Short (9:16) or a 3-4 min film."""
-    topic: str = ""  # life: the struggle; fiction: the whole brief (up to 4,000 letters)
+    topic: str = ""  # life: the struggle; fiction: the whole brief (any length)
     kind: str = "life"  # life | fiction
     format: str = "short"  # short | film
     seconds: int = 35
@@ -1582,7 +1582,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/lowpoly")
     def lowpoly(body: LowPolyBody):
         film = body.format == "film"
-        given = {"topic": body.topic.strip()[:4000], "kind": "fiction" if body.kind == "fiction" else "life",
+        given = {"topic": body.topic.strip(), "kind": "fiction" if body.kind == "fiction" else "life",
                  "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
                  "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
                  "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],

@@ -687,7 +687,7 @@ Plain paragraphs are read by the narrator."></textarea>
       <label>Make</label>
       <div class="segmented" id="lpMode"><button data-mode="short" class="on">📱 Short 9:16</button><button data-mode="film">🎞 Film (3-15 min)</button></div>
       <label for="lpTopic" id="lpTopicLabel">The struggle (optional)</label>
-      <textarea class="edit" id="lpTopic" rows="2" maxlength="4000" placeholder="e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used."></textarea>
+      <textarea class="edit" id="lpTopic" rows="2" placeholder="e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used."></textarea>
       <p class="hint" id="lpTopicCount" hidden></p>
       <div class="grid2">
         <div id="lpLenShort"><label for="lpSeconds">Length</label>
@@ -3428,7 +3428,7 @@ const LP_PVOICES = [["man", "A man"], ["young-man", "A young man"], ["woman", "A
   ["older-woman", "An older woman"], ["child", "A child"], ["deep-man", "A deep man's voice"], ["british-man", "A British man"], ["british-woman", "A British woman"]];
 const LP_KIND_HINT = {
   life: "One small everyday struggle, told by a calm narrator like the original.",
-  fiction: "Your own story: paste your brief (up to 4,000 letters) and Claude writes and directs it as a cinematic film with dialogue in each person's own voice, " +
+  fiction: "Your own story: paste your brief (any length, even the whole story) and Claude writes and directs it as a cinematic film with dialogue in each person's own voice, " +
     "super strength, speed and jumps, cars, trucks and steel beams, shockwaves, sparks, slow motion, aerial and orbit cameras, and new places (a building site, a highway, a night alley, a lab).",
 };
 const lpFace = (p) => {
@@ -3469,16 +3469,18 @@ const lpKindSet = (kind) => {
   $("#lpKind").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.kind === kind));
   const fiction = kind === "fiction";
   $("#lpKindHint").textContent = LP_KIND_HINT[kind];
-  $("#lpTopicLabel").textContent = fiction ? "Your story brief (optional, up to 4,000 letters)" : "The struggle (optional)";
+  $("#lpTopicLabel").textContent = fiction ? "Your story brief (optional, any length)" : "The struggle (optional)";
   $("#lpTopic").rows = fiction ? 9 : 2;
   $("#lpTopic").placeholder = fiction ? "Paste your film's brief: the title, what happens, the look and feel you want. Leave empty and Claude invents an original sci-fi story for him."
     : "e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used.";
   $("#lpTopicCount").hidden = !fiction;
-  $("#lpTopicCount").textContent = `${$("#lpTopic").value.length} / 4000 letters`;
+  $("#lpTopicCount").textContent = lpLetters();
   try { localStorage.setItem("lpKind", kind); } catch (e) {}
 };
 $("#lpKind").onclick = (e) => { const b = e.target.closest("button"); if (b) lpKindSet(b.dataset.kind); };
-$("#lpTopic").addEventListener("input", () => { $("#lpTopicCount").textContent = `${$("#lpTopic").value.length} / 4000 letters`; });
+// The brief has no length limit (the user: "remove this limitation 4000"); the count is only for reference.
+function lpLetters() { return `${$("#lpTopic").value.length.toLocaleString("en-US")} letters`; }
+$("#lpTopic").addEventListener("input", () => { $("#lpTopicCount").textContent = lpLetters(); });
 const lpFill = () => {
   if ($("#lpVoice").options.length) return;
   $("#lpVoice").innerHTML = LP_VOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
