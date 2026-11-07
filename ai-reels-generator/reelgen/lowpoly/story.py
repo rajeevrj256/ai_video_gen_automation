@@ -500,9 +500,9 @@ def voices_for(story: Story, narrator: str) -> dict[str, str]:
     return out
 
 
-def lock_cast(cfg: Config, story: Story) -> None:
+def lock_cast(cfg: Config, story: Story, keep: bool = True) -> None:
     """Someone met before (or from the library) keeps the look and voice they had; someone new is saved for the next
-    films."""
+    films (`keep`; a storyboard draft the user may still reject only borrows the saved looks)."""
     saved = seed_library(cfg)
     changed = False
     # someone from the recurring cast who acts or speaks in a shot but was left out of the story's cast list comes in
@@ -527,7 +527,7 @@ def lock_cast(cfg: Config, story: Story) -> None:
         else:
             saved[k] = {"name": c.name, "who": c.who, "design": c.design.model_dump(), "voice": c.voice}
             changed = True
-    if changed:
+    if changed and keep:
         try:
             _cast_path(cfg).write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError:
@@ -591,11 +591,9 @@ def _act_len(fiction: bool, minutes: float) -> tuple[int, int]:
     return (round(minutes * 60 / (3.0 if fiction else 3.3)), int(minutes * 60 * (1.3 if fiction else 1.8)))
 
 
-def write_long(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction: bool, progress=log.info,
-               save_to: Path | None = None) -> Story:
-    """A 6-15 minute film: one call plans it (title, cast, acts with their minutes, places, moods), then one call per act
-    writes that act's shots knowing the whole plan and how the act before it ended. Each finished part is kept in
-    `save_to`, so a stopped or failed run carries on from the next act."""
+def plan_outline(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction: bool, progress=log.info) -> Outline:
+    """A long film's plan: title, cast and acts with their minutes, places and moods (the first step of `write_long`, and
+    on its own the storyboard draft of a long film the user reads before it is written act by act)."""
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     n_acts = max(4, min(9, round(minutes / 1.7)))
     shots, words = _act_len(fiction, minutes)
@@ -606,16 +604,28 @@ THIS FILM IS LONG ({minutes:g} minutes), so plan it first: {n_acts} acts (give o
 {minutes:g}. A long film needs more than a long version of a short one: a fuller world (more places, two to six people
 with their own wants), a middle that turns more than once, set-ups paid off later, quiet scenes between the big ones,
 and the ending's line in red. Write the outline only; the shots come next, act by act."""
+    progress(f"Planning the {minutes:g}-minute film in acts")
+    return ask(cfg.ai_backend, cfg.claude_model, plan_system, f"{ask_for}\n\nAlready made (never the same story or title "
+               f"again):\n{made}{_known(cfg)}", Outline, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+
+
+def write_long(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction: bool, progress=log.info,
+               save_to: Path | None = None) -> Story:
+    """A 6-15 minute film: one call plans it (title, cast, acts with their minutes, places, moods), then one call per act
+    writes that act's shots knowing the whole plan and how the act before it ended. Each finished part is kept in
+    `save_to`, so a stopped or failed run carries on from the next act; an approved storyboard draft (boards.py) puts
+    its outline and take there first, so only the acts are written."""
+    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     saved = json.loads(save_to.read_text(encoding="utf-8")) if save_to and save_to.exists() else {}
     if "outline" in saved:
         outline = Outline.model_validate(saved["outline"])
     else:
-        progress(f"Planning the {minutes:g}-minute film in acts")
-        outline = ask(cfg.ai_backend, cfg.claude_model, plan_system, f"{ask_for}\n\nAlready made (never the same story or title "
-                      f"again):\n{made}{_known(cfg)}", Outline, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+        outline = plan_outline(cfg, ask_for, made, minutes=minutes, fiction=fiction, progress=progress)
         saved = {"outline": outline.model_dump(), "acts": []}
         if save_to:
             save_to.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    if saved.get("take") and TAKE_MARK not in ask_for:
+        ask_for += TAKE.format(take=saved["take"])
     acts: list[list[LPShot]] = [[LPShot.model_validate(x) for x in a] for a in saved.get("acts", [])]
     plan = "\n".join(f"Act {i + 1} ({a.minutes:g} min, {a.name}): {a.summary} Ends with: {a.ends_with}" for i, a in enumerate(outline.acts))
     cast = "\n".join(f"- {c.name}: {c.who} ({c.voice} voice)" for c in outline.cast) or "- nobody else"
@@ -653,9 +663,12 @@ and the ending's line in red. Write the outline only; the shots come next, act b
     return Story(**o, shots=all_shots, score=score, kind="fiction" if fiction else "life")
 
 
-def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: float = 3.5, progress=log.info,
-          kind: str = "life", save_to: Path | None = None) -> Story:
-    fiction = kind == "fiction"
+TAKE_MARK = "THIS VERSION'S TAKE"
+TAKE = ("\n\n" + TAKE_MARK + " (one of several storyboards written from the same prompt for the user to choose from; tell "
+        "it this way, and the prompt still holds):\n{take}")
+
+
+def _system(fiction: bool, short: bool, seconds: int, minutes: float) -> str:
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     if fiction:
         if short:
@@ -663,15 +676,18 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
         else:
             shots = round(minutes * 60 / 3.0)
             length = FICTION_FILM.format(minutes=f"{minutes:g}", shots=f"{shots - 8}-{shots + 8}", words=int(minutes * 60 * 1.3))
-        system = FICTION.format(spots=spots, length=length)
+        return FICTION.format(spots=spots, length=length)
+    if short:
+        shots = max(7, round(seconds / 3.0))
+        length = SHORT.format(seconds=seconds, shots=shots, words=int(seconds * 1.85))
     else:
-        if short:
-            shots = max(7, round(seconds / 3.0))
-            length = SHORT.format(seconds=seconds, shots=shots, words=int(seconds * 1.85))
-        else:
-            shots = round(minutes * 60 / 3.3)
-            length = FILM.format(minutes=f"{minutes:g}", shots=f"{shots - 8}-{shots + 6}", words=int(minutes * 60 * 1.8))
-        system = RULES.format(spots=spots, length=length)
+        shots = round(minutes * 60 / 3.3)
+        length = FILM.format(minutes=f"{minutes:g}", shots=f"{shots - 8}-{shots + 6}", words=int(minutes * 60 * 1.8))
+    return RULES.format(spots=spots, length=length)
+
+
+def _asking(cfg: Config, topic: str, fiction: bool, take: str = "") -> tuple[str, str, list[dict]]:
+    """What the writer is asked for, the films already made (never again), and those films."""
     past = recent(cfg)
     made = "\n".join(f"- {p['title']} ({p['problem']})" for p in past[-40:]) or "- none yet"
     if fiction:
@@ -681,13 +697,23 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
     else:
         ask_for = (f"Write it about: {topic}." if topic else
                    "Choose the struggle yourself, different from the ones already made. Ideas (not a list to copy): " + ", ".join(TOPICS) + ".")
+    return ask_for + (TAKE.format(take=take) if take else ""), made, past
+
+
+def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: float = 3.5, progress=log.info,
+          kind: str = "life", save_to: Path | None = None, take: str = "") -> Story:
+    """The story, shot by shot (a film over LONG_FROM minutes: outline, then act by act). `take`: this storyboard's own
+    way of telling it, one of several drafts the user chooses from (boards.py)."""
+    fiction = kind == "fiction"
+    system = _system(fiction, short, seconds, minutes)
+    ask_for, made, past = _asking(cfg, topic, fiction, take)
     if not short and minutes > LONG_FROM:
         story = write_long(cfg, ask_for, made, minutes=minutes, fiction=fiction, progress=progress, save_to=save_to)
         story.kind = "fiction" if fiction else "life"
         return story
     prompt = f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
     story = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
-    near = too_close(story, past) if not topic else ""
+    near = too_close(story, past) if not topic and not take else ""
     if near:
         progress(f"That story is too close to '{near}'; writing a different one")
         story = ask(cfg.ai_backend, cfg.claude_model, system, prompt + f"\n\nYour first idea was too close to '{near}'. Pick a "
@@ -697,6 +723,42 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
     story.kind = "fiction" if fiction else "life"
     return story
 
+
+
+# ---------------------------------------------------------------- storyboards to choose from (boards.py)
+
+class Pitch(BaseModel):
+    title: str = Field(description="2-5 words")
+    take: str = Field(description="this version in 3-5 plain sentences: what happens from the first shot to the last, the "
+                                  "places, who is in it and how it ends")
+    differs: str = Field(description="one line: what makes it unlike the other takes")
+
+
+class Pitches(BaseModel):
+    takes: list[Pitch]
+
+
+PITCH = """
+
+BEFORE ANY STORYBOARD IS WRITTEN: the user will read {n} different storyboards made from the same prompt and choose one
+to build. Propose the {n} takes they will be written from. They differ in the story itself, not only in the wording: a
+different moment of the struggle or angle on the brief, another structure, other places and people, another ending.
+Each keeps to the prompt (the user's brief always holds), fits this channel's films and the length, and can be staged
+with the places, actions and things above. Never one already written for this prompt. Write the takes only."""
+
+
+def pitches(cfg: Config, topic: str, *, kind: str, short: bool, seconds: int, minutes: float, n: int,
+            others: str = "") -> list[Pitch]:
+    """`n` clearly different takes on one prompt, each the seed of one storyboard draft (written in parallel, they would
+    otherwise not know about each other and could tell the same story three times)."""
+    fiction = kind == "fiction"
+    system = _system(fiction, short, seconds, minutes) + PITCH.format(n=n)
+    ask_for, made, _ = _asking(cfg, topic, fiction)
+    prompt = (f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
+              + (f"\n\nStoryboards already written for this prompt (every new take must differ from each of them):\n{others}"
+                 if others else "") + f"\n\nPropose {n} takes.")
+    got = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Pitches, allow_web=False, effort=cfg.claude_effort, timeout=1200)
+    return got.takes[:n]
 
 def repair(story: Story) -> list[str]:
     """Fix what the editor can't draw, in code: an unknown spot, a lying action away from a bed, a cast member who

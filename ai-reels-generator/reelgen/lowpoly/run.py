@@ -123,6 +123,11 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     seconds = max(20, min(60, int(req.seconds)))
     minutes = max(2.5, min(15.0, float(req.minutes)))
     story_path = work / "story.json"
+    board = state.get("board")  # ✍ a storyboard the user read and approved (boards.py)
+    if board and not state.get("board_said"):
+        progress(f"Building the storyboard you approved: '{board.get('title', '')}'"
+                 + ("" if story_path.exists() else " (its acts are written now from the outline you read)"))
+        state["board_said"] = True
     if story_path.exists():
         story = S.load(story_path)
     else:
@@ -230,7 +235,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "sound_levels": mixed.get("levels"), "mix_version": mixed.get("mix_version"),
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
-        "cast": [c.name for c in story.cast], "story_kind": story.kind,
+        "cast": [c.name for c in story.cast], "story_kind": story.kind, "storyboard": board,
         "voices": sorted({a.get("voice", "") for a in audio.values()} - {""}), "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),
         "youtube_tags": story.tags, "youtube_hashtags": story.hashtags[:3], "caption": story.description.strip(),
         "hashtags": story.hashtags,

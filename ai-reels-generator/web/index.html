@@ -84,6 +84,29 @@
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .segmented { display: flex; gap: 6px; background: var(--panel-2); padding: 4px; border-radius: 12px; }
   .lp-cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin: 8px 0; }
+  /* ✍ storyboards to read first (reelgen/lowpoly/boards.py) */
+  .lp-enh { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 12px 0 4px; }
+  .lp-enh > label { display: flex; gap: 8px; align-items: center; margin: 0; font-weight: 700; }
+  .lp-enh > label input { width: auto; }
+  .lp-set { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
+  .lp-set .lp-prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: auto; font-size: 13px; color: var(--muted); }
+  .lp-set .lp-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .lp-draft { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; background: var(--panel-2); }
+  .lp-draft > summary { padding: 10px 12px; cursor: pointer; list-style: none; }
+  .lp-draft > summary::-webkit-details-marker { display: none; }
+  .lp-draft > summary b { font-size: 15px; }
+  .lp-draft .lp-body { padding: 0 12px 12px; }
+  .lp-draft.writing, .lp-draft.failed { padding: 10px 12px; }
+  .lp-take { font-size: 13px; color: var(--muted); margin: 4px 0 0; overflow-wrap: anywhere; }
+  .lp-shots { padding-left: 0; list-style: none; margin: 8px 0; max-height: 70vh; overflow: auto; }
+  .lp-shots li { border-top: 1px solid var(--line); padding: 7px 2px; font-size: 13px; overflow-wrap: anywhere; }
+  .lp-shots .lp-meta { color: var(--muted); font-size: 12px; }
+  .lp-shots .lp-line { font-size: 14px; margin: 2px 0; }
+  .lp-shots .lp-line.red { color: var(--bad); font-weight: 700; }
+  .lp-shots .lp-who, .lp-shots .lp-extra { color: var(--muted); font-size: 12px; }
+  .lp-acts li { border-top: 1px solid var(--line); padding: 8px 2px; font-size: 13px; }
+  .lp-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .lp-decide input { flex: 1 1 220px; min-width: 0; }
   .lp-person { display: flex; gap: 10px; align-items: flex-start; background: var(--panel-2); border-radius: 10px; padding: 8px; }
   .lp-person > div { flex: 1; min-width: 0; }
   .lp-person .hint { margin: 2px 0 0; }
@@ -727,8 +750,24 @@ Plain paragraphs are read by the narrator."></textarea>
           <button id="lpPSave">Save this person</button> <span class="hint" id="lpPMsg"></span>
         </details>
       </details>
+      <div class="lp-enh">
+        <label><input type="checkbox" id="lpEnhance"> ✍ Read the storyboard first</label>
+        <div id="lpEnhanceBox" hidden>
+          <p class="hint">Claude writes different storyboards from your prompt, each its own take (another angle, other places,
+            another ending), and nothing is built yet. Read them below: approve one and it's built; reject them and new ones are
+            written from the same prompt (say what was wrong and the next ones are told). One you rejected can still be approved.
+            Films over 5 minutes show their act-by-act outline; the shots are written once you approve it.</p>
+          <label for="lpDrafts">Storyboards to choose from</label>
+          <select id="lpDrafts"><option value="2">2</option><option value="3" selected>3</option></select>
+        </div>
+      </div>
       <button class="primary" id="lpBtn">✨ Make it</button>
       <p class="hint" id="lpMsg"></p>
+    </div>
+    <div class="panel" id="lpBoardsPanel" hidden>
+      <h2>✍ Storyboards to read</h2>
+      <p class="hint">Tap one to read it shot by shot. Approve it to build the video; it goes on like any low-poly video (Create tab).</p>
+      <div id="lpBoards"></div>
     </div>
   </section>
 
@@ -1409,7 +1448,7 @@ function show(view) {
   const tab = document.querySelector(`nav button[data-view="${view}"]`);
   $("#navNow").textContent = tab ? "· " + tab.textContent.trim() : "";  // phones: which tab this is, beside the title
   navMenu(false);
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => lpFill() }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => { lpFill(); lpLoadBoards(); } }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -2558,7 +2597,7 @@ function videosOf(j) {
     stepsOf(j).forEach(([, re], i) => { if (re.test(m)) v.step = Math.max(v.step, i); });
     if (!m.startsWith("§")) (v.byStep[v.step] ||= []).push(m); // what each stage did, for its popup
     if (/^Done/.test(m)) v.state = /did not pass/.test(m) ? "check" : "done";
-    if (/^Video \d+ failed:/.test(m)) { v.state = "failed"; v.error = m.replace(/^Video \d+ failed: /, ""); }
+    if (/^(Video|Storyboard) \d+ failed:/.test(m)) { v.state = "failed"; v.error = m.replace(/^(Video|Storyboard) \d+ failed: /, ""); }
   });
   return Object.values(vids).sort((x, y) => x.n - y.n);
 }
@@ -2636,8 +2675,9 @@ function jobCard(j) {
   const errors = vids.filter((v) => v.error).map((v) => `Video ${v.n}: ${v.error}`);
   const retries = msgs.filter((m) => /Failed verification|Script rejected/.test(m)).length;
   const label = j.status === "partial" ? `${made} of ${j.count} made` : LABEL[j.status];
-  const what = (j.topic ? esc(j.topic) : "Trending topic") + (STYLE_TAG[j.style] ? ` · ${STYLE_TAG[j.style]}` : "")
-    + (j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
+  const boards = !!j.lowpoly_boards;  // ✍ a round of low-poly storyboards to read (no video)
+  const what = (j.topic ? esc(j.topic) : boards ? "Claude picks the story" : "Trending topic") + (STYLE_TAG[j.style] && !boards ? ` · ${STYLE_TAG[j.style]}` : "")
+    + (boards ? ` · ✍ Low-poly storyboards to read` : j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
       : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "sticky" ? (j.sticky_input?.format === "short" ? " · 🎞 Sticky Short (9:16)" : " · 🎞 Sticky film") : j.length === "lowpoly" ? (j.lowpoly_input?.format === "film" ? " · 🧊 Low-poly film" : " · 🧊 Low-poly Short (9:16)") : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📱 Shorts+ (${j.count} part${j.count > 1 ? "s" : ""})` : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
@@ -2668,18 +2708,20 @@ function jobCard(j) {
         <span class="vname" title="${esc(now)}">${esc(v.state === "running" ? (v.paused ? `Paused till ${v.paused}` : v.step >= 0 ? stepsOf(j)[v.step][0] : "Starting") : v.state === "failed" ? "Failed" : v.state === "check" ? "Done, needs a look" : "Done")}</span>
         ${v.state === "running" && !v.paused ? miniSteps(v.step) : ""}${v.attempt && v.state === "running" ? `<span class="try">${v.attempt}</span>` : ""}
         ${vtok[n] ? `<span class="vtok">🪙 ${fmtTok(vtok[n])}</span>` : ""}<span class="vtime">${time}</span>
-        <button class="mini tapbtn" data-sheet="${esc(j.id)}" data-video="${n}" data-step="0" title="Read the script">📜</button>
+        ${boards ? "" : `<button class="mini tapbtn" data-sheet="${esc(j.id)}" data-video="${n}" data-step="0" title="Read the script">📜</button>`}
         <button class="mini tapbtn" data-sheet="${esc(j.id)}" data-video="${n}" data-step="${Math.max(0, v.step)}" title="What this step is doing">📋</button></div>`);
     }
     body = `<div class="vrows">${rows.join("")}</div><div class="timer">⏱ Total ${liveSince(jobStart)}</div>`;
   } else if (j.status !== "queued" && j.log.length) {
     const per = vids.map((v) => mmss(v.end - v.start));
-    body = (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
+    body = boards ? (j.boards_made ? `<div class="okbox">✓ ${j.boards_made} storyboard${j.boards_made > 1 ? "s" : ""} ready to read</div>
+        <button class="primary" onclick="show('lowpoly')" style="width:100%;margin-top:8px">📖 Read them in the Low-poly tab</button>` : "")
+      + `<div class="timer">⏱ Took ${mmss(end - jobStart)}</div>` : (made ? `<div class="okbox">✓ ${made} video${made > 1 ? "s" : ""} ready${retries ? ` · the checker sent back ${retries} draft${retries > 1 ? "s" : ""} to improve` : ""}</div>` : "")
       + `<div class="timer">⏱ Took ${mmss(end - jobStart)}${per.length > 1 ? ` in total · per video ${per.join(", ")}` : ""}</div>`
       + (vids.length ? `<div class="scriptbtns">${vids.map((v) => `<button class="mini" data-sheet="${esc(j.id)}" data-video="${v.n}" data-step="0">📜 Script${vids.length > 1 ? " " + v.n : ""}</button>`).join("")}</div>` : "");
   }
   const errBox = errors.length ? `<div class="errbox">⚠️ ${errors.map(esc).join("<br>")}</div>` : "";
-  const canResume = !running && j.status !== "queued" && made < j.count
+  const canResume = !boards && !running && j.status !== "queued" && made < j.count
     && ((j.folders || []).length || j.skipped || j.status === "paused");
   const pauseBtn = running || j.status === "queued"
     ? (j.pause ? `<button disabled style="width:100%;margin-top:8px">⏸️ Pausing after the current step…</button>`
@@ -2698,7 +2740,9 @@ function jobCard(j) {
       `<img src="/media/${encodeURIComponent(id)}/thumbnail.jpg" alt="" onclick="openVideo('${esc(id)}')">`).join("")}</div>` : "";
   const sub = running
     ? (j.count === 1 ? (vids[0] && vids[0].attempt ? vids[0].attempt.replace("Try", "Try ").replace("/", " of ") : "Starting")
+                     : boards ? `${j.count} storyboards being written side by side`
                      : `${j.count} videos · ${active.length} in progress · ${vids.filter((v) => v.state !== "running").length} finished`)
+    : boards ? (j.status === "queued" ? `${j.count} storyboard${j.count > 1 ? "s" : ""} to write` : `${j.boards_made || 0} of ${j.count} storyboard${j.count > 1 ? "s" : ""} written`)
     : `${j.count} video${j.count > 1 ? "s" : ""} requested`;
   return `<div class="panel job ${j.status}">
     <div class="head"><div><div class="title">${what}</div><div class="sub">${sub}</div></div>
@@ -3520,20 +3564,145 @@ $("#lpMode").onclick = (e) => {
   const film = lpModeIs() === "film";
   $("#lpLenShort").hidden = film; $("#lpLenFilm").hidden = !film; $("#lpShape").hidden = !film;
 };
+// ✍ Read the storyboard first: only for this build, never a setting (the user: "only work if i open enhancer at the
+// time of building video not at settings"), so it starts off every time the page opens.
+const lpEnhanceSet = () => {
+  const on = $("#lpEnhance").checked;
+  $("#lpEnhanceBox").hidden = !on;
+  $("#lpCount").parentElement.hidden = on;  // one video per approved storyboard
+  $("#lpBtn").textContent = on ? "✍ Write the storyboards" : "✨ Make it";
+};
+$("#lpEnhance").onchange = lpEnhanceSet;
 $("#lpBtn").onclick = async () => {
   lpFill();
   const film = lpModeIs() === "film";
+  const enhance = $("#lpEnhance").checked;
   const body = { kind: lpKindIs(), format: film ? "film" : "short", topic: $("#lpTopic").value, seconds: Number($("#lpSeconds").value),
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
-    pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value), ai: aiValue("lowpoly") };
+    pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value),
+    drafts: Number($("#lpDrafts").value), ai: aiValue("lowpoly") };
   try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); } catch (e) {}
   $("#lpBtn").disabled = true;
   try {
-    await api("/api/lowpoly", { method: "POST", body: JSON.stringify(body) });
-    $("#lpMsg").textContent = "Started. Follow it on the Create tab.";
-    show("create");
+    if (enhance) {
+      const r = await api("/api/lowpoly/boards", { method: "POST", body: JSON.stringify(body) });
+      $("#lpMsg").textContent = `Writing ${r.count} storyboards from your prompt: they appear below as each one is ready (a minute or two).`;
+      await lpLoadBoards();
+      $("#lpBoardsPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      await api("/api/lowpoly", { method: "POST", body: JSON.stringify(body) });
+      $("#lpMsg").textContent = "Started. Follow it on the Create tab.";
+      show("create");
+    }
   } catch (e) { $("#lpMsg").textContent = "Couldn't start it: " + e.message; }
   finally { $("#lpBtn").disabled = false; }
+};
+
+// The storyboards (reelgen/lowpoly/boards.py): every prompt's drafts, newest first. A draft opens to read it shot by shot.
+let lpBoardsTimer = null;
+const lpDraftCache = {};
+const lpLen = (sec) => !sec ? "" : sec < 90 ? `about ${Math.round(sec)} s` : `about ${(sec / 60).toFixed(1)} min`;
+const lpSetName = (s) => `${s.kind === "fiction" ? "🚀 Fiction" : "🏠 Everyday life"} · ${s.format === "film"
+  ? `🎞 Film, ${s.minutes} min${s.vertical ? " (9:16)" : ""}` : `📱 Short, ${s.seconds} s`}`;
+function lpDraftHtml(s, d, open) {
+  const key = `${s.id}/${d.n}`;
+  const size = [d.shots ? `${d.shots} shots` : d.acts ? `${d.acts} acts` : "", lpLen(d.seconds)].filter(Boolean).join(" · ");
+  if (d.state === "writing") return `<div class="lp-draft writing"><span class="spinner"></span> <b>Writing storyboard ${d.n}: ${esc(d.title)}</b>
+    <p class="lp-take">${esc(d.take || "")}</p></div>`;
+  if (d.state === "failed") return `<div class="lp-draft failed">⚠️ <b>Storyboard ${d.n} (${esc(d.title || "untitled")})</b> couldn't be written: ${esc(d.error || "")}</div>`;
+  const badge = d.state === "approved" ? "✅ Approved" : d.state === "rejected" ? "✕ Turned down" : "📄";
+  return `<details class="lp-draft lpd ${d.state}" data-key="${esc(key)}" data-set="${esc(s.id)}" data-n="${d.n}" ${open.has(key) ? "open" : ""}>
+    <summary>${badge} <b>${esc(d.title)}</b> <span class="hint">${esc(size)}</span>
+      <p class="lp-take">${esc(d.problem || d.take || "")}</p>${d.note ? `<p class="lp-take">Why not: ${esc(d.note)}</p>` : ""}</summary>
+    <div class="lp-body"><div class="lp-read"><span class="spinner"></span> Opening it…</div>
+      ${d.state === "approved"
+        ? `<p class="hint">✅ Approved: it's being built (follow it on the Create tab). Approve another one to make a second video.</p>`
+        : `<div class="lp-decide">
+            <button class="primary lp-ok" data-set="${esc(s.id)}" data-n="${d.n}">${d.state === "rejected" ? "↩ Approve this one anyway and build it" : "✓ Approve and build"}</button>
+            ${d.state === "ready" ? `<input class="edit lp-why" placeholder="What's wrong with it? (optional: the next ones are told)">
+            <button class="danger lp-no" data-set="${esc(s.id)}" data-n="${d.n}">✕ Reject</button>` : ""}</div>`}
+    </div></details>`;
+}
+function lpSetHtml(s, open) {
+  const live = s.drafts.filter((d) => ["ready", "writing", "failed"].includes(d.state) || d.state === "approved");
+  const turned = s.drafts.filter((d) => d.state === "rejected");
+  const waiting = s.drafts.filter((d) => d.state === "ready").length;
+  const status = s.writing ? '<span class="pill running"><span class="spinner"></span>Writing</span>'
+    : waiting ? `<span class="pill done">${waiting} to read</span>` : "";
+  return `<div class="lp-set" data-set="${esc(s.id)}">
+    <div class="head"><div><b>${lpSetName(s)}</b><div class="hint">${new Date(s.created * 1000).toLocaleString()}${s.long ? " · outlines (act by act)" : ""}</div></div>${status}</div>
+    <div class="lp-prompt">${esc(s.topic || "No prompt: Claude picks the story.")}</div>
+    ${live.map((d) => lpDraftHtml(s, d, open)).join("")}
+    ${turned.length ? `<details ${open.has(s.id + "/turned") ? "open" : ""} data-key="${esc(s.id)}/turned"><summary class="hint">✕ Turned down (${turned.length}): you can still approve one</summary>
+      ${turned.map((d) => lpDraftHtml(s, d, open)).join("")}</details>` : ""}
+    ${!s.writing && !waiting && !s.drafts.some((d) => d.state === "approved") ? `<p class="hint">None left to read. Write new ones from the same prompt, or approve one you turned down.</p>` : ""}
+    <div class="lp-tools">
+      <button class="mini lp-more" data-set="${esc(s.id)}" data-count="2" ${s.writing ? "disabled" : ""}>✍ Write 2 more</button>
+      <button class="mini lp-more" data-set="${esc(s.id)}" data-count="1" ${s.writing ? "disabled" : ""}>✍ Write 1 more</button>
+      <button class="mini lp-forget" data-set="${esc(s.id)}" ${s.writing ? "disabled" : ""}>🗑 Forget these</button>
+    </div></div>`;
+}
+function lpReadHtml(v) {
+  const cast = (v.cast || []).length ? `<p class="hint">👥 ${v.cast.map((c) => `<b>${esc(c.name)}</b>: ${esc(c.who)}`).join(" · ")}</p>` : "";
+  const head = `${v.take ? `<p class="lp-take"><b>The take:</b> ${esc(v.take)}</p>` : ""}${v.youtube_title ? `<p class="lp-take"><b>YouTube title:</b> ${esc(v.youtube_title)}</p>` : ""}${cast}`;
+  if ((v.acts || []).length) return head + `<ol class="lp-shots lp-acts">${v.acts.map((a, i) => `<li><b>Act ${i + 1}: ${esc(a.name)}</b>
+      <span class="hint">${a.minutes} min · ${esc(a.places.join(", "))} · ${esc(a.mood)}, ${esc(a.energy)}</span>
+      <div>${esc(a.summary)}</div><div class="lp-who">Ends with: ${esc(a.ends_with)}</div></li>`).join("")}</ol>`;
+  return head + `<ol class="lp-shots">${(v.shots || []).map((x) => {
+    const said = x.line ? `<div class="lp-line ${x.red ? "red" : ""}">${x.speaker && x.speaker !== "narrator" ? `<b>${esc(x.speaker === "hero" ? "He" : x.speaker)}:</b> ` : ""}“${esc(x.line)}”</div>`
+      : `<div class="lp-line hint">(no words)</div>`;
+    const extra = [x.things.length ? "things: " + x.things.join(", ") : "", x.big.length ? x.big.join(", ") : "",
+      x.fx.length ? "effects: " + x.fx.join(", ") : "", x.slowmo ? "slow motion" : "", x.pause ? `holds ${x.pause} s` : ""].filter(Boolean).join(" · ");
+    return `<li><div class="lp-meta">${x.n}. ${x.stamp ? `🕐 <b>${esc(x.stamp)}</b> · ` : ""}${esc(x.place)} · ${esc(x.light)} · 🎥 ${esc(x.camera)}</div>${said}
+      <div class="lp-who">${esc(x.people.join(" · "))}</div>${extra ? `<div class="lp-extra">${esc(extra)}</div>` : ""}</li>`;
+  }).join("")}</ol>`;
+}
+async function lpOpenDraft(el) {
+  const box = el.querySelector(".lp-read");
+  if (!box || box.dataset.done) return;
+  const key = el.dataset.key;
+  try {
+    const v = lpDraftCache[key] || (lpDraftCache[key] = await api(`/api/lowpoly/boards/${encodeURIComponent(el.dataset.set)}/${el.dataset.n}`));
+    box.innerHTML = lpReadHtml(v); box.dataset.done = "1";
+  } catch (e) { box.textContent = "Couldn't open it: " + e.message; }
+}
+async function lpLoadBoards() {
+  let sets = [];
+  try { sets = await api("/api/lowpoly/boards"); } catch (e) { return; }
+  const open = new Set([...document.querySelectorAll("#lpBoards details[open]")].map((d) => d.dataset.key));
+  const firstTime = !$("#lpBoards").dataset.loaded;
+  if (firstTime) sets.forEach((s) => s.drafts.filter((d) => d.state === "ready").slice(0, 1).forEach((d) => open.add(`${s.id}/${d.n}`)));
+  $("#lpBoards").dataset.loaded = "1";
+  $("#lpBoardsPanel").hidden = !sets.length;
+  $("#lpBoards").innerHTML = sets.map((s) => lpSetHtml(s, open)).join("");
+  document.querySelectorAll("#lpBoards details.lpd").forEach((el) => {
+    el.addEventListener("toggle", () => el.open && lpOpenDraft(el));
+    if (el.open) lpOpenDraft(el);
+  });
+  clearTimeout(lpBoardsTimer);
+  if (sets.some((s) => s.writing) && current === "lowpoly") lpBoardsTimer = setTimeout(lpLoadBoards, 5000);
+}
+$("#lpBoards").onclick = async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const sid = b.dataset.set, n = b.dataset.n;
+  b.disabled = true;
+  try {
+    if (b.classList.contains("lp-ok")) {
+      await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}/${n}/approve`, { method: "POST" });
+      $("#lpMsg").textContent = "Approved: it's being built. Follow it on the Create tab.";
+    } else if (b.classList.contains("lp-no")) {
+      const note = b.closest(".lp-decide").querySelector(".lp-why")?.value || "";
+      const r = await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}/${n}/reject`, { method: "POST", body: JSON.stringify({ note }) });
+      $("#lpMsg").textContent = r.writing_more ? "None left to read: new storyboards are being written from the same prompt." : "Turned down.";
+    } else if (b.classList.contains("lp-more")) {
+      await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}/more`, { method: "POST", body: JSON.stringify({ count: Number(b.dataset.count) }) });
+      $("#lpMsg").textContent = "Writing more storyboards from the same prompt.";
+    } else if (b.classList.contains("lp-forget")) {
+      if (!confirm("Forget these storyboards? Videos already built from one stay.")) { b.disabled = false; return; }
+      await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}`, { method: "DELETE" });
+    }
+  } catch (err) { $("#lpMsg").textContent = err.message; }
+  lpLoadBoards();
 };
 
 // Toon Explainers (reelgen/toon.py): flat animated explainers with cartoon people and a mascot.

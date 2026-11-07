@@ -389,6 +389,60 @@ def lowpoly_lists() -> None:
         fail("lowpoly mix: the music should stay down across a 0.7 s pause between lines and be up long before them")
 
 
+def lowpoly_boards() -> None:
+    """✍ Storyboards to read first (lowpoly/boards.py), offline: a draft read shot by shot, rejecting the last open one
+    asks for a new round (not after an approval), a rejected one can still be approved but only once, an approved one
+    becomes an unfinished video at stage 'written' (a long film's outline: its acts are written from it), and a draft's
+    new person is kept only once approved."""
+    import json
+    import tempfile
+    from dataclasses import asdict, replace
+
+    from .config import Config
+    from .lowpoly import boards as B
+    from .lowpoly import story as S
+    from .lowpoly.run import LowPolyRequest
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = replace(Config(), output_dir=Path(tmp))
+        A = S.LPActor
+        shots = [S.LPShot(stamp="11:47 P.M.", line="He sets the alarm for five.", set="bedroom", light="night", camera="face",
+                          actors=[A(who="hero", action="lie-phone", expression="tired", spot="bed")]),
+                 S.LPShot(line="", set="kitchen", light="morning", camera="medium", actors=[A(who="Zed Quill", action="stand", expression="happy", spot="counter")])]
+        story = S.Story(title="Five A.M.", problem="the run", youtube_title="y", description="d", tags=[], hashtags=[], thumbnail_text="t",
+                        mood="calm", end_mood="uplifting", music_prompt="m", shots=shots,
+                        cast=[S.LPCast(name="Zed Quill", who="a neighbour", design=S.LPDesign(**S.CAST_LIBRARY[0]["design"]))])
+        st = B.new_set(cfg, asdict(LowPolyRequest(topic="the run")), 2)
+        for n in (1, 2):
+            (Path(tmp) / B.DIR / st["id"] / f"draft-{n}.json").write_text(json.dumps(story.model_dump()), encoding="utf-8")
+        B._update(cfg, st["id"], lambda x: x["drafts"].extend({"n": n, "state": "ready", "title": f"T{n}", "take": "", "problem": "p"} for n in (1, 2)))
+        v = B.view(cfg, st["id"], 1)
+        if len(v["shots"]) != 2 or v["shots"][0]["stamp"] != "11:47 P.M." or not v["shots"][0]["people"][0].startswith("him: lie phone"):
+            fail(f"lowpoly boards: a storyboard doesn't read shot by shot: {v['shots'][:1]}")
+        if B.estimate(story) <= 0:
+            fail("lowpoly boards: no running time estimated")
+        if B.reject(cfg, st["id"], 1, "too sad") or not B.reject(cfg, st["id"], 2):
+            fail("lowpoly boards: only rejecting the last open storyboard asks for new ones")
+        work, _ = B.prepare_build(cfg, st["id"], 1)
+        ck = json.loads((Path(tmp) / work / "lowpoly-checkpoint.json").read_text(encoding="utf-8"))
+        if ck.get("stage") != "written" or not (Path(tmp) / work / "story.json").exists() or ck.get("board", {}).get("draft") != 1:
+            fail(f"lowpoly boards: an approved storyboard isn't an unfinished video at 'written': {ck.get('stage')}")
+        if "zed quill" not in json.loads((Path(tmp) / "lowpoly_cast.json").read_text(encoding="utf-8")):
+            fail("lowpoly boards: an approved storyboard's new person wasn't kept for later films")
+        try:
+            B.prepare_build(cfg, st["id"], 1)
+            fail("lowpoly boards: the same storyboard was approved twice")
+        except ValueError:
+            pass
+        st2 = B.new_set(cfg, asdict(LowPolyRequest(topic="x")), 2)
+        (Path(tmp) / B.DIR / st2["id"] / "draft-1.json").write_text(json.dumps(story.model_dump()), encoding="utf-8")
+        B._update(cfg, st2["id"], lambda x: x["drafts"].append({"n": 1, "state": "ready", "title": "T", "take": "", "problem": "p"}))
+        B._update(cfg, st2["id"], lambda x: x["drafts"].append({"n": 2, "state": "ready", "title": "U", "take": "", "problem": "p"}))
+        B.prepare_build(cfg, st2["id"], 1)
+        if B.reject(cfg, st2["id"], 2):
+            fail("lowpoly boards: new storyboards were asked for after one was approved")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -399,6 +453,7 @@ def main() -> int:
     hook_templates()
     visual_templates()
     lowpoly_lists()
+    lowpoly_boards()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

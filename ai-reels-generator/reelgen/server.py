@@ -62,6 +62,8 @@ def job_label(job: dict) -> str:
     inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input") or job.get("sticky_input")
            or job.get("lowpoly_input") or job.get("story_input") or job.get("shoot_input") or {})
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
+    if job.get("lowpoly_boards"):
+        return f"{job.get('topic') or 'Claude picks'} · Low-poly storyboards"
     kind = ("Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
@@ -203,7 +205,12 @@ class JobManager:
                 cfg.visual_template = job["visual_template"]
             if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
                 cfg.long_voice_rate = job["voice_rate"]
-            if job.get("myvoice"):
+            boards = None
+            if job.get("lowpoly_boards"):  # ✍ low-poly storyboards to read first (reelgen/lowpoly/boards.py)
+                from .lowpoly.boards import write_round
+                boards = write_round(cfg, job["lowpoly_boards"]["id"], job["lowpoly_boards"]["count"], progress)
+                reports = []
+            elif job.get("myvoice"):
                 from .myvoice import finish
                 r = job["myvoice"]
                 reports = [finish(cfg, video_dir(cfg, r["id"]), r["mode"], r["fit"], progress)]
@@ -297,6 +304,9 @@ class JobManager:
             made = len(reports)
             job["status"] = ("done" if made == job["count"] else "paused" if job.get("pause")
                              else "partial" if made else "failed")
+            if boards is not None:  # a storyboard round makes no video: done when any storyboard was written
+                job["boards_made"] = boards
+                job["status"] = "done" if boards else "failed"
         except Exception as exc:  # never kill the worker thread
             progress(f"Error: {exc}")
             job["status"] = "failed"
@@ -559,7 +569,17 @@ class LowPolyBody(BaseModel):
     watermark: str = "Life of a man"
     words: str = "on"  # on (subtitles + time stamps) | stamps (time stamps only) | off
     count: int = 1
+    drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
     ai: AIPick | None = None
+
+
+class LowPolyRejectBody(BaseModel):
+    """✍ A storyboard turned down, and what was wrong with it (optional; the next ones are told)."""
+    note: str = ""
+
+
+class LowPolyMoreBody(BaseModel):
+    count: int = 2
 
 
 class LowPolyRestageBody(BaseModel):
@@ -1605,17 +1625,125 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
                            sticky_input=given, captions=False, ai=body.ai)
 
+    def lowpoly_given(body: LowPolyBody) -> dict:
+        film = body.format == "film"
+        return {"topic": body.topic.strip(), "kind": "fiction" if body.kind == "fiction" else "life",
+                "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
+                "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
+                "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
+                "words": body.words if body.words in ("on", "stamps", "off") else "on"}
+
     @app.post("/api/lowpoly")
     def lowpoly(body: LowPolyBody):
-        film = body.format == "film"
-        given = {"topic": body.topic.strip(), "kind": "fiction" if body.kind == "fiction" else "life",
-                 "format": "film" if film else "short", "seconds": max(20, min(60, int(body.seconds))),
-                 "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
-                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
-                 "words": body.words if body.words in ("on", "stamps", "off") else "on"}
+        given = lowpoly_given(body)
         label = given["topic"].splitlines()[0][:80] if given["topic"] else None
         return jobs.submit(label, max(1, min(body.count, 5)), "lowpoly", "story", "lowpoly",
                            lowpoly_input=given, captions=given["words"] == "on", ai=body.ai)
+
+    # ✍ Read the storyboard first (reelgen/lowpoly/boards.py): 2-3 different storyboards from one prompt, read in the
+    # Low-poly tab; approve one to build it, reject them for new ones, or approve one turned down before.
+    def boards_busy() -> set[str]:
+        return {j["lowpoly_boards"]["id"] for j in jobs.jobs if j.get("lowpoly_boards") and j["status"] in ("queued", "running")}
+
+    def boards_round(s: dict, count: int) -> dict:
+        req = s["request"]
+        label = (req.get("topic") or "").splitlines()[0][:80] if (req.get("topic") or "").strip() else None
+        return jobs.submit(label, count, "lowpoly", "story", "lowpoly", lowpoly_boards={"id": s["id"], "count": count},
+                           lowpoly_kind={"format": req.get("format"), "kind": req.get("kind")}, captions=False, ai=s.get("ai"))
+
+    @app.post("/api/lowpoly/boards")
+    def lowpoly_boards_new(body: LowPolyBody):
+        from .lowpoly import boards
+
+        count = body.drafts if body.drafts in boards.COUNTS else boards.COUNTS[-1]
+        s = boards.new_set(cfg, lowpoly_given(body), count, body.ai.model_dump() if body.ai else None)
+        boards_round(s, count)
+        return {"id": s["id"], "count": count}
+
+    @app.get("/api/lowpoly/boards")
+    def lowpoly_boards_list():
+        from .lowpoly import boards
+
+        return boards.listing(cfg, boards_busy())
+
+    def board_or_404(sid: str):
+        from .lowpoly import boards
+
+        try:
+            return boards.load(cfg, sid)
+        except KeyError:
+            raise HTTPException(404, "No such storyboards") from None
+
+    @app.get("/api/lowpoly/boards/{sid}/{n}")
+    def lowpoly_board_view(sid: str, n: int):
+        from .lowpoly import boards
+
+        board_or_404(sid)
+        try:
+            return boards.view(cfg, sid, n)
+        except KeyError:
+            raise HTTPException(404, "No such storyboard") from None
+        except ValueError as exc:
+            raise HTTPException(400, f"Couldn't read it: {exc}") from exc
+
+    @app.post("/api/lowpoly/boards/{sid}/{n}/approve")
+    def lowpoly_board_approve(sid: str, n: int):
+        """Build it: an unfinished low-poly video made from this storyboard, carried on like a resume (its story is
+        never written again)."""
+        from .lowpoly import boards
+
+        s = board_or_404(sid)
+        try:
+            work, req = boards.prepare_build(cfg, sid, n)
+        except KeyError:
+            raise HTTPException(404, "No such storyboard") from None
+        except (OSError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        title = next((d.get("title") for d in s["drafts"] if d["n"] == n), "") or None
+        job = jobs.submit(title, 1, "lowpoly", "story", "lowpoly", lowpoly_input=req, lowpoly_resume=[work],
+                          captions=req.get("words", "on") == "on", ai=s.get("ai"))
+        boards.built(cfg, sid, n, job["id"])
+        return {"job": job["id"], "work": work}
+
+    @app.post("/api/lowpoly/boards/{sid}/{n}/reject")
+    def lowpoly_board_reject(sid: str, n: int, body: LowPolyRejectBody):
+        """Turn it down. When none is left to read, new ones are written with the same prompt (told which were turned
+        down and why)."""
+        from .lowpoly import boards
+
+        s = board_or_404(sid)
+        try:
+            empty = boards.reject(cfg, sid, n, body.note)
+        except KeyError:
+            raise HTTPException(404, "No such storyboard") from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        more = empty and sid not in boards_busy()
+        if more:
+            boards_round(s, s.get("count", 3))
+        return {"ok": True, "writing_more": more}
+
+    @app.post("/api/lowpoly/boards/{sid}/more")
+    def lowpoly_board_more(sid: str, body: LowPolyMoreBody):
+        from .lowpoly import boards
+
+        s = board_or_404(sid)
+        if sid in boards_busy():
+            raise HTTPException(409, "Storyboards for this prompt are being written right now")
+        count = body.count if body.count in (1, *boards.COUNTS) else 2
+        boards_round(s, count)
+        return {"ok": True, "count": count}
+
+    @app.delete("/api/lowpoly/boards/{sid}")
+    def lowpoly_board_remove(sid: str):
+        """Forget these storyboards (videos already built from one are not touched)."""
+        from .lowpoly import boards
+
+        board_or_404(sid)
+        if sid in boards_busy():
+            raise HTTPException(409, "Storyboards for this prompt are being written right now: stop that job first")
+        boards.remove(cfg, sid)
+        return {"ok": True}
 
     @app.get("/api/lowpoly/cast")
     def lowpoly_cast():
