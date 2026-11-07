@@ -464,10 +464,14 @@ def lowpoly_vehicles() -> None:
                       S.LPShot(line="", set="highway", light="day", camera="chase", pause=2, actors=[], big=car("drift", 0.6))])
     S.repair(st2)
     props, _, cues, _ = build(st2, {}, vertical=False, watermark="", seed=1)
-    ins = [x.get("insert") for x in props["shots"]]
-    got = [(i or {}).get("cam", "") + ("/" + i["pedal"] if i and i.get("pedal") else "") for i in ins]
-    if got != ["pedal/gas", "", "wheel", "pedal/brake", "", ""]:
-        fail(f"lowpoly vehicles: cut-ins {got}, wanted a gas pedal, none, the wheel, the brake, none (a pedal shot), none (nobody driving)")
+    allins = [x.get("inserts", []) for x in props["shots"]]
+    got = ["+".join(i["cam"] + ("/" + i["pedal"] if i.get("pedal") else "") for i in x) for x in allins]
+    want = ["pedal/gas+speedo", "", "wheel", "pedal/brake", "", ""]
+    if [x.get("camera") for x in props["shots"]][4] != "pedal":
+        want[4] = got[4]  # (a whole pedal shot only once every CUT_SHOT_EVERY shots: repair may have changed it)
+    if got != want:
+        fail(f"lowpoly vehicles: cut-ins {got}, wanted {want}")
+    ins = [x[0] if x else None for x in allins]
     for i in (2, 3):
         x, sh = ins[i], props["shots"][i]
         if x and not (0.1 <= x["from"] < x["to"] < sh["big"][0]["at"] < sh["duration"]):

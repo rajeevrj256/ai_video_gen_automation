@@ -59,7 +59,7 @@ def _bank() -> tuple[np.ndarray, np.ndarray]:
 def speed_keys(motion: str, at: float, dur: float) -> list[tuple[float, float]]:
     """A vehicle's speed (m/s) over action seconds, as Big.tsx `profile` moves it."""
     return {
-        "race": [(0, 15), (0.75, 16), (max(1.0, dur), 36)],
+        "race": [(0, 15), (0.75, 16), (2.35, 33), (max(2.6, dur), 36)],
         "drift": [(0, 23), (at, 23), (at + 0.6, 17)],
         "spin": [(0, 21), (at, 21), (at + 1.1, 8), (at + 2.2, 14)],
         "reverse": [(0, 9)],

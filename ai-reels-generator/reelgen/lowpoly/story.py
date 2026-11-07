@@ -26,7 +26,7 @@ SetName = Literal["bedroom", "hallway", "street", "park", "kitchen", "living", "
                   "construction", "highway", "bridge", "alley", "lab", "sky", "void"]
 LightName = Literal["night", "lamp", "dawn", "morning", "day", "evening", "dark"]
 CamName = Literal["face", "face-top", "top", "medium", "wide", "side", "front", "back", "low", "detail", "aerial", "orbit", "crash-zoom",
-                  "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper", "pedal", "wheel"]
+                  "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper", "pedal", "wheel", "speedo"]
 ActionName = Literal[
     "stand", "walk", "run", "sit", "sit-floor", "lie", "lie-side", "lie-phone", "phone", "type", "reach", "sit-up", "get-up", "shoes",
     "head-in-hands", "slump", "stretch", "sigh", "nod", "shake-head", "shrug", "think", "drink", "eat", "look-out", "wave", "point",
@@ -347,8 +347,9 @@ the leap.
 - Cut-ins come by themselves: in a shot where he drives a car that races off, jumps, brakes ('stop'), drifts or spins, \
 the editor cuts for a split second to his foot slamming the accelerator or the brake, or to his hands yanking the \
 wheel, then back to your camera on what the car does. So give those shots a camera that shows the car (chase, \
-tracking, bumper, pass-by, lead, heli), not his face. 'pedal' (his foot on the pedal) and 'wheel' (his hands on the \
-wheel) as a whole shot only for a short tense beat on its own (1-1.5 s), never twice running.
+tracking, bumper, pass-by, lead, heli), not his face. A race also cuts to the speedometer, its needle climbing. \
+'pedal' (his foot on the pedal), 'wheel' (his hands on the wheel) and 'speedo' (the speedometer) as a whole shot \
+only for one short tense beat (1-1.5 s), at most one such shot in a film's every 15 shots.
 
 THINGS THE EDITOR HASN'T GOT: when the brief needs a vehicle or a big object that isn't in the list (a plane, a jet, \
 an enemy's plane, a helicopter, a motorbike, a boat, a spaceship, a tank, a drone), design it in `made` and use it in \
@@ -977,6 +978,28 @@ def travel_of(story: Story, b: LPBig) -> str:
     return "none"
 
 
+CUT_SHOT_EVERY = 15  # shots: at most one whole shot on the pedal, the wheel or the speedometer in this many
+CUT_SHOT_INSTEAD = {"pedal": "chase", "wheel": "cockpit", "speedo": "chase"}
+
+
+def _cut_shots(story: Story) -> list[str]:
+    """A whole shot on his foot, his hands or the dial is a beat a film uses once in a while (the user's 55 s film had
+    five on the pedal, floating shoes each time): only with someone driving a car in it, at most one every
+    `CUT_SHOT_EVERY` shots; the others get the car's own camera (the cut-ins come by themselves inside shots)."""
+    notes, last = [], -CUT_SHOT_EVERY
+    for i, s in enumerate(story.shots):
+        if s.camera not in CUT_SHOT_INSTEAD:
+            continue
+        driving = any(a.action == "drive" and a.on and a.on <= len(s.big) and s.big[a.on - 1].kind == "car" for a in s.actors)
+        if driving and i - last >= CUT_SHOT_EVERY:
+            last = i
+            continue
+        new = CUT_SHOT_INSTEAD[s.camera]
+        notes.append(f"Shot {i + 1}: '{s.camera}' as a whole shot again so soon (or with nobody driving) became '{new}'")
+        s.camera = new
+    return notes
+
+
 def _broken_bridge(story: Story) -> list[str]:
     """A car jumping on the open highway jumped over nothing (the user: "this not look real broken highway"): it leaps
     the fallen span of the 'bridge' instead, and the shots of vehicles under way on the highway right before and after
@@ -1155,6 +1178,7 @@ def repair(story: Story) -> list[str]:
             notes.append(f"Shot {i + 1} had nothing in it; he stands there.")
         notes += [f"Shot {i + 1}: {n}" for n in _stage(story, s)]
     notes += _broken_bridge(story)
+    notes += _cut_shots(story)
     reds = [i for i, s in enumerate(story.shots) if s.red]
     for i in reds[:-1]:
         story.shots[i].red = False

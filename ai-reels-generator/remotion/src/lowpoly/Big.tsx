@@ -145,7 +145,7 @@ const profile = (b: Big, travel: Travel, t: number, at: number, dur: number, alt
   switch (b.motion) {
     case 'race':
       // the foot goes down (the cut-in to the pedal) and it surges
-      p.keys = [[0, 15], [0.75, 16], [Math.max(1, dur), 36]];
+      p.keys = [[0, 15], [0.75, 16], [2.35, 33], [Math.max(2.6, dur), 36]]; // the surge: the needle leaps
       p.lat = 0.18 * Math.sin(t * 0.7 + k);
       break;
     case 'drift':
@@ -525,7 +525,8 @@ const glassMat = (c: string, opacity = 0.32) => {
   const key = `${c}|${opacity}`;
   let m = glassMats.get(key);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({color: c, roughness: 0.5, metalness: 0, transparent: true, opacity, flatShading: true, depthWrite: false});
+    // fully rough: at 0.5 the camera-side light made a broad white highlight on the glass over his head in every cockpit shot
+    m = new THREE.MeshStandardMaterial({color: c, roughness: 1, metalness: 0, transparent: true, opacity, flatShading: true, depthWrite: false});
     glassMats.set(key, m);
   }
   return m;
@@ -675,8 +676,101 @@ const Pedal: React.FC<{x: number; w: number; h: number; press: number; foot?: [n
   </group>
   );
 };
+// The instrument cluster in front of the driver, seen through the top of the wheel (the user: "add speedometer on car
+// and camera angle as well, and increase arrow when speed increases on speedometer for fraction of second just like
+// action movies"): a speedometer and a rev counter, lit dials drawn on a canvas, their needles turned by the car's
+// speed. Shown at film speeds: the cars move at 15-36 m/s on screen, the dial reads that x `SHOWN` (36 m/s = 285 km/h).
+export const CLUSTER = {at: [-0.4, 0.94, 0.31] as [number, number, number], tilt: 0.32, speedo: -0.072, tach: 0.072, r: 0.058};
+const SHOWN = 7.9; // km/h on the dial per m/s on screen
+const TOP_KMH = 320;
+const GEAR_TOP = [70, 115, 160, 205, 255, 320]; // km/h shown at 7.5 thousand rpm in each gear
+const dials = new Map<string, THREE.CanvasTexture>();
+const dialTexture = (kind: 'speed' | 'rpm') => {
+  let t = dials.get(kind);
+  if (!t) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#0b0c10';
+    g.beginPath();
+    g.arc(128, 128, 124, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = '#3a3d46';
+    g.lineWidth = 6;
+    g.stroke();
+    const max = kind === 'speed' ? TOP_KMH : 9;
+    const major = kind === 'speed' ? 40 : 1;
+    const minor = kind === 'speed' ? 10 : 0.5;
+    const red = kind === 'speed' ? 260 : 7;
+    const ang = (v: number) => ((225 - (v / max) * 270) * Math.PI) / 180;
+    for (let v = 0; v <= max + 1e-6; v += minor) {
+      const a = ang(v);
+      const big = Math.abs(v / major - Math.round(v / major)) < 1e-6;
+      g.strokeStyle = v >= red ? '#ff3b30' : '#e9edf2';
+      g.lineWidth = big ? 5 : 2;
+      const r0 = big ? 92 : 100;
+      g.beginPath();
+      g.moveTo(128 + Math.cos(a) * r0, 128 - Math.sin(a) * r0);
+      g.lineTo(128 + Math.cos(a) * 112, 128 - Math.sin(a) * 112);
+      g.stroke();
+      if (big) {
+        g.fillStyle = v >= red ? '#ff3b30' : '#e9edf2';
+        g.font = 'bold 22px sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(String(v), 128 + Math.cos(a) * 72, 128 - Math.sin(a) * 72);
+      }
+    }
+    g.fillStyle = '#8b93a1';
+    g.font = 'bold 18px sans-serif';
+    g.textAlign = 'center';
+    g.fillText(kind === 'speed' ? 'km/h' : 'x1000 rpm', 128, 190);
+    t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    dials.set(kind, t);
+  }
+  return t;
+};
+const Dial: React.FC<{x: number; r: number; kind: 'speed' | 'rpm'; value: number; max: number}> = ({x, r, kind, value, max}) => {
+  const a = ((225 - (Math.min(max, Math.max(0, value)) / max) * 270) * Math.PI) / 180;
+  return (
+    <group position={[x, 0, 0]}>
+      <mesh>
+        <circleGeometry args={[r, 40]} />
+        <meshStandardMaterial map={dialTexture(kind)} emissiveMap={dialTexture(kind)} emissive="#ffffff" emissiveIntensity={0.5} roughness={0.9} />
+      </mesh>
+      <group position={[0, 0, 0.003]} rotation={[0, 0, a]}>
+        <mesh position={[r * 0.38, 0, 0]}>
+          <boxGeometry args={[r * 0.86, r * 0.05, 0.002]} />
+          <meshStandardMaterial color="#ff3b30" emissive="#ff3b30" emissiveIntensity={1.6} />
+        </mesh>
+      </group>
+      <mesh position={[0, 0, 0.005]}>
+        <circleGeometry args={[r * 0.1, 16]} />
+        <meshStandardMaterial color="#1c1d22" />
+      </mesh>
+    </group>
+  );
+};
+const Cluster: React.FC<{speed: number}> = ({speed}) => {
+  const kmh = Math.min(TOP_KMH, Math.abs(speed) * SHOWN);
+  const top = GEAR_TOP.find((g) => kmh < g * 0.97) ?? GEAR_TOP[GEAR_TOP.length - 1];
+  const rpm = speed < 0.3 ? 0.9 : Math.max(1.1, (kmh / top) * 7.5);
+  // facing the driver (-z), leaning back
+  return (
+    <group position={CLUSTER.at} rotation={[CLUSTER.tilt, Math.PI, 0]}>
+      <mesh position={[0, 0, -0.006]}>
+        <boxGeometry args={[0.34, 0.15, 0.01]} />
+        <meshStandardMaterial color="#15161a" roughness={0.9} />
+      </mesh>
+      <Dial x={-CLUSTER.speedo} r={CLUSTER.r} kind="speed" value={kmh} max={TOP_KMH} />
+      <Dial x={-CLUSTER.tach} r={CLUSTER.r * 0.82} kind="rpm" value={rpm} max={9} />
+    </group>
+  );
+};
+
 export type Pedals = {gas: number; brake: number; at?: {gas: [number, number, number]; brake: [number, number, number]}};
-const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pedals}> = ({c, turn = 0, steer = 0, pedals}) => {
+const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pedals; speed?: number}> = ({c, turn = 0, steer = 0, pedals, speed = 0}) => {
   const paint = paintMat(c);
   const dark = mat('#141518');
   const L = CAR_L / 2;
@@ -740,6 +834,9 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pe
           dials and screen, the steering wheel where his hands are */}
       {/* (the body's rounded edges grow its outline by 0.07: the cabin's floor is at 0.37, its front wall at z 0.51;
           carpet on both, so the footwell is dark round his feet and the pedals) */}
+      {/* a matt headliner under the roof: from inside, the glossy paint caught the light as a white wedge over his
+          head in every night cockpit shot */}
+      <Box p={[0, 1.315, -0.45]} s={[CAR_W - 0.42, 0.02, 0.78]} c="#2e2f34" />
       <Box p={[0, 0.38, -0.13]} s={[CAR_W - 0.2, 0.025, 1.28]} c="#141417" />
       <Box p={[0, 0.6, 0.5]} s={[CAR_W - 0.2, 0.46, 0.02]} c="#141417" />
       {[-0.4, 0.4].map((x) => (
@@ -761,7 +858,7 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pe
       <Box p={[0, 0.79, 0.45]} s={[CAR_W - 0.2, 0.15, 0.34]} c="#17181b" />
       <Pedal x={-0.5} w={0.07} h={0.16} press={pedals?.gas ?? 0} foot={pedals?.at?.gas} />
       <Pedal x={-0.36} w={0.1} h={0.09} press={pedals?.brake ?? 0} foot={pedals?.at?.brake} />
-      <Box p={[-0.4, 0.87, 0.33]} s={[0.36, 0.1, 0.02]} c="#6fc6ff" glow={0.7} r={[-0.3, 0, 0]} />
+      <Cluster speed={speed} />
       <Box p={[0.04, 0.88, 0.4]} s={[0.26, 0.15, 0.02]} c="#4f86c6" glow={0.6} r={[-0.3, 0, 0]} />
       {/* the steering wheel on its column, which runs forward and down into the dashboard (the user: "why steering
           move toward the character, it must be attached to car": it hung in the air, its top leaning at him) */}
@@ -870,14 +967,14 @@ export const MadeModel: React.FC<{m: Made; spin: number}> = ({m, spin}) => (
   </group>
 );
 
-export const BigModel: React.FC<{kind: BigKind; color?: string; seed: number; open?: boolean; turn?: number; steer?: number; made?: Made; pedals?: Pedals}> = ({kind, color, seed, open = false, turn = 0, steer = 0, made, pedals}) => {
+export const BigModel: React.FC<{kind: BigKind; color?: string; seed: number; open?: boolean; turn?: number; steer?: number; made?: Made; pedals?: Pedals; speed?: number}> = ({kind, color, seed, open = false, turn = 0, steer = 0, made, pedals, speed = 0}) => {
   const c = color || PAINT[Math.abs(seed) % PAINT.length];
   void open; // (a car is always the closed coupe now; whoever drives is seen through its glass)
   switch (kind) {
     case 'made':
       return made ? <MadeModel m={made} spin={turn} /> : null;
     case 'car':
-      return <SportsCar c={color || SPORT_PAINT[Math.abs(seed) % SPORT_PAINT.length]} turn={turn} steer={steer} pedals={pedals} />;
+      return <SportsCar c={color || SPORT_PAINT[Math.abs(seed) % SPORT_PAINT.length]} turn={turn} steer={steer} pedals={pedals} speed={speed} />;
     case 'bus':
       return <Bus c={color || '#e2b21f'} />;
     case 'truck':
@@ -972,13 +1069,14 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boole
       <group position={st.pos} rotation={new THREE.Euler(st.rx, st.ry, st.rz, 'YXZ')}>
         <group position={[-st.pivot[0], -st.pivot[1], -st.pivot[2]]} scale={st.squash}>
           <group scale={MODEL_SCALE[b.kind] ?? 1}>
-            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} />
+            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} speed={st.speed ?? 0} />
           </group>
           {night && b.kind === 'car' ? (
             <>
               {/* at night its headlights light the road ahead, and a soft light from above keeps a dark car's shape */}
               <pointLight position={[0, 0.7, size[2] / 2 + 3.5]} color="#ffe7b8" intensity={4.5} distance={14} decay={1.4} />
-              <pointLight position={[0, 1.8, -size[2] / 2 - 2.2]} color="#ffd2b0" intensity={3} distance={6} decay={1.3} />
+              {/* (low behind the car: higher up it shone into the rear window, a glow over his head from inside) */}
+              <pointLight position={[0, 0.55, -size[2] / 2 - 3.0]} color="#ffd2b0" intensity={3} distance={6} decay={1.3} />
             </>
           ) : null}
           {children}

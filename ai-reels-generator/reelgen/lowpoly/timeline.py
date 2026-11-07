@@ -89,7 +89,8 @@ JUMP_TIME = 1.25  # = the jump's time in the air in Big.tsx (profile 'jump', T) 
 # (camera, pedal, when it starts and ends: 'go' = from the shot's start, else action seconds before the moment).
 CUT_IN = {"race": ("pedal", "gas", "go", 0.75), "jump": ("pedal", "gas", 0.75, 0.15), "stop": ("pedal", "brake", 0.6, 0.04),
           "drift": ("wheel", None, 0.6, 0.04), "spin": ("wheel", None, 0.6, 0.04)}
-CUT_IN_CAMS = {"pedal", "wheel"}
+CUT_IN_CAMS = {"pedal", "wheel", "speedo"}
+SPEEDO_FOR = 0.6  # seconds on the speedometer while the needle climbs
 CUT_IN_MIN = 0.3  # seconds: a cut-in shorter than this is a flicker, so there is none
 RACE_SURGE = 0.75  # = race's speed keys in Big.tsx: the foot goes down, then it surges from this action second
 
@@ -108,7 +109,7 @@ FLOOR = {"bedroom": "wood", "hallway": "wood", "living": "wood", "cafe": "wood",
          "kitchen": "tile", "bathroom": "tile", "lab": "tile", "street": "concrete", "busstop": "concrete", "rooftop": "concrete",
          "highway": "concrete", "bridge": "concrete", "alley": "wet", "park": "path", "construction": "gravel", "void": "studio"}
 CAMERA_NEAR = {"wide": 0.55, "aerial": 0.4, "top": 0.6, "side": 1.0, "front": 1.0, "back": 0.9, "low": 1.0, "orbit": 0.9,
-               "face": 0.75, "face-top": 0.7, "medium": 0.8, "detail": 0.7, "crash-zoom": 0.8, "pedal": 0.6, "wheel": 0.6}
+               "face": 0.75, "face-top": 0.7, "medium": 0.8, "detail": 0.7, "crash-zoom": 0.8, "pedal": 0.6, "wheel": 0.6, "speedo": 0.6}
 _SPOTS: dict[str, dict[str, tuple[float, float]]] | None = None
 
 
@@ -214,12 +215,15 @@ def moments(s, dur: float) -> tuple[list[float | None], list[float | None]]:
     return acts, bigs
 
 
-def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_race: bool) -> dict | None:
-    """The split-second cut-in for this shot (seconds into it), or None: only a built-in car someone drives ('drive', `on`
-    it), never when this shot or the one before is itself on the pedal or the wheel or the shot before cut in the same
-    way, and a race only as it sets off (not every shot of a chase)."""
+def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_race: bool) -> list[dict]:
+    """The split-second cut-ins for this shot (seconds into it): only for a built-in car someone drives ('drive', `on`
+    it), never when this shot or the one before is itself on the pedal, the wheel or the speedometer, nor the same
+    cut-in as the shot before. A race gets the foot on the accelerator as it sets off (not every shot of a chase) and
+    then the speedometer, its needle climbing as it surges (the user: "add speedometer on car and camera angle as well,
+    and increase arrow when speed increases ... for fraction of second just like action movies")."""
     if s.camera in CUT_IN_CAMS or (prev and (prev.get("camera") in CUT_IN_CAMS)):
-        return None
+        return []
+    before = {x.get("cam") for x in (prev or {}).get("inserts", [])}
     slow = 1 / SLOW if s.slowmo else 1.0
     for k, (b, at) in enumerate(zip(s.big, big_at)):
         if b.kind != "car" or b.motion not in CUT_IN:
@@ -227,24 +231,30 @@ def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_ra
         if not any(x.action == "drive" and x.on == k + 1 for x in s.actors):
             continue
         cam, pedal, a, z = CUT_IN[b.motion]
-        if prev and (prev.get("insert") or {}).get("cam") == cam:
-            continue
+        out: list[dict] = []
         if a == "go":
-            if prev_race:
-                continue
-            start, end = 0.12, RACE_SURGE * slow
-        else:
-            if at is None:
-                continue
-            start, end = at - a * slow, at - z * slow
-        start, end = max(0.1, start), min(end, dur - 0.4)
+            start = 0.12
+            if not prev_race and cam not in before:
+                end = min(RACE_SURGE * slow, dur - 0.4)
+                if end - start >= CUT_IN_MIN:
+                    out.append({"cam": cam, "from": round(start, 3), "to": round(end, 3), "on": k, "pedal": pedal})
+                    start = end + 0.45 * slow  # back on the car a moment, then the needle as it surges
+            else:
+                start = 0.6
+            end = min(start + SPEEDO_FOR * slow, dur - 0.4)
+            if "speedo" not in before and end - start >= CUT_IN_MIN:
+                out.append({"cam": "speedo", "from": round(start, 3), "to": round(end, 3), "on": k})
+            return out
+        if at is None or cam in before:
+            continue
+        start, end = max(0.1, at - a * slow), min(at - z * slow, dur - 0.4)
         if end - start < CUT_IN_MIN:
             continue
         d = {"cam": cam, "from": round(start, 3), "to": round(end, 3), "on": k}
         if pedal:
             d["pedal"] = pedal
-        return d
-    return None
+        return [d]
+    return []
 
 
 def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: str, seed: int,
@@ -326,9 +336,9 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 have.add("glass")
         if big:
             shot["big"] = big
-        ins = cut_in(s, dur, big_at, shots[-1] if shots else None, prev_race)
-        if ins:
-            shot["insert"] = ins
+        ins_all = cut_in(s, dur, big_at, shots[-1] if shots else None, prev_race)
+        if ins_all:
+            shot["inserts"] = ins_all
         prev_race = any(b.kind == "car" and b.motion == "race" and any(x.action == "drive" and x.on == k + 1 for x in s.actors)
                         for k, b in enumerate(s.big))
         if fx:
@@ -424,7 +434,9 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 if s.camera in ("pass-by", "wide") or (not s.actors and s.camera == "wide"):
                     cue("flyby", t + max(0.0, at - 0.7), 0.95)
         # the cut-in's own sounds: the engine revving as the foot goes down, a stamp on the brake, the wheel yanked
-        if ins:
+        for ins in ins_all:
+            if ins["cam"] == "speedo":
+                continue  # the engine pulling is the sound of it
             if ins["cam"] == "pedal" and ins.get("pedal") == "gas":
                 cue("rev", t + ins["from"] + 0.1, 0.95)
             elif ins["cam"] == "pedal":
