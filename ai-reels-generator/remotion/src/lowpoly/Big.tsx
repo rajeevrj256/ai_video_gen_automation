@@ -196,7 +196,8 @@ const yankOf = (motion: string, tau: number) =>
 
 // A vehicle under way at time t: along the set's road (or its walk), at its spot at its moment (a jump at the roof's
 // edge), never further than the set reaches; a second one in a shot follows behind in the next lane.
-export const ridePath = (b: Big, set: SetDef, t: number, dur: number, k: number, order: number, trail = true): BigState => {
+export type Nudge = {lat: number; along: number}; // a vehicle moved over a lane or along the road (LowPoly.tsx rideNudges)
+export const ridePath = (b: Big, set: SetDef, t: number, dur: number, k: number, order: number, trail = true, nudge?: Nudge): BigState => {
   const size = sizeOf(b);
   const travel = travelOf(b);
   const sp = spotOf(set, b.spot);
@@ -209,8 +210,8 @@ export const ridePath = (b: Big, set: SetDef, t: number, dur: number, k: number,
   const pr = shape(t);
   const dir = set.walk === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
   const side = new THREE.Vector3(dir.z, 0, -dir.x);
-  const lane = (set.drive ?? set.road ?? (set.walk === 'z' ? sp.x : sp.z)) + (order % 2 ? 3.2 : 0);
-  let along0 = b.motion === 'jump' && set.jumpAt !== undefined ? set.jumpAt : set.walk === 'z' ? sp.z : sp.x;
+  const lane = (set.drive ?? set.road ?? (set.walk === 'z' ? sp.x : sp.z)) + (order % 2 ? 3.2 : 0) + (nudge?.lat ?? 0);
+  let along0 = (b.motion === 'jump' && set.jumpAt !== undefined ? set.jumpAt : set.walk === 'z' ? sp.z : sp.x) + (nudge?.along ?? 0);
   // the whole run fits the place (a 240 m highway, a row of roofs); in the air and the sky there is no end
   const reach = air || sky ? Infinity : set.reach ?? 30;
   const span = Math.abs(travelled(pr.keys, dur) - travelled(pr.keys, 0));

@@ -40,6 +40,7 @@ import {
   type Pedals,
   CLUSTER,
   type RoadPlace,
+  type Nudge,
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
 import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot} from './types';
@@ -271,9 +272,22 @@ const kin = (a: Actor, action: Action, k: number, shot: LPShot, design: Design, 
 // its state at any other moment (for a leap off it and for the cameras that follow it).
 export type Ride = {b: Big; k: number; st: BigState; m: THREE.Matrix4; at: (tt: number) => BigState; under: boolean};
 
-export const rideStates = (shot: LPShot, set: SetDef, tReal: number, people: Holder[] = []): (Ride | undefined)[] => {
-  const da = actionTime(shot, shot.duration);
-  const ta = actionTime(shot, tReal);
+// Two vehicles never overlap (the user, of two cars at a race's start drawn inside each other: "make some runtime
+// rules to analyse what needs to be done", not hand-placed): each vehicle someone is in or that is under way is
+// placed in turn, and if at any of `RIDE_MOMENTS` moments of the shot it would touch one already placed it moves a
+// lane over (its own width + `RIDE_GAP`, either side, then further) or a car length ahead or behind, the first place
+// that touches nobody (else the one that touches least). Worked out once per shot.
+const RIDE_MOMENTS = 9;
+const RIDE_GAP = 1.0;
+const vehicleOutline = (b: Big, st: BigState) => {
+  const [w, h, l] = sizeOf(b);
+  const m = vehicleMatrix(st);
+  return [[-1, -1], [-1, 1], [1, -1], [1, 1], [0, 1], [0, -1], [1, 0], [-1, 0], [0, 0]].map(([sx, sz]) => new THREE.Vector3((sx * w) / 2, h / 2, (sz * l) / 2).applyMatrix4(m));
+};
+export const vehiclesTouch = (b1: Big, s1: BigState, b2: Big, s2: BigState) =>
+  vehicleOutline(b1, s1).some((pt) => insideBig(b2, s2, pt, 0.3)) || vehicleOutline(b2, s2).some((pt) => insideBig(b1, s1, pt, 0.3));
+type RideEntry = {b: Big; k: number; under: boolean; o: number; road?: RoadPlace};
+const rideEntries = (shot: LPShot, set: SetDef): (RideEntry | undefined)[] => {
   const alone = !shot.actors.length; // a shot of only a vehicle: it travels, and the camera goes with it
   const pusher = shot.actors.some((a) => a.action === 'push-stop');
   let order = 0;
@@ -286,9 +300,57 @@ export const rideStates = (shot: LPShot, set: SetDef, tReal: number, people: Hol
     const o = under ? order++ : 0;
     // standing with someone in it: on the road where the set has one
     const road: RoadPlace | undefined = !under && set.road !== undefined && set.walk === 'x' && !(b.motion === 'stop' && pusher) ? {lane: set.road, shift: 0} : undefined;
-    const at = (tt: number, trail = false) => (under ? ridePath(b, set, tt, da, k, o, trail) : bigState(b, set, people, tt, da, k, road));
+    return {b, k, under, o, road};
+  });
+};
+const rideAt = (e: RideEntry, set: SetDef, tt: number, da: number, n: Nudge, people: Holder[] = [], trail = false): BigState => {
+  if (e.under) return ridePath(e.b, set, tt, da, e.k, e.o, trail, n);
+  if (!n.lat && !n.along) return bigState(e.b, set, people, tt, da, e.k, e.road);
+  const sp = spotOf(set, e.b.spot);
+  const base = e.road ?? {lane: set.walk === 'x' ? sp.z : sp.x, shift: 0};
+  return bigState(e.b, set, people, tt, da, e.k, {lane: base.lane + n.lat, shift: base.shift + n.along});
+};
+const NUDGES = new WeakMap<LPShot, Nudge[]>();
+export const rideNudges = (shot: LPShot, set: SetDef): Nudge[] => {
+  const hit = NUDGES.get(shot);
+  if (hit) return hit;
+  const entries = rideEntries(shot, set);
+  const da = actionTime(shot, shot.duration);
+  const moments = Array.from({length: RIDE_MOMENTS}, (_, i) => (da * i) / (RIDE_MOMENTS - 1));
+  const out: Nudge[] = entries.map(() => ({lat: 0, along: 0}));
+  const placed: {e: RideEntry; n: Nudge}[] = [];
+  for (const e of entries) {
+    if (!e) continue;
+    const [w, , l] = sizeOf(e.b);
+    const across = w + RIDE_GAP;
+    const tries: Nudge[] = [];
+    for (const a of [0, 1, -1]) for (const s of [0, 1, -1, 2, -2, 3, -3]) tries.push({lat: s * across, along: a * (l + 2)});
+    let best: {n: Nudge; hits: number} | undefined;
+    for (const n of tries) {
+      const hits = moments.filter((t) => {
+        const st = rideAt(e, set, t, da, n);
+        return placed.some((p) => vehiclesTouch(e.b, st, p.e.b, rideAt(p.e, set, t, da, p.n)));
+      }).length;
+      if (!best || hits < best.hits) best = {n, hits};
+      if (!hits) break;
+    }
+    out[e.k] = best!.n;
+    placed.push({e, n: best!.n});
+  }
+  NUDGES.set(shot, out);
+  return out;
+};
+
+export const rideStates = (shot: LPShot, set: SetDef, tReal: number, people: Holder[] = []): (Ride | undefined)[] => {
+  const da = actionTime(shot, shot.duration);
+  const ta = actionTime(shot, tReal);
+  const nudges = rideNudges(shot, set);
+  return rideEntries(shot, set).map((e) => {
+    if (!e) return undefined;
+    const n = nudges[e.k];
+    const at = (tt: number, trail = false) => rideAt(e, set, tt, da, n, people, trail);
     const st = at(ta, true);
-    return {b, k, st, m: vehicleMatrix(st), at, under};
+    return {b: e.b, k: e.k, st, m: vehicleMatrix(st), at, under: e.under};
   });
 };
 
@@ -1434,13 +1496,7 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
     const da = actionTime(shot, shot.duration);
     const movingAt = moments.map((t) => rideStates(shot, set, t));
     const settled: {b: Big; k: number; place: RoadPlace}[] = [];
-    const outline = (b: Big, st: BigState) => {
-      const [w, h, l] = sizeOf(b);
-      const m = vehicleMatrix(st);
-      return [[-1, -1], [-1, 1], [1, -1], [1, 1], [0, 1], [0, -1], [1, 0], [-1, 0], [0, 0]].map(([sx, sz]) => new THREE.Vector3((sx * w) / 2, h / 2, (sz * l) / 2).applyMatrix4(m));
-    };
-    const touch = (b1: Big, s1: BigState, b2: Big, s2: BigState) =>
-      outline(b1, s1).some((pt) => insideBig(b2, s2, pt, 0.3)) || outline(b2, s2).some((pt) => insideBig(b1, s1, pt, 0.3));
+    const touch = vehiclesTouch;
     const clash = (b0: Big, k: number, place: RoadPlace) =>
       moments.some((t, i) => {
         const ta = actionTime(shot, t);
@@ -1504,6 +1560,14 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
 // How far the camera must move toward what it looks at so that at no moment of the shot is it inside a vehicle or a
 // boulder (0 almost always), worked out once per shot from 13 moments.
 const PULLS = new WeakMap<LPShot, number>();
+// the camera swung round its subject to the other side, for the whole shot, when moving it in can't clear a vehicle
+// in the way (a whole car between the lens and the driver beside it at the start line)
+const SWINGS = new WeakMap<LPShot, boolean>();
+const swung = (plan: CamPlan): THREE.Vector3 => {
+  const c = plan.look;
+  const d = plan.pos.clone().sub(c);
+  return new THREE.Vector3(c.x - d.x, plan.pos.y, c.z - d.z);
+};
 const pullOf = (shot: LPShot, set: SetDef, cast: Record<string, Design>, aspect: number) => {
   const got = PULLS.get(shot);
   if (got !== undefined) return got;
@@ -1516,25 +1580,33 @@ const pullOf = (shot: LPShot, set: SetDef, cast: Record<string, Design>, aspect:
       const t = (shot.duration * i) / 12;
       const placed = placeAll(shot, set, t, cast);
       const rides = ridesAt(shot, set, placed, t);
-      const {plan, who, ride, cam} = planFor(shot, set, placed, rides, aspect, t);
-      // the cameras that go with a vehicle are placed round it on purpose (the cockpit one inside it)
-      if (!who || ride || VEHICLE_CAMS.has(cam)) continue;
+      const {plan, who, ride, cam, insert} = planFor(shot, set, placed, rides, aspect, t);
+      // the cameras inside his own car are there on purpose; any other camera, his car's own ones included, never
+      // sits inside another vehicle (the side camera on a driver at the start line ended up in the car beside his)
+      if (!who || insert || INSIDE_CAMS.has(cam)) continue;
       const people = holders(placed);
       const states = (shot.big ?? []).map((b0, k) => {
         const b = scaledBig(b0, shot);
-        return {b, st: rides[k]?.st ?? bigState(b, set, people, actionTime(shot, t), da, k, lanes[k])};
-      }).filter((_, k) => solid[k]);
+        return {b, k, st: rides[k]?.st ?? bigState(b, set, people, actionTime(shot, t), da, k, lanes[k])};
+      }).filter(({k}) => solid[k] && k !== ride?.k);
       const toLook = plan.look.clone().sub(plan.pos);
       const D = toLook.length();
       toLook.normalize();
       const blocked = (d: number) => states.some(({b, st}) => insideBig(b, st, plan.pos.clone().addScaledVector(toLook, d)));
       if (!blocked(pull)) continue;
       const most = Math.min(D - 0.6, plan.pos.distanceTo(who.head) - 1.1); // never into the face it films
+      let cleared = false;
       for (let d = pull + 0.15; d < most; d += 0.15) {
         if (!blocked(d)) {
           pull = d;
+          cleared = true;
           break;
         }
+      }
+      if (!cleared) {
+        const other = swung(plan);
+        const inWay = (p: THREE.Vector3) => states.some(({b, st}) => [0, 0.25, 0.5, 0.75].some((f) => insideBig(b, st, p.clone().lerp(plan.look, f), 0.1)));
+        if (!inWay(other)) SWINGS.set(shot, true);
       }
     }
   }
@@ -1562,7 +1634,8 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   const seated = new Set(placed.filter((p) => p.ride !== undefined && p.pose.y < 0.75 && ['drive', 'ride'].includes(p.actor.action)).map((p) => p.ride!));
   // never inside a bus driving by: the camera moves toward what it looks at, for the whole shot, with a wider lens
   const pull = who ? pullOf(shot, set, props.cast, aspect) : 0;
-  if (pull > 0) {
+  if (who && SWINGS.get(shot) && !insert && !INSIDE_CAMS.has(cam)) plan.pos = swung(plan);
+  else if (pull > 0) {
     const toLook = plan.look.clone().sub(plan.pos);
     const D = toLook.length();
     plan.pos.addScaledVector(toLook.normalize(), pull);
