@@ -80,7 +80,7 @@ FX_SOUNDS = {"glass": "glass", "sparks": "sparks", "fire": "fire", "rain": "rain
 LOOPING = {"fire", "rain", "wind", "siren", "sparks"}
 VEHICLE = {"car", "bus", "truck"}
 HEAVY = VEHICLE | {"beam", "boulder", "crate", "pipe"}
-OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley"}
+OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "bridge", "alley"}
 SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}
 JUMP_TIME = 1.25  # = the jump's time in the air in Big.tsx (profile 'jump', T)  # energy -> the music's act (sticky.mixdown.INTENSITY)
 # Split-second cut-ins inside a shot where he drives a car (LowPoly.tsx `planFor`/`pressAt`, Big.tsx `yankOf`): his foot
@@ -106,7 +106,7 @@ STOP_SEATED = 1.65  # = STOP_SEATED in LowPoly.tsx: ...or of someone on a seat (
 SEAT_SPOTS = {"chair", "couch", "desk", "bed"}  # = SEAT_SPOTS in LowPoly.tsx
 FLOOR = {"bedroom": "wood", "hallway": "wood", "living": "wood", "cafe": "wood", "office": "carpet", "gym": "rubber",
          "kitchen": "tile", "bathroom": "tile", "lab": "tile", "street": "concrete", "busstop": "concrete", "rooftop": "concrete",
-         "highway": "concrete", "alley": "wet", "park": "path", "construction": "gravel", "void": "studio"}
+         "highway": "concrete", "bridge": "concrete", "alley": "wet", "park": "path", "construction": "gravel", "void": "studio"}
 CAMERA_NEAR = {"wide": 0.55, "aerial": 0.4, "top": 0.6, "side": 1.0, "front": 1.0, "back": 0.9, "low": 1.0, "orbit": 0.9,
                "face": 0.75, "face-top": 0.7, "medium": 0.8, "detail": 0.7, "crash-zoom": 0.8, "pedal": 0.6, "wheel": 0.6}
 _SPOTS: dict[str, dict[str, tuple[float, float]]] | None = None

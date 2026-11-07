@@ -23,7 +23,7 @@ from ..llm import ask
 log = logging.getLogger(__name__)
 
 SetName = Literal["bedroom", "hallway", "street", "park", "kitchen", "living", "office", "bathroom", "gym", "cafe", "busstop", "rooftop",
-                  "construction", "highway", "alley", "lab", "sky", "void"]
+                  "construction", "highway", "bridge", "alley", "lab", "sky", "void"]
 LightName = Literal["night", "lamp", "dawn", "morning", "day", "evening", "dark"]
 CamName = Literal["face", "face-top", "top", "medium", "wide", "side", "front", "back", "low", "detail", "aerial", "orbit", "crash-zoom",
                   "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper", "pedal", "wheel"]
@@ -70,6 +70,7 @@ SPOTS: dict[str, set[str]] = {
     "rooftop": {"center", "left", "right", "chair"},
     "construction": {"center", "left", "right", "far", "chair", "door"},
     "highway": {"center", "left", "right", "far", "door"},
+    "bridge": {"center", "left", "right", "far", "door"},
     "alley": {"center", "left", "right", "far", "door", "chair"},
     "lab": {"center", "left", "right", "desk", "chair", "counter", "far", "door"},
     "sky": {"center", "left", "right", "far"},
@@ -326,7 +327,8 @@ past him, and never a parked car while the line says he is racing.
 - Vehicle motions under way (it travels the whole shot and anyone on it goes with it): 'race' (flat out, \
 accelerating), 'drift' (at `at` the tail slides out, tyres smoking, and it slides through), 'spin' (a full spin at \
 `at`), 'jump' (leaves the ground at `at` and lands about a second later; on 'rooftop' it jumps the gap to the next \
-roof), 'reverse', 'stop' with a driver (brakes hard to a stop at `at`); in the air: 'fly', 'climb', 'dive', 'bank' \
+roof, on 'bridge' it flies the collapsed span of a broken highway bridge: a jump over a broken road is always on \
+'bridge', and the chase before it on 'bridge' too), 'reverse', 'stop' with a driver (brakes hard to a stop at `at`); in the air: 'fly', 'climb', 'dive', 'bank' \
 (a turn, leaning into it), 'roll' (a barrel roll at `at`). 'drive' with a driver is under way too. A car goes along \
 the road: 'highway' (a long open road), 'street' (past the city), 'rooftop' (along the roofs); a plane through 'sky' \
 (high over a sea of clouds; on 'highway' a plane with 'fly' and `at` runs along the road and takes off at `at`). Two \
@@ -398,7 +400,10 @@ nobody shown hurt); danger is about saving people. No capes, costumes, logos or 
 THE EDITOR'S VOCABULARY (use only these):
 - Places and their spots: {spots}. 'construction' = a building site with a steel frame, a tower crane, barriers, a site \
 office (door) and crates (chair); 'highway' = a wide road along the frame, guard rails, the city beyond ('center' and \
-the near lane 'left'/'right' are on the road, 'door' is the roadside); 'alley' = a narrow brick alley (night is best), \
+the near lane 'left'/'right' are on the road, 'door' is the roadside); 'bridge' = the same kind of road raised high \
+over a river on concrete piers, its middle span collapsed into the river: jagged edges, rebar, a slab hanging into \
+the gap, rubble and cones before it (the spots are on the road short of the gap; a car 'jump' there leaps it, a \
+'stop' brakes at its edge); 'alley' = a narrow brick alley (night is best), \
 a dumpster, a door with a lamp, a fire escape; 'lab' = a white lab with a glowing chamber ('far' = inside it), a \
 console ('desk'/'counter') and screens; 'rooftop' over the city; 'gym' for the barbell; 'street', 'park', and his \
 flat (bedroom, kitchen, living, hallway, bathroom).
@@ -972,6 +977,32 @@ def travel_of(story: Story, b: LPBig) -> str:
     return "none"
 
 
+def _broken_bridge(story: Story) -> list[str]:
+    """A car jumping on the open highway jumped over nothing (the user: "this not look real broken highway"): it leaps
+    the fallen span of the 'bridge' instead, and the shots of vehicles under way on the highway right before and after
+    it (the run-up, the landing) go onto that bridge with it."""
+    def jumps(s: LPShot) -> bool:
+        return any(b.motion == "jump" and travel_of(story, b) == "ground" for b in s.big)
+
+    def under_way(s: LPShot) -> bool:
+        return any(travel_of(story, b) == "ground" and (b.motion in GROUND_UNDERWAY or b.motion in ("drive", "stop")) for b in s.big)
+
+    notes, shots = [], story.shots
+    for i, s in enumerate(shots):
+        if s.set != "highway" or not jumps(s):
+            continue
+        run = [i]
+        for step in (-1, 1):
+            j = i + step
+            while 0 <= j < len(shots) and shots[j].set == "highway" and under_way(shots[j]):
+                run.append(j)
+                j += step
+        for j in sorted(run):
+            shots[j].set = "bridge"
+        notes.append(f"Shots {', '.join(str(j + 1) for j in sorted(run))}: the jump leaps a broken bridge ('bridge')")
+    return notes
+
+
 def _vehicles(story: Story, s: LPShot) -> list[str]:
     """Notes; fixes what the editor can't draw about vehicles in a shot (a design that doesn't exist, a car flying, a
     driver with no car, two at one wheel, someone falling free on the ground)."""
@@ -1118,6 +1149,7 @@ def repair(story: Story) -> list[str]:
             s.actors = [LPActor(who="hero", action="stand", expression="neutral", spot="center")]
             notes.append(f"Shot {i + 1} had nothing in it; he stands there.")
         notes += [f"Shot {i + 1}: {n}" for n in _stage(story, s)]
+    notes += _broken_bridge(story)
     reds = [i for i, s in enumerate(story.shots) if s.red]
     for i in reds[:-1]:
         story.shots[i].red = False
@@ -1204,7 +1236,7 @@ def restage(cfg: Config, story: Story, progress=log.info) -> Story:
 
 
 # cameras that can show a moment, by what the subject does (`new_angles`); aerial only outdoors
-OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley", "sky"}  # = outdoor: true in Sets.tsx
+OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "bridge", "alley", "sky"}  # = outdoor: true in Sets.tsx
 _LYING_ACTS = {"lie", "lie-side", "lie-phone", "sit-up"}
 _MOVING_ACTS = {"walk", "run", "jog", "dash", "flee", "carry"}
 _POWER_ACTS = {"catch", "lift", "throw", "push-stop", "super-jump", "land", "punch", "fall", "crush"}

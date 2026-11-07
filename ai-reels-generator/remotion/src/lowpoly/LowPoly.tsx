@@ -1129,7 +1129,7 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
   );
 };
 
-const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway: '#9d968c', alley: '#77746f', street: '#8f8c88', park: '#a99a7c'};
+const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway: '#9d968c', bridge: '#9d968c', alley: '#77746f', street: '#8f8c88', park: '#a99a7c'};
 
 // Actions that keep their own way (they act on the place, not on the other person) and those that turn right round.
 const LONE = new Set<Action>(['push-stop', 'catch', 'lift', 'throw', 'super-jump', 'land', 'dash', 'punch', 'look-out', 'pushup', 'cower', 'flee', 'carried', 'fall', 'skydive', 'jump-off', 'brace', 'drive', 'ride']);
@@ -1429,6 +1429,7 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
           const c = at + shift;
           const near = (v: {x: number; z: number}, m: number) => Math.abs(across(v) - lane) < w / 2 + m && (passes || Math.abs(along(v) - c) < l / 2 + m);
           const place: RoadPlace = {lane, shift};
+          if (set.gap && !passes && c + l / 2 > set.gap[0] - 0.5 && c - l / 2 < set.gap[1] + 0.5) continue; // over the broken span
           if (clash(b, k, place)) continue; // through another car, bus or truck
           clear ??= place;
           if (paths.some((pp) => pp && pp.some((q) => near({x: q[0], z: q[1]}, 0.5)))) continue; // through someone

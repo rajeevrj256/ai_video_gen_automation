@@ -22,6 +22,7 @@ export type SetDef = {
   reach?: number; // how far a vehicle under way can travel through it in one shot (metres)
   drive?: number; // the line across the walk a vehicle under way follows where there is no road (else the road, else its spot)
   jumpAt?: number; // where along it a vehicle's jump takes off (the rooftop's edge)
+  gap?: [number, number]; // along the walk: no ground here (between two roofs, a bridge's fallen span); only a jump crosses it
   sky?: boolean; // high in the air: there is no ground, anything flying flies at the clouds' height
   Draw: React.FC<{look: Look; seed: number}>;
 };
@@ -680,6 +681,7 @@ const rooftop: SetDef = {
   reach: 64,
   drive: 0.2, // a vehicle under way runs along the middle of the roofs, clear of the parapet
   jumpAt: 6.0, // the roof's edge before the gap
+  gap: [7, 10],
   surface: [1.2, 0.9, -2.3],
   Draw: ({look, seed}) => {
     const n = night(look);
@@ -919,6 +921,229 @@ const highway: SetDef = {
   },
 };
 
+// ---------------------------------------------------------------- the broken bridge
+
+// An elevated highway over a river whose middle span has collapsed (the user, of a car jumping between two plain
+// grey roofs: "this not look real broken highway"): the deck on concrete piers 26 m up, its broken ends jagged with
+// rebar sticking out and bent down, a slab hanging into the gap from the near side, a barrier and a lamp post torn
+// with it, cracks and rubble on the road before it, cones knocked over, and the fallen span lying in the river below.
+// The road runs along x; the gap is BRIDGE_GAP.
+const BRIDGE_GAP: [number, number] = [5.2, 19.6];
+const DECK_W = 11; // z -5.5..5.5
+const DROP = 26; // the river's surface below the road
+const CONCRETE = '#8f8b84';
+const ASPHALT = '#3c3e43';
+const REBAR = '#6e4430';
+
+// A bar from a point in a direction (the reinforcing steel left sticking out of broken concrete).
+const Bar: React.FC<{from: V3; dir: V3; len: number; r?: number; c?: string}> = ({from, dir, len, r = 0.025, c = REBAR}) => {
+  const d = new THREE.Vector3(...dir).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+  const mid = new THREE.Vector3(...from).addScaledVector(d, len / 2);
+  return (
+    <mesh position={mid} quaternion={q} castShadow>
+      <cylinderGeometry args={[r, r, len, 5]} />
+      <primitive object={mat(c)} attach="material" />
+    </mesh>
+  );
+};
+
+// One side of the deck from `far` to its broken end at `edge` (`dir` +1: the deck runs toward -x and breaks at its +x
+// end; -1 the other way): the slab and its asphalt in strips across that end at staggered lengths, the girders under
+// it, the barriers along both sides, rebar out of every strip, cracks across the road before it.
+const Deck: React.FC<{far: number; edge: number; dir: 1 | -1; seed: number; k: number}> = ({far, edge, dir, seed, k}) => {
+  const rand = rng(seed);
+  const solid = edge - dir * 1.6; // where the whole slab ends and the broken strips begin
+  const len = Math.abs(solid - far);
+  const mid = (solid + far) / 2;
+  const strips = Array.from({length: 7}, (_, i) => {
+    const z0 = -DECK_W / 2 + (i * DECK_W) / 7;
+    return {z: z0 + DECK_W / 14, w: DECK_W / 7 + 0.02, end: edge + dir * (rand() * 1.4 - 0.9), y: -rand() * 0.12};
+  });
+  const conc = shadeOf(CONCRETE, k);
+  const asph = shadeOf(ASPHALT, k);
+  return (
+    <group>
+      <B p={[mid, -0.5, 0]} s={[len, 1.0, DECK_W]} c={conc} />
+      <B p={[mid, -0.015, 0]} s={[len, 0.04, DECK_W - 0.9]} c={asph} noShadow />
+      {strips.map((st, i) => {
+        const l = Math.abs(st.end - solid);
+        const x = (st.end + solid) / 2;
+        return (
+          <group key={i}>
+            <B p={[x, -0.5 + st.y, st.z]} s={[l, 1.0, st.w]} c={conc} />
+            {Math.abs(st.z) < DECK_W / 2 - 0.45 ? <B p={[x, -0.015 + st.y, st.z]} s={[l, 0.04, st.w]} c={asph} noShadow /> : null}
+            {[0, 1, 2].map((j) => (
+              <Bar key={j} from={[st.end, -0.25 - j * 0.28 + st.y, st.z - st.w / 3 + (j * st.w) / 3]}
+                dir={[dir, -0.25 - rand() * 1.6, (rand() - 0.5) * 0.5]} len={0.5 + rand() * 1.3} />
+            ))}
+          </group>
+        );
+      })}
+      {/* two box girders under the slab, broken off short of the slab's end */}
+      {[-2.8, 2.8].map((z) => (
+        <group key={z}>
+          <B p={[(solid - dir * 0.8 + far) / 2, -1.8, z]} s={[Math.abs(solid - dir * 0.8 - far), 1.6, 2.6]} c={shadeOf('#7b7872', k)} />
+          {[0, 1, 2, 3].map((j) => (
+            <Bar key={j} from={[solid - dir * 0.8, -1.2 - j * 0.35, z - 0.9 + j * 0.6]} dir={[dir, -0.6 - rand(), (rand() - 0.5) * 0.4]} len={0.6 + rand() * 0.9} r={0.03} />
+          ))}
+        </group>
+      ))}
+      {/* concrete barriers along both sides (the far side's ends with the slab) */}
+      {[-1, 1].map((sd) => {
+        const end = strips[sd < 0 ? 0 : 6].end - dir * 0.3;
+        const bl = Math.abs(end - far);
+        return (
+          <group key={sd}>
+            <B p={[(end + far) / 2, 0.45, sd * (DECK_W / 2 - 0.25)]} s={[bl, 0.9, 0.45]} c={shadeOf('#a7a39b', k)} />
+            <B p={[(end + far) / 2, 0.93, sd * (DECK_W / 2 - 0.25)]} s={[bl, 0.08, 0.3]} c={shadeOf('#b9bcc2', k)} />
+          </group>
+        );
+      })}
+      {/* lane lines: two dashed, the edges solid, stopping before the break */}
+      {[-0.4, 2.8].map((z) =>
+        Array.from({length: Math.floor((len - 2) / 6)}, (_, i) => solid - dir * (3 + i * 6)).map((x) => (
+          <B key={`${z}${x}`} p={[x, 0.012, z]} s={[2.6, 0.02, 0.13]} c={shadeOf('#e9e4c8', k)} noShadow />
+        )),
+      )}
+      {[-4.6, 4.6].map((z) => (
+        <B key={z} p={[mid - dir * 0.6, 0.012, z]} s={[len - 1.2, 0.02, 0.12]} c={shadeOf('#e9e4da', k)} noShadow />
+      ))}
+      {/* cracks running back from the break across the asphalt */}
+      {Array.from({length: 6}, (_, i) => {
+        let x = edge - dir * (0.6 + rand() * 1.0);
+        let z = -4 + i * 1.6 + rand() * 0.8;
+        return Array.from({length: 4}, (_, j) => {
+          const l = 0.6 + rand() * 1.1;
+          const a = (rand() - 0.5) * 1.4;
+          const cx = x - dir * Math.cos(a) * l * 0.5;
+          const cz = z + Math.sin(a) * l * 0.5;
+          x -= dir * Math.cos(a) * l;
+          z += Math.sin(a) * l;
+          return <B key={`${i}${j}`} p={[cx, 0.01, cz]} s={[l, 0.012, 0.05 - j * 0.008]} r={[0, a, 0]} c="#16171a" noShadow />;
+        });
+      })}
+    </group>
+  );
+};
+
+const LAMP_EVERY = 30;
+const BridgeLamp: React.FC<{x: number; z: number; look: Look; tilt?: number}> = ({x, z, look, tilt = 0}) => {
+  const sd = z > 0 ? -1 : 1;
+  return (
+    <group position={[x, 0.95, z]} rotation={[tilt * sd, 0, 0]}>
+      <Cyl p={[0, 3.8, 0]} r1={0.07} r2={0.1} h={7.6} c="#6c6f76" seg={6} />
+      <B p={[0, 7.6, sd * 1.1]} s={[0.12, 0.1, 2.3]} c="#6c6f76" />
+      <B p={[0, 7.5, sd * 2.1]} s={[0.36, 0.1, 0.55]} c="#fff1d6" glow={night(look) ? 2 : 0.4} />
+    </group>
+  );
+};
+
+const Cone: React.FC<{p: V3; down?: number; ry?: number}> = ({p, down = 0, ry = 0}) => (
+  <group position={p} rotation={[0, ry, down]}>
+    <B p={[0, 0.02, 0]} s={[0.42, 0.04, 0.42]} c="#2a2b2f" />
+    <Cyl p={[0, 0.34, 0]} r1={0.03} r2={0.17} h={0.62} c="#e2622a" seg={8} />
+    <Cyl p={[0, 0.4, 0]} r1={0.11} r2={0.13} h={0.1} c="#f1efe8" seg={8} />
+  </group>
+);
+
+const bridge: SetDef = {
+  road: -2.0, // the far lane, as on the highway
+  reach: 160,
+  jumpAt: 4.2, // its rear wheels leave the broken edge as it flies the fallen span
+  gap: BRIDGE_GAP,
+  spots: {
+    center: {x: -2, z: 0.4, ry: 0},
+    left: {x: -4.5, z: 2.1, ry: 0},
+    right: {x: 0.5, z: 2.1, ry: 0},
+    far: {x: -2, z: -2.1, ry: 0},
+    door: {x: -2, z: 4.3, ry: Math.PI},
+  },
+  wide: {pos: [16, 3.2, 17], look: [8, -3, 0]},
+  sun: [-6, 8, 6],
+  outdoor: true,
+  walk: 'x',
+  surface: [0, 0, 0],
+  Draw: ({look, seed}) => {
+    const k = look.shade;
+    const n = night(look);
+    const rand = rng(seed + 31);
+    const [g0, g1] = BRIDGE_GAP;
+    const piers = [-6, -38, -70, -102, 31, 63, 95];
+    return (
+      <group>
+        <Sky look={look} r={260} />
+        <Deck far={-130} edge={g0} dir={1} seed={seed + 1} k={k} />
+        <Deck far={130} edge={g1} dir={-1} seed={seed + 2} k={k} />
+        {/* the slab that broke but didn't fall: hanging from the near edge into the gap on its rebar */}
+        <group position={[g0 - 0.2, -0.15, -2.6]} rotation={[0.12, 0, -1.0]}>
+          <B p={[1.7, -0.5, 0]} s={[3.4, 0.95, 5.2]} c={shadeOf(CONCRETE, k)} />
+          <B p={[1.7, 0.0, 0.4]} s={[3.4, 0.04, 4.4]} c={shadeOf(ASPHALT, k)} noShadow />
+          <B p={[1.6, 0.0, 0.9]} s={[2.4, 0.02, 0.13]} c={shadeOf('#e9e4c8', k)} noShadow />
+          {/* its barrier, torn and hanging off it */}
+          <B p={[1.4, 0.45, -2.4]} s={[2.8, 0.9, 0.45]} c={shadeOf('#a7a39b', k)} />
+          {[0, 1, 2, 3, 4].map((j) => (
+            <Bar key={j} from={[3.4, -0.3, -2.2 + j * 1.1]} dir={[1, -0.4 - 0.3 * j, 0.1]} len={0.6 + 0.2 * j} />
+          ))}
+          {[0, 1, 2, 3].map((j) => <Bar key={`h${j}`} from={[0.1, -0.4, -1.8 + j * 1.2]} dir={[-1, 0.9, 0]} len={0.9} />)}
+        </group>
+        {/* a lamp post bent over the edge, and the far edge's torn barrier sagging */}
+        <BridgeLamp x={g0 - 2.4} z={-5.25} look={look} tilt={-0.5} />
+        <group position={[g1 + 0.3, 0.2, 5.25]} rotation={[0, 0, -0.9]}>
+          <B p={[-1.3, 0.3, 0]} s={[2.6, 0.9, 0.45]} c={shadeOf('#a7a39b', k)} />
+        </group>
+        {piers.map((x) => (
+          <group key={x}>
+            <B p={[x, -3.2, 0]} s={[2.8, 1.2, DECK_W - 0.6]} c={shadeOf('#827e77', k)} />
+            <B p={[x, -3.8 - (DROP - 3.8) / 2, 0]} s={[2.4, DROP - 3.8, 3.4]} c={shadeOf('#8a867f', k)} />
+          </group>
+        ))}
+        {Array.from({length: 9}, (_, i) => -126 + i * LAMP_EVERY)
+          .filter((x) => x < g0 - 6 || x > g1 + 4)
+          .map((x, i) => <BridgeLamp key={x} x={x} z={i % 2 ? 5.25 : -5.25} look={look} />)}
+        {/* rubble and cones before the break */}
+        {Array.from({length: 22}, (_, i) => {
+          const s0 = 0.12 + rand() * 0.45;
+          return (
+            <B key={i} p={[g0 - 0.5 - rand() * 7, s0 * 0.4, -4.6 + rand() * 9.2]} s={[s0, s0 * 0.8, s0 * (0.7 + rand() * 0.6)]}
+              r={[rand() * 3, rand() * 3, rand() * 3]} c={shadeOf(i % 3 ? '#9b968e' : '#6f6b65', k)} />
+          );
+        })}
+        <Cone p={[g0 - 9, 0, -3.8]} />
+        <Cone p={[g0 - 7.5, 0.15, -1.6]} down={1.5} ry={0.7} />
+        <Cone p={[g0 - 9.5, 0, 3.6]} />
+        <Cone p={[g0 - 6.2, 0.15, 2.4]} down={1.5} ry={-1.1} />
+        {/* the valley: the river under the gap, its banks, trees, the fallen span lying broken in the water */}
+        <B p={[0, -DROP - 0.3, 0]} s={[420, 0.4, 320]} c={shadeOf('#5f6a48', k)} noShadow />
+        <B p={[12, -DROP + 0.02, 0]} s={[44, 0.06, 320]} c={shadeOf('#35596c', k)} noShadow />
+        <group position={[8.6, -DROP + 0.6, 0.6]} rotation={[0.08, 0.22, 0.42]}>
+          <B p={[0, 0, 0]} s={[7.5, 1.0, DECK_W]} c={shadeOf('#7d7973', k)} />
+          <B p={[0, 0.5, 0]} s={[7.5, 0.04, DECK_W - 0.9]} c={shadeOf(ASPHALT, k)} noShadow />
+        </group>
+        <group position={[16.2, -DROP + 0.9, -1.2]} rotation={[-0.18, -0.3, -0.55]}>
+          <B p={[0, 0, 0]} s={[6.5, 1.0, DECK_W - 1.5]} c={shadeOf('#7d7973', k)} />
+          <B p={[0, 0.5, 0]} s={[6.5, 0.04, DECK_W - 2.2]} c={shadeOf(ASPHALT, k)} noShadow />
+        </group>
+        {Array.from({length: 16}, (_, i) => {
+          const s0 = 0.6 + rand() * 1.6;
+          return <B key={`r${i}`} p={[5 + rand() * 15, -DROP + s0 * 0.3, -9 + rand() * 18]} s={[s0, s0 * 0.7, s0]} r={[rand(), rand() * 3, rand()]} c={shadeOf('#78746e', k)} />;
+        })}
+        {Array.from({length: 26}, (_, i) => {
+          const x = i % 2 ? -12 - rand() * 70 : 38 + rand() * 70;
+          return <Tree key={`t${i}`} p={[x, -DROP, -60 + rand() * 120]} seed={seed + 90 + i} s={2.2 + rand() * 1.4} tone={rand() < 0.5 ? '#3f6b38' : '#2f5532'} />;
+        })}
+        {Array.from({length: 16}, (_, i) => {
+          const h = 34 + ((i * 37) % 5) * 9;
+          return <Building key={`b${i}`} p={[-110 + i * 15, -DROP + h / 2, -95 - (i % 3) * 12]} s={[11, h, 9]} seed={seed + i} look={look} night={n} />;
+        })}
+        <group position={[0, -DROP, 0]} scale={[1.6, 2.4, 1]}>
+          <Mountains z={-150} seed={seed} c={shadeOf('#5d6f7a', k * 0.9)} />
+        </group>
+      </group>
+    );
+  },
+};
+
 const alley: SetDef = {
   lamp: [-1.9, 2.7, -4],
   spots: {
@@ -1088,6 +1313,7 @@ export const SETS: Record<SetName, SetDef> = {
   rooftop,
   construction,
   highway,
+  bridge,
   alley,
   lab,
   sky: skySet,

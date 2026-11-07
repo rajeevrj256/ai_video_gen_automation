@@ -474,6 +474,22 @@ def lowpoly_vehicles() -> None:
             fail(f"lowpoly vehicles: shot {i + 1}'s cut-in {x} doesn't come before its moment {sh['big'][0]['at']}")
     if "rev" not in [c["sound"] for c in cues]:
         fail("lowpoly vehicles: no rev as the foot goes down on the accelerator")
+    # a jump on the open highway leaps the broken bridge, with the chase into it; a shot of someone on foot stays
+    st3 = S.Story(title="t", problem="p", youtube_title="t", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="calm",
+                  end_mood="calm", music_prompt="m", kind="fiction", shots=[
+                      S.LPShot(line="", set="highway", light="day", camera="wide", pause=2, actors=[hero(action="stand")]),
+                      S.LPShot(line="", set="highway", light="day", camera="chase", pause=2, actors=drv(), big=car("race")),
+                      S.LPShot(line="", set="highway", light="day", camera="pass-by", pause=2, actors=drv(), big=car("jump", 0.5)),
+                      S.LPShot(line="", set="highway", light="day", camera="lead", pause=2, actors=drv(), big=car("race")),
+                      S.LPShot(line="", set="street", light="day", camera="chase", pause=2, actors=drv(), big=car("race"))])
+    S.repair(st3)
+    if [x.set for x in st3.shots] != ["highway", "bridge", "bridge", "bridge", "street"]:
+        fail(f"lowpoly vehicles: a jump on the highway gave the places {[x.set for x in st3.shots]}")
+    sets_ts = (ROOT / "remotion" / "src" / "lowpoly" / "Sets.tsx").read_text(encoding="utf-8")
+    for name in ("bridge", "rooftop"):
+        body = re.search(rf"const {name}: SetDef = \{{(.*?)\n  Draw:", sets_ts, re.S)
+        if not body or "gap:" not in body.group(1) or "jumpAt:" not in body.group(1):
+            fail(f"lowpoly vehicles: the {name} set has no gap or no place a jump takes off")
 
 
 def lowpoly_boards() -> None:

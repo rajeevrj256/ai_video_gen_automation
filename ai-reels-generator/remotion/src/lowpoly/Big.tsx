@@ -210,11 +210,19 @@ export const ridePath = (b: Big, set: SetDef, t: number, dur: number, k: number,
   const dir = set.walk === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
   const side = new THREE.Vector3(dir.z, 0, -dir.x);
   const lane = (set.drive ?? set.road ?? (set.walk === 'z' ? sp.x : sp.z)) + (order % 2 ? 3.2 : 0);
-  const along0 = b.motion === 'jump' && set.jumpAt !== undefined ? set.jumpAt : set.walk === 'z' ? sp.z : sp.x;
+  let along0 = b.motion === 'jump' && set.jumpAt !== undefined ? set.jumpAt : set.walk === 'z' ? sp.z : sp.x;
   // the whole run fits the place (a 240 m highway, a row of roofs); in the air and the sky there is no end
   const reach = air || sky ? Infinity : set.reach ?? 30;
   const span = Math.abs(travelled(pr.keys, dur) - travelled(pr.keys, 0));
   const fit = span > reach ? reach / span : 1;
+  // where the ground has a gap (between two roofs, a bridge's fallen span) only a jump crosses it: any other run
+  // stays on the near side and ends before it (a race on the roofs used to drive across thin air)
+  if (set.gap && b.motion !== 'jump' && !air) {
+    const ss = Array.from({length: 25}, (_, i) => (travelled(pr.keys, (dur * i) / 24) - travelled(pr.keys, at)) * fit - order * 11);
+    const lo = along0 + Math.min(...ss) - size[2] / 2;
+    const hi = along0 + Math.max(...ss) + size[2] / 2;
+    if (hi > set.gap[0] - 0.8 && lo < set.gap[1] + 0.8) along0 -= hi - (set.gap[0] - 0.8);
+  }
   const s = (travelled(pr.keys, t) - travelled(pr.keys, at)) * fit - order * 11;
   const ry0 = Math.atan2(dir.x, dir.z);
   const base = set.walk === 'z' ? new THREE.Vector3(lane, 0, along0) : new THREE.Vector3(along0, 0, lane);

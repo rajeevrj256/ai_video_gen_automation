@@ -17,6 +17,7 @@ export type SetName =
   | 'rooftop'
   | 'construction' // a building site: steel frame, a crane with a hanging beam, barriers
   | 'highway' // a wide road with lanes, guard rails, the city beyond
+  | 'bridge' // an elevated highway over a river whose middle span has collapsed: a car jumps the broken gap
   | 'alley' // a narrow brick alley at night: dumpster, fire escape, puddles
   | 'lab' // a white lab with a glowing chamber and screens
   | 'sky' // high above a sea of clouds: for anything that flies, a skydive, a fight on a plane's wing
