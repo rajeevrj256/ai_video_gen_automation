@@ -840,18 +840,18 @@ const insertPlan = (kind: 'pedal' | 'wheel' | 'speedo', r: Ride, who: Placed | u
   // -0.36, hinged at y 0.62, z 0.36), as the films do; in front of his feet the camera was inside the bonnet
   const pa = who?.pedalAt;
   const foot: V3 = pa ? [(pa.gas[0] + pa.brake[0]) / 2, (pa.gas[1] + pa.brake[1]) / 2, (pa.gas[2] + pa.brake[2]) / 2] : [-0.43, 0.44, 0.3];
-  // low in the footwell in front of the pedals, looking back past them at his shoe and shin coming down onto them
-  // (beside the foot the other leg or the centre tunnel filled the picture); never past the footwell's front wall
+  // from beside and behind the foot, by the door sill: his leg coming down, the shoe on the pedal, the wheel above
+  // (the user picked this one: "this angle is ok")
   // the speedometer: square on the dial through the top of the wheel (Big.tsx `CLUSTER`), its needle climbing
   const speedo = kind === 'speedo';
   const dial = new THREE.Vector3(...CLUSTER.at).add(new THREE.Vector3(CLUSTER.speedo, 0, 0));
   const facing = new THREE.Vector3(0, Math.sin(CLUSTER.tilt), -Math.cos(CLUSTER.tilt));
-  const pos = speedo ? at(...(dial.clone().addScaledVector(facing, 0.15).toArray() as V3)) : pedal ? at(foot[0] + 0.07, foot[1] + 0.05, Math.min(0.46, foot[2] + 0.27)) : at(lr[0] + 0.46, 0.98, lr[2] + 0.66);
-  const look = speedo ? at(dial.x, dial.y, dial.z) : pedal ? at(foot[0] - 0.03, foot[1] + 0.12, foot[2] - 0.28) : at(lr[0], 0.8, lr[2] + 0.36);
+  const pos = speedo ? at(...(dial.clone().addScaledVector(facing, 0.15).toArray() as V3)) : pedal ? at(foot[0] - 0.34, foot[1] + 0.2, foot[2] - 0.34) : at(lr[0] + 0.46, 0.98, lr[2] + 0.66);
+  const look = speedo ? at(dial.x, dial.y, dial.z) : pedal ? at(foot[0] + 0.02, foot[1] + 0.02, foot[2] + 0.02) : at(lr[0], 0.8, lr[2] + 0.36);
   // the road through the car: a fine shake with its speed
   const jig = 0.004 * Math.min(1, (r.st.speed ?? 0) / 25);
   pos.add(new THREE.Vector3(Math.sin(t * 57 + seed), Math.sin(t * 49 + seed * 2), Math.sin(t * 61 + seed * 3)).multiplyScalar(jig));
-  return {pos, look, up: new THREE.Vector3(0, 1, 0).applyQuaternion(q), fov: speedo ? (tall ? 48 : 40) : pedal ? (tall ? 74 : 62) : tall ? 60 : 50, focus: pos.distanceTo(look), aperture: 1.0, near: 0.02};
+  return {pos, look, up: new THREE.Vector3(0, 1, 0).applyQuaternion(q), fov: speedo ? (tall ? 48 : 40) : pedal ? (tall ? 66 : 54) : tall ? 60 : 50, focus: pos.distanceTo(look), aperture: 1.0, near: 0.02};
 };
 
 // How far the driver's foot is down on each pedal of car k: in the shot's cut-in to the pedal (the brake for a hard
