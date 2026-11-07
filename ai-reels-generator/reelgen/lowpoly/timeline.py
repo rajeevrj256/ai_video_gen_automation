@@ -91,6 +91,9 @@ SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}  # energy -> th
 STRIDE = {"walk": 1.75, "run": 2.7, "jog": 2.2, "dash": 5.5, "flee": 2.7, "carry": 1.75}  # f in poses.ts
 SPEED = {"walk": 1.0, "run": 2.6, "jog": 1.7, "dash": 16.0, "flee": 2.8, "carry": 0.8}  # = SPEED in poses.ts
 SLOW = 0.4  # = SLOW in LowPoly.tsx
+STOP_SHORT = 1.2  # = STOP_SHORT in LowPoly.tsx: a walk to someone's spot ends this far in front of them
+STOP_SEATED = 1.65  # = STOP_SEATED in LowPoly.tsx: ...or of someone on a seat (past their knees and the table)
+SEAT_SPOTS = {"chair", "couch", "desk", "bed"}  # = SEAT_SPOTS in LowPoly.tsx
 FLOOR = {"bedroom": "wood", "hallway": "wood", "living": "wood", "cafe": "wood", "office": "carpet", "gym": "rubber",
          "kitchen": "tile", "bathroom": "tile", "lab": "tile", "street": "concrete", "busstop": "concrete", "rooftop": "concrete",
          "highway": "concrete", "alley": "wet", "park": "path", "construction": "gravel", "void": "studio"}
@@ -129,7 +132,10 @@ def step_times(actor, k: int, s, dur: float, seed: int) -> tuple[list[float], fl
         spots = set_spots().get(s.set, {})
         a, b = spots.get(actor.spot), spots.get(actor.to)
         if a and b:
-            arrive = math.hypot(b[0] - a[0], b[1] - a[1]) / SPEED[actor.action]
+            # someone standing or sitting there: he stops in front of them (LowPoly.tsx `lanes`, STOP_SHORT)
+            taken = any(o is not actor and o.spot == actor.to and o.action not in STRIDE for o in s.actors)
+            short = (STOP_SEATED if actor.to in SEAT_SPOTS else STOP_SHORT) if taken else 0.0
+            arrive = max(0.0, math.hypot(b[0] - a[0], b[1] - a[1]) - short) / SPEED[actor.action]
             end = min(end, arrive)
     phase = k * 1.7 + seed
     first = ((0.5 - phase / math.pi) % 1.0) / f
@@ -208,13 +214,17 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                  "spot": actor.spot, "facing": actor.facing, "hold": actor.hold, "covered": actor.covered}
             if actor.to:
                 d["to"] = actor.to
+            if actor.look_at:
+                d["look"] = "hero" if actor.look_at == "hero" else _key(actor.look_at)
             if at is not None:
                 d["at"] = round(at, 3)
             if line and speaker and d["who"] == speaker and a.get("words"):
                 lead0 = STAMP if s.stamp.strip() and mode != "off" else LEAD
                 d["talk"] = _talk(a["words"], lead0)
             actors.append(d)
-        focus = next((k for k, x in enumerate(actors) if x["who"] == "hero"), 0)
+        subject = "hero" if (s.subject or "hero") == "hero" else _key(s.subject)  # who the camera is on
+        focus = next((k for k, x in enumerate(actors) if x["who"] == subject),
+                     next((k for k, x in enumerate(actors) if x["who"] == "hero"), 0))
         shot = {"start": round(t, 3), "duration": round(dur, 3), "set": s.set, "light": s.light, "camera": s.camera, "actors": actors,
                 "things": [th.model_dump() | {"spot": "center"} for th in s.things], "focus": focus, "seed": seed + i * 13}
         big = []

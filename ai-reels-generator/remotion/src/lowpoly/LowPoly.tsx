@@ -64,7 +64,20 @@ export type Placed = {
   body: THREE.Vector3; // middle of the body
   hold: Hold;
   seed: number;
+  aim?: THREE.Vector3; // the head of the person he looks at (`look`), for the two-shot cameras
 };
+
+// Where each person stands in a shot: an offset from their spot (sideways, so two people never share a spot and
+// walkers go side by side or pass each other), and for a walk to someone's spot, where he stops in front of them.
+export type Lane = {off: [number, number]; to?: [number, number]};
+// Which way he turns: toward the person he looks at (`explicit`), else toward the nearest one, a little.
+type Aim = {x: number; z: number; explicit: boolean};
+export const STOP_SHORT = 1.2; // = timeline.STOP_SHORT: a walk to someone's spot ends this far in front of them
+export const STOP_SEATED = 1.65; // = timeline.STOP_SEATED: ...or of someone on a seat (past their knees and the table)
+const SEAT_SPOTS = new Set(['chair', 'couch', 'desk', 'bed']); // = timeline.SEAT_SPOTS
+const GAP = 0.8; // two people's middles never closer than this (heads are 0.7 wide)
+const wrap = (d: number) => Math.atan2(Math.sin(d), Math.cos(d));
+const clampTo = (d: number, most: number) => Math.max(-most, Math.min(most, d));
 
 // facing in the room's own terms: 'camera' keeps the spot's natural way (at the desk, toward the screen), 'away' turns
 // his back to the open side (toward the counter, the window, the door), left/right face across the room
@@ -72,7 +85,7 @@ const FACING: Record<string, number> = {left: -Math.PI / 2, right: Math.PI / 2, 
 
 // Where an actor is at time t: his spot (and the seat or bed there), his walk, his pose, and the world positions the
 // camera needs (computed with the same rotations the Man applies).
-export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, cast: Record<string, Design>, others: Placed[] = [], toward?: [number, number]): Placed => {
+export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, cast: Record<string, Design>, others: Placed[] = [], aim?: Aim, lane?: Lane): Placed => {
   const t = actionTime(shot, tReal);
   const dur = actionTime(shot, shot.duration);
   const design = cast[a.who] ?? (a.who === 'hero' ? HERO : HERO);
@@ -98,22 +111,18 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   if (turn !== undefined && seat === null && !lying) ry = turn;
   // stopping a vehicle with his hands: he faces up the road (it comes from there), unless told otherwise
   if (action === 'push-stop' && !a.facing) ry = set.walk === 'z' ? Math.PI : -Math.PI / 2;
-  // two people never on the same spot: the later one moves along the spot (along the couch, beside him)
-  if (!moves(a) && action !== 'carried' && others.some((o) => Math.hypot(o.root[0] - root[0], o.root[2] - root[2]) < 0.7)) {
-    const side = others.length % 2 ? 1 : -1;
-    root = [root[0] + Math.cos(ry) * 0.85 * side, root[1], root[2] - Math.sin(ry) * 0.85 * side];
-  }
+  // his lane in this shot (`lanesFor`): two people never on one spot, walkers side by side, never through anyone
+  const off = lane?.off ?? [0, 0];
+  if (action !== 'carried') root = [root[0] + off[0], root[1], root[2] + off[1]];
   if (action === 'sit' && seat === null) seat = 0.46; // a chair the set doesn't have: drawn under him
   // a spot that faces into the set (the counter, the mirror, a window) turns him round when the camera wants his face
   if ((a.facing ?? 'camera') === 'camera' && Math.cos(ry) < -0.5 && !lying && !moves(a) && action !== 'push-stop' && (FACE_CAMS.has(shot.camera) || TO_ROOM.has(action))) ry += Math.PI;
-  // with someone else in the shot he turns toward them (fully to help them up; partly when talking, so the camera
-  // still sees his face), unless the shot says which way he faces
-  if (toward && (a.facing ?? 'camera') === 'camera' && seat === null && !lying && !moves(a) && !LONE.has(action)) {
-    const want = Math.atan2(toward[0] - root[0], toward[1] - root[2]);
-    let diff = want - ry;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    const most = FULL_TURN.has(action) ? Math.PI : 0.6;
-    ry += Math.max(-most, Math.min(most, diff));
+  // standing, he turns to the person he looks at (all the way round: the son points AT his dad on the chair); with
+  // nobody named, toward the nearest one a little (fully to help them up), so the camera still sees his face.
+  // Sitting, lying, walking or in a power move, his body keeps its way (his head turns, below).
+  if (aim && seat === null && !lying && !moves(a) && !LONE.has(action) && (aim.explicit || (a.facing ?? 'camera') === 'camera')) {
+    const diff = wrap(Math.atan2(aim.x - root[0], aim.z - root[2]) - ry);
+    ry += clampTo(diff, aim.explicit || FULL_TURN.has(action) ? Math.PI : 0.6);
   }
   const moving = moves(a);
   if (moving) {
@@ -121,9 +130,11 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
     const dist = speed * dur;
     let from = V([root[0], 0, root[2]]);
     let to: THREE.Vector3;
-    if (a.to) {
+    if (lane?.to) {
+      to = V([lane.to[0], 0, lane.to[1]]); // in front of the person standing or sitting where he goes
+    } else if (a.to) {
       const b = spotOf(set, a.to);
-      to = V([b.x, 0, b.z]);
+      to = V([b.x + off[0], 0, b.z + off[1]]);
     } else {
       const dir = set.walk === 'x' ? new THREE.Vector3(a.facing === 'left' ? -1 : 1, 0, 0) : new THREE.Vector3(0, 0, a.facing === 'away' ? -1 : 1);
       from = from.clone().addScaledVector(dir, -dist * (set.walk === 'z' ? 0.6 : 0.5));
@@ -147,6 +158,11 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   }
   const ps = pose({action, t, dur, seat, k: k * 1.7 + (shot.seed ?? 0), at: actorAt(a, shot), moving});
   if (lying) ps.y = 0;
+  // the head turns to the one he looks at when his body can't (sitting, walking past, mid power move), at most ~65°
+  if (aim?.explicit && !lying && action !== 'carried') {
+    const diff = wrap(Math.atan2(aim.x - root[0], aim.z - root[2]) - ry - ps.twist);
+    if (Math.abs(diff) > 0.08) ps.head = [ps.head[0], ps.head[1] + clampTo(diff, 1.15), ps.head[2]];
+  }
   if (ps.shift) {
     // the pose moves the whole body in his own frame (a jump's drift, feet driven back)
     const f = new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry));
@@ -201,6 +217,41 @@ const frontOf = (f: THREE.Vector3, outdoor: boolean) => {
   return d;
 };
 
+// A two-shot of him and the one he looks at (the son pointing at his dad on the chair): square to the line between
+// them, so both are the same size and who looks at whom reads at once, from the side where the other one's face shows
+// (and indoors from the open side of the room), far enough back for both whole, seated or standing.
+const twoShot = (who: Placed, all: Placed[], set: SetDef, aspect: number, push: number) => {
+  const H = who.head;
+  const A = who.aim ?? H;
+  const other = all.find((p) => p !== who && p.head.distanceToSquared(A) < 1e-6);
+  const line = A.clone().sub(H).setY(0);
+  const spread = line.length();
+  if (line.lengthSq() < 1e-4) line.set(1, 0, 0);
+  line.normalize();
+  const side = new THREE.Vector3(-line.z, 0, line.x);
+  const flat = (v: THREE.Vector3) => new THREE.Vector3(v.x, 0, v.z).normalize();
+  const score = (s: THREE.Vector3) =>
+    (other ? s.dot(flat(other.faceDir)) : 0) * 0.6 + s.dot(flat(who.faceDir)) * 0.4 + s.z * (set.outdoor ? 0.2 : 1.2);
+  if (score(side.clone().negate()) > score(side)) side.negate();
+  const low = Math.min(H.y, A.y);
+  const look = H.clone().lerp(A, 0.5).setY((Math.max(H.y, A.y) + 0.75 + low - 1.05) / 2);
+  const d = distFor(1.5 + spread, 2.65 + Math.abs(H.y - A.y), 32, aspect) * push;
+  // indoors square to them too (nudged toward the room's open side only when that side faces a back wall): nudged
+  // always, the one nearer the open side came out twice the size of the other
+  const dir = set.outdoor || side.z > -0.2 ? side : frontOf(side, false);
+  const pos = look.clone().addScaledVector(dir, d).add(new THREE.Vector3(0, 0.25, 0));
+  let fov = 32;
+  if (!set.outdoor) {
+    // inside the room; a camera the walls pull in widens its lens to keep both whole
+    const want = pos.distanceTo(look);
+    pos.x = Math.max(-3.1, Math.min(3.1, pos.x));
+    pos.z = Math.max(-2.5, pos.z);
+    const got = Math.max(0.5, pos.distanceTo(look));
+    if (got < want - 0.01) fov = Math.min(70, (2 * Math.atan(Math.tan((16 * Math.PI) / 180) * (want / got)) * 180) / Math.PI);
+  }
+  return {pos, look, fov};
+};
+
 export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect: number, t: number, dur: number, seed: number): CamPlan => {
   const p = ease(t / Math.max(0.5, dur));
   const push = 1.05 - 0.08 * p; // a slow push in over the shot
@@ -247,6 +298,14 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
     }
     case 'medium': {
       fov = 32;
+      if (who.aim) {
+        const two = twoShot(who, all, set, aspect, push);
+        pos = two.pos;
+        look = two.look;
+        fov = two.fov;
+        aperture = 0.3;
+        break;
+      }
       const pts = all.length > 1 ? all.map((a) => a.head) : [H];
       const mid = pts.reduce((s, v) => s.add(v), new THREE.Vector3()).multiplyScalar(1 / pts.length);
       const spread = all.length > 1 ? Math.max(...pts.map((v) => v.distanceTo(mid))) * 2 : 0;
@@ -263,7 +322,9 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
       const fwd = new THREE.Vector3(Math.sin(who.ry), 0, Math.cos(who.ry));
       let side = new THREE.Vector3(fwd.z, 0, -fwd.x);
       if (side.z < 0) side.negate();
-      const d = distFor(1.8, 3.0, fov, aspect) * push;
+      const gap = who.aim ? who.aim.clone().sub(who.head).setY(0).length() : 0; // the one he looks at in the frame too
+      if (who.aim) look.lerp(who.aim.clone().add(new THREE.Vector3(0, -0.5, 0)), 0.5);
+      const d = distFor(1.8 + gap, 3.0, fov, aspect) * push;
       pos = look.clone().addScaledVector(side, d).add(new THREE.Vector3(0, 0.15, 0)).addScaledVector(fwd, 0.25);
       aperture = 0.5;
       break;
@@ -279,12 +340,25 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
     }
     case 'back': {
       fov = 36;
-      const fwd = new THREE.Vector3(Math.sin(who.ry), 0, Math.cos(who.ry));
+      // over his shoulder at what he faces, or at the one he looks at (seated, his body may point elsewhere)
+      const toAim = who.aim ? who.aim.clone().sub(H).setY(0) : undefined;
+      const fwd = toAim && toAim.lengthSq() > 0.04 ? toAim.clone().normalize() : new THREE.Vector3(Math.sin(who.ry), 0, Math.cos(who.ry));
       const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
       // high over the shoulder, so a chair or a table behind him stays under the shot
       pos = H.clone().addScaledVector(fwd, -2.3 * push).addScaledVector(right, 0.75).add(new THREE.Vector3(0, 0.65, 0));
-      look = H.clone().addScaledVector(fwd, 2.0).add(new THREE.Vector3(0, -0.75, 0));
+      look = who.aim
+        ? who.aim.clone().add(new THREE.Vector3(0, -0.45, 0)).lerp(H, 0.3)
+        : H.clone().addScaledVector(fwd, 2.0).add(new THREE.Vector3(0, -0.75, 0));
       aperture = 0.45;
+      // his back to a wall (a chair against it): the room leaves no space behind him and the camera ended up in his
+      // hair; a two-shot from the side instead
+      if (who.aim && !set.outdoor && (pos.z < -2.6 || Math.abs(pos.x) > 3.2)) {
+        const two = twoShot(who, all, set, aspect, push);
+        pos = two.pos;
+        look = two.look;
+        fov = two.fov;
+        aperture = 0.3;
+      }
       break;
     }
     case 'low': {
@@ -364,7 +438,25 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
     default: {
       fov = aspect < 1 ? 46 : 38;
       pos = V(set.wide.pos);
-      look = V(set.wide.look).lerp(who.body, 0.45);
+      look = V(set.wide.look).lerp(who.aim ? who.body.clone().lerp(who.aim, 0.5) : who.body, 0.45);
+      if (who.aim) {
+        // the room's own view, moved sideways when one of the two would stand in front of the other (the son who
+        // walked up to his dad on the couch hid him)
+        const right = new THREE.Vector3().crossVectors(look.clone().sub(pos), up).normalize();
+        const apart = (at: THREE.Vector3) => {
+          const a = who.head.clone().sub(at).normalize();
+          const b = who.aim!.clone().sub(at).normalize();
+          return a.angleTo(b) * Math.min(at.distanceTo(who.head), at.distanceTo(who.aim!));
+        };
+        let best = pos.clone();
+        for (const s of [0.7, -0.7, 1.4, -1.4, 2.1, -2.1]) {
+          if (apart(best) >= 0.85) break;
+          const p2 = pos.clone().addScaledVector(right, s);
+          if (!set.outdoor) p2.x = Math.max(-3.1, Math.min(3.1, p2.x));
+          if (apart(p2) > apart(best) + 0.05) best = p2;
+        }
+        pos = best;
+      }
       pos.lerp(look, 0.06 * p);
       aperture = 0.15;
       break;
@@ -477,20 +569,129 @@ const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway:
 const LONE = new Set<Action>(['push-stop', 'catch', 'lift', 'throw', 'super-jump', 'land', 'dash', 'punch', 'look-out', 'pushup', 'cower', 'flee', 'carried', 'fall']);
 const FULL_TURN = new Set<Action>(['help-up', 'carry']);
 
-// Everyone in the shot, in order (the one carried is placed after the one who carries him); each turns toward the
-// nearest other person (within 4 m).
+// ---------------------------------------------------------------- who stands where in a shot
+// The user's films had people inside each other: two walkers on one spot walked the same line, a walk to someone's
+// spot ended inside them, and spots only 0.5 apart (the park's left/center/right) put heads through heads. Each shot
+// is laid out once: people who stay put first (a second one on a spot moves along it, as along a couch), then the
+// walkers, each on the first lane (sideways from his line, 0, ±0.85, ±1.7) where he is never within GAP of anyone at
+// any moment of the shot; a walk to the spot of someone standing or sitting there stops in front of them.
+const SAMPLES = 16;
+type Layout = {lanes: Lane[]; paths: ([number, number][] | undefined)[]};
+const LAYOUTS = new WeakMap<LPShot, Layout>();
+
+export const layoutFor = (shot: LPShot, set: SetDef, cast: Record<string, Design>): Layout => {
+  const hit = LAYOUTS.get(shot);
+  if (hit) return hit;
+  const actors = shot.actors;
+  const lanes: Lane[] = actors.map(() => ({off: [0, 0]}));
+  const paths: ([number, number][] | undefined)[] = actors.map(() => undefined);
+  const times = Array.from({length: SAMPLES + 1}, (_, i) => (shot.duration * i) / SAMPLES);
+  const track = (k: number, lane: Lane) =>
+    times.map((t) => {
+      const p = place(actors[k], k, set, shot, t, cast, [], undefined, lane);
+      return [p.root[0], p.root[2]] as [number, number];
+    });
+  const pair = (i: number, j: number) => {
+    const carry = (x: number, y: number) => actors[x].action === 'carry' && actors[y].action === 'carried';
+    return carry(i, j) || carry(j, i);
+  };
+  const clearance = (k: number, path: [number, number][]) => {
+    let worst = Infinity;
+    paths.forEach((other, j) => {
+      if (!other || j === k || pair(j, k)) return;
+      path.forEach((p, s) => (worst = Math.min(worst, Math.hypot(p[0] - other[s][0], p[1] - other[s][1]))));
+    });
+    return worst;
+  };
+  const order = actors.map((_, k) => k).filter((k) => actors[k].action !== 'carried');
+  order.sort((i, j) => Number(moves(actors[i])) - Number(moves(actors[j])));
+  for (const k of order) {
+    const a = actors[k];
+    const sp = spotOf(set, a.spot);
+    let to: [number, number] | undefined;
+    let axis: [number, number] = [Math.cos(sp.ry), -Math.sin(sp.ry)]; // along the spot (the couch, the counter)
+    let along: [number, number] = [0, 0]; // a walker's own direction
+    if (moves(a)) {
+      const straight = track(k, {off: [0, 0]});
+      const start = straight[0];
+      if (a.to) {
+        // someone standing or sitting where he goes: he stops in front of them, facing them
+        const b = spotOf(set, a.to);
+        const there = paths.find((p, j) => p && j !== k && !moves(actors[j]) && Math.hypot(p[SAMPLES][0] - b.x, p[SAMPLES][1] - b.z) < GAP);
+        if (there) {
+          const occ = there[SAMPLES];
+          const d = Math.hypot(occ[0] - start[0], occ[1] - start[1]);
+          const ux = d > 1e-3 ? (occ[0] - start[0]) / d : 0;
+          const uz = d > 1e-3 ? (occ[1] - start[1]) / d : 1;
+          const stop = Math.max(0.02, d - (SEAT_SPOTS.has(a.to) ? STOP_SEATED : STOP_SHORT));
+          to = [start[0] + ux * stop, start[1] + uz * stop];
+        }
+      }
+      const end = to ?? straight[SAMPLES];
+      const dx = end[0] - start[0];
+      const dz = end[1] - start[1];
+      const len = Math.hypot(dx, dz);
+      if (len > 0.05) {
+        axis = [dz / len, -dx / len]; // sideways from his line
+        along = [dx / len, dz / len];
+      }
+    }
+    let best: Lane = {off: [0, 0], to};
+    let bestPath: [number, number][] | undefined;
+    let bestGap = -1;
+    // sideways lanes; walkers side by side are also a little ahead or behind each other, so a camera from the side
+    // sees a group, not one man hiding the others
+    for (const [s, b] of [[0, 0], [0.9, -0.85], [-0.9, 0.85], [1.8, -1.7], [-1.8, 1.7]]) {
+      const lane: Lane = {off: [axis[0] * s + along[0] * b, axis[1] * s + along[1] * b], to};
+      const path = track(k, lane);
+      const gap = clearance(k, path);
+      if (gap > bestGap + 0.05) {
+        best = lane;
+        bestPath = path;
+        bestGap = gap;
+      }
+      if (gap >= GAP) break;
+    }
+    lanes[k] = best;
+    paths[k] = bestPath;
+  }
+  const out = {lanes, paths};
+  LAYOUTS.set(shot, out);
+  return out;
+};
+
+// Everyone in the shot, in order (the one carried is placed after the one who carries him); each turns to the one he
+// looks at (`look`), else toward the nearest other person (within 4 m).
 export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<string, Design>) => {
+  const {lanes, paths} = layoutFor(shot, set, cast);
   const placed: (Placed | undefined)[] = shot.actors.map(() => undefined);
   const done: Placed[] = [];
-  const at = shot.actors.map((a) => spotOf(set, a.spot));
-  const toward = (k: number): [number, number] | undefined => {
-    let best: [number, number] | undefined;
+  const where = (j: number, at: number): [number, number] | undefined => {
+    const p = paths[j];
+    if (!p) return undefined;
+    const f = Math.max(0, Math.min(SAMPLES, (at / Math.max(0.01, shot.duration)) * SAMPLES));
+    const i = Math.min(SAMPLES - 1, Math.floor(f));
+    const u = f - i;
+    return [p[i][0] + (p[i + 1][0] - p[i][0]) * u, p[i][1] + (p[i + 1][1] - p[i][1]) * u];
+  };
+  const target = (k: number) => {
+    const name = shot.actors[k].look;
+    return name ? shot.actors.findIndex((o, j) => j !== k && o.who === name) : -1;
+  };
+  const aimOf = (k: number): Aim | undefined => {
+    const j = target(k);
+    const me = where(k, t);
+    const them = j >= 0 ? where(j, t) : undefined;
+    if (them) return {x: them[0], z: them[1], explicit: true};
+    if (!me) return undefined;
+    let best: Aim | undefined;
     let dist = 4;
-    at.forEach((s, j) => {
-      const d = Math.hypot(s.x - at[k].x, s.z - at[k].z);
-      if (j !== k && d < dist && d > 0.05) {
+    paths.forEach((_, o) => {
+      const p = o !== k ? where(o, shot.duration / 2) : undefined;
+      const d = p ? Math.hypot(p[0] - me[0], p[1] - me[1]) : Infinity;
+      if (p && d < dist && d > 0.05) {
         dist = d;
-        best = [s.x, s.z];
+        best = {x: p[0], z: p[1], explicit: false};
       }
     });
     return best;
@@ -498,11 +699,15 @@ export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<stri
   for (const late of [false, true]) {
     shot.actors.forEach((a, k) => {
       if ((a.action === 'carried') !== late) return;
-      const pl = place(a, k, set, shot, t, cast, done, toward(k));
+      const pl = place(a, k, set, shot, t, cast, done, aimOf(k), lanes[k]);
       placed[k] = pl;
       done.push(pl);
     });
   }
+  placed.forEach((pl, k) => {
+    const j = target(k);
+    if (pl && j >= 0 && placed[j]) pl.aim = placed[j]!.head.clone();
+  });
   return placed as Placed[];
 };
 

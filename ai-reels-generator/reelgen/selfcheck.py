@@ -323,8 +323,36 @@ def lowpoly_lists() -> None:
     want = {"run": float(walk.group(1)), "jog": float(walk.group(2)), "walk": float(walk.group(3)), **legs} if walk else {}
     if want != STRIDE:
         fail(f"lowpoly footsteps: timeline.STRIDE {STRIDE} differs from the walk cycles in poses.ts {want}")
-    if f"export const SLOW = {SLOW};" not in (ROOT / "remotion" / "src" / "lowpoly" / "LowPoly.tsx").read_text(encoding="utf-8"):
+    lp_tsx = (ROOT / "remotion" / "src" / "lowpoly" / "LowPoly.tsx").read_text(encoding="utf-8")
+    if f"export const SLOW = {SLOW};" not in lp_tsx:
         fail("lowpoly footsteps: timeline.SLOW differs from LowPoly.tsx SLOW")
+    # a walk up to someone stops in front of them: the editor and the footsteps agree on where
+    from .lowpoly.timeline import SEAT_SPOTS, STOP_SEATED, STOP_SHORT
+    seats_ts = re.search(r"const SEAT_SPOTS = new Set\(\[([^\]]*)\]\)", lp_tsx)
+    if (f"export const STOP_SHORT = {STOP_SHORT};" not in lp_tsx or f"export const STOP_SEATED = {STOP_SEATED};" not in lp_tsx
+            or not seats_ts or set(re.findall(r"'([\w-]+)'", seats_ts.group(1))) != SEAT_SPOTS):
+        fail("lowpoly: timeline STOP_SHORT / STOP_SEATED / SEAT_SPOTS differ from LowPoly.tsx")
+    # who looks at whom (the user's son had to point AT his dad on the chair, the camera showing both)
+    lib = {c["name"]: c for c in S.CAST_LIBRARY}
+    cast = [S.LPCast(name=n, who=lib[n]["who"], design=S.LPDesign(**lib[n]["design"]), voice=lib[n]["voice"])
+            for n in ("his dad", "Kai")]
+    staged = S.Story(title="t", problem="", youtube_title="", description="", tags=[], hashtags=[], thumbnail_text="",
+                      mood="calm", end_mood="calm", music_prompt="", cast=cast, shots=[
+                          S.LPShot(line="", set="park", light="day", camera="front", subject="kai", actors=[
+                              S.LPActor(who="Kai", action="point", expression="worried", spot="center"),
+                              S.LPActor(who="his dad", action="sit", expression="neutral", spot="chair")]),
+                          S.LPShot(line="Dad.", speaker="Kai", set="park", light="day", camera="medium", actors=[
+                              S.LPActor(who="hero", action="stand", expression="neutral", spot="left"),
+                              S.LPActor(who="Kai", action="talk", expression="neutral", spot="center", look_at="nobody")])])
+    S.repair(staged)
+    s1, s2 = staged.shots
+    if (s1.subject, s1.camera, s1.actors[0].look_at) != ("Kai", "medium", "his dad"):
+        fail(f"lowpoly staging: pointing at his dad gave subject {s1.subject}, camera {s1.camera}, look {s1.actors[0].look_at}")
+    if (s2.subject, s2.actors[0].look_at, s2.actors[1].look_at) != ("Kai", "Kai", "hero"):
+        fail(f"lowpoly staging: a line said to someone gave {s2.subject}, {[a.look_at for a in s2.actors]}")
+    shot1 = build(staged, {}, vertical=False, watermark="", seed=1)[0]["shots"][0]
+    if shot1["focus"] != 0 or shot1["actors"][0].get("look") != "his dad":
+        fail(f"lowpoly staging: props lost the subject or the look: {shot1['focus']}, {shot1['actors'][0]}")
     from .lowpoly.sounds import BANK, FLOORS
     for floor, (sets, *_rest) in FLOORS.items():
         if not all(list(BANK.glob(f"{x}-*.ogg")) for x in sets):

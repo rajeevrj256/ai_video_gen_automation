@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -68,11 +69,29 @@ def _record(cfg: Config, story: S.Story, req: LowPolyRequest, work: Path, progre
         groups.setdefault(voices.get(speaker_key(story.shots[i].speaker), narrator), []).append(i)
     rate = f"{max(-30, min(30, int(pace))):+d}%"
     who = narrator.split(":")[-1] if len(groups) == 1 else f"{len(groups)} voices"
-    progress(f"Recording the {'narration' if len(groups) == 1 else 'voices'} ({len(idx)} lines, {who}, {rate})")
-    out = {}
+    what = "narration" if len(groups) == 1 else "voices"
+    progress(f"Recording the {what} ({len(idx)} lines, {who}, {rate})")
+    # who speaks in each voice, for the progress lines (a film's voices took minutes with one unchanging line)
+    names = {"narrator": "the narrator", "hero": "him", **{S._key(c.name): c.name for c in story.cast}}
+    speaking = {}
+    for key, v in voices.items():
+        speaking.setdefault(v, []).append(names.get(key, key))
+    out, before, said = {}, 0, [time.monotonic()]
     for n, (voice, items) in enumerate(groups.items()):
         folder = work / take if len(groups) == 1 else work / take / f"voice{n}"
-        takes = synthesize_scenes([story.shots[i].line.strip() for i in items], voice, folder, cfg.tts_engine, cfg.kokoro_voice, rate)
+        if len(groups) > 1:
+            progress(f"Recording the voices: {' / '.join(speaking.get(voice, [voice]))} ({n + 1} of {len(groups)}, "
+                     f"{len(items)} line{'s' if len(items) != 1 else ''}; {before} of {len(idx)} done)")
+            said[0] = time.monotonic()
+
+        def tick(done: int, total: int, before: int = before) -> None:
+            if time.monotonic() - said[0] >= 15 and done < total:  # a long narration: a line every 15 s
+                said[0] = time.monotonic()
+                progress(f"Recording the {what}: {before + done} of {len(idx)} lines done")
+
+        takes = synthesize_scenes([story.shots[i].line.strip() for i in items], voice, folder, cfg.tts_engine, cfg.kokoro_voice,
+                                  rate, on_take=tick)
+        before += len(items)
         for i, tk in zip(items, takes):
             secs = float(probe(tk.path).get("duration") or 0) or (tk.words[-1].end if tk.words else 1.0)
             out[i] = {"path": str(tk.path), "seconds": round(secs, 3), "voice": voice,

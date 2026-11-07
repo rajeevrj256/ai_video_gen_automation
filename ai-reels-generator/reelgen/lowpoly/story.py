@@ -115,6 +115,9 @@ class LPActor(BaseModel):
     covered: bool = Field(False, description="in bed under the blanket")
     at: float | None = Field(None, description="for an action with a moment (catch, lift, throw, push-stop, super-jump, land, punch, "
                                                "fall): when it happens, as a fraction 0-1 of the shot; else none")
+    look_at: str = Field("", description="the person in this shot they look at, talk to, point at or walk up to: 'hero' or "
+                                         "that person's name exactly; empty when nobody in particular. They turn to face "
+                                         "them (seated or walking: their head turns)")
 
 
 class LPThing(BaseModel):
@@ -157,6 +160,8 @@ class LPShot(BaseModel):
     set: SetName
     light: LightName
     camera: CamName
+    subject: str = Field("", description="who the camera is on: 'hero' or the name of someone in the shot (the one who "
+                                         "speaks, points, reacts or acts in this moment); empty = him")
     actors: list[LPActor] = Field(description="who is in the shot and what they do (the hero in nearly every shot)")
     things: list[LPThing] = Field(default_factory=list, description="objects put down in the place (on the bedside table, the "
                                                                      "desk, the kitchen table)")
@@ -193,6 +198,26 @@ class Story(BaseModel):
     kind: Literal["life", "fiction"] = "life"
 
 
+# Two or more people in a shot (the user: the son should look at and point to his dad on the chair, not walk off; and
+# people walked through each other). Shared by every kind of film.
+STAGING = """
+TWO OR MORE PEOPLE IN A SHOT (stage it like a film director):
+- Each person on their own spot (left, center, right, chair, door...), never two on one spot unless they sit on a \
+couch together. People who walk side by side are both 'walk' from the same spot; the editor keeps them apart.
+- `look_at` on everyone who looks at, talks to, answers, points at, reaches for or walks up to someone: that person's \
+name or 'hero'. They turn to face them (sitting or walking, their head turns). A line said to someone always has \
+`look_at` on the speaker and on the one listening. "He points to his dad on the chair" = the one pointing stands \
+('point', `look_at` the dad), the dad sits on 'chair'; nobody walks away in that shot.
+- `subject` = who the moment is about (the one who speaks, points, reacts or acts); the camera is on them.
+- Cameras with two people: 'medium' = both in frame (a two-shot: who looks at whom is clear); 'back' = over the \
+subject's shoulder at the person they face; 'face' = one face only (a reaction), so never for a gesture at someone \
+else; 'wide' = the whole place and everyone in it. A shot whose line or action is about someone else in the room \
+(points at him, looks at her, walks up to him) must show both people: 'medium', 'back' or 'wide'.
+- A walk with a purpose: 'walk' with `to` the spot of the person they go to (they stop in front of them, facing \
+them) and `look_at` that person.
+"""
+
+
 RULES = """You write narrated 3D animated shorts in the style of the channel's own Short 'Life of a Man': one low-poly \
 man (a big faceted head, curly brown hair, square glasses, a red sweater) living one small, relatable everyday \
 struggle, told by a calm narrator over quiet piano. Captions show the words two or three at a time.
@@ -227,7 +252,7 @@ the street or comes down the park path toward the camera with 'front').
 things go in `hold` (a phone in his hand, a mug).
 - Sounds: the world's own sounds where they happen: 'alarm' on the alarm, 'footsteps' are added to walks by the editor, \
 'door', 'notify'/'buzz' for a phone, 'typing', 'tick' for time passing. A few, not on every shot.
-
+""" + STAGING + """
 LENGTH: {length}. Each shot holds about 2-4 seconds (its line plus a breath); a silent stamp beat about 2 s."""
 
 SHORT = ("a 9:16 Short of {seconds} seconds: {shots} shots, about {words} words of narration in all, a stamp every 2-4 "
@@ -298,7 +323,7 @@ and far; a cinematic rhythm.
 'crowd' for frightened people, 'wind', 'fire', 'heartbeat' before the moment, 'impact'); the editor adds the usual ones \
 to actions. The score: `score` parts that follow the story (calm for his life, mystery for the discovery, energetic \
 for the tests, suspense for the danger, emotional for the consequences, a quiet end).
-
+""" + STAGING + """
 LENGTH: {length}."""
 
 FICTION_SHORT = ("a 9:16 Short of {seconds} seconds: {shots} shots of 1.5-4 s, about {words} words in all (dialogue and a "
@@ -733,6 +758,7 @@ def repair(story: Story) -> list[str]:
         if not s.actors:
             s.actors = [LPActor(who="hero", action="stand", expression="neutral", spot="center")]
             notes.append(f"Shot {i + 1} had nobody in it; he stands there.")
+        notes += [f"Shot {i + 1}: {n}" for n in _stage(story, s)]
     reds = [i for i, s in enumerate(story.shots) if s.red]
     for i in reds[:-1]:
         story.shots[i].red = False
@@ -740,6 +766,52 @@ def repair(story: Story) -> list[str]:
         last = next((s for s in reversed(story.shots) if s.line.strip()), None)
         if last:
             last.red = True
+    return notes
+
+
+GESTURES = {"point", "help-up", "wave", "carry"}  # an action at another person: both must be in the picture
+ONE_FACE = {"face", "face-top", "front", "detail", "top", "low", "crash-zoom"}  # cameras that show only the subject
+
+
+def who_key(name: str) -> str:
+    n = (name or "").strip()
+    return "hero" if n.lower() in ("hero", "he", "him", "his") else _key(n) if n else ""
+
+
+def _stage(story: Story, s: LPShot) -> list[str]:
+    """Who looks at whom and who the camera is on, in code: a `look_at` or `subject` naming nobody in the shot is
+    dropped; a line said to someone has the speaker and the listeners looking at each other; someone pointing with
+    one other person there points at them; the camera is on the subject; and a gesture at someone else (pointing at
+    his dad) is never a one-face camera, which left the dad out of the picture."""
+    notes = []
+    names = {"hero": "hero", **{_key(c.name): c.name for c in story.cast}}
+    here: dict[str, LPActor] = {}
+    for a in s.actors:
+        here.setdefault(who_key(a.who), a)
+    for a in s.actors:
+        k = who_key(a.look_at)
+        a.look_at = names.get(k, "") if k in here and k != who_key(a.who) else ""
+    subject = who_key(s.subject)
+    spk = "" if s.speaker == "narrator" else who_key(s.speaker)
+    if subject not in here:
+        subject = spk if spk in here else "hero" if "hero" in here else who_key(s.actors[0].who)
+    s.subject = names.get(subject, "hero")
+    if len(here) < 2:
+        return notes
+    if spk in here:  # a line said to someone: they look at each other
+        other = subject if subject != spk else next(k for k in here if k != spk)
+        if not here[spk].look_at:
+            here[spk].look_at = names[other]
+        for k, a in here.items():
+            if k != spk and not a.look_at:
+                a.look_at = names[spk]
+    for a in s.actors:
+        if a.action == "point" and not a.look_at and len(here) == 2 and not s.big:
+            a.look_at = names[next(k for k in here if k != who_key(a.who))]
+    lead = here[subject]
+    if lead.action in GESTURES and lead.look_at and s.camera in ONE_FACE:
+        notes.append(f"'{lead.action}' at {lead.look_at} with the '{s.camera}' camera showed only one of them: 'medium'")
+        s.camera = "medium"
     return notes
 
 

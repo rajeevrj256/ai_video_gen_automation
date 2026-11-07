@@ -61,7 +61,14 @@ KOKORO_FOR_EDGE = {
     "en-IN-NeerjaNeural": "af_heart",
     "hi-IN-MadhurNeural": "hm_omega",
     "hi-IN-SwaraNeural": "hf_alpha",
+    # the low-poly films' cast voices, so people stay different from each other if the offline voice takes over
+    "en-US-GuyNeural": "am_adam", "en-US-EricNeural": "am_eric", "en-US-AriaNeural": "af_sarah",
+    "en-US-JennyNeural": "af_nicole", "en-US-EmmaNeural": "af_bella", "en-US-RogerNeural": "am_onyx",
+    "en-US-SteffanNeural": "am_fenrir", "en-US-MichelleNeural": "af_kore", "en-US-AnaNeural": "af_sky",
+    "en-GB-ThomasNeural": "bm_lewis", "en-GB-SoniaNeural": "bf_emma", "en-GB-LibbyNeural": "bf_isabella",
+    "en-US-ChristopherNeural": "am_liam",
 }
+EDGE_PARALLEL = 4  # Microsoft takes recorded at once: one line is a round trip of 2-10 s, so 74 lines one by one took minutes
 KOKORO_LANG = {"a": "en-us", "b": "en-gb", "h": "hi", "e": "es", "f": "fr-fr", "i": "it", "p": "pt-br"}
 
 
@@ -81,7 +88,7 @@ class SceneAudio:
 def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: str = "auto",
                       kokoro_voice: str = "", rate: str = "+10%", pitch: str = "+0Hz",
                       volume: str = "+0%", delivery: str = "", sarvam_speed: float = 1.0,
-                      separate: bool = False) -> list[SceneAudio]:
+                      separate: bool = False, on_take=None) -> list[SceneAudio]:
     """One audio file per line, the whole narration levelled to one loudness (reelgen/audio.py).
 
     **No word is ever cut.** The voice used to be one take per chapter (or per Stick character), cut into lines at
@@ -89,7 +96,15 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     ("remove it completely"). Now every run of lines that ends a sentence is its own take (`_sentence_takes`): a
     line that is whole sentences is recorded alone and needs no cut at all; lines that split one sentence stay in one
     take so it still reads as one sentence, and each cut between them must land in silence (`_clean_joins`), else
-    those lines are recorded one by one too. `separate` is kept for callers; every line is separate-safe now."""
+    those lines are recorded one by one too. `separate` is kept for callers; every line is separate-safe now.
+
+    Microsoft takes are recorded `EDGE_PARALLEL` at a time (each is a round trip of seconds: a low-poly film's 74 lines
+    one by one sat on 'Recording the voices' for a quarter of an hour). When Microsoft fails a take three times, the
+    rest of this voice goes straight to the offline voice (it used to try three times again for every line, with
+    waits, which is what made a whole film's voices take half an hour), and the takes Microsoft did make are recorded
+    offline too, so one character never changes voice halfway. `on_take(done, total)` is told after every take."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from . import hinglish
     from .audio import level_voice
 
@@ -98,16 +113,49 @@ def synthesize_scenes(narrations: list[str], voice: str, out_dir: Path, engine: 
     mixed = hinglish.needs_mixing(voice, narrations) and hinglish.enabled()
     if mixed:
         hinglish.to_speech(narrations)
-    scenes: list[SceneAudio] = []
-    for g, idx in enumerate(_sentence_takes(narrations)):
+    takes = _sentence_takes(narrations)
+    state = {"engine": engine, "done": 0}
+    offline: set[int] = set()
+    lock = threading.Lock()
+
+    def record(g: int, idx: list[int], eng: str | None = None) -> list[SceneAudio]:
         lines = [narrations[i] for i in idx]
         where = out_dir / f"take_{g:03d}"
-        got = _synthesize(lines, voice, where, engine, kokoro_voice, rate, pitch, volume, delivery, sarvam_speed, mixed)
+        eng = eng or state["engine"]
+        fell: list[bool] = []
+        got = _synthesize(lines, voice, where, eng, kokoro_voice, rate, pitch, volume, delivery, sarvam_speed, mixed, fell=fell)
         if len(lines) > 1 and not _clean_joins(got):
             log.info("A cut between lines %d-%d wasn't in silence: recording them one by one", idx[0] + 1, idx[-1] + 1)
-            got = [_synthesize([line], voice, where / f"line_{k:02d}", engine, kokoro_voice, rate, pitch, volume,
-                               delivery, sarvam_speed, mixed)[0] for k, line in enumerate(lines)]
-        scenes += got
+            got = [_synthesize([line], voice, where / f"line_{k:02d}", "kokoro" if fell else eng, kokoro_voice, rate,
+                               pitch, volume, delivery, sarvam_speed, mixed, fell=fell)[0] for k, line in enumerate(lines)]
+        with lock:
+            if fell or eng == "kokoro":
+                offline.add(g)
+            if fell and state["engine"] == "auto":
+                state["engine"] = "kokoro"  # Microsoft is down for this voice: no three tries for every line left
+            state["done"] += len(idx)
+            done = state["done"]
+        if on_take:
+            try:
+                on_take(min(done, len(narrations)), len(narrations))
+            except Exception:  # noqa: BLE001 - a progress line never stops the voice
+                pass
+        return got
+
+    online = engine in ("auto", "edge") and not voice.startswith("sarvam:")
+    if online and len(takes) > 1:
+        with ThreadPoolExecutor(min(EDGE_PARALLEL, len(takes))) as pool:
+            results = list(pool.map(lambda a: record(*a), enumerate(takes)))
+    else:
+        results = [record(g, idx) for g, idx in enumerate(takes)]
+    if offline and engine == "auto" and len(offline) < len(takes):
+        log.warning("Microsoft's voice %s failed on %d of %d takes: the rest are recorded offline too, so it stays one "
+                    "voice", voice, len(offline), len(takes))
+        state["done"] = sum(len(takes[g]) for g in offline)
+        for g, idx in enumerate(takes):
+            if g not in offline:
+                results[g] = record(g, idx, "kokoro")
+    scenes: list[SceneAudio] = [s for got in results for s in got]
     try:
         level_voice([s.path for s in scenes])
     except Exception as exc:  # noqa: BLE001 - an unlevelled voice is still a voice
@@ -152,8 +200,9 @@ def _clean_joins(scenes: list[SceneAudio], edge: float = 0.03) -> bool:
 def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = "auto",
                 kokoro_voice: str = "", rate: str = "+10%", pitch: str = "+0Hz",
                 volume: str = "+0%", delivery: str = "", sarvam_speed: float = 1.0,
-                mixed: bool | None = None) -> list[SceneAudio]:
-    """`mixed`: the Hinglish decision made for the whole narration (None: decided here).
+                mixed: bool | None = None, fell: list | None = None) -> list[SceneAudio]:
+    """`mixed`: the Hinglish decision made for the whole narration (None: decided here). `fell` gets an entry when
+    Microsoft's voice failed and the offline voice made this take.
     One audio file per scene, so each scene's duration follows its voiceover.
 
     The whole narration is spoken in one take and then cut between scenes. Speaking
@@ -199,10 +248,13 @@ def _synthesize(narrations: list[str], voice: str, out_dir: Path, engine: str = 
             except Exception as exc:
                 edge_error = exc
                 log.warning("Microsoft voice failed (try %d of 3): %s", attempt + 1, exc)
-                time.sleep(3 * (attempt + 1))
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
         if engine == "edge":
             raise edge_error
         log.warning("Microsoft voice unavailable (%s); using the offline Kokoro voice", edge_error)
+        if fell is not None:
+            fell.append(True)
     try:
         import kokoro_onnx  # noqa: F401
     except ImportError:

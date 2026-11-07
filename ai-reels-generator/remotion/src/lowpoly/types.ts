@@ -124,6 +124,7 @@ export type Actor = {
   covered?: boolean; // in bed under the blanket
   talk?: [number, number][]; // seconds into the shot when this person is speaking (the mouth moves)
   at?: number; // seconds into the shot of his key moment (the catch, the jump, the landing, the punch)
+  look?: string; // a key of cast: the person in this shot he looks at, talks to, points at or walks up to
 };
 
 export type Thing = {
