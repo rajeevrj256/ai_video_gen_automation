@@ -889,7 +889,18 @@ const rideCam = (cam: Cam, r: Ride, who: Placed | undefined, set: SetDef, shot: 
       break;
     }
     case 'cockpit': {
-      // on the dashboard, facing the driver: his face, the world rushing away behind him
+      // on the dashboard, facing the driver: his face, the world rushing away behind him. Inside a closed car the
+      // camera sits in the cabin over the middle of the dashboard, so his body, his hands on the wheel, the seats and
+      // the gear lever are in the picture (through the windscreen only his head showed over the dashboard)
+      if (who && who.inside && who.local) {
+        fov = tall ? 70 : 60;
+        const lr = who.local.root;
+        pos = new THREE.Vector3(-lr[0] * (tall ? 0.3 : 0.15), tall ? 1.03 : 1.0, lr[2] + (tall ? 0.82 : 0.7)).applyMatrix4(r.m);
+        look = who.head.clone().lerp(who.body, 0.35);
+        aperture = 0.35;
+        shake = 0.6;
+        break;
+      }
       if (who) {
         fov = tall ? 64 : 56;
         const fd = who.faceDir.clone().setY(0);
@@ -1303,14 +1314,44 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
   let out: (RoadPlace | undefined)[] = bigs.map(() => undefined);
   if (want.some(Boolean)) {
     const {paths} = layoutFor(shot, set, cast);
-    const views: {cam: THREE.Vector3; heads: THREE.Vector3[]}[] = [];
+    const views: {t: number; cam: THREE.Vector3; heads: THREE.Vector3[]}[] = [];
     for (let i = 0; i <= 8; i++) {
       const t = (shot.duration * i) / 8;
       const placed = placeAll(shot, set, t, cast);
-      if (placed.length) views.push({cam: planFor(shot, set, placed, ridesAt(shot, set, placed, t), aspect, t).plan.pos, heads: placed.map((p) => p.head)});
+      if (placed.length) views.push({t, cam: planFor(shot, set, placed, ridesAt(shot, set, placed, t), aspect, t).plan.pos, heads: placed.map((p) => p.head)});
     }
     const xRoad = set.walk === 'x'; // the road runs along x (else along z)
+    // every other vehicle at each moment of the shot: those under way or with someone in them (their own paths) and
+    // the road vehicles placed before this one; a place where it would touch one of them is refused (the user's truck
+    // drove straight through the hero's car: lanes were chosen against people and the camera only)
+    const moments = Array.from({length: 13}, (_, i) => (shot.duration * i) / 12);
+    const da = actionTime(shot, shot.duration);
+    const movingAt = moments.map((t) => rideStates(shot, set, t));
+    const settled: {b: Big; k: number; place: RoadPlace}[] = [];
+    const outline = (b: Big, st: BigState) => {
+      const [w, h, l] = sizeOf(b);
+      const m = vehicleMatrix(st);
+      return [[-1, -1], [-1, 1], [1, -1], [1, 1], [0, 1], [0, -1], [1, 0], [-1, 0], [0, 0]].map(([sx, sz]) => new THREE.Vector3((sx * w) / 2, h / 2, (sz * l) / 2).applyMatrix4(m));
+    };
+    const touch = (b1: Big, s1: BigState, b2: Big, s2: BigState) =>
+      outline(b1, s1).some((pt) => insideBig(b2, s2, pt, 0.3)) || outline(b2, s2).some((pt) => insideBig(b1, s1, pt, 0.3));
+    const clash = (b0: Big, k: number, place: RoadPlace) =>
+      moments.some((t, i) => {
+        const ta = actionTime(shot, t);
+        const b = scaledBig(b0, shot);
+        const st = bigState(b, set, [], ta, da, k, place);
+        if (movingAt[i].some((r, j) => r && j !== k && touch(b, st, r.b, r.st))) return true;
+        return settled.some((o) => {
+          const ob = scaledBig(o.b, shot);
+          return touch(b, st, ob, bigState(ob, set, [], ta, da, o.k, o.place));
+        });
+      });
     out = bigs.map((b, k) => {
+      const place = roadPlace(b, k);
+      if (place) settled.push({b, k, place});
+      return place;
+    });
+    function roadPlace(b: Big, k: number): RoadPlace | undefined {
       if (!want[k]) return undefined;
       const sp = spotOf(set, b.spot);
       const road = set.road !== undefined && xRoad;
@@ -1322,23 +1363,32 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
       const shifts = passes ? [0] : [0, -1, 1, -2, 2].map((m) => m * (l / 2 + 1.4));
       const across = (v: {x: number; z: number}) => (xRoad ? v.z : v.x);
       const along = (v: {x: number; z: number}) => (xRoad ? v.x : v.z);
-      let fallback: RoadPlace | undefined;
-      for (const lane of lanes) {
+      // at how many moments it stands or drives between the camera and someone (a truck passing between the lens and
+      // the hero's car hid him for most of a tracking shot)
+      const hidesAt = (place: RoadPlace) =>
+        views.filter((v) => {
+          const st = bigState(scaledBig(b, shot), set, [], actionTime(shot, v.t), da, k, place);
+          return v.heads.some((hd) => [0.25, 0.4, 0.55, 0.7, 0.85].some((f) => insideBig(b, st, v.cam.clone().lerp(hd, f), 0.05)));
+        }).length;
+      let best: {place: RoadPlace; hides: number} | undefined;
+      let clear: RoadPlace | undefined; // touches no other vehicle, whatever else
+      for (const lane of [...lanes, ...lanes.map((x) => x + (road ? 7 : 5) * Math.sign(lanes[lanes.length - 1] - base || 1))]) {
         for (const shift of shifts) {
           const c = at + shift;
           const near = (v: {x: number; z: number}, m: number) => Math.abs(across(v) - lane) < w / 2 + m && (passes || Math.abs(along(v) - c) < l / 2 + m);
+          const place: RoadPlace = {lane, shift};
+          if (clash(b, k, place)) continue; // through another car, bus or truck
+          clear ??= place;
           if (paths.some((pp) => pp && pp.some((q) => near({x: q[0], z: q[1]}, 0.5)))) continue; // through someone
           if (views.some((v) => v.cam.y < h + 0.35 && near(v.cam, 0.35))) continue; // the camera inside it
-          const place: RoadPlace = {lane, shift};
-          if (passes) return place; // driving past the lens or in front of people for a moment is fine
-          fallback ??= place;
-          const st = bigState(b, set, [], 0, shot.duration, k, place);
-          const hides = views.some((v) => v.heads.some((hd) => [0.25, 0.4, 0.55, 0.7, 0.85].some((f) => insideBig(b, st, v.cam.clone().lerp(hd, f), 0.05))));
-          if (!hides) return place;
+          // driving past the lens for a moment is fine; the lane that hides the least, none at best
+          const hides = hidesAt(place);
+          if (hides === 0) return place;
+          if (!best || hides < best.hides) best = {place, hides};
         }
       }
-      return fallback ?? {lane: base, shift: 0};
-    });
+      return best?.place ?? clear ?? {lane: base, shift: 0};
+    }
   }
   VPLANS.set(shot, out);
   return out;

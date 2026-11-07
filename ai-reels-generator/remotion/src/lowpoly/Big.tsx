@@ -511,7 +511,7 @@ const glassMat = (c: string, opacity = 0.32) => {
   const key = `${c}|${opacity}`;
   let m = glassMats.get(key);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({color: c, roughness: 0.15, metalness: 0.3, transparent: true, opacity, flatShading: true, depthWrite: false});
+    m = new THREE.MeshStandardMaterial({color: c, roughness: 0.5, metalness: 0, transparent: true, opacity, flatShading: true, depthWrite: false});
     glassMats.set(key, m);
   }
   return m;
@@ -534,11 +534,13 @@ const CAR_W = 2.0;
 const WHEEL_Z = 1.45;
 const WHEEL_R = 0.36;
 const paintMats = new Map<string, THREE.Material>();
-const paintMat = (c: string) => {
-  let m = paintMats.get(c);
+// (both sides for the roof and the doors: a camera inside the car sees their inside, the ceiling over his head)
+const paintMat = (c: string, both = false) => {
+  const key = `${c}|${both}`;
+  let m = paintMats.get(key);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({color: c, flatShading: true, roughness: 0.3, metalness: 0.1});
-    paintMats.set(c, m);
+    m = new THREE.MeshStandardMaterial({color: c, flatShading: true, roughness: 0.3, metalness: 0.1, side: both ? THREE.DoubleSide : THREE.FrontSide});
+    paintMats.set(key, m);
   }
   return m;
 };
@@ -573,7 +575,13 @@ const CAR_BODY = (() => {
     [L, 0.5],
     [L - 0.2, 0.63],
     [1.2, 0.79],
-    [0.62, 0.86],
+    [0.66, 0.86],
+    // the cabin is open inside (the user: "inside the car, char body and car interior must be visible like seat,
+    // gear"): the body dips to the floor between the dashboard and the rear bulkhead, the doors are their own panels
+    [0.6, 0.86],
+    [0.58, 0.3],
+    [-0.84, 0.3],
+    [-0.86, 0.92],
     [-1.6, 0.92],
     [-L + 0.22, 0.92],
     [-L + 0.02, 0.9],
@@ -582,13 +590,18 @@ const CAR_BODY = (() => {
   ];
   return extruded(pts, CAR_W, 0.07);
 })();
+const KNOB = facetedBall(0.04, 1, 0.05, 11);
 const CABIN = extruded([[0.66, 0.84], [-0.08, 1.39], [-0.78, 1.42], [-1.62, 1.04], [-1.85, 0.9], [0.66, 0.86]], 1.66, 0.05);
 // a solid roof over the cabin, in the paint, a little wider than the glass (the user: "not half car. add ceiling"):
 // the glass cabin with a thin strip on top read from above and in front as an open frame
 const ROOF = extruded([[0.04, 1.36], [-0.1, 1.455], [-0.8, 1.485], [-1.5, 1.16], [-1.62, 1.07], [-1.5, 1.08], [-0.8, 1.4], [-0.1, 1.37]], 1.74, 0.04);
 // the rear quarters behind the doors: solid, with a fastback window let into the top
 const QUARTER = extruded([[-0.8, 0.9], [-0.8, 1.41], [-1.5, 1.09], [-1.84, 0.9]], 1.7, 0.04);
+// the doors: the body's sides along the cabin, from the floor to the window line
+const DOOR = extruded([[0.6, 0.3], [0.6, 0.87], [-0.86, 0.915], [-0.86, 0.3]], 0.1, 0.02);
 const UNDER = '#0d0e10';
+const LEATHER = '#2b1d1a';
+const TRIM = '#1b1c20';
 // a straight piece between two points of the side view, at the car's side or across it
 const Strut: React.FC<{a: [number, number]; b: [number, number]; x: number; w: number; t: number; m: THREE.Material}> = ({a, b, x, w, t, m}) => {
   const dz = b[0] - a[0];
@@ -640,11 +653,7 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, tur
   return (
     <group>
       <mesh geometry={CAR_BODY} material={paint} castShadow receiveShadow />
-      {/* dark wheel wells and a dark floor between them, so the arches read as holes (nothing seen through) */}
-      <mesh position={[0, 0.45, 0]}>
-        <boxGeometry args={[CAR_W - 0.24, 0.56, 2.0]} />
-        <primitive object={mat(UNDER)} attach="material" />
-      </mesh>
+      {/* dark wheel wells, so the arches read as holes (nothing seen through) */}
       {[-WHEEL_Z, WHEEL_Z].map((z) => (
         <mesh key={`w${z}`} position={[0, 0.5, z]}>
           <boxGeometry args={[1.4, 0.62, 0.95]} />
@@ -652,9 +661,17 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, tur
         </mesh>
       ))}
       {/* the cabin: tinted glass all round, pillars and a roof in the paint */}
-      <mesh geometry={CABIN} material={glassMat('#1e2a36', 0.5)} />
-      <mesh geometry={ROOF} material={paint} castShadow receiveShadow />
-      <mesh geometry={QUARTER} material={paint} castShadow receiveShadow />
+      <mesh geometry={CABIN} material={glassMat('#1e2a36', 0.42)} />
+      <mesh geometry={ROOF} material={paintMat(c, true)} castShadow receiveShadow />
+      <mesh geometry={QUARTER} material={paintMat(c, true)} castShadow receiveShadow />
+      {[-1, 1].map((sd) => (
+        <group key={`door${sd}`}>
+          <mesh geometry={DOOR} position={[sd * (CAR_W / 2 - 0.05), 0, 0]} material={paint} castShadow receiveShadow />
+          {/* its inside: trim, an armrest */}
+          <Box p={[sd * (CAR_W / 2 - 0.11), 0.6, -0.13]} s={[0.02, 0.5, 1.36]} c={TRIM} />
+          <Box p={[sd * (CAR_W / 2 - 0.15), 0.62, -0.25]} s={[0.07, 0.05, 0.5]} c={LEATHER} />
+        </group>
+      ))}
       <Strut a={[-0.84, 1.42]} b={[-1.46, 1.13]} x={0} w={1.3} t={0.02} m={glassMat('#141c24', 0.85)} />
       <Strut a={[0.66, 0.86]} b={[-0.06, 1.39]} x={0.81} w={0.09} t={0.07} m={paint} />
       <Strut a={[0.66, 0.86]} b={[-0.06, 1.39]} x={-0.81} w={0.09} t={0.07} m={paint} />
@@ -688,16 +705,35 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, tur
           <primitive object={mat('#9a9ea6', {rough: 0.3})} attach="material" />
         </mesh>
       ))}
-      {/* inside: seats and a steering wheel (seen through the glass) */}
+      {/* inside: carpet, two leather bucket seats, the centre tunnel with the gear lever, a dashboard with its lit
+          dials and screen, the steering wheel where his hands are */}
+      <Box p={[0, 0.315, -0.13]} s={[CAR_W - 0.2, 0.03, 1.42]} c="#141417" />
       {[-0.4, 0.4].map((x) => (
-        <Box key={`s${x}`} p={[x, 0.82, -0.72]} s={[0.5, 0.6, 0.12]} c="#3b2420" r={[0.25, 0, 0]} />
+        <group key={`s${x}`}>
+          <Box p={[x, 0.35, -0.32]} s={[0.48, 0.1, 0.5]} c={LEATHER} />
+          <Box p={[x, 0.68, -0.62]} s={[0.48, 0.62, 0.1]} c={LEATHER} r={[-0.16, 0, 0]} />
+          <Box p={[x, 1.06, -0.69]} s={[0.3, 0.16, 0.08]} c={LEATHER} r={[-0.16, 0, 0]} />
+          {[-0.21, 0.21].map((sx) => <Box key={sx} p={[x + sx, 0.47, -0.32]} s={[0.07, 0.12, 0.5]} c={LEATHER} />)}
+        </group>
       ))}
-      <Box p={[0, 0.82, 0.48]} s={[1.6, 0.1, 0.4]} c="#17181b" />
-      <group position={[-0.4, 0.76, 0.1]} rotation={[-0.55, 0, steer * 2.2]}>
+      <Box p={[0, 0.46, -0.12]} s={[0.26, 0.3, 1.25]} c={TRIM} />
+      <mesh position={[0, 0.69, 0.16]} rotation={[0.25, 0, 0]}>
+        <cylinderGeometry args={[0.014, 0.014, 0.16, 6]} />
+        <primitive object={mat('#9a9ea6', {rough: 0.3})} attach="material" />
+      </mesh>
+      <mesh geometry={KNOB} position={[0, 0.77, 0.18]}>
+        <primitive object={mat('#2a2b2f', {rough: 0.35})} attach="material" />
+      </mesh>
+      <Box p={[0, 0.79, 0.45]} s={[CAR_W - 0.2, 0.15, 0.34]} c="#17181b" />
+      <Box p={[-0.4, 0.87, 0.33]} s={[0.36, 0.1, 0.02]} c="#6fc6ff" glow={0.7} r={[-0.3, 0, 0]} />
+      <Box p={[0.04, 0.88, 0.4]} s={[0.26, 0.15, 0.02]} c="#4f86c6" glow={0.6} r={[-0.3, 0, 0]} />
+      <group position={[-0.4, 0.78, 0.08]} rotation={[-0.5, 0, steer * 2.2]}>
         <mesh>
-          <torusGeometry args={[0.17, 0.026, 6, 16]} />
+          <torusGeometry args={[0.19, 0.026, 6, 18]} />
           <primitive object={dark} attach="material" />
         </mesh>
+        <Box p={[0, -0.04, 0]} s={[0.3, 0.04, 0.03]} c="#141518" />
+        <Box p={[0, 0, -0.04]} s={[0.07, 0.07, 0.07]} c="#202125" />
       </group>
       {[-0.86, 0.86].map((x) =>
         [-WHEEL_Z, WHEEL_Z].map((z) => <CarWheel key={`${x}${z}`} p={[x, WHEEL_R, z]} turn={turn} steer={z > 0 ? steer : 0} caliper={caliper} />),
@@ -896,7 +932,6 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boole
             <>
               {/* at night its headlights light the road ahead, and a soft light from above keeps a dark car's shape */}
               <pointLight position={[0, 0.7, size[2] / 2 + 3.5]} color="#ffe7b8" intensity={4.5} distance={14} decay={1.4} />
-              <pointLight position={[0, 3.2, 0]} color="#c9d6ff" intensity={4} distance={7} decay={1.2} />
               <pointLight position={[0, 1.8, -size[2] / 2 - 2.2]} color="#ffd2b0" intensity={3} distance={6} decay={1.3} />
             </>
           ) : null}
