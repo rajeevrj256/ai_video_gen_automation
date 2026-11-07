@@ -19,6 +19,10 @@ export type SetDef = {
   road?: number; // z of the traffic lane (walk 'x' sets with a road): cars and buses drive and stand there, never on the pavement
   surface: [number, number, number]; // where things are put
   lamp?: [number, number, number]; // where a lamp's light comes from when one is on
+  reach?: number; // how far a vehicle under way can travel through it in one shot (metres)
+  drive?: number; // the line across the walk a vehicle under way follows where there is no road (else the road, else its spot)
+  jumpAt?: number; // where along it a vehicle's jump takes off (the rooftop's edge)
+  sky?: boolean; // high in the air: there is no ground, anything flying flies at the clouds' height
   Draw: React.FC<{look: Look; seed: number}>;
 };
 
@@ -237,21 +241,21 @@ const Table: React.FC<{p: V3; s: [number, number, number]; c?: string}> = ({p, s
   </group>
 );
 
-const Sky: React.FC<{look: Look}> = ({look}) => {
+const Sky: React.FC<{look: Look; r?: number; deep?: number}> = ({look, r = 140, deep = 0.6}) => {
   const g = React.useMemo(() => {
-    const geo = new THREE.SphereGeometry(140, 24, 12);
+    const geo = new THREE.SphereGeometry(r, 24, 12);
     const top = new THREE.Color(look.sky[0]);
     const hor = new THREE.Color(look.sky[1]);
     const cols: number[] = [];
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
-      const y = Math.max(0, pos.getY(i) / 140);
-      const c = hor.clone().lerp(top, Math.pow(y, 0.6));
+      const y = Math.max(0, pos.getY(i) / r);
+      const c = hor.clone().lerp(top, Math.pow(y, deep));
       cols.push(c.r, c.g, c.b);
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
     return geo;
-  }, [look.sky]);
+  }, [look.sky, r, deep]);
   return (
     <mesh geometry={g}>
       <meshBasicMaterial vertexColors side={THREE.BackSide} toneMapped={false} fog={false} />
@@ -349,6 +353,7 @@ const street: SetDef = {
   outdoor: true,
   walk: 'x',
   road: 2.8,
+  reach: 120,
   surface: [0, 0, -0.4],
   Draw: ({look, seed}) => {
     const n = night(look);
@@ -388,6 +393,7 @@ const park: SetDef = {
   sun: [-3, 5, -20],
   outdoor: true,
   walk: 'z',
+  reach: 70,
   surface: [2.3, 0.45, -1],
   Draw: ({look, seed}) => {
     const rand = rng(seed + 11);
@@ -639,6 +645,7 @@ const busstop: SetDef = {
   outdoor: true,
   walk: 'x',
   road: 2.8,
+  reach: 120,
   surface: [0.7, 0.47, -1.5],
   Draw: ({look, seed}) => {
     const n = night(look);
@@ -670,6 +677,9 @@ const rooftop: SetDef = {
   sun: [-4, 4, -12],
   outdoor: true,
   walk: 'x',
+  reach: 64,
+  drive: 0.2, // a vehicle under way runs along the middle of the roofs, clear of the parapet
+  jumpAt: 6.0, // the roof's edge before the gap
   surface: [1.2, 0.9, -2.3],
   Draw: ({look, seed}) => {
     const n = night(look);
@@ -678,6 +688,17 @@ const rooftop: SetDef = {
       <group>
         <Sky look={look} />
         <B p={[0, -0.05, -1]} s={[14, 0.1, 6]} c={shadeOf('#8d8a84', look.shade)} noShadow />
+        {/* the next roofs along, across a gap to the street far below (a car can jump it) */}
+        {/* the roof goes on to the left; to the right, past a gap over the street far below, the next roof (a car
+            can jump it at jumpAt) */}
+        {[[-29.5, 45], [31, 42]].map(([x, len]) => (
+          <group key={x}>
+            <B p={[x, -0.05, -1]} s={[len, 0.1, 6]} c={shadeOf('#86837d', look.shade)} noShadow />
+            <B p={[x, -6, -1]} s={[len, 11.9, 5.9]} c={shadeOf('#5f6168', look.shade)} />
+            <B p={[x, 0.45, -2.4]} s={[len, 0.9, 0.3]} c={shadeOf('#a29d94', look.shade)} />
+          </group>
+        ))}
+        <B p={[0, -6, -1]} s={[14, 11.9, 5.9]} c={shadeOf('#666870', look.shade)} />
         <B p={[0, 0.45, -2.4]} s={[14, 0.9, 0.3]} c={shadeOf('#a29d94', look.shade)} />
         <B p={[3.5, 0.6, 0.2]} s={[1.2, 1.2, 1.2]} c={shadeOf('#9a968e', look.shade)} />
         {Array.from({length: 18}, (_, i) => {
@@ -779,6 +800,7 @@ const construction: SetDef = {
   sun: [5, 7, 4],
   outdoor: true,
   walk: 'x',
+  reach: 46,
   surface: [3.4, 0.62, -0.7],
   Draw: ({look, seed}) => {
     const k = look.shade;
@@ -842,6 +864,8 @@ const construction: SetDef = {
 };
 
 const highway: SetDef = {
+  road: -2.0, // the far lane: a car under way drives there, the camera cars beside it on the road
+  reach: 200,
   spots: {
     center: {x: 0, z: 0.4, ry: 0},
     left: {x: -2.5, z: 2.1, ry: 0},
@@ -879,7 +903,7 @@ const highway: SetDef = {
             ))}
           </group>
         ))}
-        {[-40, -10, 20, 50].map((x) => (
+        {Array.from({length: 12}, (_, i) => -110 + i * 20).map((x) => (
           <group key={x} position={[x, 0, -5.4]}>
             <Cyl p={[0, 4, 0]} r1={0.08} r2={0.12} h={8} c="#6c6f76" seg={6} />
             <B p={[0, 8, 1.2]} s={[0.15, 0.12, 2.6]} c="#6c6f76" />
@@ -909,6 +933,7 @@ const alley: SetDef = {
   sun: [2, 9, -10],
   outdoor: true,
   walk: 'z',
+  reach: 40,
   surface: [-1.7, 1.25, -2.2],
   Draw: ({look, seed}) => {
     const k = look.shade;
@@ -1012,6 +1037,42 @@ const lab: SetDef = {
   },
 };
 
+// High above a sea of clouds (anything flying, a skydive, a fight on a plane's wing): faceted cloud lumps far below,
+// banks of cloud on the horizon, the sky's own gradient; no ground.
+const CLOUD = facetedBall(1, 1, 0.22, 11);
+const skySet: SetDef = {
+  spots: {center: {x: 0, z: 0, ry: Math.PI / 2}, left: {x: -2.5, z: 0, ry: Math.PI / 2}, right: {x: 2.5, z: 0, ry: Math.PI / 2}, far: {x: 0, z: -8, ry: Math.PI / 2}},
+  wide: {pos: [10, 9, 16], look: [0, 5, 0]},
+  sun: [-8, 9, -6],
+  outdoor: true,
+  walk: 'x',
+  sky: true,
+  surface: [0, 0, 0],
+  Draw: ({look, seed}) => {
+    const rand = rng(seed + 17);
+    // a sea of clouds far below (a skydiver falls toward it for many seconds before reaching it)
+    const lumps = React.useMemo(() => Array.from({length: 260}, () => [-420 + rand() * 840, -40 - rand() * 5, -180 + rand() * 300, 7 + rand() * 13] as const), [seed]);
+    // and clouds at the height it flies, well off its line, that stream past whatever follows it
+    const near = React.useMemo(() => Array.from({length: 70}, () => [-420 + rand() * 840, -12 + rand() * 34, (rand() < 0.5 ? -1 : 1) * (48 + rand() * 150), 6 + rand() * 10] as const), [seed]);
+    const cloud = shadeOf('#f2efe9', Math.min(1, look.shade + 0.15));
+    return (
+      <group>
+        <Sky look={look} r={380} deep={0.32} />
+        {near.map(([x, y, z, r], i) => (
+          <mesh key={`n${i}`} geometry={CLOUD} position={[x, y, z]} scale={[r * 1.7, r * 0.55, r]}>
+            <primitive object={mat(cloud)} attach="material" />
+          </mesh>
+        ))}
+        {lumps.map(([x, y, z, r], i) => (
+          <mesh key={i} geometry={CLOUD} position={[x, y, z]} scale={[r * 1.6, r * 0.5, r]}>
+            <primitive object={mat(cloud)} attach="material" />
+          </mesh>
+        ))}
+      </group>
+    );
+  },
+};
+
 export const SETS: Record<SetName, SetDef> = {
   bedroom,
   hallway,
@@ -1029,6 +1090,7 @@ export const SETS: Record<SetName, SetDef> = {
   highway,
   alley,
   lab,
+  sky: skySet,
   void: voidSet,
 };
 

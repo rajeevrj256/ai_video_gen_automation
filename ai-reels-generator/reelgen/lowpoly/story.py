@@ -23,15 +23,17 @@ from ..llm import ask
 log = logging.getLogger(__name__)
 
 SetName = Literal["bedroom", "hallway", "street", "park", "kitchen", "living", "office", "bathroom", "gym", "cafe", "busstop", "rooftop",
-                  "construction", "highway", "alley", "lab", "void"]
+                  "construction", "highway", "alley", "lab", "sky", "void"]
 LightName = Literal["night", "lamp", "dawn", "morning", "day", "evening", "dark"]
-CamName = Literal["face", "face-top", "top", "medium", "wide", "side", "front", "back", "low", "detail", "aerial", "orbit", "crash-zoom"]
+CamName = Literal["face", "face-top", "top", "medium", "wide", "side", "front", "back", "low", "detail", "aerial", "orbit", "crash-zoom",
+                  "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper"]
 ActionName = Literal[
     "stand", "walk", "run", "sit", "sit-floor", "lie", "lie-side", "lie-phone", "phone", "type", "reach", "sit-up", "get-up", "shoes",
     "head-in-hands", "slump", "stretch", "sigh", "nod", "shake-head", "shrug", "think", "drink", "eat", "look-out", "wave", "point",
     "cheer", "jog", "pushup", "read", "cry",
     "lift", "catch", "push-stop", "throw", "super-jump", "land", "dash", "punch", "crush", "look-hands", "crouch", "kneel", "carry",
-    "carried", "fall", "flee", "cower", "help-up", "talk", "gasp"]
+    "carried", "fall", "flee", "cower", "help-up", "talk", "gasp",
+    "drive", "ride", "jump-off", "skydive", "brace"]
 ExprName = Literal["neutral", "tired", "sad", "worried", "surprised", "happy", "determined", "annoyed", "asleep", "blank", "scared",
                    "angry", "amazed", "pained"]
 SpotName = Literal["center", "left", "right", "bed", "chair", "desk", "door", "window", "couch", "mirror", "counter", "far"]
@@ -41,8 +43,12 @@ SoundName = Literal["alarm", "footsteps", "door", "knock", "notify", "buzz", "ty
                     "thud", "heartbeat", "tick", "coins", "cheer", "pop", "scribble", "swoosh", "send",
                     "impact", "crash", "glass", "crack", "creak", "skid", "siren", "wind", "fire", "sparks", "rumble", "flyby", "crowd"]
 Mood = Literal["calm", "emotional", "uplifting", "curious", "mystery", "dark", "suspense", "energetic"]
-BigName = Literal["car", "bus", "truck", "beam", "crate", "boulder", "barbell", "pipe", "door", "ball"]
-MotionName = Literal["still", "fall", "caught", "lifted", "held", "thrown", "stop", "drive", "crushed", "hang", "shake"]
+BigName = Literal["car", "bus", "truck", "beam", "crate", "boulder", "barbell", "pipe", "door", "ball", "made"]
+MotionName = Literal["still", "fall", "caught", "lifted", "held", "thrown", "stop", "drive", "crushed", "hang", "shake",
+                     "race", "drift", "spin", "reverse", "jump", "fly", "climb", "dive", "bank", "roll"]
+GROUND_UNDERWAY = {"race", "drift", "spin", "reverse", "jump"}  # = UNDERWAY in Big.tsx, on the ground...
+AIR_MOTIONS = {"fly", "climb", "dive", "bank", "roll"}  # ...and in the air
+VEHICLES = {"car", "bus", "truck"}  # built in; a design ('made') that travels is one too
 FxName = Literal["shockwave", "crack", "dust", "speed", "sparks", "debris", "glass", "smoke", "fire", "shake", "flash", "alarm", "rain", "wind"]
 VoiceKind = Literal["man", "young-man", "woman", "young-woman", "older-man", "older-woman", "child", "deep-man", "british-man",
                     "british-woman"]
@@ -66,6 +72,7 @@ SPOTS: dict[str, set[str]] = {
     "highway": {"center", "left", "right", "far", "door"},
     "alley": {"center", "left", "right", "far", "door", "chair"},
     "lab": {"center", "left", "right", "desk", "chair", "counter", "far", "door"},
+    "sky": {"center", "left", "right", "far"},
     "void": {"center", "left", "right", "chair"},
 }
 SEATS = {"bed", "chair", "desk", "couch"}
@@ -118,6 +125,9 @@ class LPActor(BaseModel):
     look_at: str = Field("", description="the person in this shot they look at, talk to, point at or walk up to: 'hero' or "
                                          "that person's name exactly; empty when nobody in particular. They turn to face "
                                          "them (seated or walking: their head turns)")
+    on: int = Field(0, description="0 = on the ground; n = in or on this shot's n-th big thing (1 = the first in `big`): "
+                                   "'drive' at its wheel or controls, 'ride' in a passenger seat, any other action standing "
+                                   "on it (a car's roof, a plane's wing: 'brace', 'punch', 'jump-off'...); they go with it")
 
 
 class LPThing(BaseModel):
@@ -132,16 +142,20 @@ class LPSound(BaseModel):
 
 
 class LPBig(BaseModel):
-    kind: BigName
+    kind: BigName = Field(description="one of the editor's own, or 'made' = one of this film's own designs (`made`)")
     spot: SpotName = "center"
     motion: MotionName = Field(description="still; fall (drops from high onto its spot); caught (drops into the hands of the one who "
                                            "'catch'es); hang (swings from the crane's cable; with `at` the cable snaps then and it "
                                            "falls into the hands of the one who 'catch'es); lifted (raised overhead by the one who "
                                            "'lift's); held (already overhead, or carried); thrown (flung from overhead by the one who "
                                            "'throw's); stop (drives at the one who 'push-stop's and stops against his hands); drive "
-                                           "(drives across); crushed; shake")
+                                           "(drives across; with someone at the wheel it is under way like 'race'); crushed; shake. "
+                                           "Under way (anyone on it goes with it, the camera can follow it): race, drift, spin, "
+                                           "reverse, jump, and 'stop' (brakes to a stop at `at`) with a driver; in the air: fly, "
+                                           "climb, dive, bank, roll")
     at: float | None = Field(None, description="when its moment happens, a fraction 0-1 of the shot")
     color: Literal["", "red", "navy", "green", "mustard", "grey", "white", "black", "teal", "blue", "orange", "maroon"] = ""
+    made: str = Field("", description="kind 'made': the name of the film's design it is, exactly")
 
 
 class LPFx(BaseModel):
@@ -162,7 +176,8 @@ class LPShot(BaseModel):
     camera: CamName
     subject: str = Field("", description="who the camera is on: 'hero' or the name of someone in the shot (the one who "
                                          "speaks, points, reacts or acts in this moment); empty = him")
-    actors: list[LPActor] = Field(description="who is in the shot and what they do (the hero in nearly every shot)")
+    actors: list[LPActor] = Field(description="who is in the shot and what they do (the hero in nearly every shot; empty for "
+                                              "a shot of only a vehicle under way, which the camera follows)")
     things: list[LPThing] = Field(default_factory=list, description="objects put down in the place (on the bedside table, the "
                                                                      "desk, the kitchen table)")
     sounds: list[LPSound] = Field(default_factory=list)
@@ -172,6 +187,33 @@ class LPShot(BaseModel):
     big: list[LPBig] = Field(default_factory=list, description="big objects in the shot and what they do (fiction)")
     fx: list[LPFx] = Field(default_factory=list, description="effects (fiction): most come with the actions by themselves")
     slowmo: bool = Field(False, description="the action in slow motion (the key rescue moment, a catch); give it a longer pause")
+
+
+class LPPart(BaseModel):
+    shape: Literal["box", "cylinder", "cone", "sphere", "wedge"] = Field(
+        description="box; cylinder and cone along their own y (turn [90,0,0] to lie along z); sphere (squashed by size); "
+                    "wedge = a box narrowing to its front (+z): noses, tails, fins")
+    at: list[float] = Field(description="[x, y, z] its centre in metres: x right, y up from the ground, z forward")
+    size: list[float] = Field(description="box, sphere, wedge: [width, height, length]; cylinder: [diameter, length, end "
+                                          "diameter]; cone: [base diameter, length, 0]")
+    turn: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0], description="degrees about x, y, z")
+    color: str = Field(description="#rrggbb, flat and muted like the sets (#c1121f red, #e9e6df white, #22252a near-black...)")
+    glow: bool = Field(False, description="lights, jet exhausts, screens")
+    glass: bool = Field(False, description="see-through: a canopy, a windscreen")
+    spin: Literal["", "x", "y", "z"] = Field("", description="turns fast about this axis while it moves: a propeller (z), "
+                                                             "a rotor (y), a wheel (x)")
+
+
+class LPMade(BaseModel):
+    name: str = Field(description="what the shots call it in big.made: 'the jet', 'Victor's plane', 'the motorbike'")
+    what: str = Field(description="one line: what it is")
+    travel: Literal["ground", "air", "water", "none"] = Field(description="how it moves when it goes: on the ground, flying, "
+                                                                           "on water, or not at all (a big object)")
+    parts: list[LPPart] = Field(description="8-40 parts, front toward +z, its bottom at y = 0, centred")
+    seats: list[list[float]] = Field(default_factory=list, description="[x, seat height, z] where people sit, the driver's or "
+                                                                        "pilot's first; on top of or inside the body so head "
+                                                                        "and shoulders show")
+    top: float = Field(0.0, description="the height of the surface someone stands on (a wing's top, a roof)")
 
 
 class ScorePart(BaseModel):
@@ -195,6 +237,9 @@ class Story(BaseModel):
     shots: list[LPShot]
     score: list[ScorePart] = Field(default_factory=list, description="fiction: the score's parts as the story moves (3-7), the "
                                                                     "first from shot 1; empty for life stories")
+    made: list[LPMade] = Field(default_factory=list, description="vehicles and big things the film needs that the editor "
+                                                                "hasn't got (a plane, a jet, a helicopter, a motorbike, a "
+                                                                "boat), designed from parts; empty for most films")
     kind: Literal["life", "fiction"] = "life"
 
 
@@ -248,6 +293,9 @@ desk, couch. Lying actions ('lie', 'lie-side', 'lie-phone', 'sit-up') are for th
 at night and early morning).
 - Walking: 'walk'/'run'/'jog' move him; give `to` inside a room (to the door, the window), none outside (he crosses \
 the street or comes down the park path toward the camera with 'front').
+- Driving: 'drive' with `on` 1 and a 'car' in `big` (motion 'drive') on the 'street' or 'highway': he is at the wheel \
+inside it; film it with 'cockpit' (his face through the windscreen), 'back' (his view down the road), 'tracking' or \
+'pass-by'. A passenger: 'ride' with the same `on`.
 - Things: 'alarm' with its time as `label` on the bedside table, a 'phone' with `glow`, a 'mug', a 'laptop'; held \
 things go in `hold` (a phone in his hand, a mug).
 - Sounds: the world's own sounds where they happen: 'alarm' on the alarm, 'footsteps' are added to walks by the editor, \
@@ -262,6 +310,52 @@ FILM = ("a 16:9 short film of {minutes} minutes: {shots} shots, about {words} wo
         "the low point (a silent beat or two), a small turn that comes from outside him (a person, a message, a moment he "
         "sees himself), the climb (DAY stamps, short shots of small real progress in new places), a test, and the ending "
         "line in red. Two or three other people at most, each introduced by the narration ('His sister, Mia.').")
+
+# The user's film 'Born to Fly' (a driver nobody can catch) had car shots with nobody in them and the hero stood on the
+# road: the writer had no words for a man at the wheel. And the user: "this cars movement, angle movement must be
+# hollywood style", "may be i ask more in future like jumping from flying plane, flying the actual plane, fighting with
+# enemies on aircraft ... claude can understand this char or object needed so it build at run time if needed".
+VEHICLE_RULES = """
+VEHICLES AND STUNTS (shoot them like a Hollywood car chase or an air-to-air sequence):
+- People in and on vehicles: an actor with `on` = n is in or on this shot's n-th big thing. 'drive' = at the wheel or \
+the controls (the first seat), 'ride' = a passenger seat, any other action = standing on it ('brace' to keep balance \
+on a car's roof or a plane's wing while it moves, 'punch' or 'talk' up there, 'jump-off' = he leaps off it at `at`). \
+Cars are low luxury sports cars; with someone in them the roof is off, so the driver is seen at the wheel. Whoever the \
+story says is driving is IN the car every time we see it move: never a man standing on the road while his car drives \
+past him, and never a parked car while the line says he is racing.
+- Vehicle motions under way (it travels the whole shot and anyone on it goes with it): 'race' (flat out, \
+accelerating), 'drift' (at `at` the tail slides out, tyres smoking, and it slides through), 'spin' (a full spin at \
+`at`), 'jump' (leaves the ground at `at` and lands about a second later; on 'rooftop' it jumps the gap to the next \
+roof), 'reverse', 'stop' with a driver (brakes hard to a stop at `at`); in the air: 'fly', 'climb', 'dive', 'bank' \
+(a turn, leaning into it), 'roll' (a barrel roll at `at`). 'drive' with a driver is under way too. A car goes along \
+the road: 'highway' (a long open road), 'street' (past the city), 'rooftop' (along the roofs); a plane through 'sky' \
+(high over a sea of clouds; on 'highway' a plane with 'fly' and `at` runs along the road and takes off at `at`). Two \
+vehicles under way in one shot (a chase): the second follows behind the first in the next lane.
+- A shot of only a vehicle (no actors) is fine: the camera follows it. A shot of someone falling free: 'skydive' in \
+'sky' (face down, arms out, the camera falling with him); after a 'jump-off' from a plane he is already falling.
+- Vehicle cameras: 'chase' (from a camera car behind it), 'lead' (ahead of it, low, looking back as it gains), \
+'tracking' (beside it at its speed), 'pass-by' (from the roadside as it whooshes past, a long lens panning), 'heli' \
+(a helicopter shot from high behind and to the side), 'drone' (straight down), 'cockpit' (on the dashboard, on the \
+driver's or pilot's face, the world rushing away behind him), 'bumper' (low at its front corner along its flank; on a \
+plane the wing tip), 'orbit' (circling it as it goes). On someone in a vehicle, 'face' and 'medium' are close on him \
+at the wheel and 'back' is his point of view over his shoulder down the road. Cut it like a film: establish with \
+'heli' or 'pass-by', then 'chase', 'cockpit' on his face, 'bumper' or 'tracking' as it drifts or jumps, 'lead' as it \
+comes at us, a 'pass-by' whoosh; short shots (1.5-3 s), never the same camera twice running, `slowmo` on the jump or \
+the leap.
+
+THINGS THE EDITOR HASN'T GOT: when the brief needs a vehicle or a big object that isn't in the list (a plane, a jet, \
+an enemy's plane, a helicopter, a motorbike, a boat, a spaceship, a tank, a drone), design it in `made` and use it in \
+shots as a big thing of kind 'made' with `made` = its name. Build it from 8-40 low-poly parts, front toward +z, its \
+bottom at y = 0, centred on x = 0, to the man's scale (he is about 2 m to the top of his hair, his shoulders at 1.24 \
+m; a car is 1.7 wide, 0.95 high, 3.9 long; a small plane about 9 m long with 10 m wings; a motorbike 0.7 wide, 1.1 \
+high, 2.1 long). A plane: a cylinder body turned [90,0,0], a cone nose turned [90,0,0], box wings, a box fin and \
+tailplane, a propeller (a thin box, 'spin' 'z') or glowing exhausts, a glass canopy (a sphere) over the seat, wheels. \
+`seats`: where the pilot or rider sits ([x, seat height, z], the seat's top; his hips just above it; on top of or in \
+the body so his head and shoulders show), the driver's first. `top`: the height someone stands on (a wing's top). \
+Two designs that meet (his plane and the enemy's) look clearly different (colours, shape). Design only what the film \
+needs, once, and use the same design in every shot it is in.
+"""
+
 
 FICTION = """You write and direct original cinematic 3D animated short films with dialogue, starring the channel's own \
 low-poly man (a big faceted head, curly brown hair, square glasses, a red sweater: 'hero'; the same man in every film). \
@@ -289,8 +383,9 @@ action shots have no line at all: the picture and the sound carry them (give the
 - People: use the recurring cast below when the story needs that kind of person (their look and voice are kept); \
 invent a new person only when nobody fits, and give them a fitting look and voice. Three to six people, each with a \
 reason to be there. Name them through the dialogue.
-- No killing, no blood, no one hurt on screen; he never punches a person (only a wall, a boulder, the ground); danger \
-is about saving people. No capes, costumes, logos or names from existing superhero films; no real brands or people.
+- No killing, no blood, no one hurt on screen; he never punches a person (only a wall, a boulder, the ground) unless \
+the brief has a fight, and then it plays like a family action film (a shove, a punch that knocks someone off balance, \
+nobody shown hurt); danger is about saving people. No capes, costumes, logos or names from existing superhero films; no real brands or people.
 
 THE EDITOR'S VOCABULARY (use only these):
 - Places and their spots: {spots}. 'construction' = a building site with a steel frame, a tower crane, barriers, a site \
@@ -325,7 +420,7 @@ and far; a cinematic rhythm.
 'crowd' for frightened people, 'wind', 'fire', 'heartbeat' before the moment, 'impact'); the editor adds the usual ones \
 to actions. The score: `score` parts that follow the story (calm for his life, mystery for the discovery, energetic \
 for the tests, suspense for the danger, emotional for the consequences, a quiet end).
-""" + STAGING + """
+""" + VEHICLE_RULES + STAGING + """
 LENGTH: {length}."""
 
 FICTION_SHORT = ("a 9:16 Short of {seconds} seconds: {shots} shots of 1.5-4 s, about {words} words in all (dialogue and a "
@@ -579,6 +674,9 @@ class Outline(BaseModel):
     end_mood: Mood
     music_prompt: str = Field(description="the feeling of the score in a few words; no genre")
     cast: list[LPCast] = Field(default_factory=list, description="everyone besides him the whole film needs")
+    made: list[LPMade] = Field(default_factory=list, description="vehicles and big things the whole film needs that the "
+                                                                "editor hasn't got, designed from parts (see THINGS THE "
+                                                                "EDITOR HASN'T GOT); empty for most films")
     acts: list[ActPlan] = Field(description="the film's acts in order, their minutes adding up to its length")
 
 
@@ -629,6 +727,9 @@ def write_long(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction:
     acts: list[list[LPShot]] = [[LPShot.model_validate(x) for x in a] for a in saved.get("acts", [])]
     plan = "\n".join(f"Act {i + 1} ({a.minutes:g} min, {a.name}): {a.summary} Ends with: {a.ends_with}" for i, a in enumerate(outline.acts))
     cast = "\n".join(f"- {c.name}: {c.who} ({c.voice} voice)" for c in outline.cast) or "- nobody else"
+    if outline.made:
+        cast += "\n\nThe film's own designs (a big thing of kind 'made' with `made` = the name exactly):\n" + "\n".join(
+            f"- {m.name}: {m.what} ({m.travel}, {len(m.seats)} seat{'s' if len(m.seats) != 1 else ''})" for m in outline.made)
     for i, act in enumerate(outline.acts):
         if i < len(acts):
             continue
@@ -760,12 +861,173 @@ def pitches(cfg: Config, topic: str, *, kind: str, short: bool, seconds: int, mi
     got = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Pitches, allow_web=False, effort=cfg.claude_effort, timeout=1200)
     return got.takes[:n]
 
+# ---------------------------------------------------------------- vehicles, and the things the writer designed
+
+MAX_PARTS = 60
+
+
+def _hex(c: str) -> str:
+    c = (c or "").strip()
+    return c if re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#8a8f98"
+
+
+def _part_box(p: LPPart) -> list[tuple[float, float, float]]:
+    """A part's eight corners (turned as the editor turns it: Euler XYZ in degrees) relative to its centre."""
+    import math
+
+    a, b, c = (max(0.02, min(40.0, float(v))) for v in (list(p.size) + [0.0, 0.0, 0.0])[:3])
+    if p.shape in ("cylinder", "cone"):
+        d = max(a, c if p.shape == "cylinder" else 0.0)
+        ext = (d / 2, b / 2, d / 2)
+    else:
+        ext = (a / 2, b / 2, c / 2)
+    rx, ry, rz = (math.radians(float(v)) for v in (list(p.turn) + [0.0, 0.0, 0.0])[:3])
+    out = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                x, y, z = sx * ext[0], sy * ext[1], sz * ext[2]
+                # three.js Euler 'XYZ': the vector is turned about z, then y, then x
+                x, y = x * math.cos(rz) - y * math.sin(rz), x * math.sin(rz) + y * math.cos(rz)
+                x, z = x * math.cos(ry) + z * math.sin(ry), -x * math.sin(ry) + z * math.cos(ry)
+                y, z = y * math.cos(rx) - z * math.sin(rx), y * math.sin(rx) + z * math.cos(rx)
+                out.append((x, y, z))
+    return out
+
+
+def design_for_editor(m: LPMade) -> dict:
+    """A design as the editor builds it: at most MAX_PARTS parts with sane sizes and colours, moved so it is centred on
+    x and z with its bottom at y = 0, its size (dims) from its parts, seats and the standing height moved with it."""
+    parts = [p for p in m.parts if len(p.at) >= 3 and len(p.size) >= 2][:MAX_PARTS]
+    if not parts:
+        parts = [LPPart(shape="box", at=[0, 0.5, 0], size=[1, 1, 1], color="#8a8f98")]
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for p in parts:
+        for cx, cy, cz in _part_box(p):
+            pt = (float(p.at[0]) + cx, float(p.at[1]) + cy, float(p.at[2]) + cz)
+            lo = [min(a, b) for a, b in zip(lo, pt)]
+            hi = [max(a, b) for a, b in zip(hi, pt)]
+    shift = (-(lo[0] + hi[0]) / 2, -lo[1], -(lo[2] + hi[2]) / 2)
+    dims = [round(hi[k] - lo[k], 3) for k in range(3)]
+    out = []
+    for p in parts:
+        size = [round(max(0.02, min(40.0, float(v))), 3) for v in (list(p.size) + [0.0, 0.0, 0.0])[:3]]
+        d = {"shape": p.shape, "at": [round(float(p.at[k]) + shift[k], 3) for k in range(3)], "size": size,
+             "turn": [round(float(v), 2) for v in (list(p.turn) + [0.0, 0.0, 0.0])[:3]], "color": _hex(p.color)}
+        if p.glow:
+            d["glow"] = True
+        if p.glass:
+            d["glass"] = True
+        if p.spin:
+            d["spin"] = p.spin
+        out.append(d)
+    seats = [[round(float(x[0]) + shift[0], 3), round(max(0.0, float(x[1]) + shift[1]), 3), round(float(x[2]) + shift[2], 3)]
+             for x in m.seats if len(x) >= 3][:6]
+    if not seats:
+        seats = [[0.0, round(dims[1] * 0.45, 3), round(dims[2] * 0.1, 3)]]
+    top = float(m.top) + shift[1] if m.top > 0 else dims[1]
+    return {"parts": out, "seats": seats, "top": round(max(0.0, min(dims[1], top)), 3), "travel": m.travel, "dims": dims}
+
+
+def designs(story: Story) -> dict[str, LPMade]:
+    return {_key(m.name): m for m in story.made}
+
+
+def travel_of(story: Story, b: LPBig) -> str:
+    """How a big thing moves when it goes: 'ground' for a car, bus or truck, a design's own way, else 'none'."""
+    if b.kind in VEHICLES:
+        return "ground"
+    if b.kind == "made":
+        m = designs(story).get(_key(b.made))
+        return m.travel if m else "none"
+    return "none"
+
+
+def _vehicles(story: Story, s: LPShot) -> list[str]:
+    """Notes; fixes what the editor can't draw about vehicles in a shot (a design that doesn't exist, a car flying, a
+    driver with no car, two at one wheel, someone falling free on the ground)."""
+    notes = []
+    known = designs(story)
+    keep = []
+    for b in s.big:
+        if b.kind == "made":
+            m = known.get(_key(b.made)) or (next(iter(known.values())) if len(known) == 1 else None)
+            if not m:
+                notes.append(f"a design '{b.made}' that the film doesn't have was left out")
+                continue
+            b.made = m.name
+        else:
+            b.made = ""
+        keep.append(b)
+    # (people `on` a thing that was left out: renumbered, or on the ground)
+    if len(keep) != len(s.big):
+        index = {id(b): k for k, b in enumerate(keep)}
+        for a in s.actors:
+            if a.on:
+                old = s.big[a.on - 1] if 0 < a.on <= len(s.big) else None
+                a.on = index[id(old)] + 1 if old is not None and id(old) in index else 0
+        s.big = keep
+    for b in s.big:
+        way = travel_of(story, b)
+        if way == "air" and (b.motion in GROUND_UNDERWAY or b.motion in ("drive", "stop")):
+            b.motion = "fly"
+        elif way in ("ground", "water") and b.motion in AIR_MOTIONS:
+            b.motion = "race"
+        elif way == "none" and (b.motion in GROUND_UNDERWAY or b.motion in AIR_MOTIONS):
+            b.motion = "still"
+    vehicles = [k for k, b in enumerate(s.big) if travel_of(story, b) != "none"]
+    drivers: dict[int, int] = {}
+    for a in s.actors:
+        if a.on and (a.on > len(s.big) or (a.on - 1) not in vehicles):
+            a.on = 0
+        if a.action == "skydive":
+            a.on = 0
+            if s.set != "sky":
+                s.set = "sky"
+                notes.append("someone falling free goes in the sky")
+        if a.action in ("drive", "ride") and not a.on:
+            if vehicles:
+                a.on = vehicles[0] + 1
+            elif s.set == "sky":
+                air = next((m for m in story.made if m.travel == "air"), None)
+                if air:
+                    s.big.append(LPBig(kind="made", made=air.name, spot="center", motion="fly"))
+                    a.on = len(s.big)
+                    vehicles.append(len(s.big) - 1)
+                else:
+                    a.action = "skydive"
+            else:
+                s.big.append(LPBig(kind="car", spot="center", motion="race" if story.kind == "fiction" else "drive"))
+                a.on = len(s.big)
+                vehicles.append(len(s.big) - 1)
+                notes.append(f"{a.who} was at the wheel of nothing: a car added")
+        if a.on and a.action == "drive":
+            if a.on in drivers:
+                a.action = "ride"  # one at the wheel; the next one a passenger
+            drivers[a.on] = 1
+        if a.on and a.action in ("walk", "run", "jog", "dash", "flee"):
+            a.action = "brace"
+        if a.on:
+            a.to = None
+    # a car under way in a room (or a plane): out to the road or into the sky
+    under = [b for b in s.big if b.motion in GROUND_UNDERWAY or b.motion in AIR_MOTIONS or (b.motion in ("drive", "stop") and any(
+        a.on and s.big[a.on - 1] is b for a in s.actors))]
+    if under and s.set not in OUTDOOR_SETS and s.set != "sky":
+        flying = any(b.motion in AIR_MOTIONS for b in under)
+        s.set = "sky" if flying else "highway"
+        notes.append(f"a vehicle under way can't be indoors: '{s.set}'")
+    return notes
+
+
 def repair(story: Story) -> list[str]:
     """Fix what the editor can't draw, in code: an unknown spot, a lying action away from a bed, a cast member who
-    isn't in the cast, more than one red line. Returns notes for the report."""
+    isn't in the cast, more than one red line, vehicles (vehicles_ above). Returns notes for the report: staging the
+    editor fixed by itself, not faults of the video."""
     notes = []
     names = {_key(c.name) for c in story.cast}
     fiction = story.kind == "fiction"
+    seen_made: set[str] = set()
+    story.made = [m for m in story.made if not (_key(m.name) in seen_made or seen_made.add(_key(m.name)))]
     for i, s in enumerate(story.shots):
         s.pause = max(0.0, min(4.0 if fiction else 2.0, s.pause))
         sp = (s.speaker or "narrator").strip()
@@ -786,7 +1048,8 @@ def repair(story: Story) -> list[str]:
         acts = {a.action for a in s.actors}
         for b in s.big:
             need = {"caught": "catch", "lifted": "lift", "held": None, "thrown": "throw", "stop": "push-stop"}.get(b.motion, "")
-            if need and need not in acts and not (b.motion == "thrown" and "lift" in acts):
+            ridden = any(a.on and a.on - 1 < len(s.big) and s.big[a.on - 1] is b for a in s.actors)
+            if need and need not in acts and not (b.motion == "thrown" and "lift" in acts) and not (b.motion == "stop" and ridden):
                 b.motion = {"caught": "fall", "lifted": "still", "thrown": "fall", "stop": "drive"}[b.motion]
                 notes.append(f"Shot {i + 1}: the {b.kind} had nobody to handle it; it {b.motion}s instead.")
         for b in s.big:
@@ -819,9 +1082,12 @@ def repair(story: Story) -> list[str]:
                     a.action = "sit"
             if a.to and a.to not in SPOTS[s.set]:
                 a.to = None
-        if not s.actors:
+        notes += [f"Shot {i + 1}: {n}" for n in _vehicles(story, s)]
+        # a shot with nobody in it: fine when a vehicle or something else is there (the camera follows the car); a
+        # shot of nothing at all gets him
+        if not s.actors and not s.big and not s.fx:
             s.actors = [LPActor(who="hero", action="stand", expression="neutral", spot="center")]
-            notes.append(f"Shot {i + 1} had nobody in it; he stands there.")
+            notes.append(f"Shot {i + 1} had nothing in it; he stands there.")
         notes += [f"Shot {i + 1}: {n}" for n in _stage(story, s)]
     reds = [i for i, s in enumerate(story.shots) if s.red]
     for i in reds[:-1]:
@@ -871,9 +1137,9 @@ RESTAGE_BATCH = 40  # shots per call: a long film's whole storyboard would not f
 
 
 def _staged(s: LPShot) -> str:
-    who = "; ".join(f"{a.who} {a.action}@{a.spot}" + (f"->{a.to}" if a.to else "") + (f" looks at {a.look_at}" if a.look_at else "")
-                    for a in s.actors)
-    extra = "".join([f"; big: {', '.join(f'{b.kind} {b.motion}' for b in s.big)}" if s.big else "",
+    who = "; ".join(f"{a.who} {a.action}" + (f" on big {a.on}" if a.on else f"@{a.spot}") + (f"->{a.to}" if a.to else "")
+                    + (f" looks at {a.look_at}" if a.look_at else "") for a in s.actors) or "(nobody)"
+    extra = "".join([f"; big: {', '.join(f'{b.made or b.kind} {b.motion}' for b in s.big)}" if s.big else "",
                      f"; fx: {', '.join(f.kind for f in s.fx)}" if s.fx else "", "; slow motion" if s.slowmo else ""])
     return f"[{s.set}, {s.light}, camera {s.camera}, on {s.subject or 'hero'}] {who}{extra}"
 
@@ -909,7 +1175,7 @@ def restage(cfg: Config, story: Story, progress=log.info) -> Story:
 
 
 # cameras that can show a moment, by what the subject does (`new_angles`); aerial only outdoors
-OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley"}  # = outdoor: true in Sets.tsx
+OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley", "sky"}  # = outdoor: true in Sets.tsx
 _LYING_ACTS = {"lie", "lie-side", "lie-phone", "sit-up"}
 _MOVING_ACTS = {"walk", "run", "jog", "dash", "flee", "carry"}
 _POWER_ACTS = {"catch", "lift", "throw", "push-stop", "super-jump", "land", "punch", "fall", "crush"}
@@ -921,6 +1187,9 @@ ANGLES = {
     "stop": ["side", "wide"],
     "held": ["detail", "face", "medium", "back", "side", "wide"],
     "other": ["face", "medium", "back", "wide", "side", "front", "low", "orbit", "crash-zoom"],
+    # in or on a vehicle under way, or a shot of only the vehicle: the car-chase and air-to-air cameras
+    "vehicle": ["chase", "tracking", "cockpit", "lead", "pass-by", "heli", "bumper", "back", "face", "orbit", "drone"],
+    "falling": ["back", "side", "front", "orbit", "face"],
 }
 
 
@@ -937,7 +1206,8 @@ def new_angles(story: Story, seed: int) -> Story:
         here = {who_key(a.who): a for a in s.actors}
         lead = here.get(who_key(s.subject or "hero")) or (s.actors[0] if s.actors else None)
         act = lead.action if lead else "stand"
-        kind = ("stop" if act == "push-stop" else "lying" if act in _LYING_ACTS else "moving" if act in _MOVING_ACTS
+        kind = ("vehicle" if (lead and lead.on) or (not s.actors and s.big) else "falling" if act in ("skydive", "jump-off")
+                else "stop" if act == "push-stop" else "lying" if act in _LYING_ACTS else "moving" if act in _MOVING_ACTS
                 else "power" if act in _POWER_ACTS else "held" if act in _HELD_ACTS or (lead and lead.hold != "none") else "other")
         pool = [c for c in ANGLES[kind] if c != "aerial" or s.set in OUTDOOR_SETS]
         if lead and lead.look_at and s.camera in ("medium", "back") and kind == "other":
@@ -967,6 +1237,9 @@ def _stage(story: Story, s: LPShot) -> list[str]:
     one other person there points at them; the camera is on the subject; and a gesture at someone else (pointing at
     his dad) is never a one-face camera, which left the dad out of the picture."""
     notes = []
+    if not s.actors:  # only a vehicle or a place: the camera is on it
+        s.subject = ""
+        return notes
     names = {"hero": "hero", **{_key(c.name): c.name for c in story.cast}}
     here: dict[str, LPActor] = {}
     for a in s.actors:

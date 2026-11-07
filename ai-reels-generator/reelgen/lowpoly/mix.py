@@ -40,8 +40,9 @@ UNDER_VOICE = {
     "tap": 13, "page": 14, "scribble": 14, "coins": 11, "cheer": 12, "swell": 14, "static": 16,
     "footsteps": 17, "typing": 18, "tick": 19, "heartbeat": 15,
     "wind": 27, "rain": 24, "fire": 24, "siren": 27, "sparks": 22, "crowd": 22,
+    "engine": 13, "jet": 14, "propeller": 15,  # a vehicle under way: the shot's own bed, the loudest one
 }
-BEDS = {"wind", "rain", "fire", "siren", "sparks", "crowd", "tick"}  # lower still under speech
+BEDS = {"wind", "rain", "fire", "siren", "sparks", "crowd", "tick", "engine", "jet", "propeller"}  # lower still under speech
 BED_UNDER_SPEECH = 0.5  # -6 dB more while someone speaks
 EFFECT_UNDER_SPEECH = 0.75
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from .story import COLOURS, HERO, Story, _key, editor_design
+from .story import AIR_MOTIONS, COLOURS, GROUND_UNDERWAY, HERO, Story, _key, design_for_editor, designs, editor_design, travel_of
 
 FPS = 30
 LEAD = 0.25  # the line starts this long after its shot does
@@ -81,7 +81,8 @@ LOOPING = {"fire", "rain", "wind", "siren", "sparks"}
 VEHICLE = {"car", "bus", "truck"}
 HEAVY = VEHICLE | {"beam", "boulder", "crate", "pipe"}
 OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley"}
-SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}  # energy -> the music's act (sticky.mixdown.INTENSITY)
+SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}
+JUMP_TIME = 1.25  # = the jump's time in the air in Big.tsx (profile 'jump', T)  # energy -> the music's act (sticky.mixdown.INTENSITY)
 
 
 # ---------------------------------------------------------------- footsteps where the feet land
@@ -237,6 +238,8 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 d["look"] = "hero" if actor.look_at == "hero" else _key(actor.look_at)
             if at is not None:
                 d["at"] = round(at, 3)
+            if actor.on and actor.on <= len(s.big):
+                d["on"] = actor.on - 1  # the editor counts its big things from 0
             if line and speaker and d["who"] == speaker and a.get("words"):
                 lead0 = STAMP if s.stamp.strip() and mode != "off" else LEAD
                 d["talk"] = _talk(a["words"], lead0)
@@ -253,6 +256,8 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 d["at"] = round(at, 3)
             if b.color:
                 d["color"] = COLOURS.get(b.color, "")
+            if b.kind == "made":
+                d["made"] = b.made
             big.append(d)
         fx = [{"kind": f.kind, "at": round((f.at if f.at is not None else (0 if f.kind in ("rain", "wind") else 0.4)) * dur, 3),
                **({"spot": f.spot} if f.spot else {})} for f in s.fx]
@@ -340,6 +345,33 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
             if b.motion == "hang" and b.at is not None:
                 cue("crack", t + b.at * dur, 0.9)
                 cue("swoosh", t + b.at * dur + 0.1, 0.8)
+        # a vehicle under way: its engine (a car), its propeller or its jet under the whole shot, and its moments
+        for k, (b, at) in enumerate(zip(s.big, big_at)):
+            way = travel_of(story, b)
+            ridden = any(x.on == k + 1 for x in s.actors)
+            if way == "none" or not (b.motion in GROUND_UNDERWAY or b.motion in AIR_MOTIONS
+                                     or ((ridden or not s.actors) and b.motion in ("drive", "stop"))):
+                continue
+            m = designs(story).get(_key(b.made)) if b.kind == "made" else None
+            bed = "engine" if way in ("ground", "water") else "propeller" if m and any(p.spin for p in m.parts) else "jet"
+            cue(bed, t + 0.02, 0.9, max(0.6, dur - 0.05))
+            slow = 1 / SLOW if s.slowmo else 1.0
+            if at is not None:
+                if b.motion in ("drift", "spin"):
+                    cue("skid", t + at, 0.95, 1.5 * slow if b.motion == "drift" else 1.1 * slow)
+                elif b.motion == "stop":
+                    cue("skid", t + at - 0.05, 0.95, 1.0 * slow)
+                elif b.motion == "jump":
+                    cue("swoosh", t + at, 0.8)
+                    cue("impact", t + at + JUMP_TIME * slow, 1.0)
+                    cue("thud", t + at + JUMP_TIME * slow + 0.03, 0.8)
+                elif b.motion in ("roll", "dive", "bank"):
+                    cue("swoosh", t + at, 0.75)
+                if s.camera in ("pass-by", "wide") or (not s.actors and s.camera == "wide"):
+                    cue("flyby", t + max(0.0, at - 0.7), 0.95)
+        # the rush of air round someone falling free or standing on something moving fast
+        if any(x.action in ("skydive", "jump-off", "brace") for x in s.actors):
+            cue("wind", t + 0.02, 0.9, max(0.6, dur - 0.05))
         for f in fx:
             sound = FX_SOUNDS.get(f["kind"])
             if sound:
@@ -384,4 +416,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     shown = captions if mode == "on" else [c for c in captions if c.get("stamp")] if mode == "stamps" else []
     props = {"fps": FPS, "duration": total, "vertical": vertical, "watermark": watermark, "seed": seed, "cast": cast, "shots": shots,
              "captions": shown, "dof": True}
+    used = {b.made for x in story.shots for b in x.big if b.kind == "made"}
+    if used:  # the things the writer designed, built by the editor from their parts
+        props["made"] = {m.name: design_for_editor(m) for m in story.made if m.name in used}
     return props, clips, cues, sections

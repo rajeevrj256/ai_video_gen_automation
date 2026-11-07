@@ -229,8 +229,11 @@ def _place(name: str) -> str:
     return {"busstop": "bus stop", "living": "living room"}.get(name, name.replace("-", " "))
 
 
-def _actor(a: S.LPActor) -> str:
+def _actor(a: S.LPActor, big: list | None = None) -> str:
     bits = [a.action.replace("-", " ")]
+    if a.on and big and a.on <= len(big):
+        b = big[a.on - 1]
+        bits.append(("in the " if a.action in ("drive", "ride") else "on the ") + (b.made or b.kind))
     if a.expression not in ("neutral", ""):
         bits.append(f"({a.expression})")
     if a.to:
@@ -262,11 +265,12 @@ def view(cfg: Config, sid: str, n: int) -> dict:
     shots = []
     for i, x in enumerate(story.shots, 1):
         shots.append({"n": i, "stamp": x.stamp, "place": _place(x.set), "light": x.light, "camera": x.camera.replace("-", " "),
-                      "people": [_actor(a) for a in x.actors], "line": x.line, "speaker": x.speaker, "red": x.red,
+                      "people": [_actor(a, x.big) for a in x.actors], "line": x.line, "speaker": x.speaker, "red": x.red,
                       "pause": x.pause, "slowmo": x.slowmo, "things": [t.kind + (f" '{t.label}'" if t.label else "") for t in x.things],
-                      "big": [f"{b.kind} {b.motion}" for b in x.big], "fx": [f.kind for f in x.fx]})
+                      "big": [f"{b.made or b.kind} {b.motion}" for b in x.big], "fx": [f.kind for f in x.fx]})
     return {**d, "youtube_title": story.youtube_title, "description": story.description, "mood": story.mood,
-            "cast": [{"name": c.name, "who": c.who, "voice": c.voice} for c in story.cast], "shots": shots, "acts": []}
+            "cast": [{"name": c.name, "who": c.who, "voice": c.voice} for c in story.cast]
+            + [{"name": m.name, "who": f"designed for this film: {m.what}", "voice": ""} for m in story.made], "shots": shots, "acts": []}
 
 
 def reject(cfg: Config, sid: str, n: int, note: str = "") -> bool:

@@ -208,7 +208,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         save("rendered")
     progress("Checking the video")
     info = probe(out)
-    issues = list(notes)
+    issues = []  # (the storyboard fixes `repair` made are staging the editor did itself, not faults: report "staging_fixes")
     size = (1080, 1920) if vertical else (1920, 1080)
     if (info.get("width"), info.get("height")) != size:
         issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {size[0]}x{size[1]}.")
@@ -235,7 +235,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "sound_levels": mixed.get("levels"), "mix_version": mixed.get("mix_version"),
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
-        "cast": [c.name for c in story.cast], "story_kind": story.kind, "storyboard": board,
+        "cast": [c.name for c in story.cast], "story_kind": story.kind, "storyboard": board, "staging_fixes": notes,
+        "designed": [m.name for m in story.made],
         "voices": sorted({a.get("voice", "") for a in audio.values()} - {""}), "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),
         "youtube_tags": story.tags, "youtube_hashtags": story.hashtags[:3], "caption": story.description.strip(),
         "hashtags": story.hashtags,

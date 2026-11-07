@@ -243,7 +243,7 @@ def lowpoly_lists() -> None:
         fail("lowpoly Thing kinds differ between story.py ThingName and types.ts")
     sets_ts = (ROOT / "remotion" / "src" / "lowpoly" / "Sets.tsx").read_text(encoding="utf-8")
     for name, spots in S.SPOTS.items():
-        var = "voidSet" if name == "void" else name
+        var = {"void": "voidSet", "sky": "skySet"}.get(name, name)
         body = re.search(rf"const {var}: SetDef = \{{(.*?)\n  wide:", sets_ts, re.S)
         drawn = set(re.findall(r"(\w+): \{x:", body.group(1))) if body else set()
         if spots != drawn:
@@ -389,6 +389,59 @@ def lowpoly_lists() -> None:
         fail("lowpoly mix: the music should stay down across a 0.7 s pause between lines and be up long before them")
 
 
+def lowpoly_vehicles() -> None:
+    """People in and on vehicles, the vehicles' motions and cameras, and the things the writer designs: a driver with no
+    car gets one, a plane can't race on the road nor a car fly, a design is centred with its bottom on the ground, the
+    editor gets `on` (counted from 0) and the designs, an engine plays under a car under way, and the editor's numbers
+    are the same as Python's (the jump's time in the air)."""
+    import re
+
+    from .lowpoly import story as S
+    from .lowpoly.timeline import JUMP_TIME, build
+
+    big = (ROOT / "remotion" / "src" / "lowpoly" / "Big.tsx").read_text(encoding="utf-8")
+    m = re.search(r"case 'jump': \{[^}]*?const T = ([0-9.]+);", big, re.S)
+    if not m or float(m.group(1)) != JUMP_TIME:
+        fail(f"lowpoly vehicles: the jump's time in the air differs (Big.tsx {m and m.group(1)}, timeline.JUMP_TIME {JUMP_TIME})")
+    ts_under = set(re.findall(r"'([a-z]+)'", re.search(r"export const UNDERWAY = new Set\(\[([^\]]*)\]", big).group(1)))
+    if ts_under != S.GROUND_UNDERWAY | S.AIR_MOTIONS:
+        fail(f"lowpoly vehicles: Big.tsx UNDERWAY {sorted(ts_under)} but story.py {sorted(S.GROUND_UNDERWAY | S.AIR_MOTIONS)}")
+    P = S.LPPart
+    plane = S.LPMade(name="the jet", what="a small plane", travel="air", seats=[[3, 1.4, 1.0]], top=1.0, parts=[
+        P(shape="cylinder", at=[3, 2.0, 0], size=[1.2, 8, 0.8], turn=[90, 0, 0], color="#e9e6df"),
+        P(shape="box", at=[3, 1.6, 0], size=[9, 0.15, 1.6], color="#c1121f"),
+        P(shape="box", at=[3, 2.0, 4.1], size=[2.2, 0.1, 0.06], color="#22252a", spin="z")])
+    hero = lambda **k: S.LPActor(**{"who": "hero", "expression": "determined", "spot": "center", **k})
+    st = S.Story(title="t", problem="p", youtube_title="t", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="calm",
+                 end_mood="calm", music_prompt="m", kind="fiction", made=[plane], shots=[
+                     S.LPShot(line="", set="highway", light="day", camera="chase", pause=2, actors=[hero(action="drive")]),
+                     S.LPShot(line="", set="sky", light="day", camera="tracking", pause=2, actors=[hero(action="drive", on=1)],
+                              big=[S.LPBig(kind="made", made="The Jet", motion="race")]),
+                     S.LPShot(line="", set="kitchen", light="day", camera="pass-by", pause=2, actors=[],
+                              big=[S.LPBig(kind="car", motion="fly", at=0.5)]),
+                     S.LPShot(line="", set="highway", light="day", camera="face", pause=2, actors=[hero(action="skydive")])])
+    S.repair(st)
+    s0, s1, s2, s3 = st.shots
+    if not (s0.big and s0.big[0].kind == "car" and s0.actors[0].on == 1 and s0.big[0].motion == "race"):
+        fail(f"lowpoly vehicles: a driver with no car got {[(b.kind, b.motion) for b in s0.big]}, on {s0.actors[0].on}")
+    if s1.big[0].motion != "fly" or s1.big[0].made != "the jet":
+        fail(f"lowpoly vehicles: a plane told to race ({s1.big[0].motion}, design '{s1.big[0].made}')")
+    if s2.big[0].motion != "race" or s2.set != "highway" or s2.actors:
+        fail(f"lowpoly vehicles: a flying car in a kitchen became {s2.big[0].motion} in '{s2.set}' with {len(s2.actors)} people")
+    if s3.set != "sky":
+        fail(f"lowpoly vehicles: someone falling free stayed in '{s3.set}'")
+    d = S.design_for_editor(plane)
+    xs = [p["at"][0] for p in d["parts"]]
+    if abs(min(xs) + max(xs)) > 0.01 or d["dims"][1] <= 0 or d["seats"][0][0] != 0.0 or not 8.9 <= d["dims"][0] <= 9.1:
+        fail(f"lowpoly vehicles: the design wasn't centred or sized ({d['dims']}, seats {d['seats']})")
+    props, _, cues, _ = build(st, {}, vertical=True, watermark="", seed=1)
+    if props["shots"][1]["actors"][0].get("on") != 0 or "the jet" not in props.get("made", {}):
+        fail("lowpoly vehicles: the editor didn't get `on` (from 0) or the design")
+    names = [c["sound"] for c in cues]
+    if "engine" not in names or "propeller" not in names or "wind" not in names:
+        fail(f"lowpoly vehicles: no engine, propeller or wind under the shots ({sorted(set(names))})")
+
+
 def lowpoly_boards() -> None:
     """✍ Storyboards to read first (lowpoly/boards.py), offline: a draft read shot by shot, rejecting the last open one
     asks for a new round (not after an approval), a rejected one can still be approved but only once, an approved one
@@ -453,6 +506,7 @@ def main() -> int:
     hook_templates()
     visual_templates()
     lowpoly_lists()
+    lowpoly_vehicles()
     lowpoly_boards()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0

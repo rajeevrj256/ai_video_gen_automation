@@ -17,7 +17,28 @@ import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, SETS, spotOf, ThingView, type SetDef} from './Sets';
-import {bigState, BigView, holderFor, insideBig, keyMoment, ROAD_MOTIONS, SIZE, VEHICLE, type BigState, type Holder, type RoadPlace} from './Big';
+import {
+  bigState,
+  BigView,
+  GRAVITY,
+  holderFor,
+  insideBig,
+  isVehicle,
+  keyMoment,
+  ridePath,
+  RIDER_SCALE,
+  ROAD_MOTIONS,
+  seatsOf,
+  setMade,
+  sizeOf,
+  standsOf,
+  underway,
+  VEHICLE,
+  vehicleMatrix,
+  type BigState,
+  type Holder,
+  type RoadPlace,
+} from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
 import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, LowPolyProps, LPShot} from './types';
 
@@ -65,6 +86,11 @@ export type Placed = {
   hold: Hold;
   seed: number;
   aim?: THREE.Vector3; // the head of the person he looks at (`look`), for the two-shot cameras
+  // in or on a vehicle: where he is in its own frame (root, ry) and the vehicle's frame in the world (pos, quat); he
+  // is drawn inside that frame, so he turns, pitches and rolls with it
+  local?: {root: V3; ry: number; pos: THREE.Vector3; quat: THREE.Quaternion};
+  ride?: number; // the index of the vehicle he is in or on (shot.big)
+  inside?: boolean; // seated inside a closed car (under its roof)
 };
 
 // Where each person stands in a shot: an offset from their spot (sideways, so two people never share a spot and
@@ -137,6 +163,10 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
     const diff = wrap(Math.atan2(aim.x - root[0], aim.z - root[2]) - ry);
     ry += clampTo(diff, aim.explicit || FULL_TURN.has(action) ? Math.PI : 0.6);
   }
+  if (action === 'skydive') {
+    // falling free at about 9 m/s (high over the clouds in the sky), drifting a little with the wind
+    root = [root[0] + 0.8 * t, (set.sky ? 6 : 24) - 9 * t, root[2]];
+  }
   const moving = moves(a);
   if (moving) {
     const speed = SPEED[action] ?? 1;
@@ -183,6 +213,12 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
     const right = new THREE.Vector3(f.z, 0, -f.x);
     root = [root[0] + right.x * ps.shift[0] + f.x * ps.shift[1], root[1], root[2] + right.z * ps.shift[0] + f.z * ps.shift[1]];
   }
+  return kin(a, action, k, shot, design, ps, root, ry);
+};
+
+// Forward kinematics: where his head, face, hands and body are in the world (or in a vehicle's own frame), with the
+// rotations the Man applies.
+const kin = (a: Actor, action: Action, k: number, shot: LPShot, design: Design, ps: Pose, root: V3, ry: number): Placed => {
   // forward kinematics for the head: root -> pelvis (rx, rz) -> torso (lean, twist, side) -> head (its own turn)
   const scale = design.height ?? 1;
   const qRoot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0));
@@ -209,6 +245,154 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   const phone = hand.clone().add(new THREE.Vector3(...PHONE_AT).applyQuaternion(q.clone().multiply(qArm)));
   const hold = a.hold && a.hold !== 'none' ? a.hold : AUTO_HOLD[action] ?? (action === 'type' && !['desk', 'chair'].includes(a.spot) ? 'laptop' : 'none');
   return {actor: {...a, action}, design, pose: ps, root, ry, head, hand: hold === 'phone' ? phone : hand, screen, faceDir, headUp, body, hold, seed: (shot.seed ?? 1) * 31 + k * 7 + (a.who === 'hero' ? 0 : 101)};
+};
+
+// ---------------------------------------------------------------- people in and on vehicles
+// The user's film 'Born to Fly' had a driver nobody ever saw drive: the editor had no way to put a man in a car. Now
+// an actor `on` a vehicle sits in its seats (the driver's first) or stands on it (a roof, a wing), is drawn in its own
+// frame (so he goes with it through a drift, a jump, a bank), and can leap off it at his moment.
+
+// A vehicle someone is in or on, or one under way on its own, at this moment: its state, its frame in the world, and
+// its state at any other moment (for a leap off it and for the cameras that follow it).
+export type Ride = {b: Big; k: number; st: BigState; m: THREE.Matrix4; at: (tt: number) => BigState; under: boolean};
+
+export const rideStates = (shot: LPShot, set: SetDef, tReal: number, people: Holder[] = []): (Ride | undefined)[] => {
+  const da = actionTime(shot, shot.duration);
+  const ta = actionTime(shot, tReal);
+  const alone = !shot.actors.length; // a shot of only a vehicle: it travels, and the camera goes with it
+  const pusher = shot.actors.some((a) => a.action === 'push-stop');
+  let order = 0;
+  return (shot.big ?? []).map((b0, k) => {
+    const b = scaledBig(b0, shot);
+    if (!isVehicle(b)) return undefined;
+    const ridden = shot.actors.some((a) => a.on === k);
+    const under = underway(b, ridden || alone) && !(b.motion === 'stop' && pusher);
+    if (!under && !ridden) return undefined;
+    const o = under ? order++ : 0;
+    // standing with someone in it: on the road where the set has one
+    const road: RoadPlace | undefined = !under && set.road !== undefined && set.walk === 'x' && !(b.motion === 'stop' && pusher) ? {lane: set.road, shift: 0} : undefined;
+    const at = (tt: number, trail = false) => (under ? ridePath(b, set, tt, da, k, o, trail) : bigState(b, set, people, tt, da, k, road));
+    const st = at(ta, true);
+    return {b, k, st, m: vehicleMatrix(st), at, under};
+  });
+};
+
+// Which seat or standing place each person on a vehicle takes: the driver the first seat, passengers the next ones,
+// everyone else a place to stand (in the order they are listed).
+type Slot = {seat?: number; stand?: number};
+const rideSlots = (shot: LPShot): (Slot | undefined)[] => {
+  const used = new Map<number, {seats: Set<number>; stands: number}>();
+  return shot.actors.map((a) => {
+    if (a.on === undefined) return undefined;
+    const u = used.get(a.on) ?? {seats: new Set<number>(), stands: 0};
+    used.set(a.on, u);
+    if (a.action === 'drive' || a.action === 'ride') {
+      let s = a.action === 'drive' ? 0 : 1;
+      while (u.seats.has(s)) s++;
+      u.seats.add(s);
+      return {seat: s};
+    }
+    return {stand: u.stands++};
+  });
+};
+const slotPlace = (b: Big, slot: Slot): {root: V3; seat: number | null} => {
+  const seats = seatsOf(b);
+  if (slot.seat !== undefined && slot.seat < seats.length) {
+    const s = seats[slot.seat];
+    return {root: [s[0], 0, s[2]], seat: s[1]};
+  }
+  const stands = standsOf(b);
+  const s = stands[(slot.stand ?? slot.seat ?? 0) % stands.length];
+  return {root: [s[0], s[1], s[2]], seat: null};
+};
+
+// A placement worked out in a vehicle's frame, carried into the world (the Man is still drawn in that frame).
+const toWorld = (pl: Placed, m: THREE.Matrix4, k: number): Placed => {
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  m.decompose(pos, quat, new THREE.Vector3());
+  const P = (v: THREE.Vector3) => v.clone().applyMatrix4(m);
+  const R = (v: THREE.Vector3) => v.clone().applyQuaternion(quat);
+  const fwd = R(new THREE.Vector3(Math.sin(pl.ry), 0, Math.cos(pl.ry)));
+  return {
+    ...pl,
+    root: V(pl.root).applyMatrix4(m).toArray() as V3,
+    ry: Math.atan2(fwd.x, fwd.z),
+    head: P(pl.head),
+    hand: P(pl.hand),
+    body: P(pl.body),
+    screen: R(pl.screen),
+    faceDir: R(pl.faceDir),
+    headUp: R(pl.headUp),
+    local: {root: pl.root, ry: pl.ry, pos, quat},
+    ride: k,
+  };
+};
+
+const ON_TOP_MOVING = new Set<Action>(['walk', 'run', 'jog', 'dash', 'flee', 'carry']);
+
+// Someone in or on a vehicle at time t: in his seat or on his standing place, facing its front (or the way he is
+// told, or the person on it he looks at); after a 'jump-off' at his moment, through the air from where he stood with
+// the vehicle's speed and his own leap: in the sky falling free, else down beside it into a one-knee landing.
+const placeOn = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, cast: Record<string, Design>, ride: Ride, slot: Slot, mate?: V3): Placed => {
+  const t = actionTime(shot, tReal);
+  const dur = actionTime(shot, shot.duration);
+  const {root, seat} = slotPlace(ride.b, slot);
+  // seated in a car he is drawn smaller, inside it under its roof (RIDER_SCALE)
+  const base = cast[a.who] ?? HERO;
+  const shrink = seat !== null ? RIDER_SCALE[ride.b.kind] ?? 1 : 1;
+  const design = shrink === 1 ? base : {...base, height: (base.height ?? 1) * shrink};
+  const sc = design.height ?? 1;
+  let action: Action = a.action;
+  if (ON_TOP_MOVING.has(action)) action = ride.under ? 'brace' : 'stand';
+  if (seat === null && (action === 'drive' || action === 'ride')) action = 'brace'; // more people than seats
+  const kk = k * 1.7 + (shot.seed ?? 0);
+  const ev = actorAt(a, shot) ?? dur * 0.45;
+  if (action === 'jump-off' && t > ev) {
+    const m0 = vehicleMatrix(ride.at(ev));
+    const p0 = V(root).applyMatrix4(m0);
+    const v = V(root).applyMatrix4(vehicleMatrix(ride.at(ev + 0.05))).sub(p0).multiplyScalar(20);
+    const q0 = new THREE.Quaternion();
+    m0.decompose(new THREE.Vector3(), q0, new THREE.Vector3());
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q0).setY(0).normalize();
+    const side = new THREE.Vector3(fwd.z, 0, -fwd.x).multiplyScalar(a.facing === 'left' ? 1 : -1); // off to his right unless told left
+    v.addScaledVector(side, 3.2).add(new THREE.Vector3(0, 3.6, 0));
+    const tt = t - ev;
+    const free = !!set.sky || !!ride.st.air || p0.y > 4;
+    let pos: THREE.Vector3;
+    let air: 'leap' | 'fall' | undefined = 'leap';
+    let landed = 0;
+    if (free) {
+      // drag: his speed along falls away (the vehicle goes on without him), his fall reaches about 9 m/s
+      const tau = 1.1;
+      const vt = 9;
+      pos = p0.clone().addScaledVector(v.clone().setY(0), tau * (1 - Math.exp(-tt / tau)));
+      pos.y = p0.y + v.y * 0.5 * (1 - Math.exp(-tt / 0.5)) - ((vt * vt) / GRAVITY) * Math.log(Math.cosh((GRAVITY * tt) / vt));
+      if (tt > 0.35) air = 'fall';
+    } else {
+      const T = (v.y + Math.sqrt(v.y * v.y + 2 * GRAVITY * Math.max(0, p0.y))) / GRAVITY;
+      const flat = v.clone().setY(0);
+      pos = p0.clone().addScaledVector(flat, Math.min(tt, T));
+      if (tt < T) pos.y = p0.y + v.y * tt - 0.5 * GRAVITY * tt * tt;
+      else {
+        pos.addScaledVector(flat, 0.12 * (1 - Math.exp(-(tt - T) * 6))); // a skid as he lands
+        pos.y = 0;
+        air = undefined;
+        landed = tt - T;
+      }
+    }
+    const ps = air ? pose({action, t, dur, seat: null, k: kk, at: ev, air}) : pose({action: 'land', t: landed, dur, seat: null, k: kk, at: 0});
+    return kin(a, air ? action : 'land', k, shot, design, ps, pos.toArray() as V3, Math.atan2(fwd.x, fwd.z));
+  }
+  let ry = 0;
+  if (seat === null) {
+    const turn = FACING[a.facing ?? 'camera'];
+    if (turn !== undefined) ry = turn;
+    if (mate) ry = Math.atan2(mate[0] - root[0], mate[2] - root[2]); // two on a wing face each other
+  }
+  // (the pose's seat is in his own units: his hips land just above the seat's top whatever his size)
+  const ps = pose({action, t, dur, seat: seat === null ? null : seat / sc, k: kk, at: ev, steer: ride.st.steer ?? 0});
+  return {...toWorld(kin(a, action, k, shot, design, ps, root, ry), ride.m, ride.k), inside: shrink < 1};
 };
 
 // ---------------------------------------------------------------- the cameras
@@ -278,6 +462,49 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
   let camUp = up.clone();
   let aperture = 0.0;
   const H = who.head.clone();
+  // falling free (a skydive, a leap from a plane): the camera falls with him like a skydiving cameraman
+  // (and the whole shot of someone who leaps off a vehicle, before and after the leap, so the camera never jumps)
+  const leaping = who.actor.action === 'jump-off';
+  if ((leaping || (lying && who.pose.rx > 1.2 && (set.sky || who.root[1] > 1.5) && who.ride === undefined)) && !['face', 'face-top', 'medium', 'crash-zoom'].includes(cam)) {
+    const fwd = new THREE.Vector3(Math.sin(who.ry), 0, Math.cos(who.ry));
+    const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    const B = who.body.clone();
+    const buffet = new THREE.Vector3(Math.sin(t * 7.1 + seed), Math.sin(t * 5.3 + seed * 2), Math.sin(t * 6.2 + seed * 3)).multiplyScalar(0.04);
+    let fpos: THREE.Vector3;
+    let flook = B.clone();
+    if (cam === 'side' || cam === 'tracking') {
+      fpos = B.clone().addScaledVector(right, 3.4).add(new THREE.Vector3(0, 0.5, 0));
+    } else if (cam === 'front' || cam === 'lead' || cam === 'low' || cam === 'cockpit') {
+      fpos = H.clone().addScaledVector(fwd, 2.6).add(new THREE.Vector3(0, -0.7, 0));
+    } else if (cam === 'orbit') {
+      const th = Math.atan2(fwd.x, fwd.z) + 1.2 - t * 0.6;
+      fpos = B.clone().add(new THREE.Vector3(Math.sin(th) * 3.2, 1.0, Math.cos(th) * 3.2));
+    } else {
+      // above and behind him: his back, his spread arms, the clouds far below
+      fpos = B.clone().addScaledVector(fwd, -2.4).addScaledVector(right, 0.6).add(new THREE.Vector3(0, 2.7, 0));
+      flook = B.clone().addScaledVector(fwd, 1.2).add(new THREE.Vector3(0, -1.6, 0));
+    }
+    fpos.add(buffet);
+    return {pos: fpos, look: flook, up: up.clone(), fov: aspect < 1 ? 62 : 48, focus: fpos.distanceTo(B), aperture: 0.2, near: 0.05};
+  }
+  // seated inside a closed car: close shots look in through the windscreen (from the side the doors and pillars fill
+  // the picture), framing him alone ('face') or everyone in the car ('medium')
+  if (who.inside && who.local && (cam === 'face' || cam === 'medium' || cam === 'crash-zoom')) {
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(who.local.quat);
+    const flat = fwd.clone().setY(0).normalize();
+    const mates = cam === 'medium' ? all.filter((p) => p.ride === who.ride && p.inside) : [who];
+    const mid = mates.reduce((sum, p) => sum.add(p.head), new THREE.Vector3()).multiplyScalar(1 / mates.length);
+    const spread = Math.max(...mates.map((p) => p.head.distanceTo(mid))) * 2;
+    const ifov = aspect < 1 ? 50 : 36;
+    const q = cam === 'crash-zoom' ? ease((t - 0.12) / 0.3) : 0;
+    const d = distFor((cam === 'face' ? 0.75 : 1.1) + spread, 0.8, ifov, aspect) * (cam === 'crash-zoom' ? 2.2 - 1.2 * q : push);
+    const ipos = mid.clone().addScaledVector(flat, Math.max(1.25, d)).add(new THREE.Vector3(0, 0.12, 0));
+    const ilook = mid.clone().add(new THREE.Vector3(0, -0.06, 0));
+    const toward = ilook.clone().sub(ipos);
+    const side = new THREE.Vector3().crossVectors(toward, up).normalize();
+    ilook.addScaledVector(side, sway * toward.length());
+    return {pos: ipos, look: ilook, up: up.clone(), fov: ifov, focus: ipos.distanceTo(mid), aperture: 0.35, near: 0.05};
+  }
   const kind = cam === 'face' && lying ? 'face-top' : cam === 'aerial' && !set.outdoor ? 'wide' : cam;
   switch (kind) {
     case 'face': {
@@ -360,6 +587,19 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
       const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
       // high over the shoulder, so a chair or a table behind him stays under the shot
       pos = H.clone().addScaledVector(fwd, -2.3 * push).addScaledVector(right, 0.75).add(new THREE.Vector3(0, 0.65, 0));
+      if (who.ride !== undefined && !who.aim) {
+        // at the wheel: his point of view over his shoulder, the road (or the sky) far ahead, his head low in the frame
+        // (in a closed car from the back of the cabin, under its roof)
+        // (inside a car from behind his seat toward the car's middle, so his head sits at the side of the picture)
+        const inward = who.local ? new THREE.Vector3(who.local.root[0] < 0 ? 1 : -1, 0, 0).applyQuaternion(who.local.quat).setY(0).normalize() : right;
+        pos = who.inside
+          ? H.clone().addScaledVector(fwd, -0.6).addScaledVector(inward, 0.42).add(new THREE.Vector3(0, 0.1, 0))
+          : H.clone().addScaledVector(fwd, -1.5).addScaledVector(right, 0.55).add(new THREE.Vector3(0, 0.55, 0));
+        look = H.clone().addScaledVector(fwd, 14).add(new THREE.Vector3(0, -0.6, 0));
+        fov = who.inside ? (aspect < 1 ? 70 : 60) : aspect < 1 ? 58 : 44;
+        aperture = 0.15;
+        break;
+      }
       look = who.aim
         ? who.aim.clone().add(new THREE.Vector3(0, -0.45, 0)).lerp(H, 0.3)
         : H.clone().addScaledVector(fwd, 2.0).add(new THREE.Vector3(0, -0.75, 0));
@@ -523,6 +763,224 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
   return {pos, look, up: camUp, fov, focus, aperture, near};
 };
 
+// ---------------------------------------------------------------- cameras on vehicles: the car-chase and air-to-air shots
+// The user: "this cars movement, angle movement must be hollywood style". A vehicle under way is filmed the way films
+// do it: from a camera car behind it (chase), ahead of it looking back as it gains (lead), beside it at its speed
+// (tracking), from the roadside as it whooshes past with a long lens panning (pass-by), from a helicopter (heli),
+// straight down from a drone (drone), from the dashboard on the driver's face (cockpit), low at its front corner
+// along its flank (bumper), circling it as it goes (orbit). They shake with its speed, punch in at its moment (the
+// drift, the jump, the spin) and tilt a little when they are low and fast.
+export const VEHICLE_CAMS = new Set<Cam>(['chase', 'lead', 'tracking', 'pass-by', 'heli', 'cockpit', 'bumper', 'drone']);
+// a person's camera on someone riding a vehicle under way, as the vehicle's own shot (face, medium, back, orbit and
+// crash-zoom stay on him: they go with him)
+const RIDER_CAM: Partial<Record<Cam, Cam>> = {wide: 'pass-by', side: 'tracking', front: 'lead', aerial: 'heli', low: 'bumper', detail: 'cockpit', top: 'drone'};
+// a shot of only the vehicle: every camera is one of its own
+const ALONE_CAM: Partial<Record<Cam, Cam>> = {
+  ...RIDER_CAM,
+  face: 'chase',
+  medium: 'tracking',
+  back: 'chase',
+  'face-top': 'drone',
+  'crash-zoom': 'lead',
+  detail: 'bumper',
+  cockpit: 'chase',
+};
+// a vehicle's camera with no vehicle to follow: the matching camera on the person
+const ON_FOOT: Record<string, Cam> = {chase: 'back', lead: 'front', tracking: 'side', 'pass-by': 'wide', heli: 'aerial', cockpit: 'face', bumper: 'low', drone: 'top'};
+const MOMENT_MOTIONS = new Set(['drift', 'spin', 'jump', 'roll', 'stop', 'dive', 'climb', 'bank']);
+
+// The camera a shot really uses, given who it is on: a vehicle's own cameras when its subject is in a moving vehicle
+// (or the shot is only the vehicle), a person's otherwise.
+export const camOf = (cam: Cam, who: Placed | undefined, ride: Ride | undefined): Cam => {
+  if (ride && !who) return ALONE_CAM[cam] ?? (VEHICLE_CAMS.has(cam) || cam === 'orbit' ? cam : 'chase');
+  if (ride && ride.under) return VEHICLE_CAMS.has(cam) ? cam : RIDER_CAM[cam] ?? cam;
+  if (ride) return VEHICLE_CAMS.has(cam) ? (cam === 'cockpit' ? 'cockpit' : ON_FOOT[cam]) : cam;
+  return VEHICLE_CAMS.has(cam) ? ON_FOOT[cam] : cam;
+};
+
+const rideCam = (cam: Cam, r: Ride, who: Placed | undefined, set: SetDef, shot: LPShot, aspect: number, t: number, seed: number): CamPlan => {
+  const dur = shot.duration;
+  const ta = actionTime(shot, t);
+  const da = actionTime(shot, dur);
+  const [w, h, l] = sizeOf(r.b);
+  const st = r.st;
+  const flying = !!st.air || !!set.sky;
+  const yawOf = (s: BigState) => s.heading ?? s.ry;
+  const fwdOf = (y: number) => new THREE.Vector3(Math.sin(y), 0, Math.cos(y));
+  const f = fwdOf(yawOf(st));
+  const c = st.pos.clone(); // its middle
+  const up = new THREE.Vector3(0, 1, 0);
+  // the open side of the place (where the set's own camera stands: the road's far side, away from the buildings)
+  const sideOf = (fw: THREE.Vector3) => {
+    const s = new THREE.Vector3(fw.z, 0, -fw.x);
+    const toward = V(set.wide.pos).sub(c).setY(0);
+    if (set.sky ? seed % 2 === 1 : toward.dot(s) < 0) s.negate();
+    return s;
+  };
+  const open = sideOf(f);
+  const tall = aspect < 1;
+  const p = ease(t / Math.max(0.5, dur));
+  let fov = tall ? 54 : 38;
+  let pos: THREE.Vector3;
+  let look: THREE.Vector3;
+  let camUp = up.clone();
+  let aperture = 0.2;
+  let shake = 0.5; // how much its speed shakes this camera
+  let roll = 0; // a dutch tilt
+  const big = Math.max(w, l);
+  switch (cam) {
+    case 'lead': {
+      // ahead of it, low, looking back: it comes on and gains on the camera
+      const d0 = distFor(w * 1.7 + 1.2, h * 2.6 + 1, fov, aspect) + l * 0.5;
+      const d = d0 * (1.35 - 0.5 * p);
+      pos = c.clone().addScaledVector(f, d).addScaledVector(open, d0 * 0.12).add(new THREE.Vector3(0, h * 0.3 + 0.35, 0));
+      look = c.clone().add(new THREE.Vector3(0, h * 0.12, 0));
+      shake = 0.45;
+      break;
+    }
+    case 'tracking': {
+      // beside it at its speed, wheels spinning, the world streaming behind (a tall frame takes it from three-quarters
+      // ahead, so its whole length fits)
+      const dir = tall ? open.clone().multiplyScalar(0.78).addScaledVector(f, 0.62).normalize() : open.clone();
+      const span = tall ? big * 0.8 + 1.4 : l + 1.6;
+      const d = distFor(span, h * 2.6 + 0.8, fov, aspect) + w * 0.5;
+      pos = c.clone().addScaledVector(dir, d).addScaledVector(f, l * 0.08).add(new THREE.Vector3(0, h * 0.2 + 0.25, 0));
+      look = c.clone().addScaledVector(f, l * 0.06);
+      shake = 0.6;
+      roll = 0.03;
+      break;
+    }
+    case 'pass-by': {
+      // a fixed camera by the road where it passes at its moment, a long lens panning with it: small and far, then
+      // filling the frame as it whooshes past, then gone
+      const atM = r.b.at ?? da * 0.5;
+      const m = r.at(atM);
+      const fm = fwdOf(yawOf(m));
+      const sm = sideOf(fm);
+      pos = m.pos.clone().addScaledVector(sm, w / 2 + (flying ? 9 : 2.6)).addScaledVector(fm, l * 0.6 + (flying ? 6 : 2.2));
+      pos.y = flying ? m.pos.y - 2.5 : 0.55;
+      look = c.clone();
+      const dist = Math.max(1, pos.distanceTo(c));
+      const width = l * 1.25 + 1.6;
+      fov = Math.max(14, Math.min(64, (2 * Math.atan(width / 2 / dist / Math.min(1, aspect)) * 180) / Math.PI));
+      aperture = 0.08;
+      shake = 0;
+      break;
+    }
+    case 'heli': {
+      // from a helicopter behind and to the side, high, looking down on it and the way ahead
+      const d = distFor(big * 2.6 + 4, h * 3 + 4, 34, aspect) + l * 0.5;
+      fov = 34;
+      pos = c.clone().addScaledVector(f, -0.72 * d).addScaledVector(open, 0.55 * d).add(new THREE.Vector3(0, 0.62 * d, 0));
+      look = c.clone().addScaledVector(f, Math.min(12, (st.speed ?? 0) * 0.35));
+      aperture = 0.04;
+      shake = 0.12;
+      break;
+    }
+    case 'drone': {
+      // straight down on it, its nose to the top of the frame
+      const d = distFor(w * 2.6 + 2.5, l * 2.0 + 2.5, 40, aspect);
+      fov = 40;
+      pos = c.clone().add(new THREE.Vector3(0, d, 0)).addScaledVector(f, -0.01);
+      look = c.clone();
+      camUp = f.clone();
+      aperture = 0.04;
+      shake = 0.1;
+      break;
+    }
+    case 'cockpit': {
+      // on the dashboard, facing the driver: his face, the world rushing away behind him
+      if (who) {
+        fov = tall ? 64 : 56;
+        const fd = who.faceDir.clone().setY(0);
+        const dir = (fd.lengthSq() > 0.01 ? fd : f.clone()).normalize();
+        look = who.head.clone().add(new THREE.Vector3(0, -0.12, 0));
+        pos = who.head.clone().addScaledVector(dir, 1.3).add(new THREE.Vector3(0, 0.08, 0)); // through the windscreen
+        aperture = 0.5;
+        shake = 0.8;
+        break;
+      }
+      return rideCam('chase', r, who, set, shot, aspect, t, seed);
+    }
+    case 'bumper': {
+      if (flying) {
+        // past the wing tip and a little above, looking in along the wing at the cockpit
+        fov = tall ? 60 : 50;
+        pos = c.clone().addScaledVector(open, w / 2 + 1.6).addScaledVector(f, l * 0.12).add(new THREE.Vector3(0, h * 0.6, 0));
+        look = c.clone().addScaledVector(f, l * 0.2).add(new THREE.Vector3(0, h * 0.2, 0));
+      } else {
+        // low at its front corner, looking back along its flank: the wheel, the road, the speed
+        fov = tall ? 62 : 56;
+        pos = c.clone().addScaledVector(f, l / 2 + 0.35).addScaledVector(open, w / 2 + 0.3).add(new THREE.Vector3(0, -h / 2 + 0.28, 0));
+        look = c.clone().addScaledVector(f, -l * 0.35).add(new THREE.Vector3(0, h * 0.1, 0));
+      }
+      shake = 0.9;
+      roll = 0.045;
+      aperture = 0.3;
+      break;
+    }
+    case 'orbit': {
+      // circling it as it goes: the hero shot
+      const d = distFor(big * 1.2 + 1, h * 2.5 + 1, 38, aspect);
+      fov = 38;
+      const th0 = Math.atan2(open.x, open.z);
+      const th = th0 + 0.9 - t * 0.55;
+      pos = c.clone().add(new THREE.Vector3(Math.sin(th) * d, h * 0.4 + 0.5, Math.cos(th) * d));
+      look = c.clone();
+      shake = 0.25;
+      break;
+    }
+    case 'chase':
+    default: {
+      // from a camera car behind it and a little above: in a drift it stays on its line and the car slides across
+      // the frame; under hard acceleration it pulls away
+      const lag = r.at(Math.max(0, ta - 0.06));
+      const fl = fwdOf(yawOf(lag));
+      const d = distFor(w * 1.2 + 1.0, h * 2.2 + 0.8, fov, aspect) + l * 0.5;
+      pos = lag.pos.clone().addScaledVector(fl, -d).addScaledVector(open, 0.25 * Math.sin(t * 0.5 + seed)).add(new THREE.Vector3(0, h * 0.55 + 0.55, 0));
+      look = c.clone().addScaledVector(f, l * 0.35).add(new THREE.Vector3(0, h * 0.15, 0));
+      shake = 0.5;
+      break;
+    }
+  }
+  // its moment (the drift, the jump, the spin, the roll): the lens punches in for a beat
+  const atM = r.b.at;
+  if (atM !== undefined && MOMENT_MOTIONS.has(r.b.motion)) fov *= 1 - 0.12 * Math.exp(-(((ta - atM) / 0.35) ** 2));
+  // never under the ground
+  if (!set.sky) pos.y = Math.max(0.22, pos.y);
+  const toward = look.clone().sub(pos);
+  const dist = toward.length();
+  // the road through the lens: a fine shake that grows with its speed
+  const fast = Math.min(1, (st.speed ?? 0) / 26);
+  if (shake > 0 && fast > 0) {
+    const a = 0.0045 * shake * fast * Math.max(1, dist);
+    pos.add(new THREE.Vector3(Math.sin(t * 53.1 + seed), Math.sin(t * 61.7 + seed * 2) * 0.7, Math.sin(t * 47.3 + seed * 3)).multiplyScalar(a));
+  }
+  if (roll) {
+    const axis = toward.clone().normalize();
+    camUp.applyAxisAngle(axis, roll * (0.5 + 0.5 * fast) * (seed % 2 ? 1 : -1));
+  }
+  const focus = who && (cam === 'cockpit' || cam === 'tracking') ? pos.distanceTo(who.head) : pos.distanceTo(c);
+  return {pos, look, up: camUp, fov, focus, aperture, near: cam === 'cockpit' || cam === 'bumper' ? 0.05 : Math.max(0.05, Math.min(1.2, focus * 0.25))};
+};
+
+// The camera of a shot at time t: on its subject (the focus actor, or the vehicle when nobody is in the shot), by the
+// camera the story asked for (as camOf turns it), and the wide view of the place when there is nothing to film.
+export const planFor = (shot: LPShot, set: SetDef, placed: Placed[], rides: (Ride | undefined)[], aspect: number, t: number) => {
+  const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
+  // (someone who leaps off a vehicle in this shot is filmed as himself the whole shot, not as the vehicle)
+  const ride = who ? (who.ride !== undefined && who.actor.action !== 'jump-off' ? rides[who.ride] : undefined) : rides.find((r) => r?.under) ?? rides.find(Boolean);
+  const cam = camOf(shot.camera, who, ride);
+  const seed = shot.seed ?? 1;
+  const plan: CamPlan =
+    ride && (VEHICLE_CAMS.has(cam) || (!who && cam === 'orbit'))
+      ? rideCam(cam, ride, who, set, shot, aspect, t, seed)
+      : who
+        ? camFor(cam, who, placed, set, aspect, t, shot.duration, seed)
+        : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
+  return {plan, who, ride, cam};
+};
+
 const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) => {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const gl = useThree((s) => s.gl);
@@ -611,7 +1069,7 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
 const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway: '#9d968c', alley: '#77746f', street: '#8f8c88', park: '#a99a7c'};
 
 // Actions that keep their own way (they act on the place, not on the other person) and those that turn right round.
-const LONE = new Set<Action>(['push-stop', 'catch', 'lift', 'throw', 'super-jump', 'land', 'dash', 'punch', 'look-out', 'pushup', 'cower', 'flee', 'carried', 'fall']);
+const LONE = new Set<Action>(['push-stop', 'catch', 'lift', 'throw', 'super-jump', 'land', 'dash', 'punch', 'look-out', 'pushup', 'cower', 'flee', 'carried', 'fall', 'skydive', 'jump-off', 'brace', 'drive', 'ride']);
 const FULL_TURN = new Set<Action>(['help-up', 'carry']);
 
 // ---------------------------------------------------------------- who stands where in a shot
@@ -648,7 +1106,8 @@ export const layoutFor = (shot: LPShot, set: SetDef, cast: Record<string, Design
     });
     return worst;
   };
-  const order = actors.map((_, k) => k).filter((k) => actors[k].action !== 'carried');
+  // the one carried goes with his carrier, people in or on a vehicle with it: neither walks a lane of his own
+  const order = actors.map((_, k) => k).filter((k) => actors[k].action !== 'carried' && !onVehicle(shot, k));
   order.sort((i, j) => Number(moves(actors[i])) - Number(moves(actors[j])));
   for (const k of order) {
     const a = actors[k];
@@ -743,10 +1202,24 @@ export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<stri
     });
     return best;
   };
-  for (const late of [false, true]) {
+  // the people on the ground first, the one carried after his carrier, then those in or on vehicles (a car stopped by
+  // a man's hands needs him placed before its driver)
+  const slots = rideSlots(shot);
+  let rides: (Ride | undefined)[] | undefined;
+  for (const pass of [0, 1, 2]) {
     shot.actors.forEach((a, k) => {
-      if ((a.action === 'carried') !== late) return;
-      const pl = place(a, k, set, shot, t, cast, done, aimOf(k), lanes[k]);
+      const rider = onVehicle(shot, k);
+      if ((rider ? 2 : a.action === 'carried' ? 1 : 0) !== pass) return;
+      let pl: Placed;
+      if (rider) {
+        rides ??= rideStates(shot, set, t, holders(done));
+        const r = rides[a.on!];
+        const j = target(k);
+        const mate = r && j >= 0 && shot.actors[j].on === a.on && slots[j] ? slotPlace(r.b, slots[j]!).root : undefined;
+        pl = r ? placeOn(a, k, set, shot, t, cast, r, slots[k]!, mate) : place(a, k, set, shot, t, cast, done, aimOf(k), lanes[k]);
+      } else {
+        pl = place(a, k, set, shot, t, cast, done, aimOf(k), lanes[k]);
+      }
       placed[k] = pl;
       done.push(pl);
     });
@@ -758,10 +1231,20 @@ export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<stri
   return placed as Placed[];
 };
 
-const holders = (placed: Placed[]): Holder[] => placed.map((p) => ({action: p.actor.action, root: p.root, ry: p.ry, head: p.head, hand: p.hand, body: p.body}));
+const holders = (placed: Placed[]): Holder[] => placed.map((p) => ({action: p.actor.action, root: p.root, ry: p.ry, head: p.head, hand: p.hand, body: p.body, on: p.ride}));
+
+// The shot's vehicles that someone is in or on, or that travel, at time t (with the people on the ground placed).
+const ridesAt = (shot: LPShot, set: SetDef, placed: Placed[], t: number) => rideStates(shot, set, t, holders(placed.filter((p) => p.ride === undefined)));
+
+// Is this actor in or on one of the shot's vehicles?
+const onVehicle = (shot: LPShot, k: number) => {
+  const on = shot.actors[k].on;
+  const b = on !== undefined ? shot.big?.[on] : undefined;
+  return !!b && isVehicle(b);
+};
 
 // The effects with their start in action seconds, and where each one happens.
-const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undefined, bigs: {b: Big; st: BigState}[], ta: number, da: number) =>
+const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undefined, bigs: {b: Big; st: BigState}[], ta: number, da: number, ride?: Ride) =>
   (shot.fx ?? []).map((f: Fx, i) => {
     const at = f.at !== undefined ? actionTime(shot, f.at) : ['rain', 'wind'].includes(f.kind) ? 0 : da * 0.4;
     const fallen = bigs.find((x) => x.b.motion === 'fall' || x.b.motion === 'crushed');
@@ -781,13 +1264,20 @@ const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undef
       point = new THREE.Vector3();
     }
     const fast = placed.find((p) => ['dash', 'run', 'flee', 'super-jump'].includes(p.actor.action));
-    const mover = who && ['dash', 'run', 'flee', 'super-jump'].includes(who.actor.action) ? who : fast;
+    const runner = who && ['dash', 'run', 'flee', 'super-jump'].includes(who.actor.action) ? who : fast;
+    // speed streaks follow a vehicle under way (from its bottom, along the way it travels), else the fastest runner
+    const vh = ride?.under ? sizeOf(ride.b)[1] : 0;
+    const mover = ride?.under
+      ? {root: [ride.st.pos.x, ride.st.pos.y - vh / 2, ride.st.pos.z] as V3, ry: ride.st.heading ?? ride.st.ry}
+      : runner
+        ? {root: runner.root, ry: runner.ry}
+        : undefined;
     const ctx: FxCtx = {
       at,
       t: ta,
       dur: da,
       point,
-      mover: mover ? {root: mover.root, ry: mover.ry} : undefined,
+      mover,
       around: who ? new THREE.Vector3(who.root[0], 0, who.root[2]) : new THREE.Vector3(),
       seed: (shot.seed ?? 1) * 5 + i,
       dust: DUST[shot.set] ?? '#b8ab98',
@@ -807,7 +1297,9 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
   if (got) return got;
   const bigs = shot.big ?? [];
   const stopper = shot.actors.some((a) => a.action === 'push-stop');
-  const want = bigs.map((b) => VEHICLE.has(b.kind) && ROAD_MOTIONS.has(b.motion) && !(b.motion === 'stop' && stopper));
+  // (a vehicle someone is in or on, or one under way, has its own path: rideStates)
+  const ridden = rideStates(shot, set, 0);
+  const want = bigs.map((b, k) => VEHICLE.has(b.kind) && ROAD_MOTIONS.has(b.motion) && !(b.motion === 'stop' && stopper) && !ridden[k]);
   let out: (RoadPlace | undefined)[] = bigs.map(() => undefined);
   if (want.some(Boolean)) {
     const {paths} = layoutFor(shot, set, cast);
@@ -815,8 +1307,7 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
     for (let i = 0; i <= 8; i++) {
       const t = (shot.duration * i) / 8;
       const placed = placeAll(shot, set, t, cast);
-      const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
-      if (who) views.push({cam: camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1).pos, heads: placed.map((p) => p.head)});
+      if (placed.length) views.push({cam: planFor(shot, set, placed, ridesAt(shot, set, placed, t), aspect, t).plan.pos, heads: placed.map((p) => p.head)});
     }
     const xRoad = set.walk === 'x'; // the road runs along x (else along z)
     out = bigs.map((b, k) => {
@@ -825,7 +1316,7 @@ const vehiclePlans = (shot: LPShot, set: SetDef, cast: Record<string, Design>, a
       const road = set.road !== undefined && xRoad;
       const base = road ? set.road! : xRoad ? sp.z : sp.x;
       const at = xRoad ? sp.x : sp.z;
-      const [w, h, l] = SIZE[b.kind];
+      const [w, h, l] = sizeOf(b);
       const passes = b.motion === 'drive' || b.motion === 'stop'; // it comes along the whole road
       const lanes = (road ? [0, 1, 2, 3, 4, 5, 6] : [0, -1, 1, -2, 2, -3, 3, -4, 4]).map((d) => base + d);
       const shifts = passes ? [0] : [0, -1, 1, -2, 2].map((m) => m * (l / 2 + 1.4));
@@ -860,20 +1351,21 @@ const pullOf = (shot: LPShot, set: SetDef, cast: Record<string, Design>, aspect:
   const got = PULLS.get(shot);
   if (got !== undefined) return got;
   let pull = 0;
-  const solid = (shot.big ?? []).map((b) => VEHICLE.has(b.kind) || b.kind === 'boulder');
+  const solid = (shot.big ?? []).map((b) => isVehicle(b) || b.kind === 'boulder');
   if (solid.some(Boolean)) {
     const lanes = vehiclePlans(shot, set, cast, aspect);
     const da = actionTime(shot, shot.duration);
     for (let i = 0; i <= 12; i++) {
       const t = (shot.duration * i) / 12;
       const placed = placeAll(shot, set, t, cast);
-      const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
-      if (!who) continue;
-      const plan = camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1);
+      const rides = ridesAt(shot, set, placed, t);
+      const {plan, who, ride, cam} = planFor(shot, set, placed, rides, aspect, t);
+      // the cameras that go with a vehicle are placed round it on purpose (the cockpit one inside it)
+      if (!who || ride || VEHICLE_CAMS.has(cam)) continue;
       const people = holders(placed);
       const states = (shot.big ?? []).map((b0, k) => {
         const b = scaledBig(b0, shot);
-        return {b, st: bigState(b, set, people, actionTime(shot, t), da, k, lanes[k])};
+        return {b, st: rides[k]?.st ?? bigState(b, set, people, actionTime(shot, t), da, k, lanes[k])};
       }).filter((_, k) => solid[k]);
       const toLook = plan.look.clone().sub(plan.pos);
       const D = toLook.length();
@@ -899,18 +1391,18 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   const ta = actionTime(shot, t);
   const da = actionTime(shot, shot.duration);
   const placed = placeAll(shot, set, t, props.cast);
-  const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
   const people = holders(placed);
   const lanes = vehiclePlans(shot, set, props.cast, aspect);
+  const rides = ridesAt(shot, set, placed, t);
   const bigs = (shot.big ?? []).map((b0, i) => {
     const b = scaledBig(b0, shot);
-    return {b, st: bigState(b, set, people, ta, da, i, lanes[i]), i};
+    return {b, st: rides[i]?.st ?? bigState(b, set, people, ta, da, i, lanes[i]), i};
   });
   void holderFor;
-  const fx = fxPlan(shot, set, placed, who, bigs, ta, da);
-  const plan = who
-    ? camFor(shot.camera, who, placed, set, aspect, t, shot.duration, shot.seed ?? 1)
-    : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
+  const {plan, who, ride} = planFor(shot, set, placed, rides, aspect, t);
+  const fx = fxPlan(shot, set, placed, who, bigs, ta, da, ride ?? rides.find((r) => r?.under));
+  // someone seated in it: an open roadster (the driver seen at the wheel), else a coupe
+  const seated = new Set(placed.filter((p) => p.ride !== undefined && p.pose.y < 0.75 && ['drive', 'ride'].includes(p.actor.action)).map((p) => p.ride!));
   // never inside a bus driving by: the camera moves toward what it looks at, for the whole shot, with a wider lens
   const pull = who ? pullOf(shot, set, props.cast, aspect) : 0;
   if (pull > 0) {
@@ -932,34 +1424,47 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   return (
     <>
       <color attach="background" args={[look.sky[1]]} />
-      {set.outdoor ? <fogExp2 attach="fog" args={[look.sky[1], look.fog]} /> : null}
+      {set.outdoor ? <fogExp2 attach="fog" args={[look.sky[1], look.fog * (set.sky ? 0.3 : 1)]} /> : null}
       <CamRig plan={plan} exposure={look.exposure} />
-      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : V(set.wide.look)} eye={plan.pos} />
+      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : V(set.wide.look)} eye={plan.pos} />
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
       {things.map((th, i) => (
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
       ))}
       {bigs.map(({b, st, i}) => (
-        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} />
+        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} />
       ))}
       {fx.map((f, i) => (
         <FxView key={`fx${i}`} kind={f.kind} c={f.ctx} />
       ))}
-      {placed.map((pl, i) => (
-        <group key={i}>
+      {placed.map((pl, i) => {
+        const man = (
           <Man
             design={pl.design}
             pose={pl.pose}
             face={face(pl.actor.expression, ta, i + (shot.seed ?? 0), (pl.actor.talk ?? []).some(([a, b]) => t >= a && t < b))}
-            root={pl.root}
-            ry={pl.ry}
+            root={pl.local ? pl.local.root : pl.root}
+            ry={pl.local ? pl.local.ry : pl.ry}
             hold={pl.hold}
             seed={pl.actor.who === 'hero' ? 7 : pl.seed}
           />
-          {pl.actor.covered && LYING.has(pl.actor.action) ? <Blanket pl={pl} /> : null}
-          {pl.actor.action === 'sit' && spotOf(set, pl.actor.spot).seat === undefined ? <StoolUnder pl={pl} /> : null}
-        </group>
-      ))}
+        );
+        // in or on a vehicle: drawn in its frame, so he turns, pitches and rolls with it
+        if (pl.local) {
+          return (
+            <group key={i} position={pl.local.pos} quaternion={pl.local.quat}>
+              {man}
+            </group>
+          );
+        }
+        return (
+          <group key={i}>
+            {man}
+            {pl.actor.covered && LYING.has(pl.actor.action) ? <Blanket pl={pl} /> : null}
+            {pl.actor.action === 'sit' && spotOf(set, pl.actor.spot).seat === undefined ? <StoolUnder pl={pl} /> : null}
+          </group>
+        );
+      })}
       {props.dof !== false ? <Post focus={plan.focus} aperture={plan.aperture} /> : null}
     </>
   );
@@ -1037,6 +1542,7 @@ const Grain: React.FC<{frame: number}> = ({frame}) => (
 
 export const LowPoly: React.FC<LowPolyProps> = (props) => {
   useFonts();
+  setMade(props.made); // the things the writer designed for this film (planes, bikes, boats...)
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
   const t = frame / fps;

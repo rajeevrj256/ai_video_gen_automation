@@ -19,6 +19,7 @@ export type SetName =
   | 'highway' // a wide road with lanes, guard rails, the city beyond
   | 'alley' // a narrow brick alley at night: dumpster, fire escape, puddles
   | 'lab' // a white lab with a glowing chamber and screens
+  | 'sky' // high above a sea of clouds: for anything that flies, a skydive, a fight on a plane's wing
   | 'void'; // a plain warm studio floor: for a thought, a title
 
 export type Light = 'night' | 'lamp' | 'dawn' | 'morning' | 'day' | 'evening' | 'dark';
@@ -36,7 +37,16 @@ export type Cam =
   | 'detail' // the object he holds or that the shot is about
   | 'aerial' // high above, looking down, circling slowly
   | 'orbit' // circling round him at his height
-  | 'crash-zoom'; // a fast push in on him, then a hold
+  | 'crash-zoom' // a fast push in on him, then a hold
+  // a vehicle under way (or someone in it): the car-chase and air-to-air shots
+  | 'chase' // from a camera car behind it, a little above
+  | 'lead' // ahead of it, low, looking back as it gains
+  | 'tracking' // beside it at its speed
+  | 'pass-by' // from the roadside as it whooshes past, a long lens panning
+  | 'heli' // from a helicopter, high behind and to the side
+  | 'drone' // straight down on it
+  | 'cockpit' // on the dashboard, on the driver's or pilot's face
+  | 'bumper'; // low at its front corner along its flank (on a plane: the wing tip)
 
 export type Action =
   | 'stand'
@@ -91,7 +101,13 @@ export type Action =
   | 'cower' // crouched, arms over the head
   | 'help-up' // reaches a hand down
   | 'talk' // talking, a hand moving
-  | 'gasp'; // hands to the mouth
+  | 'gasp' // hands to the mouth
+  // in or on a vehicle (`on`): at the controls, riding along, leaving it, falling free
+  | 'drive' // at the wheel / the controls of the vehicle he is `on` (the driver's or pilot's seat)
+  | 'ride' // a passenger seat of the vehicle he is `on`
+  | 'jump-off' // standing on (or in) the vehicle, he leaps off at his moment and falls away
+  | 'skydive' // falling free through the air, arms and legs spread
+  | 'brace'; // standing on a moving vehicle's top, knees bent, arms out for balance
 
 export type Expr = 'neutral' | 'tired' | 'sad' | 'worried' | 'surprised' | 'happy' | 'determined' | 'annoyed' | 'asleep' | 'blank' | 'scared' | 'angry' | 'amazed' | 'pained';
 
@@ -125,6 +141,7 @@ export type Actor = {
   talk?: [number, number][]; // seconds into the shot when this person is speaking (the mouth moves)
   at?: number; // seconds into the shot of his key moment (the catch, the jump, the landing, the punch)
   look?: string; // a key of cast: the person in this shot he looks at, talks to, points at or walks up to
+  on?: number; // index into the shot's big things: the vehicle he is in (drive, ride) or standing on (any other action)
 };
 
 export type Thing = {
@@ -135,7 +152,7 @@ export type Thing = {
 };
 
 // Big things in a scene and what they do (seconds `at` into the shot): a car, a falling steel beam, a truck...
-export type BigKind = 'car' | 'bus' | 'truck' | 'beam' | 'crate' | 'boulder' | 'barbell' | 'pipe' | 'door' | 'ball';
+export type BigKind = 'car' | 'bus' | 'truck' | 'beam' | 'crate' | 'boulder' | 'barbell' | 'pipe' | 'door' | 'ball' | 'made';
 export type BigMotion =
   | 'still'
   | 'fall' // drops from high above onto its spot
@@ -147,8 +164,41 @@ export type BigMotion =
   | 'drive' // drives across the place
   | 'crushed'
   | 'hang' // swinging from the crane
-  | 'shake';
-export type Big = {kind: BigKind; spot: Spot; motion: BigMotion; at?: number; color?: string};
+  | 'shake'
+  // vehicles under way (anyone `on` it moves with it, and the camera can travel with it): on the ground...
+  | 'race' // flat out, accelerating
+  | 'drift' // the tail swings out at its moment and it slides through, tyres smoking
+  | 'spin' // a full spin at its moment, then on
+  | 'reverse' // backwards
+  | 'jump' // leaves the ground at its moment (a ramp, a roof's edge) and lands further on
+  // ...and in the air
+  | 'fly' // flies level (on the ground at first it lifts off at its moment)
+  | 'climb' // noses up and climbs
+  | 'dive' // noses down and dives
+  | 'bank' // turns, leaning into the turn
+  | 'roll'; // a full barrel roll at its moment
+export type Big = {kind: BigKind; spot: Spot; motion: BigMotion; at?: number; color?: string; made?: string};
+
+// Something the writer designed for this film (a plane, a jet, a helicopter, a motorbike, a boat...), built at render
+// time from low-poly parts in its own frame: x right, y up from its bottom, z forward (metres, the man is ~2 m tall).
+export type PartShape = 'box' | 'cylinder' | 'cone' | 'sphere' | 'wedge';
+export type MadePart = {
+  shape: PartShape;
+  at: [number, number, number]; // centre
+  size: [number, number, number]; // box/sphere/wedge: width, height, length; cylinder/cone: diameter, length (along its y), end diameter
+  turn?: [number, number, number]; // degrees about x, y, z
+  color: string; // hex
+  glow?: boolean;
+  glass?: boolean;
+  spin?: '' | 'x' | 'y' | 'z'; // propellers, rotors, wheels: turns about this axis while it moves
+};
+export type Made = {
+  parts: MadePart[];
+  seats: [number, number, number][]; // where people sit, the driver's / pilot's first (the seat's top, under him)
+  top: number; // the height of the surface someone can stand on (a roof, a wing)
+  travel: 'ground' | 'air' | 'water' | 'none';
+  dims: [number, number, number]; // width, height, length (from the parts)
+};
 
 export type FxKind = 'shockwave' | 'crack' | 'dust' | 'speed' | 'sparks' | 'debris' | 'glass' | 'smoke' | 'fire' | 'shake' | 'flash' | 'alarm' | 'rain' | 'wind';
 export type Fx = {kind: FxKind; at?: number; spot?: Spot};
@@ -184,4 +234,5 @@ export type LowPolyProps = {
   captions: Caption[];
   seed: number;
   dof?: boolean; // depth of field (on unless a slow machine turns it off)
+  made?: Record<string, Made>; // things the writer designed for this film, by name
 };

@@ -234,7 +234,7 @@ const Speed: React.FC<{c: FxCtx}> = ({c}) => {
         const back = 0.6 + rand() * 1.2 + len / 2;
         const on = Math.sin(c.t * 30 + i * 2.1) > -0.3;
         if (!on) return null;
-        const p = root.clone().addScaledVector(f, -back).addScaledVector(side, off).setY(y);
+        const p = root.clone().addScaledVector(f, -back).addScaledVector(side, off).setY(root.y + y); // (a plane's are up with it)
         return <P key={i} g={cube()} m={fxMat('#ffffff', 0.55, 1.5)} p={p} s={[0.025, 0.025, len]} r={[0, c.mover!.ry, 0]} />;
       })}
     </group>

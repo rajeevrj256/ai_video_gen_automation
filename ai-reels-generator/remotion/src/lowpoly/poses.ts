@@ -60,7 +60,9 @@ const idle = (p: Pose, t: number, k: number) => {
   return p;
 };
 
-export type PoseIn = {action: Action; t: number; dur: number; seat: number | null; k: number; at?: number; moving?: boolean};
+// `steer`: the front wheels' turn of the vehicle he drives (his hands turn the wheel with it); `air`: off the ground
+// after leaping from a vehicle (tucked, or spread in free fall once `fall` is set)
+export type PoseIn = {action: Action; t: number; dur: number; seat: number | null; k: number; at?: number; moving?: boolean; steer?: number; air?: 'leap' | 'fall'};
 
 // Walking speed in units a second (the editor moves the root along his path at this speed).
 export const SPEED: Partial<Record<Action, number>> = {walk: 1.0, run: 2.6, jog: 1.7, dash: 16, flee: 2.8, carry: 0.8};
@@ -83,7 +85,7 @@ const runLegs = (p: Pose, t: number, f: number, amp: number, k: number, knee = 1
   return sw;
 };
 
-export function pose({action, t, dur, seat, k, at, moving}: PoseIn): Pose {
+export function pose({action, t, dur, seat, k, at, moving, steer = 0, air}: PoseIn): Pose {
   const p = base();
   const s = seat ?? 0.48; // a chair when nothing else is there
   switch (action) {
@@ -507,6 +509,76 @@ export function pose({action, t, dur, seat, k, at, moving}: PoseIn): Pose {
       p.lean = -0.1;
       p.head = [-0.1, 0, 0];
       return p;
+    // ---------------------------------------------------------------- in and on vehicles
+    case 'drive': {
+      // at the wheel or the controls: seated low, both hands on the wheel, turning it as the wheels turn (one hand
+      // rises as the other drops), leaning into the turns, eyes on the road
+      sitting(p, s);
+      const w = Math.max(-0.6, Math.min(0.6, steer * 1.6));
+      p.legL = L(-1.45, 0.05, 0.3); // legs out long, as in a low sports car (feet inside its body)
+      p.legR = L(-1.45, 0.05, 0.3);
+      p.armL = L(-1.08 - 0.3 * w, 0.12, -0.62 + 0.15 * w);
+      p.armR = L(-1.08 + 0.3 * w, 0.12, -0.62 - 0.15 * w);
+      p.lean = 0.04;
+      p.side = -0.08 * w;
+      p.head = [0.03, -0.22 * w, -0.05 * w];
+      return p;
+    }
+    case 'ride':
+      // a passenger: seated, an arm along the door, the other hand on his knee, looking about
+      sitting(p, s);
+      p.legL = L(-1.45, 0.05, 0.3);
+      p.legR = L(-1.45, 0.05, 0.3);
+      p.armL = L(-0.45, 0.12, -0.9);
+      p.armR = L(-0.2, 0.42, -0.5);
+      p.head = [0.02, 0.25 * Math.sin(t * 0.45 + k), 0];
+      return p;
+    case 'brace': {
+      // on top of something moving: feet wide, knees bent, leaning into the wind, arms out for balance, swaying
+      squat(p, 0.42, 0.38);
+      const sw = Math.sin(t * 2.3 + k);
+      p.lean = 0.3 + 0.05 * Math.sin(t * 3.1 + k);
+      p.side = 0.07 * sw;
+      p.armL = L(-0.35, 1.25 + 0.15 * sw, -0.35);
+      p.armR = L(-0.35, 1.25 - 0.15 * sw, -0.35);
+      p.head = [-0.2, 0, -0.05 * sw];
+      return p;
+    }
+    case 'jump-off': {
+      // on the vehicle: braced, crouching deeper as the moment comes; then the leap (tucked) and, falling free, the
+      // skydiver's spread (LowPoly moves him through the air)
+      if (air === 'fall') return pose({action: 'skydive', t, dur, seat: null, k});
+      if (air === 'leap') {
+        p.legL = L(-1.1, 0.12, 1.5);
+        p.legR = L(-0.7, 0.12, 1.2);
+        p.armL = L(-2.4, 0.5, -0.3);
+        p.armR = L(-2.4, 0.5, -0.3);
+        p.lean = 0.25;
+        p.head = [-0.25, 0, 0];
+        return p;
+      }
+      const ev = at ?? dur * 0.4;
+      const q = ease(1 - (ev - t) / 0.6);
+      squat(p, 0.42 + 0.4 * q, 0.34);
+      p.armL = L(mix(-0.35, 0.6, q), mix(1.2, 0.2, q), -0.3);
+      p.armR = L(mix(-0.35, 0.6, q), mix(1.2, 0.2, q), -0.3);
+      p.head = [-0.2, 0, 0];
+      return p;
+    }
+    case 'skydive': {
+      // falling free, face down, back arched: arms out and bent up, legs apart with the knees a little bent, the
+      // wind shaking the limbs
+      const fl = 0.06 * Math.sin(t * 13 + k);
+      p.rx = PI / 2 - 0.12;
+      p.y = HIP;
+      p.armL = L(0.15 + fl, 1.45, -1.2);
+      p.armR = L(0.15 - fl, 1.45, -1.2);
+      p.legL = L(0.32 - fl, 0.32, 0.75);
+      p.legR = L(0.32 + fl, 0.32, 0.75);
+      p.lean = -0.18;
+      p.head = [-0.55, 0.1 * Math.sin(t * 0.7 + k), 0];
+      return p;
+    }
     case 'stand':
     default:
       if (seat !== null && action !== 'stand') sitting(p, s);

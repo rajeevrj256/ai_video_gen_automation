@@ -139,8 +139,44 @@ def _crowd() -> np.ndarray:
     return out * np.minimum(t / 0.3, 1) * np.minimum((3.0 - t) / 0.5, 1)
 
 
+def _engine() -> np.ndarray:
+    """A sports car's engine under way (looped): a V8's firing note and its half-order burble, climbing through the
+    revs and dropping at each gear change, with a little intake noise on the pulses. No sub boom: it sits 140-450 Hz."""
+    t = _t(6.0)
+    ph = (t % 2.0) / 2.0  # three gears in six seconds
+    rpm = 2700 + 3700 * ph ** 0.85
+    f = rpm / 60 * 4  # four firings a turn
+    phase = 2 * np.pi * np.cumsum(f) / RATE
+    x = sum(a * np.sin(k * phase + k * 0.7) for k, a in ((0.5, 0.55), (1, 1.0), (1.5, 0.35), (2, 0.5), (3, 0.28), (4, 0.15)))
+    pulse = 0.6 + 0.4 * np.maximum(0, np.sin(phase))
+    air = _lowpass(_noise(47, len(t)), 2200) * pulse * 0.35
+    shift = 1 - 0.55 * np.exp(-((t % 2.0) / 0.06)) * (t > 0.1)  # the lift at each change
+    return _loopable(_lowpass(x * 0.5 + air, 3200) * shift)
+
+
+def _jet() -> np.ndarray:
+    """A jet going over (looped): a broad roar and a high turbine whine."""
+    t = _t(6.0)
+    roar = _lowpass(_noise(48, len(t)), 1400)
+    roar -= _lowpass(roar, 120)  # no rumble under it
+    whine = np.sin(2 * np.pi * np.cumsum(2150 + 40 * np.sin(2 * np.pi * 0.2 * t)) / RATE) * 0.12
+    return _loopable(roar * (0.85 + 0.15 * np.sin(2 * np.pi * 0.17 * t)) + whine)
+
+
+def _propeller() -> np.ndarray:
+    """A small propeller plane (looped): the engine's drone and the blades beating the air."""
+    t = _t(6.0)
+    f = 92 + 3 * np.sin(2 * np.pi * 0.13 * t)
+    phase = 2 * np.pi * np.cumsum(f) / RATE
+    drone = sum(a * np.sin(k * phase) for k, a in ((1, 0.6), (2, 1.0), (3, 0.5), (4, 0.3), (6, 0.15)))
+    blades = 0.55 + 0.45 * np.maximum(0, np.sin(phase * 0.5)) ** 3
+    air = _lowpass(_noise(49, len(t)), 1800) * blades * 0.5
+    return _loopable(_lowpass(drone * 0.4 + air, 2600))
+
+
 MAKERS = {
     **sticky.MAKERS,
+    "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45),
     "impact": (sfx._impact, 0.75), "crash": (_crash, 0.7), "glass": (_glass, 0.5), "crack": (_crack, 0.6), "creak": (_creak, 0.45),
     "skid": (_skid, 0.45), "siren": (_siren, 0.3), "wind": (_wind, 0.35), "fire": (_fire, 0.35), "sparks": (_sparks, 0.35),
     "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "rumble": (lambda: sfx._rumble(1.6), 0.55),
