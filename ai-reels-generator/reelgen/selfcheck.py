@@ -474,6 +474,24 @@ def lowpoly_vehicles() -> None:
             fail(f"lowpoly vehicles: shot {i + 1}'s cut-in {x} doesn't come before its moment {sh['big'][0]['at']}")
     if "rev" not in [c["sound"] for c in cues]:
         fail("lowpoly vehicles: no rev as the foot goes down on the accelerator")
+    # a car's engine follows its own speed (car.engine, from the user's recording), its tyres squeal by kind
+    import numpy as np
+
+    from .lowpoly import car as C
+
+    if not any(c["sound"] == "engine" and c.get("car") for c in cues) or not {c.get("skid") for c in cues} >= {"drift", "brake"}:
+        fail("lowpoly vehicles: no car engine following its speed, or no brake/drift squeal among the cues")
+    for motion in ("race", "drift", "spin", "stop", "jump"):
+        m = re.search(rf"case '{motion}':\s*\{{?(?:\s*//[^\n]*)*\s*p\.keys = (\[\[.*?\]\]);", big, re.S)
+        theirs = re.findall(r"\[([^\[\]]+)\]", m.group(1)) if m else []
+        if len(theirs) != len(C.speed_keys(motion, 1.0, 4.0)):
+            fail(f"lowpoly vehicles: car.speed_keys('{motion}') no longer matches Big.tsx ({m and m.group(1)})")
+    r, _ = C.revs("race", 1.6, 4.0)
+    if not (r[0] < r[-1] and (np.diff(r) < -0.5).any()):
+        fail("lowpoly vehicles: a race's revs should climb and drop at a gear change")
+    x = C.engine("stop", 1.6, 3.0)
+    if C.RECORDING.exists() and (x is None or not np.isfinite(x).all() or len(x) != int(3.0 * C.RATE)):
+        fail("lowpoly vehicles: the engine from the recording didn't come out")
     # a jump on the open highway leaps the broken bridge, with the chase into it; a shot of someone on foot stays
     st3 = S.Story(title="t", problem="p", youtube_title="t", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="calm",
                   end_mood="calm", music_prompt="m", kind="fiction", shots=[

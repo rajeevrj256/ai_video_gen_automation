@@ -520,7 +520,7 @@ export function pose({action, t, dur, seat, k, at, moving, steer = 0, air, press
       p.legL = L(-1.45, 0.05, 0.3); // legs out long, as in a low sports car (feet inside its body)
       // the right foot over the accelerator, or moved across onto the brake, and pushed down
       const over = pedal === 'brake' ? ease(Math.min(1, press * 3)) : 0;
-      p.legR = L(-1.45 + 0.09 * press, 0.05 - 0.37 * over, 0.3 - 0.22 * press);
+      p.legR = L(-1.45 + 0.09 * press, 0.05 + 0.37 * over, 0.3 - 0.22 * press); // the brake is beside the accelerator, toward the middle
       p.armL = L(-1.08 - 0.3 * w, 0.12, -0.62 + 0.15 * w);
       p.armR = L(-1.08 + 0.3 * w, 0.12, -0.62 - 0.15 * w);
       p.lean = 0.04;

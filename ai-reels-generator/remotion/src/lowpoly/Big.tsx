@@ -660,14 +660,22 @@ const CarWheel: React.FC<{p: V3; turn: number; steer: number; caliper: string}> 
   );
 };
 // the pedals at the driver's feet: the accelerator under his right foot, the brake inboard of it, hinged at the top
-const Pedal: React.FC<{x: number; w: number; h: number; press: number}> = ({x, w, h, press}) => (
-  <group position={[x, 0.62, 0.36]} rotation={[0.55 - 0.42 * press, 0, 0]}>
+const PEDAL_REST = 0.55; // how far the pedal leans back toward him at rest (radians from hanging straight)
+const Pedal: React.FC<{x: number; w: number; h: number; press: number; foot?: [number, number, number]}> = ({x, w, h, press, foot}) => {
+  // hinged under the dash; with his foot known, hung so its pad's face sits under the ball of his foot
+  const arm = 0.12 + h / 2;
+  const hinge: [number, number, number] = foot
+    ? [foot[0], foot[1] + arm * Math.cos(PEDAL_REST) - 0.02, foot[2] + arm * Math.sin(PEDAL_REST) + 0.03]
+    : [x, 0.62, 0.36];
+  return (
+  <group position={hinge} rotation={[PEDAL_REST - 0.42 * press, 0, 0]}>
     <Box p={[0, -0.06, 0]} s={[0.025, 0.12, 0.025]} c="#2a2b30" />
     <Box p={[0, -0.12 - h / 2, 0.01]} s={[w, h, 0.025]} c="#9aa0a8" />
     {[0, 1, 2].map((r) => <Box key={r} p={[0, -0.12 - h * 0.2 - r * h * 0.3, 0.025]} s={[w * 0.85, 0.008, 0.008]} c="#1d1e22" />)}
   </group>
-);
-export type Pedals = {gas: number; brake: number};
+  );
+};
+export type Pedals = {gas: number; brake: number; at?: {gas: [number, number, number]; brake: [number, number, number]}};
 const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pedals}> = ({c, turn = 0, steer = 0, pedals}) => {
   const paint = paintMat(c);
   const dark = mat('#141518');
@@ -751,8 +759,8 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number; pedals?: Pe
         <primitive object={mat('#2a2b2f', {rough: 0.35})} attach="material" />
       </mesh>
       <Box p={[0, 0.79, 0.45]} s={[CAR_W - 0.2, 0.15, 0.34]} c="#17181b" />
-      <Pedal x={-0.5} w={0.06} h={0.16} press={pedals?.gas ?? 0} />
-      <Pedal x={-0.36} w={0.1} h={0.09} press={pedals?.brake ?? 0} />
+      <Pedal x={-0.5} w={0.07} h={0.16} press={pedals?.gas ?? 0} foot={pedals?.at?.gas} />
+      <Pedal x={-0.36} w={0.1} h={0.09} press={pedals?.brake ?? 0} foot={pedals?.at?.brake} />
       <Box p={[-0.4, 0.87, 0.33]} s={[0.36, 0.1, 0.02]} c="#6fc6ff" glow={0.7} r={[-0.3, 0, 0]} />
       <Box p={[0.04, 0.88, 0.4]} s={[0.26, 0.15, 0.02]} c="#4f86c6" glow={0.6} r={[-0.3, 0, 0]} />
       {/* the steering wheel on its column, which runs forward and down into the dashboard (the user: "why steering

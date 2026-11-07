@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from scipy.signal import lfilter
 
-from . import sounds
+from . import car, sounds
 from ..sticky.mixdown import RATE, _place, _tracks, decode
 
 GENRE = "piano-minimal"  # the original's sound: soft felt piano
@@ -190,7 +190,22 @@ def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[di
         lx = lufs(x)
         target = lv - UNDER_VOICE.get(name, 10)
         loaded[name] = x * min(8.0, _db(target - lx)) if lx > -60 else x
+    car_gain: dict[str, float] = {}  # a car's engine and its tyres at one level each, set by the first
     for c in cues:
+        made = None
+        if c.get("car"):  # a car's engine following its speed in this shot (car.engine, the user's recording)
+            k = c["car"]
+            made = car.engine(k.get("motion", "drive"), float(k.get("at", 0)), float(c.get("length") or 1.0), float(k.get("slow", 1)), int(k.get("seed", 1)))
+        elif c.get("skid"):  # tyres: an emergency stop, a drift, a spin
+            made = car.squeal(float(c.get("length") or 1.0), c["skid"], int(c["at"] * 100))
+        if made is not None:
+            x = _filt_effect(np.stack([made, made], axis=1).astype(np.float32))
+            name = c["sound"]
+            if name not in car_gain:
+                lx = lufs(x)
+                car_gain[name] = min(8.0, _db(lv - UNDER_VOICE.get(name, 10) - lx)) if lx > -60 else 1.0
+            _place(beds if name in BEDS else fx, x * car_gain[name], float(c["at"]), float(c.get("volume", 1)))
+            continue
         if c.get("steps") is not None:  # footsteps: each landing where a foot does, recorded steps on this floor
             x = sounds.recorded_steps(c["steps"], c.get("surface", "concrete"), c.get("pace", "walk"), int(c.get("seed", 1)), bool(c.get("slow")))
             if x is None:

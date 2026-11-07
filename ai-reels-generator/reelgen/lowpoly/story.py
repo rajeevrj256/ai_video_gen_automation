@@ -987,14 +987,19 @@ def _broken_bridge(story: Story) -> list[str]:
     def under_way(s: LPShot) -> bool:
         return any(travel_of(story, b) == "ground" and (b.motion in GROUND_UNDERWAY or b.motion in ("drive", "stop")) for b in s.big)
 
+    # a story about a road (the user's first broken-highway film was staged on the roofs, and a re-make kept it there):
+    # its car jumps on the roofs go to the bridge too
+    told = " ".join([story.title, story.problem, *(x.line for x in story.shots)]).lower()
+    roads = bool(re.search(r"\b(highway|bridge|flyover|overpass|freeway|expressway|motorway|road)s?\b", told))
+    places = {"highway", "rooftop"} if roads else {"highway"}
     notes, shots = [], story.shots
     for i, s in enumerate(shots):
-        if s.set != "highway" or not jumps(s):
+        if s.set not in places or not jumps(s):
             continue
         run = [i]
         for step in (-1, 1):
             j = i + step
-            while 0 <= j < len(shots) and shots[j].set == "highway" and under_way(shots[j]):
+            while 0 <= j < len(shots) and shots[j].set == s.set and under_way(shots[j]):
                 run.append(j)
                 j += step
         for j in sorted(run):

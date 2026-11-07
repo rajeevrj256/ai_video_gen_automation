@@ -370,10 +370,10 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 cues.append({"sound": "typing", "at": round(t + 0.2, 3), "volume": 0.6, "length": round(max(0.5, dur - 0.4), 3)})
         if any(th.kind == "alarm" for th in s.things) and not any(x.sound == "alarm" for x in s.sounds):
             cues.append({"sound": "alarm", "at": round(t + 0.12, 3), "volume": 0.9, "length": round(min(2.6, dur - 0.2), 3)})
-        def cue(sound: str, at: float, volume: float = 0.9, length: float | None = None) -> None:
+        def cue(sound: str, at: float, volume: float = 0.9, length: float | None = None, **extra) -> None:
             if any(c["sound"] == sound and abs(c["at"] - at) < 0.3 for c in cues):
                 return
-            c = {"sound": sound, "at": round(max(0.0, at), 3), "volume": volume}
+            c = {"sound": sound, "at": round(max(0.0, at), 3), "volume": volume, **extra}
             if length:
                 c["length"] = round(length, 3)
             cues.append(c)
@@ -402,13 +402,19 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 continue
             m = designs(story).get(_key(b.made)) if b.kind == "made" else None
             bed = "engine" if way in ("ground", "water") else "propeller" if m and any(p.spin for p in m.parts) else "jet"
-            cue(bed, t + 0.02, 0.9, max(0.6, dur - 0.05))
+            if b.kind == "car" or (bed == "engine" and way == "ground"):
+                # a car: its own engine, following its speed through the shot (car.engine, from the user's recording)
+                cue("engine", t + 0.02, 0.9, max(0.6, dur - 0.05),
+                    car={"motion": b.motion, "at": round(at if at is not None else dur * 0.5, 3), "slow": SLOW if s.slowmo else 1.0,
+                         "seed": int(shot["seed"]) + k})
+            else:
+                cue(bed, t + 0.02, 0.9, max(0.6, dur - 0.05))
             slow = 1 / SLOW if s.slowmo else 1.0
             if at is not None:
                 if b.motion in ("drift", "spin"):
-                    cue("skid", t + at, 0.95, 1.5 * slow if b.motion == "drift" else 1.1 * slow)
+                    cue("skid", t + at, 0.95, 1.6 * slow if b.motion == "drift" else 1.2 * slow, skid=b.motion)
                 elif b.motion == "stop":
-                    cue("skid", t + at - 0.05, 0.95, 1.0 * slow)
+                    cue("skid", t + at - 0.05, 0.95, 1.05 * slow, skid="brake")
                 elif b.motion == "jump":
                     cue("swoosh", t + at, 0.8)
                     cue("impact", t + at + JUMP_TIME * slow, 1.0)

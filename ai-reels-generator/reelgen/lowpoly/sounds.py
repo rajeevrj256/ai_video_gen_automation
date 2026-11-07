@@ -11,6 +11,12 @@ import numpy as np
 from .. import sfx
 from ..sfx import RATE, _lowpass, _write
 from ..sticky import sounds as sticky
+from . import car
+
+
+def _real(x, made):
+    """The recording when it is there, else the synthesised sound."""
+    return x if x is not None else made()
 
 
 def _t(seconds: float) -> np.ndarray:
@@ -195,7 +201,7 @@ def _propeller() -> np.ndarray:
 
 MAKERS = {
     **sticky.MAKERS,
-    "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45), "rev": (_rev, 0.6),
+    "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45), "rev": (lambda: _real(car.rev(), _rev), 0.6),
     "impact": (sfx._impact, 0.75), "crash": (_crash, 0.7), "glass": (_glass, 0.5), "crack": (_crack, 0.6), "creak": (_creak, 0.45),
     "skid": (_skid, 0.45), "siren": (_siren, 0.3), "wind": (_wind, 0.35), "fire": (_fire, 0.35), "sparks": (_sparks, 0.35),
     "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "rumble": (lambda: sfx._rumble(1.6), 0.55),
@@ -203,7 +209,7 @@ MAKERS = {
 
 
 # a sound made again since a video was mixed gets a new file name, so a re-mix of an older video picks it up
-VERSION = {"wind": 2, "siren": 2, "fire": 2}
+VERSION = {"wind": 2, "siren": 2, "fire": 2, "rev": 2}
 
 
 def write_all(out_dir: Path, names: set[str]) -> dict[str, Path]:

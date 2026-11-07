@@ -92,6 +92,7 @@ export type Placed = {
   local?: {root: V3; ry: number; pos: THREE.Vector3; quat: THREE.Quaternion};
   ride?: number; // the index of the vehicle he is in or on (shot.big)
   inside?: boolean; // seated inside a closed car (under its roof)
+  pedalAt?: {gas: V3; brake: V3}; // a driver: where the ball of his right foot rests on each pedal (the car's own frame)
 };
 
 // Where each person stands in a shot: an offset from their spot (sideways, so two people never share a spot and
@@ -215,6 +216,18 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
     root = [root[0] + right.x * ps.shift[0] + f.x * ps.shift[1], root[1], root[2] + right.z * ps.shift[0] + f.z * ps.shift[1]];
   }
   return kin(a, action, k, shot, design, ps, root, ry);
+};
+
+// Where the ball of his right foot is (the same chain the Man draws: pelvis -> thigh -> knee -> shin -> shoe), in the
+// frame his root is in.
+const footOf = (design: Design, ps: Pose, root: V3, ry: number): V3 => {
+  const scale = design.height ?? 1;
+  const one = new THREE.Vector3(1, 1, 1);
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(ps.rx, 0, ps.rz)));
+  const leg = new THREE.Matrix4().compose(new THREE.Vector3(D.legX, 0, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(ps.legR.x, 0, ps.legR.z)), one);
+  const knee = new THREE.Matrix4().compose(new THREE.Vector3(0, -D.thigh, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(ps.legR.bend, 0, 0)), one);
+  const ball = new THREE.Vector3(0, -D.shin - D.shoe[1] + 0.02, 0.05 + D.shoe[2] * 0.32).applyMatrix4(knee).applyMatrix4(leg);
+  return V(root).add(new THREE.Vector3(0, ps.y * scale, 0)).add(ball.multiplyScalar(scale).applyQuaternion(q)).toArray() as V3;
 };
 
 // Forward kinematics: where his head, face, hands and body are in the world (or in a vehicle's own frame), with the
@@ -393,8 +406,12 @@ const placeOn = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: number, 
   }
   // (the pose's seat is in his own units: his hips land just above the seat's top whatever his size)
   const pd = action === 'drive' ? pressAt(shot, tReal, ride.k) : {gas: 0, brake: 0};
-  const ps = pose({action, t, dur, seat: seat === null ? null : seat / sc, k: kk, at: ev, steer: ride.st.steer ?? 0, press: Math.max(pd.gas, pd.brake), pedal: pd.brake > 0 ? 'brake' : 'gas'});
-  return {...toWorld(kin(a, action, k, shot, design, ps, root, ry), ride.m, ride.k), inside: shrink < 1};
+  const pin = {action, t, dur, seat: seat === null ? null : seat / sc, k: kk, at: ev, steer: ride.st.steer ?? 0};
+  const ps = pose({...pin, press: Math.max(pd.gas, pd.brake), pedal: pd.brake > 0 ? 'brake' : 'gas'});
+  // a driver's pedals go where his foot rests (the user: "they press but where is its leg? why leg not touching the
+  // pedal"): the accelerator under the foot at rest, the brake where the foot moves across to
+  const pedalAt = action === 'drive' ? {gas: footOf(design, pose({...pin, press: 0}), root, ry), brake: footOf(design, pose({...pin, press: 1 / 3, pedal: 'brake'}), root, ry)} : undefined;
+  return {...toWorld(kin(a, action, k, shot, design, ps, root, ry), ride.m, ride.k), inside: shrink < 1, pedalAt};
 };
 
 // ---------------------------------------------------------------- the cameras
@@ -816,12 +833,16 @@ const insertPlan = (kind: 'pedal' | 'wheel', r: Ride, who: Placed | undefined, a
   const pedal = kind === 'pedal';
   // the pedal: low by the door sill, looking forward and in across his shoe at the pedals (Big.tsx `Pedal`: x -0.5 and
   // -0.36, hinged at y 0.62, z 0.36), as the films do; in front of his feet the camera was inside the bonnet
-  const pos = pedal ? at(lr[0] - 0.36, 0.6, 0.0) : at(lr[0] + 0.46, 0.98, lr[2] + 0.66);
-  const look = pedal ? at(-0.43, 0.44, 0.3) : at(lr[0], 0.8, lr[2] + 0.36);
+  const pa = who?.pedalAt;
+  const foot: V3 = pa ? [(pa.gas[0] + pa.brake[0]) / 2, (pa.gas[1] + pa.brake[1]) / 2, (pa.gas[2] + pa.brake[2]) / 2] : [-0.43, 0.44, 0.3];
+  // low in the footwell in front of the pedals, looking back past them at his shoe and shin coming down onto them
+  // (beside the foot the other leg or the centre tunnel filled the picture); never past the footwell's front wall
+  const pos = pedal ? at(foot[0] + 0.07, foot[1] + 0.05, Math.min(0.46, foot[2] + 0.27)) : at(lr[0] + 0.46, 0.98, lr[2] + 0.66);
+  const look = pedal ? at(foot[0] - 0.03, foot[1] + 0.12, foot[2] - 0.28) : at(lr[0], 0.8, lr[2] + 0.36);
   // the road through the car: a fine shake with its speed
   const jig = 0.004 * Math.min(1, (r.st.speed ?? 0) / 25);
   pos.add(new THREE.Vector3(Math.sin(t * 57 + seed), Math.sin(t * 49 + seed * 2), Math.sin(t * 61 + seed * 3)).multiplyScalar(jig));
-  return {pos, look, up: new THREE.Vector3(0, 1, 0).applyQuaternion(q), fov: pedal ? (tall ? 66 : 54) : tall ? 60 : 50, focus: pos.distanceTo(look), aperture: 1.0, near: 0.02};
+  return {pos, look, up: new THREE.Vector3(0, 1, 0).applyQuaternion(q), fov: pedal ? (tall ? 74 : 62) : tall ? 60 : 50, focus: pos.distanceTo(look), aperture: 1.0, near: 0.02};
 };
 
 // How far the driver's foot is down on each pedal of car k: in the shot's cut-in to the pedal (the brake for a hard
@@ -1142,6 +1163,8 @@ const FULL_TURN = new Set<Action>(['help-up', 'carry']);
 // walkers, each on the first lane (sideways from his line, 0, ±0.85, ±1.7) where he is never within GAP of anyone at
 // any moment of the shot; a walk to the spot of someone standing or sitting there stops in front of them.
 const SAMPLES = 16;
+const VEHICLE_GAP = 0.7; // a person's middle never closer than this to a moving or ridden vehicle's side
+const TOUCHES_VEHICLE = new Set(['push-stop', 'lift', 'catch', 'throw', 'crush', 'punch']);
 type Layout = {lanes: Lane[]; paths: ([number, number][] | undefined)[]};
 const LAYOUTS = new WeakMap<LPShot, Layout>();
 
@@ -1161,13 +1184,35 @@ export const layoutFor = (shot: LPShot, set: SetDef, cast: Record<string, Design
     const carry = (x: number, y: number) => actors[x].action === 'carry' && actors[y].action === 'carried';
     return carry(i, j) || carry(j, i);
   };
+  // the vehicles that move or have someone in them, where they are at each moment: nobody stands or walks in their
+  // way (the user, again and again: a car driven through a man standing on the roof, on the bridge)
+  const rides = times.map((t) => rideStates(shot, set, t));
+  const vehicleGap = (k: number, path: [number, number][]) => {
+    if (TOUCHES_VEHICLE.has(actors[k].action)) return Infinity; // he stops it, lifts it, is meant to meet it
+    let worst = Infinity;
+    rides.forEach((rs, s) =>
+      rs.forEach((r) => {
+        if (!r) return;
+        const [w, , l] = sizeOf(r.b);
+        const dx = path[s][0] - r.st.pos.x;
+        const dz = path[s][1] - r.st.pos.z;
+        const c = Math.cos(r.st.ry);
+        const sn = Math.sin(r.st.ry);
+        const lx = dx * c - dz * sn; // across the vehicle
+        const lz = dx * sn + dz * c; // along it
+        worst = Math.min(worst, Math.hypot(Math.max(0, Math.abs(lx) - w / 2), Math.max(0, Math.abs(lz) - l / 2)));
+      }),
+    );
+    return worst;
+  };
   const clearance = (k: number, path: [number, number][]) => {
     let worst = Infinity;
     paths.forEach((other, j) => {
       if (!other || j === k || pair(j, k)) return;
       path.forEach((p, s) => (worst = Math.min(worst, Math.hypot(p[0] - other[s][0], p[1] - other[s][1]))));
     });
-    return worst;
+    // a vehicle's side within VEHICLE_GAP counts like a person within GAP
+    return Math.min(worst, vehicleGap(k, path) - VEHICLE_GAP + GAP);
   };
   // the one carried goes with his carrier, people in or on a vehicle with it: neither walks a lane of his own
   const order = actors.map((_, k) => k).filter((k) => actors[k].action !== 'carried' && !onVehicle(shot, k));
@@ -1210,7 +1255,7 @@ export const layoutFor = (shot: LPShot, set: SetDef, cast: Record<string, Design
     let bestGap = -1;
     // sideways lanes; walkers side by side are also a little ahead or behind each other, so a camera from the side
     // sees a group, not one man hiding the others
-    for (const [s, b] of [[0, 0], [0.9, -0.85], [-0.9, 0.85], [1.8, -1.7], [-1.8, 1.7]]) {
+    for (const [s, b] of [[0, 0], [0.9, -0.85], [-0.9, 0.85], [1.8, -1.7], [-1.8, 1.7], [2.7, 0], [-2.7, 0], [3.6, 0], [-3.6, 0], [4.6, 0], [-4.6, 0]]) {
       const lane: Lane = {off: [axis[0] * s + along[0] * b, axis[1] * s + along[1] * b], to};
       const path = track(k, lane);
       const gap = clearance(k, path);
@@ -1535,7 +1580,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
       ))}
       {bigs.map(({b, st, i}) => (
-        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} pedals={pressAt(shot, t, i)} />
+        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} pedals={{...pressAt(shot, t, i), at: placed.find((p) => p.ride === i && p.pedalAt)?.pedalAt}} />
       ))}
       {fx.map((f, i) => (
         <FxView key={`fx${i}`} kind={f.kind} c={f.ctx} />

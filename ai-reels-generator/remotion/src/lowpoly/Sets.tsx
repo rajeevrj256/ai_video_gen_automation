@@ -679,7 +679,7 @@ const rooftop: SetDef = {
   outdoor: true,
   walk: 'x',
   reach: 64,
-  drive: 0.2, // a vehicle under way runs along the middle of the roofs, clear of the parapet
+  drive: 2.6, // a vehicle under way runs along the roofs' open side, clear of the parapet and of where people stand
   jumpAt: 6.0, // the roof's edge before the gap
   gap: [7, 10],
   surface: [1.2, 0.9, -2.3],
@@ -689,20 +689,21 @@ const rooftop: SetDef = {
     return (
       <group>
         <Sky look={look} />
-        <B p={[0, -0.05, -1]} s={[14, 0.1, 6]} c={shadeOf('#8d8a84', look.shade)} noShadow />
+        <B p={[0, -0.05, 0.6]} s={[14, 0.1, 9.2]} c={shadeOf('#8d8a84', look.shade)} noShadow />
         {/* the next roofs along, across a gap to the street far below (a car can jump it) */}
         {/* the roof goes on to the left; to the right, past a gap over the street far below, the next roof (a car
             can jump it at jumpAt) */}
         {[[-29.5, 45], [31, 42]].map(([x, len]) => (
           <group key={x}>
-            <B p={[x, -0.05, -1]} s={[len, 0.1, 6]} c={shadeOf('#86837d', look.shade)} noShadow />
-            <B p={[x, -6, -1]} s={[len, 11.9, 5.9]} c={shadeOf('#5f6168', look.shade)} />
+            <B p={[x, -0.05, 0.6]} s={[len, 0.1, 9.2]} c={shadeOf('#86837d', look.shade)} noShadow />
+            <B p={[x, -6, 0.6]} s={[len, 11.9, 9.1]} c={shadeOf('#5f6168', look.shade)} />
             <B p={[x, 0.45, -2.4]} s={[len, 0.9, 0.3]} c={shadeOf('#a29d94', look.shade)} />
           </group>
         ))}
-        <B p={[0, -6, -1]} s={[14, 11.9, 5.9]} c={shadeOf('#666870', look.shade)} />
+        <B p={[0, -6, 0.6]} s={[14, 11.9, 9.1]} c={shadeOf('#666870', look.shade)} />
         <B p={[0, 0.45, -2.4]} s={[14, 0.9, 0.3]} c={shadeOf('#a29d94', look.shade)} />
-        <B p={[3.5, 0.6, 0.2]} s={[1.2, 1.2, 1.2]} c={shadeOf('#9a968e', look.shade)} />
+        {/* a vent housing, by the parapet and out of the cars' way (it stood in their lane) */}
+        <B p={[-4.6, 0.6, -1.7]} s={[1.2, 1.2, 1.0]} c={shadeOf('#9a968e', look.shade)} />
         {Array.from({length: 18}, (_, i) => {
           const x = -60 + i * 7 + rand() * 3;
           const h = 10 + rand() * 30;
@@ -1105,14 +1106,15 @@ const bridge: SetDef = {
         {Array.from({length: 22}, (_, i) => {
           const s0 = 0.12 + rand() * 0.45;
           return (
-            <B key={i} p={[g0 - 0.5 - rand() * 7, s0 * 0.4, -4.6 + rand() * 9.2]} s={[s0, s0 * 0.8, s0 * (0.7 + rand() * 0.6)]}
+            <B key={i} p={[g0 - 0.5 - rand() * 7, s0 * 0.4, (i % 2 ? -1 : 1) * (3.3 + rand() * 1.3)]} s={[s0, s0 * 0.8, s0 * (0.7 + rand() * 0.6)]}
               r={[rand() * 3, rand() * 3, rand() * 3]} c={shadeOf(i % 3 ? '#9b968e' : '#6f6b65', k)} />
           );
         })}
-        <Cone p={[g0 - 9, 0, -3.8]} />
-        <Cone p={[g0 - 7.5, 0.15, -1.6]} down={1.5} ry={0.7} />
-        <Cone p={[g0 - 9.5, 0, 3.6]} />
-        <Cone p={[g0 - 6.2, 0.15, 2.4]} down={1.5} ry={-1.1} />
+        {/* (rubble and cones by the barriers: the lanes the cars drive stay clear) */}
+        <Cone p={[g0 - 9, 0, -4.4]} />
+        <Cone p={[g0 - 7.5, 0.15, -3.9]} down={1.5} ry={0.7} />
+        <Cone p={[g0 - 9.5, 0, 4.2]} />
+        <Cone p={[g0 - 6.2, 0.15, 3.7]} down={1.5} ry={-1.1} />
         {/* the valley: the river under the gap, its banks, trees, the fallen span lying broken in the water */}
         <B p={[0, -DROP - 0.3, 0]} s={[420, 0.4, 320]} c={shadeOf('#5f6a48', k)} noShadow />
         <B p={[12, -DROP + 0.02, 0]} s={[44, 0.06, 320]} c={shadeOf('#35596c', k)} noShadow />
