@@ -1116,6 +1116,22 @@ const bridge: SetDef = {
         {/* the valley: the river under the gap, its banks, trees, the fallen span lying broken in the water */}
         <B p={[0, -DROP - 0.3, 0]} s={[420, 0.4, 320]} c={shadeOf('#5f6a48', k)} noShadow />
         <B p={[12, -DROP + 0.02, 0]} s={[44, 0.06, 320]} c={shadeOf('#35596c', k)} noShadow />
+        {/* roads in the valley: one passing under the bridge beside the river, one along the far bank */}
+        {[[-22, 'z'], [0, 'x']].map(([at, way]) => {
+          const alongZ = way === 'z';
+          const c0 = alongZ ? (at as number) : 46;
+          return (
+            <group key={String(way)}>
+              <B p={alongZ ? [c0, -DROP + 0.03, 0] : [0, -DROP + 0.03, c0]} s={alongZ ? [9, 0.06, 320] : [420, 0.06, 9]} c={shadeOf(ASPHALT, k)} noShadow />
+              {Array.from({length: 40}, (_, i) => -156 + i * 8).map((d) => (
+                <B key={d} p={alongZ ? [c0, -DROP + 0.07, d] : [d, -DROP + 0.07, c0]} s={alongZ ? [0.14, 0.02, 3] : [3, 0.02, 0.14]} c={shadeOf('#e9e4c8', k)} noShadow />
+              ))}
+              {[-4.2, 4.2].map((e) => (
+                <B key={e} p={alongZ ? [c0 + e, -DROP + 0.07, 0] : [0, -DROP + 0.07, c0 + e]} s={alongZ ? [0.12, 0.02, 320] : [420, 0.02, 0.12]} c={shadeOf('#e9e4da', k)} noShadow />
+              ))}
+            </group>
+          );
+        })}
         <group position={[8.6, -DROP + 0.6, 0.6]} rotation={[0.08, 0.22, 0.42]}>
           <B p={[0, 0, 0]} s={[7.5, 1.0, DECK_W]} c={shadeOf('#7d7973', k)} />
           <B p={[0, 0.5, 0]} s={[7.5, 0.04, DECK_W - 0.9]} c={shadeOf(ASPHALT, k)} noShadow />
@@ -1129,8 +1145,8 @@ const bridge: SetDef = {
           return <B key={`r${i}`} p={[5 + rand() * 15, -DROP + s0 * 0.3, -9 + rand() * 18]} s={[s0, s0 * 0.7, s0]} r={[rand(), rand() * 3, rand()]} c={shadeOf('#78746e', k)} />;
         })}
         {Array.from({length: 26}, (_, i) => {
-          const x = i % 2 ? -12 - rand() * 70 : 38 + rand() * 70;
-          return <Tree key={`t${i}`} p={[x, -DROP, -60 + rand() * 120]} seed={seed + 90 + i} s={2.2 + rand() * 1.4} tone={rand() < 0.5 ? '#3f6b38' : '#2f5532'} />;
+          const x = i % 2 ? (rand() < 0.5 ? -12 - rand() * 4 : -32 - rand() * 50) : 38 + rand() * 70;
+          return <Tree key={`t${i}`} p={[x, -DROP, -60 + rand() * 100]} seed={seed + 90 + i} s={2.2 + rand() * 1.4} tone={rand() < 0.5 ? '#3f6b38' : '#2f5532'} />;
         })}
         {Array.from({length: 16}, (_, i) => {
           const h = 34 + ((i * 37) % 5) * 9;
