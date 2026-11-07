@@ -136,10 +136,22 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         S.save(story, story_path)
         S.remember(cfg, story)
         save("written")
+    restaging = state.get("restage")
+    if restaging and not restaging.get("done"):  # 🎬 New angles: the same words, new pictures (prepare_restage)
+        if restaging.get("mode") == "storyboard":
+            progress("Claude is writing the new storyboard: new camera angles and staging for the same words")
+            story = S.restage(cfg, story, progress)
+        else:
+            progress("A new camera angle for every shot (the same staging, words, voices and music)")
+            story = S.new_angles(story, int(restaging.get("seed", 1)))
+        S.save(story, story_path)
+        restaging["done"] = True
+        save("restaged")
     notes = S.repair(story)
     pause_point()
     audio = {int(k): v for k, v in state.get("audio", {}).items()}
-    seed = int(uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
+    # a re-make keeps the first version's seed: the same composed music and walk rhythm
+    seed = int(state.get("seed") or uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
     look = dict(vertical=vertical, watermark=req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on")
     if not audio or not all(Path(v["path"]).exists() for v in audio.values()):
         pace = int(req.pace)
@@ -170,7 +182,12 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         progress("Making the music and the sound")
         brief = (f"cinematic film score for an animated sci-fi short film: {story.problem}; {story.music_prompt}" if story.kind == "fiction"
                  else f"soft score for a narrated low-poly animated short about {story.problem}; {story.music_prompt}")
-        mixed = mix(cfg, props, clips, cues, sections, work, soundtrack, seed, progress, brief, fiction=story.kind == "fiction")
+        mix_cfg = cfg
+        if restaging and not str(restaging.get("music", "")).startswith("AI music"):
+            import dataclasses  # a re-make keeps its first version's music: composed music stays composed
+
+            mix_cfg = dataclasses.replace(cfg, ai_music=False)
+        mixed = mix(mix_cfg, props, clips, cues, sections, work, soundtrack, seed, progress, brief, fiction=story.kind == "fiction")
         state["mix"] = mixed
         save("mixed")
     pause_point()
@@ -194,8 +211,11 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         issues.append(f"The video runs {info.get('duration')} s, the timeline {props['duration']:.1f} s.")
     if short and props["duration"] > 62:
         issues.append(f"The Short runs {props['duration']:.0f} s (over a minute).")
+    # every line's take, so a later re-make (🎬 New angles) reuses the voices exactly
+    (work / "audio.json").write_text(json.dumps({str(k): {**v, "path": str(Path(v["path"]).relative_to(work)) if Path(v["path"]).is_relative_to(work)
+                                                         else v["path"]} for k, v in audio.items()}, ensure_ascii=False), encoding="utf-8")
     ck.unlink(missing_ok=True)
-    final = cfg.output_dir / f"{stamp}-{slugify(story.title.strip('. '))}-lowpoly{'-short' if short else ''}"
+    final = cfg.output_dir / f"{stamp}-{slugify(story.title.strip('. '))}-lowpoly{'-short' if short else ''}{'-angles' if restaging else ''}"
     move(work, final)
     narration = " ".join(s.line.strip() for s in story.shots if s.line.strip())
     report = {
@@ -213,12 +233,59 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "youtube_tags": story.tags, "youtube_hashtags": story.hashtags[:3], "caption": story.description.strip(),
         "hashtags": story.hashtags,
     }
+    if restaging:
+        report.update({"restaged_from": restaging.get("from"), "restaged_from_title": restaging.get("title"),
+                       "restage_mode": restaging.get("mode")})
     rel = [{**c, "path": str(Path(c["path"]).relative_to(work)) if Path(c["path"]).is_relative_to(work) else c["path"]} for c in clips]
     (final / "props.json").write_text(json.dumps({**props, "clips": rel, "cues": cues, "sections": sections}, ensure_ascii=False), encoding="utf-8")
     report["usage"] = summarize_usage(meter_records())
     (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     progress("Done" if not issues else "Done, but it did not pass every check: review before posting")
     return report
+
+
+RESTAGE_MODES = ("storyboard", "angles")
+KEEP_FOR_RESTAGE = ("audio", "audio-fast", "music")  # the first version's voices and music tracks
+
+
+def prepare_restage(cfg: Config, folder: Path, mode: str) -> str:
+    """🎬 New angles: a new unfinished low-poly video made from a finished one, to be carried on by `run_lowpoly` like a
+    resumed one (so Pause, Stop and Resume work). It gets the first version's story, its voices (audio.json; a video
+    made before that is recorded again with the same voices and speed), its music tracks and its seed, and in its
+    checkpoint the re-staging to do: 'storyboard' (Claude stages every shot again) or 'angles' (a new camera per shot,
+    no Claude). The first version is never touched; the new one is its own video."""
+    import shutil
+
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    props = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    if report.get("source") != "lowpoly" or not (folder / "story.json").exists():
+        raise RuntimeError("Only low-poly videos with their saved story can be shot again")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    work = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-lowpoly-working"
+    work.mkdir(parents=True)
+    shutil.copy2(folder / "story.json", work / "story.json")
+    for name in KEEP_FOR_RESTAGE:
+        if (folder / name).is_dir():
+            shutil.copytree(folder / name, work / name)
+    req = dict(report.get("lowpoly_request") or {})
+    try:
+        req["pace"] = int(str(report.get("voice_rate", req.get("pace", 0))).rstrip("%"))
+    except ValueError:
+        pass
+    req = asdict(LowPolyRequest(**{k: v for k, v in req.items() if k in LowPolyRequest.__dataclass_fields__}))
+    state = {"stage": "written", "stamp": stamp, "request": req, "seed": int(props.get("seed") or 0) or None,
+             "pace": req.get("pace", 0),
+             "restage": {"mode": mode if mode in RESTAGE_MODES else "storyboard", "from": folder.name,
+                         "title": report.get("title", ""), "seed": uuid.uuid4().int % 100000, "music": report.get("music", "")}}
+    saved = folder / "audio.json"
+    if saved.exists():
+        audio = json.loads(saved.read_text(encoding="utf-8"))
+        audio = {k: {**v, "path": str(work / v["path"]) if not Path(v["path"]).is_absolute() else v["path"]} for k, v in audio.items()}
+        if all(Path(v["path"]).exists() for v in audio.values()):
+            state["audio"] = audio
+            state["stage"] = "voiced"
+    (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    return work.name
 
 
 def remix_sound(cfg: Config, folder: Path, progress) -> dict:

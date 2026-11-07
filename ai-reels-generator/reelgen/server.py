@@ -562,6 +562,12 @@ class LowPolyBody(BaseModel):
     ai: AIPick | None = None
 
 
+class LowPolyRestageBody(BaseModel):
+    """🎬 New angles for a finished low-poly video: 'storyboard' (Claude stages every shot again) or 'angles'."""
+    mode: str = "storyboard"
+    ai: AIPick | None = None
+
+
 class LowPolyPerson(BaseModel):
     """A person for the low-poly films' recurring cast, designed in the tab."""
     name: str
@@ -1247,6 +1253,26 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "This video's sound is already being mixed")
         return jobs.submit(f"New sound mix: {report.get('title', video_id)}", 1, "rerender", "story", "lowpoly",
                            lowpoly_remix={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/lowpoly-restage")
+    def lowpoly_restage_route(video_id: str, body: LowPolyRestageBody):
+        """🎬 New angles: the same low-poly video (words, voices, music, timing) shot again as a new video: a new
+        storyboard by Claude, or new camera angles only (no Claude). It runs like a resumed low-poly video."""
+        from .lowpoly.run import RESTAGE_MODES, prepare_restage
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "lowpoly" or not (folder / "story.json").exists():
+            raise HTTPException(400, "Only low-poly videos with their saved story can be shot again")
+        mode = body.mode if body.mode in RESTAGE_MODES else "storyboard"
+        try:
+            work = prepare_restage(cfg, folder, mode)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(400, f"Couldn't start it: {exc}")
+        req = json.loads((cfg.output_dir / work / "lowpoly-checkpoint.json").read_text(encoding="utf-8"))["request"]
+        label = f"{'New storyboard' if mode == 'storyboard' else 'New angles'}: {report.get('title', video_id)}"
+        return jobs.submit(label, 1, "rerender", "story", "lowpoly", lowpoly_input=req, lowpoly_resume=[work],
+                           captions=req.get("words", "on") == "on", ai=body.ai)
 
     @app.post("/api/videos/{video_id}/sounds/remove")
     def remove_sound_route(video_id: str, body: SoundRemoveBody):

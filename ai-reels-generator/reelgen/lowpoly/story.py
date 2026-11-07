@@ -771,6 +771,124 @@ def repair(story: Story) -> list[str]:
     return notes
 
 
+# ---------------------------------------------------------------- the same film, shot again (the video page's 🎬 New angles)
+# The user: "add option to re-generate same with same data but different angles. storyboard". The words, speakers, order,
+# stamps and pauses stay as they were (so the voices, the music and the timing are reused); only the pictures change.
+
+class ShotStaging(BaseModel):
+    shot: int = Field(description="the shot's number as given (1 = first)")
+    set: SetName
+    light: LightName
+    camera: CamName
+    subject: str = Field("", description="who the camera is on: 'hero' or a name of someone in the shot")
+    actors: list[LPActor]
+    things: list[LPThing] = Field(default_factory=list)
+    sounds: list[LPSound] = Field(default_factory=list)
+    big: list[LPBig] = Field(default_factory=list)
+    fx: list[LPFx] = Field(default_factory=list)
+    slowmo: bool = False
+
+
+class Restaging(BaseModel):
+    shots: list[ShotStaging] = Field(description="every shot asked for, in order, each with its new staging")
+
+
+RESTAGE = """
+
+YOU ARE DIRECTING A FINISHED FILM AGAIN. Its words, speakers, order, time stamps and pauses are final: they are
+recorded and timed. You choose new pictures for them, shot by shot (the shot numbers as given):
+- A new camera for every shot: a different one from the camera it had (shown), unless only that one can show the
+  moment; close and far mixed like a film, never the same camera three shots running.
+- Better staging where you can: the action that shows what the line says, who looks at whom (`look_at`), who the
+  camera is on (`subject`), everyone on their own spot, the speaker in the shot when someone speaks.
+- Keep each scene's place and light unless a line plainly happens somewhere else; keep the same people in each shot
+  (leave out someone with nothing to do there, or bring in someone of the cast who is plainly present).
+- Keep the big things and effects the story needs (the bus, the crash, the catch), timed and placed so they read better.
+"""
+RESTAGE_BATCH = 40  # shots per call: a long film's whole storyboard would not fit one answer
+
+
+def _staged(s: LPShot) -> str:
+    who = "; ".join(f"{a.who} {a.action}@{a.spot}" + (f"->{a.to}" if a.to else "") + (f" looks at {a.look_at}" if a.look_at else "")
+                    for a in s.actors)
+    extra = "".join([f"; big: {', '.join(f'{b.kind} {b.motion}' for b in s.big)}" if s.big else "",
+                     f"; fx: {', '.join(f.kind for f in s.fx)}" if s.fx else "", "; slow motion" if s.slowmo else ""])
+    return f"[{s.set}, {s.light}, camera {s.camera}, on {s.subject or 'hero'}] {who}{extra}"
+
+
+def restage(cfg: Config, story: Story, progress=log.info) -> Story:
+    """The same film with a new storyboard: Claude stages every shot again (cameras, actions, spots, who looks at
+    whom), in batches that each know how the shots before them were staged. A shot Claude leaves out keeps its old
+    staging."""
+    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
+    fiction = story.kind == "fiction"
+    system = (FICTION if fiction else RULES).format(spots=spots, length="the same shots as given, one staging each") + RESTAGE
+    cast = "\n".join(f"- {c.name}: {c.who}" for c in story.cast) or "- nobody else"
+    new = [s.model_copy(deep=True) for s in story.shots]
+    for start in range(0, len(new), RESTAGE_BATCH):
+        part = range(start, min(len(new), start + RESTAGE_BATCH))
+        if len(new) > RESTAGE_BATCH:
+            progress(f"Claude is writing the new storyboard: shots {part[0] + 1}-{part[-1] + 1} of {len(new)}")
+        listing = "\n".join(f"{i + 1}. " + (f"STAMP '{s.stamp}' " if s.stamp else "") + (f"{s.speaker}: \"{s.line}\"" if s.line.strip() else "(silent)")
+                            + (f" (+{s.pause:g} s pause)" if s.pause else "") + f"\n   was: {_staged(story.shots[i])}"
+                            for i, s in ((i, story.shots[i]) for i in part))
+        before = "\n".join(f"{i + 1}. {_staged(new[i])}" for i in range(max(0, start - 4), start))
+        prompt = (f"THE FILM: '{story.title}': {story.problem}\nThe people besides him (names exactly):\n{cast}\n\n"
+                  + (f"How the shots just before were staged in this new version:\n{before}\n\n" if before else "")
+                  + f"Stage shots {part[0] + 1} to {part[-1] + 1} again:\n{listing}")
+        got = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Restaging, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+        for st in got.shots:
+            i = st.shot - 1
+            if i in part:
+                new[i] = LPShot.model_validate({**new[i].model_dump(), **st.model_dump(exclude={"shot"})})
+    out = story.model_copy(update={"shots": new})
+    repair(out)
+    return out
+
+
+# cameras that can show a moment, by what the subject does (`new_angles`); aerial only outdoors
+OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "alley"}  # = outdoor: true in Sets.tsx
+_LYING_ACTS = {"lie", "lie-side", "lie-phone", "sit-up"}
+_MOVING_ACTS = {"walk", "run", "jog", "dash", "flee", "carry"}
+_POWER_ACTS = {"catch", "lift", "throw", "push-stop", "super-jump", "land", "punch", "fall", "crush"}
+_HELD_ACTS = {"phone", "drink", "read", "eat", "type", "look-hands"}
+ANGLES = {
+    "lying": ["top", "face-top", "wide", "side", "medium"],
+    "moving": ["side", "front", "back", "wide", "low", "medium", "aerial"],
+    "power": ["side", "wide", "low", "orbit", "medium", "aerial"],
+    "stop": ["side", "wide"],
+    "held": ["detail", "face", "medium", "back", "side", "wide"],
+    "other": ["face", "medium", "back", "wide", "side", "front", "low", "orbit", "crash-zoom"],
+}
+
+
+def new_angles(story: Story, seed: int) -> Story:
+    """The same film and staging with a new camera on every shot (no Claude): one that can show what the subject does,
+    never the one it had (unless nothing else fits), never the shot before's, mostly not the last few, close and far
+    mixed. A different `seed` gives a different set of angles."""
+    import random
+
+    rnd = random.Random(seed)
+    new = [s.model_copy(deep=True) for s in story.shots]
+    recent: list[str] = []
+    for s in new:
+        here = {who_key(a.who): a for a in s.actors}
+        lead = here.get(who_key(s.subject or "hero")) or (s.actors[0] if s.actors else None)
+        act = lead.action if lead else "stand"
+        kind = ("stop" if act == "push-stop" else "lying" if act in _LYING_ACTS else "moving" if act in _MOVING_ACTS
+                else "power" if act in _POWER_ACTS else "held" if act in _HELD_ACTS or (lead and lead.hold != "none") else "other")
+        pool = [c for c in ANGLES[kind] if c != "aerial" or s.set in OUTDOOR_SETS]
+        if lead and lead.look_at and s.camera in ("medium", "back") and kind == "other":
+            pool = ["medium", "back", "wide", "side"]  # a look or a gesture at someone: both in the picture
+        fresh = [c for c in pool if c != s.camera and c not in recent[-1:]] or [c for c in pool if c not in recent[-1:]] or pool
+        weights = [0.3 if c == "crash-zoom" else 0.5 if c in recent[-3:] else 1.0 for c in fresh]
+        s.camera = rnd.choices(fresh, weights)[0]
+        recent.append(s.camera)
+    out = story.model_copy(update={"shots": new})
+    repair(out)
+    return out
+
+
 GESTURES = {"point", "help-up", "wave", "carry"}  # an action at another person: both must be in the picture
 ONE_FACE = {"face", "face-top", "front", "detail", "top", "low", "crash-zoom"}  # cameras that show only the subject
 IN_FRONT = {"face", "front", "low", "crash-zoom", "detail"}  # cameras placed in front of the subject's face
