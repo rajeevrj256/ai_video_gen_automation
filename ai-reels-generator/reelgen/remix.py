@@ -56,6 +56,10 @@ def why_not(folder: Path) -> str:
     if not (folder / "props.json").exists() or not (folder / "report.json").exists():
         return "This video was made before its sounds were saved."
     props = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    if json.loads((folder / "report.json").read_text(encoding="utf-8")).get("source") == "lowpoly":
+        # a low-poly film keeps its voices and sound cues (lowpoly/run.remix_sound mixes them again)
+        gone = [c["path"] for c in props.get("clips") or [] if not (folder / c["path"]).exists() and not Path(c["path"]).exists()]
+        return f"Some of this video's voice files are gone ({Path(gone[0]).name}), so its sound can't be mixed again." if gone else ""
     try:
         comp = composition(json.loads((folder / "report.json").read_text(encoding="utf-8")), props)
     except ValueError as exc:
@@ -117,6 +121,22 @@ def remove_sound(cfg: Config, folder: Path, name: str, progress: Progress = log.
         raise ValueError(reason)
     props = json.loads((folder / "props.json").read_text(encoding="utf-8"))
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    if report.get("source") == "lowpoly":  # its cues by sound name, mixed again under the same picture
+        from .lowpoly.run import remix_sound
+
+        cues = props.get("cues") or []
+        kept = [c for c in cues if (c.get("sound") or c.get("name")) != name]
+        if len(kept) == len(cues):
+            raise ValueError(f"'{name}' isn't in this video")
+        props["cues"] = kept
+        (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+        progress(f"Taking '{name}' out ({len(cues) - len(kept)} time(s))")
+        remix_sound(cfg, folder, progress)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        report["removed_sounds"] = sorted(set(report.get("removed_sounds", [])) | {name})
+        (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        progress(f"Done: '{name}' is out of the video (the old version is kept as reel-original.mp4)")
+        return report
     comp = composition(report, props)
     cues = props.get("cues") or []
     kept = [c for c in cues if (c.get("name") or Path(c["src"]).stem) != name]

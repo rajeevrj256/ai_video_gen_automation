@@ -76,6 +76,19 @@ def media_used(cfg: Config, video: Path) -> dict:
     by_name: dict[str, dict] = {}
     times = defaultdict(list)
     for c in props.get("cues") or []:
+        if not c.get("src"):  # a low-poly film's cue: a sound by name, made when the film is mixed (lowpoly/mix.py)
+            name = c.get("sound") or "sound"
+            times[name].append(c["at"])
+            if name not in by_name:
+                made = sorted((video / "sfx").glob(f"{name}*.wav")) if (video / "sfx").exists() else []
+                by_name[name] = {"name": name, "file": f"sfx/{made[0].name}" if made else "", "library": None,
+                                 "play": f"sfx/{made[0].name}" if made else None,
+                                 "source": ("Your car recording, played at each car's speed" if c.get("car") else
+                                            "Tyre squeal, made for each stop, drift or spin" if c.get("skid") else
+                                            "Recorded footsteps (CC0), where each foot lands" if c.get("steps") is not None else
+                                            "Your car recording (first gear pulling)" if name == "rev" else
+                                            "Built-in (synthesised)")}
+            continue
         name = c.get("name") or Path(c["src"]).stem
         times[name].append(c["at"])
         if name not in by_name:
