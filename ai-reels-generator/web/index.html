@@ -168,6 +168,37 @@
   nav button.active { color: var(--accent); }
   nav button { min-width: 0; }
   @media (max-width: 440px) { nav button { font-size: 10px; } nav button svg { width: 21px; height: 21px; } }
+  nav[hidden], #navBtn[hidden], #navShade[hidden] { display: none !important; }
+  .nav-head, #navBtn, #navNow, #navShade { display: none; }
+  /* Phones: 13 tabs in one row were too small to read or tap (the user: "convert option row to side menu with
+     open close"), so the row becomes a drawer from the left, opened by ☰ in the header. */
+  @media (max-width: 760px) {
+    body { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+    #navBtn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin-left: -6px;
+              padding: 0; border-radius: 10px; background: none; color: var(--text); flex: none; }
+    #navBtn svg { width: 24px; height: 24px; }
+    #navNow { display: inline; font-size: 13px; color: var(--muted); font-weight: 600; margin-left: 6px; letter-spacing: 0; }
+    header h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    nav { top: 0; bottom: 0; right: auto; width: min(82vw, 300px); z-index: 31; flex-direction: column; overflow-y: auto;
+          border-top: 0; border-right: 1px solid var(--line); background: rgba(20,20,25,.985);
+          padding: env(safe-area-inset-top) 0 calc(12px + env(safe-area-inset-bottom));
+          transform: translateX(-105%); transition: transform .22s ease; box-shadow: 8px 0 30px rgba(0,0,0,.45); }
+    body.nav-open nav { transform: none; }
+    body.nav-open { overflow: hidden; }
+    nav button, nav button:first-of-type { flex: none; flex-direction: row; justify-content: flex-start; gap: 14px;
+          padding: 13px 22px; font-size: 16px !important; border-left: 3px solid transparent; text-align: left; }
+    nav button svg { width: 22px !important; height: 22px !important; flex: none; }
+    nav button.active { background: var(--panel-2); border-left-color: var(--accent); }
+    .nav-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 22px;
+                border-bottom: 1px solid var(--line); margin-bottom: 6px; font-size: 17px; font-weight: 700; }
+    .nav-head span { color: var(--accent); }
+    .nav-head button { background: none; padding: 8px 10px; font-size: 18px; color: var(--muted); border-left: 0; }
+    #navShade { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.5); opacity: 0;
+                pointer-events: none; transition: opacity .22s ease; }
+    body.nav-open #navShade { opacity: 1; pointer-events: auto; }
+    .toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
+  }
+  @media (max-width: 760px) and (prefers-reduced-motion: reduce) { nav, #navShade { transition: none; } }
 
   .player { position: fixed; inset: 0; z-index: 20; background: #000; display: none; overflow-y: auto; }
   .player.open { display: block; }
@@ -362,7 +393,8 @@
 </head>
 <body>
 <header>
-  <h1>Reel <span>Studio</span></h1>
+  <button id="navBtn" type="button" aria-label="Open the menu" aria-controls="nav" aria-expanded="false" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+  <h1>Reel <span>Studio</span><small id="navNow"></small></h1>
   <span class="pill" id="busyPill">Idle</span>
 </header>
 
@@ -1256,7 +1288,9 @@ Plain paragraphs are read by the narrator."></textarea>
   </section>
 </main>
 
+<div id="navShade" hidden></div>
 <nav id="nav">
+  <div class="nav-head"><b>Reel <span>Studio</span></b><button type="button" data-close aria-label="Close the menu">✕</button></div>
   <button data-view="videos" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="9" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/></svg>Videos</button>
   <button data-view="create"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Create</button>
   <button data-view="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Script</button>
@@ -1370,8 +1404,11 @@ function show(view) {
   current = view;
   if (view !== "login" && !show.myVoice) { show.myVoice = true; loadMyVoice(); }  // your cloned voice in every list
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
-  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
-  $("#nav").hidden = view === "login";
+  document.querySelectorAll("nav button[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  $("#nav").hidden = $("#navBtn").hidden = $("#navShade").hidden = view === "login";
+  const tab = document.querySelector(`nav button[data-view="${view}"]`);
+  $("#navNow").textContent = tab ? "· " + tab.textContent.trim() : "";  // phones: which tab this is, beside the title
+  navMenu(false);
   const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => lpFill() }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
@@ -3123,7 +3160,30 @@ async function poll() {
   pollTimer = setTimeout(poll, lastBusy || $("#powerBar").hidden === false ? 3000 : 8000);
 }
 
-$("#nav").onclick = (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.view); };
+$("#nav").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (b && b.dataset.view) show(b.dataset.view);
+  else if (b && b.hasAttribute("data-close")) navMenu(false);
+};
+// Phones: the tabs live in a drawer from the left (☰ in the header); a tap outside, ✕, Esc, a swipe to the left or
+// picking a tab closes it.
+function navMenu(open) {
+  document.body.classList.toggle("nav-open", !!open);
+  $("#navBtn").setAttribute("aria-expanded", open ? "true" : "false");
+}
+$("#navBtn").onclick = () => navMenu(!document.body.classList.contains("nav-open"));
+$("#navShade").onclick = () => navMenu(false);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.classList.contains("nav-open")) navMenu(false); });
+(() => {
+  let x0 = null, y0 = 0;
+  $("#nav").addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, {passive: true});
+  $("#nav").addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    if (dx < -60 && Math.abs(dy) < Math.abs(dx)) navMenu(false);
+    x0 = null;
+  }, {passive: true});
+})();
 $("#closePlayer").onclick = closePlayer;
 let countValue = 1;
 document.querySelectorAll("#count button").forEach((b) => b.onclick = () => {
