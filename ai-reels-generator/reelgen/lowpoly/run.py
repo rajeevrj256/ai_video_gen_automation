@@ -141,6 +141,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         if restaging.get("mode") == "storyboard":
             progress("Claude is writing the new storyboard: new camera angles and staging for the same words")
             story = S.restage(cfg, story, progress)
+        elif restaging.get("mode") == "same":
+            progress("The same shots and cameras, made again with the newest editor")
         else:
             progress("A new camera angle for every shot (the same staging, words, voices and music)")
             story = S.new_angles(story, int(restaging.get("seed", 1)))
@@ -215,7 +217,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     (work / "audio.json").write_text(json.dumps({str(k): {**v, "path": str(Path(v["path"]).relative_to(work)) if Path(v["path"]).is_relative_to(work)
                                                          else v["path"]} for k, v in audio.items()}, ensure_ascii=False), encoding="utf-8")
     ck.unlink(missing_ok=True)
-    final = cfg.output_dir / f"{stamp}-{slugify(story.title.strip('. '))}-lowpoly{'-short' if short else ''}{'-angles' if restaging else ''}"
+    final = cfg.output_dir / f"{stamp}-{slugify(story.title.strip('. '))}-lowpoly{'-short' if short else ''}{('-again' if restaging.get('mode') == 'same' else '-angles') if restaging else ''}"
     move(work, final)
     narration = " ".join(s.line.strip() for s in story.shots if s.line.strip())
     report = {
@@ -244,7 +246,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     return report
 
 
-RESTAGE_MODES = ("storyboard", "angles")
+RESTAGE_MODES = ("storyboard", "angles", "same")  # same = the very same shots, made again with the newest editor
 KEEP_FOR_RESTAGE = ("audio", "audio-fast", "music")  # the first version's voices and music tracks
 
 

@@ -2014,11 +2014,12 @@ async function openVideo(id) {
     <button id="lpRemix" style="width:100%;margin-top:8px">🔊 Re-mix the sound (clearer voices, quieter music and wind)</button>
     <h4 class="section">🎬 New angles</h4>
     ${v.restaged_from ? `<p class="hint">Shot again from <a href="#" id="lpFrom">${esc(v.restaged_from_title || v.restaged_from)}</a>
-      (${v.restage_mode === "angles" ? "new camera angles" : "a new storyboard"}).</p>` : ""}
+      (${v.restage_mode === "angles" ? "new camera angles" : v.restage_mode === "same" ? "the same shots, made again" : "a new storyboard"}).</p>` : ""}
     <p class="hint">Make this video again with the same story, words, voices, music and timing, shot differently. It is made as a
       new video next to this one, which stays as it is, and it uses the newest editor (people never inside each other, seats or buses).</p>
     <button id="lpRestageBoard" style="width:100%;margin-top:8px">🎬 New storyboard: Claude directs every shot again (cameras, actions, who looks at whom)</button>
-    <button id="lpRestageAngles" style="width:100%;margin-top:8px">🎥 New camera angles only (the same staging, no Claude tokens)</button>` : ""}
+    <button id="lpRestageAngles" style="width:100%;margin-top:8px">🎥 New camera angles only (the same staging, no Claude tokens)</button>
+    <button id="lpRestageSame" style="width:100%;margin-top:8px">♻️ Re-generate the same (the same shots and cameras, made again with the newest fixes; no Claude tokens)</button>` : ""}
     <div ${["stick", "sticky", "lowpoly", "anim", "storyshorts", "shoot", "clip"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice, speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: another voice, another speaking speed, or subtitles on/off. Only the voice is recorded again and the same slides, memes, pictures and music are re-timed to it: nothing is generated again, no Claude tokens. Recording again also reads numbers in English words (“one lakh”, not “ek lakh”).</p>
@@ -2222,13 +2223,13 @@ async function openVideo(id) {
       } catch (e) { toast(e.message); $("#lpRemix").disabled = false; }
     };
   }
-  for (const [btn, mode] of [["#lpRestageBoard", "storyboard"], ["#lpRestageAngles", "angles"]]) {  // run.prepare_restage
+  for (const [btn, mode] of [["#lpRestageBoard", "storyboard"], ["#lpRestageAngles", "angles"], ["#lpRestageSame", "same"]]) {  // run.prepare_restage
     if (!$(btn)) continue;
     $(btn).onclick = async () => {
       $(btn).disabled = true;
       try {
         await api(`/api/videos/${encodeURIComponent(id)}/lowpoly-restage`, { method: "POST", body: JSON.stringify({ mode }) });
-        toast((mode === "angles" ? "New camera angles" : "A new storyboard") + " — follow it on the Create page; it appears as a new video");
+        toast((mode === "angles" ? "New camera angles" : mode === "same" ? "Made again" : "A new storyboard") + " — follow it on the Create page; it appears as a new video");
       } catch (e) { toast(e.message); $(btn).disabled = false; }
     };
   }

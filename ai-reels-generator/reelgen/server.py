@@ -1270,7 +1270,7 @@ def create_app(cfg: Config) -> FastAPI:
         except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(400, f"Couldn't start it: {exc}")
         req = json.loads((cfg.output_dir / work / "lowpoly-checkpoint.json").read_text(encoding="utf-8"))["request"]
-        label = f"{'New storyboard' if mode == 'storyboard' else 'New angles'}: {report.get('title', video_id)}"
+        label = f"{ {'storyboard': 'New storyboard', 'angles': 'New angles', 'same': 'Made again'}[mode]}: {report.get('title', video_id)}"
         return jobs.submit(label, 1, "rerender", "story", "lowpoly", lowpoly_input=req, lowpoly_resume=[work],
                            captions=req.get("words", "on") == "on", ai=body.ai)
 
