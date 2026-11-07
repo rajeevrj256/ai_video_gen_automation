@@ -566,6 +566,24 @@ def lowpoly_boards() -> None:
         B.prepare_build(cfg, st2["id"], 1)
         if B.reject(cfg, st2["id"], 2):
             fail("lowpoly boards: new storyboards were asked for after one was approved")
+        # ✏ Change it: the draft rewritten with the user's words as a new draft beside it, the original untouched
+        asked = {}
+
+        def revised(cfg_, story_, instruction, **kw):
+            asked["text"] = instruction
+            return story_.model_copy(update={"title": "Five A.M., at night"})
+        (Path(tmp) / B.DIR / st2["id"] / "draft-2.json").write_text(json.dumps(story.model_dump()), encoding="utf-8")
+        real = S.revise
+        S.revise = revised
+        try:
+            m = B.change_round(cfg, st2["id"], 2, "set it at night", lambda *a: None)
+        finally:
+            S.revise = real
+        drafts = {d["n"]: d for d in B.load(cfg, st2["id"])["drafts"]}
+        if (m != 3 or asked.get("text") != "set it at night" or drafts[3]["state"] != "ready" or drafts[3].get("from") != 2
+                or drafts[3]["title"] != "Five A.M., at night" or drafts[2]["state"] != "rejected"
+                or B.view(cfg, st2["id"], 3)["title"] != "Five A.M., at night"):
+            fail(f"lowpoly boards: ✏ Change it didn't write a changed storyboard beside the original: {drafts}")
 
 
 def main() -> int:

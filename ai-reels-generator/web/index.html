@@ -107,6 +107,8 @@
   .lp-acts li { border-top: 1px solid var(--line); padding: 8px 2px; font-size: 13px; }
   .lp-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
   .lp-decide input { flex: 1 1 220px; min-width: 0; }
+  .lp-change { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; margin-top: 8px; }
+  .lp-change textarea { flex: 1 1 260px; min-width: 0; }
   .lp-person { display: flex; gap: 10px; align-items: flex-start; background: var(--panel-2); border-radius: 10px; padding: 8px; }
   .lp-person > div { flex: 1; min-width: 0; }
   .lp-person .hint { margin: 2px 0 0; }
@@ -3631,13 +3633,14 @@ const lpSetName = (s) => `${s.kind === "fiction" ? "🚀 Fiction" : "🏠 Everyd
 function lpDraftHtml(s, d, open) {
   const key = `${s.id}/${d.n}`;
   const size = [d.shots ? `${d.shots} shots` : d.acts ? `${d.acts} acts` : "", lpLen(d.seconds)].filter(Boolean).join(" · ");
-  if (d.state === "writing") return `<div class="lp-draft writing"><span class="spinner"></span> <b>Writing storyboard ${d.n}: ${esc(d.title)}</b>
-    <p class="lp-take">${esc(d.take || "")}</p></div>`;
+  const from = d.from ? `<p class="lp-take">✏ Storyboard ${d.from} changed as you asked: “${esc(d.instruction || "")}”</p>` : "";
+  if (d.state === "writing") return `<div class="lp-draft writing"><span class="spinner"></span> <b>${d.from ? `Changing storyboard ${d.from} (comes back as ${d.n})` : `Writing storyboard ${d.n}`}: ${esc(d.title)}</b>
+    ${d.from ? from : `<p class="lp-take">${esc(d.take || "")}</p>`}</div>`;
   if (d.state === "failed") return `<div class="lp-draft failed">⚠️ <b>Storyboard ${d.n} (${esc(d.title || "untitled")})</b> couldn't be written: ${esc(d.error || "")}</div>`;
   const badge = d.state === "approved" ? "✅ Approved" : d.state === "rejected" ? "✕ Turned down" : "📄";
   return `<details class="lp-draft lpd ${d.state}" data-key="${esc(key)}" data-set="${esc(s.id)}" data-n="${d.n}" ${open.has(key) ? "open" : ""}>
     <summary>${badge} <b>${esc(d.title)}</b> <span class="hint">${esc(size)}</span>
-      <p class="lp-take">${esc(d.problem || d.take || "")}</p>${d.note ? `<p class="lp-take">Why not: ${esc(d.note)}</p>` : ""}</summary>
+      <p class="lp-take">${esc(d.problem || d.take || "")}</p>${from}${d.note ? `<p class="lp-take">Why not: ${esc(d.note)}</p>` : ""}</summary>
     <div class="lp-body"><div class="lp-read"><span class="spinner"></span> Opening it…</div>
       ${d.state === "approved"
         ? `<p class="hint">✅ Approved: it's being built (follow it on the Create tab). Approve another one to make a second video.</p>`
@@ -3645,6 +3648,10 @@ function lpDraftHtml(s, d, open) {
             <button class="primary lp-ok" data-set="${esc(s.id)}" data-n="${d.n}">${d.state === "rejected" ? "↩ Approve this one anyway and build it" : "✓ Approve and build"}</button>
             ${d.state === "ready" ? `<input class="edit lp-why" placeholder="What's wrong with it? (optional: the next ones are told)">
             <button class="danger lp-no" data-set="${esc(s.id)}" data-n="${d.n}">✕ Reject</button>` : ""}</div>`}
+      <div class="lp-change">
+        <textarea class="edit lp-what" rows="2" placeholder="✏ What should change? e.g. 'set it at night, make Mia his friend, end on the rooftop'. Claude rewrites this storyboard with your changes and keeps the rest; it comes back as a new storyboard beside this one."></textarea>
+        <button class="lp-edit" data-set="${esc(s.id)}" data-n="${d.n}" ${s.writing ? "disabled" : ""}>✏ Change it with my instructions</button>
+      </div>
     </div></details>`;
 }
 function lpSetHtml(s, open) {
@@ -3718,6 +3725,11 @@ $("#lpBoards").onclick = async (e) => {
       const note = b.closest(".lp-decide").querySelector(".lp-why")?.value || "";
       const r = await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}/${n}/reject`, { method: "POST", body: JSON.stringify({ note }) });
       $("#lpMsg").textContent = r.writing_more ? "None left to read: new storyboards are being written from the same prompt." : "Turned down.";
+    } else if (b.classList.contains("lp-edit")) {
+      const instruction = (b.closest(".lp-change").querySelector(".lp-what")?.value || "").trim();
+      if (!instruction) { $("#lpMsg").textContent = "Write what should change first."; b.disabled = false; return; }
+      await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}/${n}/change`, { method: "POST", body: JSON.stringify({ instruction }) });
+      $("#lpMsg").textContent = `Claude is changing storyboard ${n} as you asked. The new version appears here; ${n} stays as it was.`;
     } else if (b.classList.contains("lp-more")) {
       await api(`/api/lowpoly/boards/${encodeURIComponent(sid)}/more`, { method: "POST", body: JSON.stringify({ count: Number(b.dataset.count) }) });
       $("#lpMsg").textContent = "Writing more storyboards from the same prompt.";

@@ -208,7 +208,13 @@ class JobManager:
             boards = None
             if job.get("lowpoly_boards"):  # ✍ low-poly storyboards to read first (reelgen/lowpoly/boards.py)
                 from .lowpoly.boards import write_round
-                boards = write_round(cfg, job["lowpoly_boards"]["id"], job["lowpoly_boards"]["count"], progress)
+                b = job["lowpoly_boards"]
+                if b.get("change"):  # ✏ Change it: one storyboard written again with the user's instructions
+                    from .lowpoly.boards import change_round
+                    change_round(cfg, b["id"], b["change"]["n"], b["change"]["instruction"], progress)
+                    boards = 1
+                else:
+                    boards = write_round(cfg, b["id"], b["count"], progress)
                 reports = []
             elif job.get("myvoice"):
                 from .myvoice import finish
@@ -571,6 +577,11 @@ class LowPolyBody(BaseModel):
     count: int = 1
     drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
     ai: AIPick | None = None
+
+
+class LowPolyChangeBody(BaseModel):
+    """✏ What to change in a storyboard (Claude rewrites it with these changes, keeping the rest)."""
+    instruction: str
 
 
 class LowPolyRejectBody(BaseModel):
@@ -1744,6 +1755,28 @@ def create_app(cfg: Config) -> FastAPI:
         if more:
             boards_round(s, s.get("count", 3))
         return {"ok": True, "writing_more": more}
+
+    @app.post("/api/lowpoly/boards/{sid}/{n}/change")
+    def lowpoly_board_change(sid: str, n: int, body: LowPolyChangeBody):
+        """✏ Change it: Claude writes storyboard `n` again with your instructions, as a new storyboard beside it (the
+        original stays, to approve or reject)."""
+        s = board_or_404(sid)
+        text = body.instruction.strip()
+        if not text:
+            raise HTTPException(400, "Say what to change")
+        d = next((d for d in s["drafts"] if d["n"] == n), None)
+        if d is None:
+            raise HTTPException(404, "No such storyboard")
+        if d.get("state") not in ("ready", "rejected", "approved"):
+            raise HTTPException(400, "That storyboard isn't written yet")
+        if sid in boards_busy():
+            raise HTTPException(409, "Storyboards for this prompt are being written right now: wait for them first")
+        req = s["request"]
+        label = (req.get("topic") or "").splitlines()[0][:80] if (req.get("topic") or "").strip() else None
+        job = jobs.submit(label, 1, "lowpoly", "story", "lowpoly",
+                          lowpoly_boards={"id": sid, "count": 1, "change": {"n": n, "instruction": text[:2000]}},
+                          lowpoly_kind={"format": req.get("format"), "kind": req.get("kind")}, captions=False, ai=s.get("ai"))
+        return {"ok": True, "job": job["id"]}
 
     @app.post("/api/lowpoly/boards/{sid}/more")
     def lowpoly_board_more(sid: str, body: LowPolyMoreBody):

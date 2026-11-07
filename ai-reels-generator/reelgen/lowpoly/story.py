@@ -703,6 +703,50 @@ def _act_len(fiction: bool, minutes: float) -> tuple[int, int]:
     return (round(minutes * 60 / (3.0 if fiction else 3.3)), int(minutes * 60 * (1.3 if fiction else 1.8)))
 
 
+def _outline_system(fiction: bool, minutes: float) -> str:
+    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
+    n_acts = max(4, min(9, round(minutes / 1.7)))
+    shots, words = _act_len(fiction, minutes)
+    whole = (FICTION_FILM if fiction else FILM).format(minutes=f"{minutes:g}", shots=f"{shots - 10}-{shots + 10}", words=words)
+    return (FICTION if fiction else RULES).format(spots=spots, length=whole) + f"""
+
+THIS FILM IS LONG ({minutes:g} minutes), so plan it first: {n_acts} acts (give or take one) whose minutes add up to
+{minutes:g}. A long film needs more than a long version of a short one: a fuller world (more places, two to six people
+with their own wants), a middle that turns more than once, set-ups paid off later, quiet scenes between the big ones,
+and the ending's line in red. Write the outline only; the shots come next, act by act."""
+
+
+# ✏ Change it (boards.py): the user liked a storyboard but wants some things changed
+REVISE = """
+
+THE USER HAS READ THIS STORYBOARD AND WANTS CHANGES. You get the storyboard as it is and the user's instructions.
+Make exactly what the instructions ask, everywhere it applies (a renamed person renamed in every shot, a moved scene
+with its lines and sounds, a new beat with the shots it needs), and keep everything else as it was: the same story,
+shots, words, places, cameras and people wherever the instructions don't touch them. The rules above still hold (the
+editor's vocabulary, the length, the staging). Return the whole storyboard, changed."""
+
+
+def revise(cfg: Config, story: Story, instruction: str, *, short: bool, seconds: int, minutes: float) -> Story:
+    """The same storyboard with the user's changes (one call, no web); everything they didn't ask about kept."""
+    fiction = story.kind == "fiction"
+    system = _system(fiction, short, seconds, minutes) + REVISE
+    prompt = (f"THE STORYBOARD AS IT IS:\n{story.model_dump_json(indent=1)}\n\nTHE USER'S CHANGES:\n{instruction.strip()}"
+              f"{_known(cfg)}")
+    out = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+    out.kind = story.kind
+    if short and "#shorts" not in [h.lower() for h in out.hashtags]:
+        out.hashtags = out.hashtags[:2] + ["#shorts"]
+    return out
+
+
+def revise_outline(cfg: Config, outline: Outline, instruction: str, *, minutes: float, fiction: bool) -> Outline:
+    """A long film's outline with the user's changes; the acts are written from it once approved."""
+    prompt = (f"THE OUTLINE AS IT IS:\n{outline.model_dump_json(indent=1)}\n\nTHE USER'S CHANGES:\n{instruction.strip()}"
+              f"{_known(cfg)}")
+    return ask(cfg.ai_backend, cfg.claude_model, _outline_system(fiction, minutes) + REVISE.replace("STORYBOARD", "OUTLINE"),
+               prompt, Outline, allow_web=False, effort=cfg.claude_effort, timeout=2400)
+
+
 def plan_outline(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction: bool, progress=log.info) -> Outline:
     """A long film's plan: title, cast and acts with their minutes, places and moods (the first step of `write_long`, and
     on its own the storyboard draft of a long film the user reads before it is written act by act)."""

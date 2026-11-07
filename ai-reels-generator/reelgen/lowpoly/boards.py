@@ -189,6 +189,60 @@ def write_round(cfg: Config, sid: str, count: int, progress) -> int:
     return len(done)
 
 
+def change_round(cfg: Config, sid: str, n: int, instruction: str, progress) -> int:
+    """The job for ✏ Change it: storyboard `n` written again with the user's instructions, as a new draft beside it
+    (the original stays to read, approve or reject). Returns the new draft's number."""
+    from ..llm import set_limit_reporter, start_meter, usage_line
+    from ..pipeline import Paused, set_pause_check
+
+    s = load(cfg, sid)
+    req = s["request"]
+    old = _draft(s, n)
+    path = _folder(cfg, sid) / f"draft-{n}.json"
+    if not path.exists():
+        raise RuntimeError("That storyboard isn't written yet")
+    set_pause_check(getattr(progress, "should_pause", None))
+    set_limit_reporter(progress)
+    start_meter(lambda r: progress(usage_line(r)))
+    box: dict = {}
+
+    def add(s2: dict) -> None:
+        m = max([d["n"] for d in s2["drafts"]] + [0]) + 1
+        box["n"] = m
+        s2["drafts"].append({"n": m, "round": s2.get("rounds", 1), "state": "writing", "title": old.get("title", ""),
+                             "take": old.get("take", ""), "differs": "", "problem": "", "long": old.get("long", False),
+                             "from": n, "instruction": instruction.strip()[:2000], "started": time.time()})
+    _update(cfg, sid, add)
+    m = box["n"]
+    progress(f"Claude is changing storyboard {n} as you asked (it comes back as storyboard {m}; {n} stays as it was)")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    fiction = req.get("kind") == "fiction"
+    short = req.get("format") != "film"
+    seconds = max(20, min(60, int(req.get("seconds", 35))))
+    minutes = max(2.5, min(15.0, float(req.get("minutes", 3.5))))
+    try:
+        if "outline" in data:
+            o = S.revise_outline(cfg, S.Outline.model_validate(data["outline"]), instruction, minutes=minutes, fiction=fiction)
+            new = {**data, "outline": o.model_dump(), "take": (data.get("take", "") + f"\nThe user's changes: {instruction.strip()}").strip()}
+            info = {"title": o.title.strip(), "problem": o.problem.strip(), "acts": len(o.acts),
+                    "seconds": round(sum(a.minutes for a in o.acts) * 60), "cast": [c.name for c in o.cast]}
+        else:
+            story = S.revise(cfg, S.Story.model_validate(data), instruction, short=short, seconds=seconds, minutes=minutes)
+            new = story.model_dump()
+            info = {"title": story.title.strip(), "problem": story.problem.strip(), "shots": len(story.shots),
+                    "seconds": estimate(story), "cast": [c.name for c in story.cast]}
+        (_folder(cfg, sid) / f"draft-{m}.json").write_text(json.dumps(new, ensure_ascii=False, indent=1), encoding="utf-8")
+        _update(cfg, sid, lambda s2: _set(s2, m, state="ready", ready=time.time(), **info))
+    except Paused:
+        _update(cfg, sid, lambda s2: _set(s2, m, state="failed", error="stopped before it was finished"))
+        raise
+    except Exception as exc:
+        _update(cfg, sid, lambda s2: _set(s2, m, state="failed", error=str(exc)[:300]))
+        raise
+    progress(f"Done: storyboard {m} is storyboard {n} with your changes, ready to read in the Low-poly tab")
+    return m
+
+
 def _set(s: dict, n: int, **fields) -> None:
     for d in s["drafts"]:
         if d["n"] == n:
