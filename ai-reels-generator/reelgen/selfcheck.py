@@ -403,6 +403,9 @@ def lowpoly_vehicles() -> None:
     m = re.search(r"case 'jump': \{[^}]*?const T = ([0-9.]+);", big, re.S)
     if not m or float(m.group(1)) != JUMP_TIME:
         fail(f"lowpoly vehicles: the jump's time in the air differs (Big.tsx {m and m.group(1)}, timeline.JUMP_TIME {JUMP_TIME})")
+    rider = re.search(r"RIDER_SCALE[^=]*= \{[^}]*made: ([0-9.]+)", big)
+    if not rider or float(rider.group(1)) != S.RIDER_MADE:
+        fail(f"lowpoly vehicles: someone seated in a design is drawn at {rider and rider.group(1)} in Big.tsx, story.RIDER_MADE {S.RIDER_MADE}")
     ts_under = set(re.findall(r"'([a-z]+)'", re.search(r"export const UNDERWAY = new Set\(\[([^\]]*)\]", big).group(1)))
     if ts_under != S.GROUND_UNDERWAY | S.AIR_MOTIONS:
         fail(f"lowpoly vehicles: Big.tsx UNDERWAY {sorted(ts_under)} but story.py {sorted(S.GROUND_UNDERWAY | S.AIR_MOTIONS)}")
@@ -434,6 +437,8 @@ def lowpoly_vehicles() -> None:
     xs = [p["at"][0] for p in d["parts"]]
     if abs(min(xs) + max(xs)) > 0.01 or d["dims"][1] <= 0 or d["seats"][0][0] != 0.0 or not 8.9 <= d["dims"][0] <= 9.1:
         fail(f"lowpoly vehicles: the design wasn't centred or sized ({d['dims']}, seats {d['seats']})")
+    if not any(p.get("glass") and p["shape"] == "sphere" for p in d["parts"]):
+        fail("lowpoly vehicles: a plane with no canopy over its pilot didn't get one")
     props, _, cues, _ = build(st, {}, vertical=True, watermark="", seed=1)
     if props["shots"][1]["actors"][0].get("on") != 0 or "the jet" not in props.get("made", {}):
         fail("lowpoly vehicles: the editor didn't get `on` (from 0) or the design")

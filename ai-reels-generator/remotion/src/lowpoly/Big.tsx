@@ -583,6 +583,11 @@ const CAR_BODY = (() => {
   return extruded(pts, CAR_W, 0.07);
 })();
 const CABIN = extruded([[0.66, 0.84], [-0.08, 1.39], [-0.78, 1.42], [-1.62, 1.04], [-1.85, 0.9], [0.66, 0.86]], 1.66, 0.05);
+// a solid roof over the cabin, in the paint, a little wider than the glass (the user: "not half car. add ceiling"):
+// the glass cabin with a thin strip on top read from above and in front as an open frame
+const ROOF = extruded([[0.04, 1.36], [-0.1, 1.455], [-0.8, 1.485], [-1.5, 1.16], [-1.62, 1.07], [-1.5, 1.08], [-0.8, 1.4], [-0.1, 1.37]], 1.74, 0.04);
+// the rear quarters behind the doors: solid, with a fastback window let into the top
+const QUARTER = extruded([[-0.8, 0.9], [-0.8, 1.41], [-1.5, 1.09], [-1.84, 0.9]], 1.7, 0.04);
 const UNDER = '#0d0e10';
 // a straight piece between two points of the side view, at the car's side or across it
 const Strut: React.FC<{a: [number, number]; b: [number, number]; x: number; w: number; t: number; m: THREE.Material}> = ({a, b, x, w, t, m}) => {
@@ -647,11 +652,16 @@ const SportsCar: React.FC<{c: string; turn?: number; steer?: number}> = ({c, tur
         </mesh>
       ))}
       {/* the cabin: tinted glass all round, pillars and a roof in the paint */}
-      <mesh geometry={CABIN} material={glassMat('#22303c', 0.42)} />
-      <Strut a={[0.66, 0.86]} b={[-0.08, 1.4]} x={0.8} w={0.07} t={0.06} m={paint} />
-      <Strut a={[0.66, 0.86]} b={[-0.08, 1.4]} x={-0.8} w={0.07} t={0.06} m={paint} />
-      <Strut a={[-0.06, 1.42]} b={[-0.8, 1.44]} x={0} w={1.6} t={0.05} m={paint} />
-      <Strut a={[-0.8, 1.44]} b={[-1.62, 1.07]} x={0} w={1.62} t={0.05} m={paint} />
+      <mesh geometry={CABIN} material={glassMat('#1e2a36', 0.5)} />
+      <mesh geometry={ROOF} material={paint} castShadow receiveShadow />
+      <mesh geometry={QUARTER} material={paint} castShadow receiveShadow />
+      <Strut a={[-0.84, 1.42]} b={[-1.46, 1.13]} x={0} w={1.3} t={0.02} m={glassMat('#141c24', 0.85)} />
+      <Strut a={[0.66, 0.86]} b={[-0.06, 1.39]} x={0.81} w={0.09} t={0.07} m={paint} />
+      <Strut a={[0.66, 0.86]} b={[-0.06, 1.39]} x={-0.81} w={0.09} t={0.07} m={paint} />
+      {/* the window line along the doors */}
+      {[-0.86, 0.86].map((x) => (
+        <Strut key={`l${x}`} a={[0.62, 0.885]} b={[-0.8, 0.915]} x={x} w={0.03} t={0.03} m={mat('#101114', {rough: 0.4})} />
+      ))}
       {[-0.82, 0.82].map((x) => (
         <group key={`b${x}`}>
           <Strut a={[-0.78, 0.92]} b={[-0.8, 1.42]} x={x} w={0.05} t={0.09} m={paint} />

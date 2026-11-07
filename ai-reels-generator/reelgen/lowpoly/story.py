@@ -350,8 +350,11 @@ bottom at y = 0, centred on x = 0, to the man's scale (he is about 2 m to the to
 m; a car is 1.7 wide, 0.95 high, 3.9 long; a small plane about 9 m long with 10 m wings; a motorbike 0.7 wide, 1.1 \
 high, 2.1 long). A plane: a cylinder body turned [90,0,0], a cone nose turned [90,0,0], box wings, a box fin and \
 tailplane, a propeller (a thin box, 'spin' 'z') or glowing exhausts, a glass canopy (a sphere) over the seat, wheels. \
-`seats`: where the pilot or rider sits ([x, seat height, z], the seat's top; his hips just above it; on top of or in \
-the body so his head and shoulders show), the driver's first. `top`: the height someone stands on (a wing's top). \
+`seats`: where the pilot or rider sits ([x, seat height, z], the seat's top; his hips just above it), the driver's \
+first, IN the body and never on top of it: the seat's top about 0.35 m below the top of the body around it, and in \
+anything that flies a closed cockpit with a ceiling, a glass canopy over his head and shoulders (a sphere about 1.0 \
+wide, 0.95 high, 1.8 long, its centre 0.8 m over the seat; the editor adds one if you leave it out). A motorbike or a \
+jet ski has no canopy. `top`: the height someone stands on (a wing's top). \
 Two designs that meet (his plane and the enemy's) look clearly different (colours, shape). Design only what the film \
 needs, once, and use the same design in every shot it is in.
 """
@@ -864,6 +867,9 @@ def pitches(cfg: Config, topic: str, *, kind: str, short: bool, seconds: int, mi
 # ---------------------------------------------------------------- vehicles, and the things the writer designed
 
 MAX_PARTS = 60
+RIDER_MADE = 0.78  # = RIDER_SCALE.made in Big.tsx: how big someone seated in a design is drawn
+CANOPY_OVER_SEAT = 0.82  # his head's centre over his seat at that size: a canopy is centred there
+CANOPY = (1.0, 0.95, 1.8)  # its width, height, length: his head, his shoulders, room in front
 
 
 def _hex(c: str) -> str:
@@ -925,6 +931,24 @@ def design_for_editor(m: LPMade) -> dict:
              for x in m.seats if len(x) >= 3][:6]
     if not seats:
         seats = [[0.0, round(dims[1] * 0.45, 3), round(dims[2] * 0.1, 3)]]
+    if m.travel == "air":
+        # a closed cockpit over every seat (the user: "add ceiling on the car or aircraft": the pilots sat on top of
+        # the planes with their heads and shoulders out): a glass canopy where Claude's design has none over his head
+        boxes = []
+        for p in out:
+            if p.get("glass"):
+                pp = LPPart.model_validate(p)
+                corners = _part_box(pp)
+                boxes.append([(p["at"][k] + min(c[k] for c in corners), p["at"][k] + max(c[k] for c in corners)) for k in range(3)])
+        for sx, sy, sz in seats:
+            head = (sx, sy + CANOPY_OVER_SEAT, sz)
+            if any(all(lo <= head[k] <= hi for k, (lo, hi) in enumerate(b)) for b in boxes):
+                continue
+            out.append({"shape": "sphere", "at": [sx, round(sy + CANOPY_OVER_SEAT, 3), sz], "size": list(CANOPY), "turn": [0, 0, 0],
+                        "color": "#9fb6c8", "glass": True})
+            out.append({"shape": "box", "at": [sx, round(sy + CANOPY_OVER_SEAT + CANOPY[1] / 2 - 0.01, 3), sz],
+                        "size": [0.05, 0.03, round(CANOPY[2] * 0.8, 3)], "turn": [0, 0, 0], "color": "#22252a"})
+            dims[1] = max(dims[1], round(sy + CANOPY_OVER_SEAT + CANOPY[1] / 2, 3))
     top = float(m.top) + shift[1] if m.top > 0 else dims[1]
     return {"parts": out, "seats": seats, "top": round(max(0.0, min(dims[1], top)), 3), "travel": m.travel, "dims": dims}
 
