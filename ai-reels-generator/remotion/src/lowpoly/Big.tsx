@@ -12,8 +12,8 @@ import type {Big, BigKind} from './types';
 
 type V3 = [number, number, number];
 
-// width (x), height (y), length (z)
-export const SIZE: Record<BigKind, V3> = {
+// width (x), height (y), length (z) of the model as built
+const BUILT: Record<BigKind, V3> = {
   car: [1.9, 1.45, 4.2],
   bus: [2.6, 3.1, 10],
   truck: [2.5, 3.4, 8],
@@ -25,6 +25,15 @@ export const SIZE: Record<BigKind, V3> = {
   door: [1.0, 2.1, 0.08],
   ball: [0.6, 0.6, 0.6],
 };
+// Vehicles drawn smaller than real, to the man's own scale: his body is small under his big head (shoulders at 1.24 m),
+// and a real-size bus (3.1 m, windows over his head) stood beside him like a yellow wall (the user: "bus size are big
+// than humans"). A car's roof now comes to his shoulders and a bus's windows start at his chest, as they would for a
+// grown man.
+export const MODEL_SCALE: Partial<Record<BigKind, number>> = {car: 0.85, bus: 0.8, truck: 0.8};
+// what every placement, lane, collision and camera rule works with: the size as drawn
+export const SIZE = Object.fromEntries(
+  (Object.keys(BUILT) as BigKind[]).map((k) => [k, BUILT[k].map((v) => v * (MODEL_SCALE[k] ?? 1)) as V3]),
+) as Record<BigKind, V3>;
 
 const PAINT = ['#c7473b', '#3d6fa8', '#e2b21f', '#e9e4da', '#3a3d44', '#4f8a5b'];
 const G = 14.7; // gravity, a little more than real so falls read heavy at this scale
@@ -392,7 +401,9 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number}> = ({b, st, 
   <group>
     <group position={st.pos} rotation={new THREE.Euler(st.rx, st.ry, st.rz, 'YXZ')}>
       <group position={[-st.pivot[0], -st.pivot[1], -st.pivot[2]]} scale={st.squash}>
-        <BigModel kind={b.kind} color={b.color} seed={seed} />
+        <group scale={MODEL_SCALE[b.kind] ?? 1}>
+          <BigModel kind={b.kind} color={b.color} seed={seed} />
+        </group>
       </group>
     </group>
     {st.cable ? (

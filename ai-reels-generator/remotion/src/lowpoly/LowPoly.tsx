@@ -76,6 +76,7 @@ export const STOP_SHORT = 1.2; // = timeline.STOP_SHORT: a walk to someone's spo
 export const STOP_SEATED = 1.65; // = timeline.STOP_SEATED: ...or of someone on a seat (past their knees and the table)
 const SEAT_SPOTS = new Set(['chair', 'couch', 'desk', 'bed']); // = timeline.SEAT_SPOTS
 const GAP = 0.8; // two people's middles never closer than this (heads are 0.7 wide)
+const WIDE_NEAR = 5; // outdoors the wide camera never closer than this to its subject
 const wrap = (d: number) => Math.atan2(Math.sin(d), Math.cos(d));
 const clampTo = (d: number, most: number) => Math.max(-most, Math.min(most, d));
 
@@ -115,8 +116,14 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   if (action === 'push-stop' && set.road !== undefined && set.walk === 'x') root = [root[0], root[1], set.road];
   const turn = FACING[a.facing ?? 'camera'];
   if (turn !== undefined && seat === null && !lying) ry = turn;
-  // stopping a vehicle with his hands: he faces up the road (it comes from there), unless told otherwise
-  if (action === 'push-stop' && !a.facing) ry = set.walk === 'z' ? Math.PI : -Math.PI / 2;
+  // stopping a vehicle with his hands: he faces up the road (it comes from there), the way away from the set's wide
+  // camera, so the vehicle lies beyond him and never between that camera and him. 'camera' is every actor's default,
+  // so it never counted as told otherwise: he faced the spot's way, the bus came from behind the camera and a wide shot
+  // showed only its side. On a road it comes only along the road (another way would bring it over the pavement).
+  if (action === 'push-stop') {
+    const up = set.walk === 'z' ? (set.wide.pos[2] >= 0 ? Math.PI : 0) : set.wide.pos[0] >= 0 ? -Math.PI / 2 : Math.PI / 2;
+    if ((set.road !== undefined && set.walk === 'x') || (a.facing ?? 'camera') === 'camera') ry = up;
+  }
   // his lane in this shot (`lanesFor`): two people never on one spot, walkers side by side, never through anyone
   const off = lane?.off ?? [0, 0];
   if (action !== 'carried') root = [root[0] + off[0], root[1], root[2] + off[1]];
@@ -467,10 +474,15 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
         }
         pos = best;
       }
+      // outdoors someone can stand right by the room's camera (a man stopping a bus on the road was 3.5 m from it and
+      // only his shoulder was in the picture): it steps back along its own line
+      const gap = pos.distanceTo(who.body);
+      if (set.outdoor && gap < WIDE_NEAR) pos = who.body.clone().add(pos.clone().sub(who.body).multiplyScalar(WIDE_NEAR / Math.max(0.3, gap)));
       pos.lerp(look, 0.06 * p);
-      if (others.length) {
-        // everyone whole in the picture: the lens opens until the widest person (side to side, head to feet) fits
-        const fwd = look.clone().sub(pos).normalize();
+      // everyone whole in the picture: the view turns toward them as far as it must, then the lens opens until the
+      // widest person (side to side, head to feet) fits
+      const need = (lk: THREE.Vector3) => {
+        const fwd = lk.clone().sub(pos).normalize();
         const side = new THREE.Vector3().crossVectors(fwd, up).normalize();
         const upv = new THREE.Vector3().crossVectors(side, fwd).normalize();
         let needH = 0;
@@ -483,10 +495,14 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
             needV = Math.max(needV, (Math.abs(d.dot(upv)) + 0.15) / depth);
           }
         }
-        const need = Math.max(needV, needH / aspect); // as tan of half the vertical angle
-        const have = Math.tan(((fov / 2) * Math.PI) / 180);
-        if (need > have) fov = Math.min(72, (2 * Math.atan(need) * 180) / Math.PI);
-      }
+        return Math.max(needV, needH / aspect); // as tan of half the vertical angle
+      };
+      const have = Math.tan(((fov / 2) * Math.PI) / 180);
+      const middle = all.reduce((sum, pl) => sum.add(pl.body), new THREE.Vector3()).multiplyScalar(1 / Math.max(1, all.length));
+      const room = look.clone();
+      for (let f = 0.2; f <= 1.001 && need(look) > have * 0.92; f += 0.2) look = room.clone().lerp(middle, f);
+      const n = need(look);
+      if (n > have) fov = Math.min(72, (2 * Math.atan(n) * 180) / Math.PI);
       aperture = 0.15;
       break;
     }
