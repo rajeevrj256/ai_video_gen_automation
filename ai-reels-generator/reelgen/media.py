@@ -261,7 +261,6 @@ ROLE_WORDS = {
     "pop": ("pop", "bubble", "blip"),
     "click": ("click", "tick", "tap", "blip"),
     "ding": ("ding", "bell", "chime", "notification"),
-    "rumble": ("rumble", "earthquake", "quake"),
     "heartbeat": ("heartbeat", "heart", "pulse"),
     "typing": ("typing", "keyboard"),
     "flyby": ("flyby", "fly", "plane", "jet"),

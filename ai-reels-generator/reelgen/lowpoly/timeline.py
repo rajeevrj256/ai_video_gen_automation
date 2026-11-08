@@ -69,7 +69,7 @@ MOMENT = {"land": 0.3, "super-jump": 0.35, "catch": 0.45, "lift": 0.35, "throw":
 # what comes with each action at its moment: effects (if the shot hasn't got that kind) and sounds
 ACTION_FX = {"land": ("shockwave", "crack", "dust", "shake"), "super-jump": ("dust", "shockwave"), "push-stop": ("sparks", "dust", "shake"),
              "catch": ("dust", "shake"), "punch": ("debris", "dust", "shake"), "lift": ("dust",)}
-ACTION_SOUNDS = {"land": (("swoosh", -0.35), ("impact", 0), ("rumble", 0.02)), "super-jump": (("swoosh", 0), ("thud", 0)),
+ACTION_SOUNDS = {"land": (("swoosh", -0.35), ("impact", 0)), "super-jump": (("swoosh", 0), ("thud", 0)),
                  "push-stop": (("skid", -0.8), ("crash", 0), ("creak", 0.25)), "catch": (("impact", 0), ("creak", 0.12)),
                  "lift": (("creak", 0.2),), "throw": (("swoosh", 0),), "punch": (("impact", 0), ("crack", 0.02)),
                  "crush": (("crack", 0),), "fall": (("thud", 0.3),), "dash": (("flyby", -9),)}

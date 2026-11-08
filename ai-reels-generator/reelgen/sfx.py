@@ -268,6 +268,20 @@ def _footsteps(duration: float = 1.0, every: float = 0.5) -> np.ndarray:
     return out
 
 
+# Sounds the user took out of every future video (the rumble: "some noise ... not used on future videos"). The maker
+# functions stay so older videos still re-mix; no writer is offered them and anything that asks for one gets nothing.
+REMOVED_SOUNDS = frozenset({"rumble"})
+
+
+def drop_removed(cues):
+    """A list of sound cues (dicts or models with a `sound`/`name`) without the removed sounds (pydantic before-validator)."""
+    if not isinstance(cues, list):
+        return cues
+    def name(c):
+        return (c.get("sound") or c.get("name")) if isinstance(c, dict) else getattr(c, "sound", None)
+    return [c for c in cues if name(c) not in REMOVED_SOUNDS]
+
+
 CUE_SOUNDS = {
     "sword": (_sword, 0.5, 0.05, "blade slash with a metallic ring: a sharp reveal, a cut, a decisive moment"),
     "heartbeat": (_heartbeat, 0.55, 0.0, "a heartbeat: suspense, fear, a life-or-death moment"),
@@ -277,7 +291,6 @@ CUE_SOUNDS = {
     "ding": (_ding, 0.3, 0.0, "clean ding: a fact or idea landing, a lightbulb moment"),
     "typing": (_typing, 0.25, 0.0, "keyboard clicks: searching, messaging, hacking, writing"),
     "click": (_click, 0.3, 0.0, "a crisp click: text or a counter landing"),
-    "rumble": (_rumble, 0.5, 0.0, "a low rumble: shaking, a threat, fear"),
     "flyby": (_flyby, 0.4, 0.5, "something rushing past the camera: a plane, a car, a crowd"),
     "boing": (_boing, 0.35, 0.0, "a cartoon spring: a silly moment, a joke's punchline"),
     "scratch": (_scratch, 0.32, 0.0, "a record scratch: 'wait, what?', an awkward or surprising turn"),

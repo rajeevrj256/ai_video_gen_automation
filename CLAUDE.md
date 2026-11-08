@@ -180,6 +180,7 @@ review about 1 min. A failed review costs a whole extra try.
   (`sfx.HOOK_SOUNDS`; its riser was banned and removed), because the user asked for the reference video's hook audio; plus one boom under the first
   word of Shorts, Toon and the Shorts Studio. Never add them back to `CUE_SOUNDS`. The same goes for the user's
   uploads: an effect named boom/braam/hit is never used (`media.BOOM_WORDS`), and a file the user bans stays out.
+- **The rumble is removed from every future video** (the user: "remove this sound, not used on future videos, some noise"): out of `sfx.CUE_SOUNDS` (Claude's lists, uploads' roles), the automatic sound design (shake, angry face), the low-poly landing and the low-poly and Sticky writers' sound lists; `sfx.REMOVED_SOUNDS` + `drop_removed` drop it from older stories when read. The maker functions stay so older videos still re-mix. Never add it back.
 - **Verify, don't assert.** After changing the editor, render a still and look at it;
   after pipeline changes, make one real video and read its `report.json`.
 - **Only one session should edit a branch at a time.** Fetch before you push, and never

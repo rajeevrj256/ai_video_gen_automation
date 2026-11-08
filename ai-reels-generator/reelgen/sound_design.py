@@ -22,7 +22,7 @@ FPS = 30
 TRANSITION_SOUND = {"smooth": ("shimmer", 0.2), "whip": ("whoosh", 0.3), "zoom": (None, 0.0),
                     "glitch": ("glitch", 0.22), "flash": ("swish", 0.3), "slide": ("swish", 0.28)}
 ACTOR_SOUND = {"enter-left": "whoosh", "enter-right": "whoosh", "walk-across": "swish", "approach": None,
-               "flee": "whoosh", "drop-in": "impact", "fall": "impact", "shake": "rumble", "grow": None,
+               "flee": "whoosh", "drop-in": "impact", "fall": "impact", "shake": None, "grow": None,
                "shrink": "swish", "pulse": "heartbeat", "spin": "swish", "orbit": "swish", "rise": None,
                "multiply": "pop"}
 MIN_GAP = 0.18  # two sounds of the same kind closer than this sound like one smeared sound
@@ -89,7 +89,7 @@ def _visual_events(v: dict, start: float, duration: float) -> list[tuple[str, fl
 
 # A reaction face's sound, at its second beat (the bottom text, ~a third into the beat; Meme.tsx `later`).
 FACE_SOUND = {"shocked": ("scratch", 0.0), "crying": ("sad", 0.32), "laughing": ("boing", 0.32), "side-eye": ("click", 0.3),
-              "mind-blown": ("shimmer", 0.3), "sweating": ("tick", 0.05), "angry": ("rumble", 0.3), "confused": ("boing", 0.3),
+              "mind-blown": ("shimmer", 0.3), "sweating": ("tick", 0.05), "confused": ("boing", 0.3),
               "smug": ("ding", 0.32)}
 
 

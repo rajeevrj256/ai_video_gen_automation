@@ -13,12 +13,13 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from ..config import Config
 from ..llm import ask
+from ..sfx import drop_removed
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ HoldName = Literal["none", "phone", "mug", "book", "laptop", "shoes", "bag", "ke
 ThingName = Literal["phone", "alarm", "mug", "laptop", "book", "shoes", "plate", "bag", "plant", "bottle", "calendar", "note", "pizza"]
 SoundName = Literal["alarm", "footsteps", "door", "knock", "notify", "buzz", "typing", "tap", "ding", "chime", "bell", "page", "rain",
                     "thud", "heartbeat", "tick", "coins", "cheer", "pop", "scribble", "swoosh", "send",
-                    "impact", "crash", "glass", "crack", "creak", "skid", "siren", "wind", "fire", "sparks", "rumble", "flyby", "crowd"]
+                    "impact", "crash", "glass", "crack", "creak", "skid", "siren", "wind", "fire", "sparks", "flyby", "crowd"]
 Mood = Literal["calm", "emotional", "uplifting", "curious", "mystery", "dark", "suspense", "energetic"]
 BigName = Literal["car", "bus", "truck", "beam", "crate", "boulder", "barbell", "pipe", "door", "ball", "made"]
 MotionName = Literal["still", "fall", "caught", "lifted", "held", "thrown", "stop", "drive", "crushed", "hang", "shake",
@@ -142,6 +143,10 @@ class LPSound(BaseModel):
     word: str = Field("", description="a word of this shot's line it lands on; empty = the start of the shot")
 
 
+# older stories may still name a sound the user removed (sfx.REMOVED_SOUNDS): it is dropped when read
+Sounds = Annotated[list[LPSound], BeforeValidator(drop_removed)]
+
+
 class LPBig(BaseModel):
     kind: BigName = Field(description="one of the editor's own, or 'made' = one of this film's own designs (`made`)")
     spot: SpotName = "center"
@@ -181,7 +186,7 @@ class LPShot(BaseModel):
                                               "a shot of only a vehicle under way, which the camera follows)")
     things: list[LPThing] = Field(default_factory=list, description="objects put down in the place (on the bedside table, the "
                                                                      "desk, the kitchen table)")
-    sounds: list[LPSound] = Field(default_factory=list)
+    sounds: Sounds = Field(default_factory=list)
     pause: float = Field(0.0, description="extra seconds of silence after the line, for a beat to land or an action to play out "
                                           "(0-2; fiction up to 4)")
     red: bool = Field(False, description="the last line's punch, shown in red; only on the final line")
@@ -1245,7 +1250,7 @@ class ShotStaging(BaseModel):
     subject: str = Field("", description="who the camera is on: 'hero' or a name of someone in the shot")
     actors: list[LPActor]
     things: list[LPThing] = Field(default_factory=list)
-    sounds: list[LPSound] = Field(default_factory=list)
+    sounds: Sounds = Field(default_factory=list)
     big: list[LPBig] = Field(default_factory=list)
     fx: list[LPFx] = Field(default_factory=list)
     slowmo: bool = False

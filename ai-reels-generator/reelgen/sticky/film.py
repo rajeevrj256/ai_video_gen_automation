@@ -6,12 +6,13 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from ..config import Config
 from ..llm import ask
+from ..sfx import drop_removed
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ Colour = Literal["black", "charcoal", "grey", "white", "navy", "blue", "red", "o
                  "purple", "teal"]
 Accent = Literal["pink", "red", "purple", "amber", "cyan"]
 Sound = Literal["ding", "notify", "buzz", "typing", "tap", "send", "knock", "door", "footsteps", "alarm", "heartbeat",
-                "rumble", "static", "chime", "bell", "pop", "swoosh", "scribble", "tick", "page", "coins", "rain", "cheer",
+                "static", "chime", "bell", "pop", "swoosh", "scribble", "tick", "page", "coins", "rain", "cheer",
                 "thud", "swell"]
 Act = Literal["open", "loop", "low", "turn", "day1", "climb", "test", "resolve", "thesis", "title"]
 Mood = Literal["calm", "dark", "emotional", "suspense", "uplifting", "curious", "playful"]
@@ -114,6 +115,10 @@ class FSoundCue(BaseModel):
     at: float = Field(ge=0, description="Seconds into the shot.")
 
 
+# older films may still name a sound the user removed (sfx.REMOVED_SOUNDS): it is dropped when read
+FSounds = Annotated[list[FSoundCue], BeforeValidator(drop_removed)]
+
+
 class FShot(BaseModel):
     kind: Literal["scene", "phone", "clock", "calendar", "card", "object", "graph", "face"] = Field(
         description="scene: a set with people. phone: the phone close in his hands. clock: the alarm clock close (the time is story). "
@@ -147,7 +152,7 @@ class FShot(BaseModel):
     day: str = Field(default="", description="The HUD day label once days are counted: 'DAY 23'. Empty before.")
     time: str = Field(default="", description="The HUD clock: '2:03 AM'. Empty when time doesn't matter.")
     quiet: bool = Field(default=False, description="The music drops away for this shot (the breath before the turn, a gut punch).")
-    sounds: list[FSoundCue] = Field(default_factory=list, description="Sounds of the world and the feeling on this shot beyond the automatic ones (phone dings, steps, bubbles, the voice's rumble are added in code).")
+    sounds: FSounds = Field(default_factory=list, description="Sounds of the world and the feeling on this shot beyond the automatic ones (phone dings, steps, bubbles are added in code).")
 
 
 class FAct(BaseModel):
