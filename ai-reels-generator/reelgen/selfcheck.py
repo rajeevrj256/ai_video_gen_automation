@@ -273,6 +273,41 @@ def lowpoly_lists() -> None:
         theirs = set(re.findall(r"'([a-z-]+)'", re.sub(r"//[^\n]*", "", block.group(1)))) if block else set()
         if set(typing.get_args(py)) != theirs:
             fail(f"lowpoly {ts_name}: story.py {sorted(typing.get_args(py))} but types.ts {sorted(theirs)}")
+    block = re.search(r"export type MoveRole =(.*?);", ts, re.S)
+    theirs = set(re.findall(r"'([a-z_]+)'", block.group(1))) if block else set()
+    if set(typing.get_args(S.MOVES)) - {""} != theirs:
+        fail(f"lowpoly MoveRole: story.py {sorted(typing.get_args(S.MOVES))} but types.ts {sorted(theirs)}")
+    # the user's own shot-by-shot script (their dinosaur film came out with the man in every shot): sections and lines
+    # read word for word, the lines put back if the writer changed them, no man in a film without people, a creature
+    # named as an actor left out, a flying creature with no canopy over it
+    sample = ("# WHAT IF?\n### 0–6 SEC — THE HOOK\n**Visual:** A T-Rex roars in a jungle.\n**Narrator:**\n\"Dinosaurs ruled Earth "
+              "for 165 million years... but what if the asteroid never hit?\"\n### 55–60 SEC — ENDING\n**Visual:** An egg hatches.\n"
+              "**Narrator (whispering):**\n\"Maybe it was never over.\"\n**CUT TO BLACK.**\nTEXT: WOULD YOU SURVIVE?")
+    secs = S.parse_script(sample)
+    lines = S.script_lines(secs or [])
+    if not secs or lines != ["Dinosaurs ruled Earth for 165 million years...", "but what if the asteroid never hit?", "Maybe it was never over."] \
+            or secs[-1]["text"] != ["WOULD YOU SURVIVE?"] or not secs[-1]["black"] or S.parse_script("A man forgets his keys.") is not None:
+        fail(f"lowpoly script: not read section by section: {secs}")
+    rex = S.LPMade(name="T-Rex", what="a dinosaur", travel="legs", parts=[
+        S.LPPart(shape="sphere", at=[0, 3, 0], size=[2, 2, 5], color="#556b2f"),
+        S.LPPart(shape="box", at=[0, 4, 3], size=[1, 1, 2], color="#556b2f", move="head")])
+    bird = S.LPMade(name="Pterosaur", what="a flying reptile", travel="air", parts=[
+        S.LPPart(shape="sphere", at=[0, 0.6, 0], size=[0.6, 0.6, 1.6], color="#8a6a4a"),
+        S.LPPart(shape="box", at=[2, 0.6, 0], size=[4, 0.06, 1.2], color="#c09a6a", move="wing_l")])
+    dino = S.Story(title="t", problem="p", youtube_title="y", description="d", tags=[], hashtags=[], thumbnail_text="t", mood="mystery",
+                   end_mood="dark", music_prompt="m", made=[rex, bird], kind="fiction", hero=False, shots=[
+                       S.LPShot(line="Dinosaurs ruled Earth for 165 million years", set="jungle", light="day", camera="low",
+                                actors=[S.LPActor(who="T-Rex", action="stand", expression="neutral", spot="center")],
+                                big=[S.LPBig(kind="made", made="T-Rex", motion="roar")]),
+                       S.LPShot(line="what if it never hit", set="jungle", light="day", camera="wide", actors=[]),
+                       S.LPShot(line="", set="cave", light="dark", camera="wide", actors=[], stamp="WOULD YOU SURVIVE?")])
+    S.keep_script_lines(dino, lines)
+    S.repair(dino)
+    if [x.line for x in dino.shots if x.line] != lines or any(x.actors for x in dino.shots) or dino.shots[0].big[0].motion != "roar":
+        fail(f"lowpoly creature film: {[(x.line, [a.who for a in x.actors], [b.motion for b in x.big]) for x in dino.shots]}")
+    if any(p.get("glass") for p in S.design_for_editor(bird)["parts"]) or S.design_for_editor(bird)["seats"] \
+            or S.design_for_editor(rex)["parts"][1].get("move") != "head":
+        fail("lowpoly creatures: a flying creature got a cockpit, or a moving part lost its role")
     from .lowpoly.sounds import MAKERS
     from .lowpoly.timeline import ACTION_SOUNDS, FX_SOUNDS, MOTION_SOUNDS
     wanted = {x for v in list(ACTION_SOUNDS.values()) + list(MOTION_SOUNDS.values()) for x, _ in v} | set(FX_SOUNDS.values())

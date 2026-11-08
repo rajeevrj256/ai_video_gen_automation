@@ -76,7 +76,7 @@ ACTION_SOUNDS = {"land": (("swoosh", -0.35), ("impact", 0)), "super-jump": (("sw
 MOTION_FX = {"fall": ("dust", "debris", "shake")}
 MOTION_SOUNDS = {"fall": (("swoosh", -0.5), ("crash", 0)), "drive": (("flyby", -0.7),), "hang": (("creak", -9),),
                  "stop": (), "thrown": ()}
-FX_SOUNDS = {"glass": "glass", "sparks": "sparks", "fire": "fire", "rain": "rain", "wind": "wind", "alarm": "siren"}
+FX_SOUNDS = {"glass": "glass", "sparks": "sparks", "fire": "fire", "rain": "rain", "wind": "wind", "alarm": "siren", "meteor": "flyby"}
 LOOPING = {"fire", "rain", "wind", "siren", "sparks"}
 VEHICLE = {"car", "bus", "truck"}
 HEAVY = VEHICLE | {"beam", "boulder", "crate", "pipe"}
@@ -331,6 +331,11 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                 if kind not in have and at is not None:
                     fx.append({"kind": kind, "at": round(at, 3), "spot": b.spot})
                     have.add(kind)
+            if b.motion == "roar" and b.kind == "made" and "shake" not in have:
+                m = designs(story).get(_key(b.made))
+                if m and design_for_editor(m)["dims"][1] > 2.5:
+                    fx.append({"kind": "shake", "at": round((at if at is not None else dur * 0.4) + 0.15, 3)})
+                    have.add("shake")
             if b.motion == "fall" and b.kind in VEHICLE and at is not None and "glass" not in have:
                 fx.append({"kind": "glass", "at": round(at, 3), "spot": b.spot})
                 have.add("glass")
@@ -403,6 +408,29 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
             if b.motion == "hang" and b.at is not None:
                 cue("crack", t + b.at * dur, 0.9)
                 cue("swoosh", t + b.at * dur + 0.1, 0.8)
+        # animals and creatures: a roar, footfalls in step with the walk (Big.tsx strideOf), wing beats, an egg cracking
+        for k, (b, at) in enumerate(zip(s.big, big_at)):
+            m = designs(story).get(_key(b.made)) if b.kind == "made" else None
+            if not m or not (m.travel == "legs" or any(p.move for p in m.parts)):
+                continue
+            h = max(0.4, design_for_editor(m)["dims"][1])
+            loud = min(1.0, 0.45 + h / 6)
+            moment = at if at is not None else dur * 0.4
+            slow = 1 / SLOW if s.slowmo else 1.0
+            if b.motion == "roar":
+                cue("roar", t + max(0.0, moment - 0.1 * slow), loud)
+            elif b.motion in ("walk", "charge") and k < 3:
+                every = 1 / (2 * ((2.5 if b.motion == "charge" else 1.5) / h ** 0.5)) * slow
+                n, x = 0, 0.15 + 0.2 * k
+                while x < dur - 0.1 and n < 16:
+                    cue("stomp" if h > 1.2 else "thud", t + x, loud * (0.9 if n % 2 else 1.0))
+                    x += every
+                    n += 1
+            elif b.motion == "hatch" and any(p.move == "shell_top" for p in m.parts):
+                cue("crack", t + max(0.0, moment - 0.9 * slow), 0.5)
+                cue("crack", t + moment, 0.95)
+            elif m.travel == "air" and (b.motion in AIR_MOTIONS or not s.actors):
+                cue("wings", t + 0.02, 0.9, max(0.6, dur - 0.05))
         # a vehicle under way: its engine (a car), its propeller or its jet under the whole shot, and its moments
         for k, (b, at) in enumerate(zip(s.big, big_at)):
             way = travel_of(story, b)
@@ -411,6 +439,8 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                                      or ((ridden or not s.actors) and b.motion in ("drive", "stop"))):
                 continue
             m = designs(story).get(_key(b.made)) if b.kind == "made" else None
+            if way == "legs" or (m and any(p.move for p in m.parts)):
+                continue  # an animal: its own sounds above
             bed = "engine" if way in ("ground", "water") else "propeller" if m and any(p.spin for p in m.parts) else "jet"
             if b.kind == "car" or (bed == "engine" and way == "ground"):
                 # a car: its own engine, following its speed through the shot (car.engine, from the user's recording)

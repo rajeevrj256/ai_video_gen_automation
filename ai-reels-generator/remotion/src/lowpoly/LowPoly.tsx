@@ -41,6 +41,8 @@ import {
   CLUSTER,
   type RoadPlace,
   type Nudge,
+  headOf,
+  isCreature,
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
 import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot} from './types';
@@ -1113,8 +1115,108 @@ const rideCam = (cam: Cam, r: Ride, who: Placed | undefined, set: SetDef, shot: 
   return {pos, look, up: camUp, fov, focus, aperture, near: cam === 'cockpit' || cam === 'bumper' ? 0.05 : Math.max(0.05, Math.min(1.2, focus * 0.25))};
 };
 
+// A shot with nobody in it, of an animal, a creature or a big thing (the user's dinosaur script: a T-Rex roaring, a
+// Brachiosaurus between skyscrapers, an egg hatching in a cave): the camera is on that thing, the way the story asked.
+export const bigCam = (cam: Cam, b: Big, st: BigState, set: SetDef, aspect: number, t: number, dur: number, seed: number): CamPlan => {
+  const [w, h, l] = sizeOf(b);
+  const f = new THREE.Vector3(Math.sin(st.ry), 0, Math.cos(st.ry));
+  // the side the camera stands on: the open side of the place (+z, where every set's own camera is: the street's
+  // buildings stood behind a camera put on the far side), else either by the shot's seed
+  const sd0 = new THREE.Vector3(f.z, 0, -f.x);
+  const sd = sd0.multiplyScalar(Math.abs(sd0.z) > 0.3 ? Math.sign(sd0.z) : seed % 2 ? 1 : -1);
+  const c = st.pos.clone().setY(Math.max(0, st.pos.y) + h / 2);
+  const head = headOf(b, st);
+  const up = new THREE.Vector3(0, 1, 0);
+  const fov = 40;
+  const whole = (k: number, dir: THREE.Vector3, high = 0) => {
+    // in a tall frame a long animal is seen three-quarters on: its length needn't fit across the narrow width
+    const D = distFor(Math.max(w, l) * (aspect < 1 ? 0.55 : 1.05), h * 1.25, fov, aspect) * k;
+    const pos = c.clone().addScaledVector(dir.clone().normalize(), D);
+    pos.y = Math.max(0.6, c.y * 0.55 + h * 0.15 + high * D);
+    return {pos, look: c.clone().add(new THREE.Vector3(0, h * 0.08, 0))};
+  };
+  const close = (k: number) => {
+    const D = distFor(head.size * 2.4 * k, head.size * 2.4 * k, 34, aspect);
+    const dir = f.clone().multiplyScalar(0.85).addScaledVector(sd, 0.5).normalize();
+    return {pos: head.p.clone().addScaledVector(dir, D).add(new THREE.Vector3(0, head.size * 0.25, 0)), look: head.p.clone()};
+  };
+  let pv: {pos: THREE.Vector3; look: THREE.Vector3};
+  let lens = fov;
+  switch (cam) {
+    case 'face':
+      pv = close(1);
+      lens = 34;
+      break;
+    case 'detail':
+      pv = close(0.55);
+      lens = 34;
+      break;
+    case 'crash-zoom': {
+      const a = whole(1, f.clone().addScaledVector(sd, 0.6));
+      const z = close(0.9);
+      const p = ease(Math.min(1, t / Math.max(0.4, dur * 0.4)));
+      pv = {pos: a.pos.clone().lerp(z.pos, p), look: a.look.clone().lerp(z.look, p)};
+      break;
+    }
+    case 'low': {
+      pv = whole(0.75, f.clone().addScaledVector(sd, 0.5));
+      pv.pos.y = 0.35;
+      pv.look = c.clone().add(new THREE.Vector3(0, h * 0.3, 0));
+      lens = 50;
+      break;
+    }
+    case 'wide':
+      // the place with it: wider for a small creature, and a huge one already fills a wide frame
+      pv = whole(Math.max(1.35, Math.min(2.3, 2.3 - 0.06 * Math.max(0, Math.max(w, l) - 6))), f.clone().multiplyScalar(0.6).addScaledVector(sd, 0.8), 0.12);
+      break;
+    case 'side':
+    case 'tracking':
+      pv = whole(1.15, sd);
+      break;
+    case 'front':
+    case 'lead':
+      pv = whole(1.2, f.clone().addScaledVector(sd, 0.15));
+      break;
+    case 'back':
+    case 'chase':
+      pv = whole(1.3, f.clone().negate().addScaledVector(sd, 0.35), 0.1);
+      pv.look = c.clone().addScaledVector(f, l * 0.8);
+      break;
+    case 'aerial':
+    case 'top':
+    case 'heli':
+    case 'drone':
+      pv = whole(1.6, f.clone().multiplyScalar(0.5).addScaledVector(sd, 0.5), 0.75);
+      break;
+    case 'orbit': {
+      const a = seed * 0.9 + t * 0.3;
+      pv = whole(1.25, f.clone().applyAxisAngle(up, a));
+      break;
+    }
+    default: // medium: all of it, from three-quarters in front
+      pv = whole(1.05, f.clone().multiplyScalar(0.75).addScaledVector(sd, 0.65));
+  }
+  // a slow push, so a held shot still breathes
+  const push = 1 - 0.05 * ease(t / Math.max(1, dur));
+  pv.pos = pv.look.clone().add(pv.pos.clone().sub(pv.look).multiplyScalar(push));
+  pv.pos.y = Math.max(0.3, pv.pos.y);
+  const focus = pv.pos.distanceTo(cam === 'face' || cam === 'detail' ? head.p : c);
+  void set;
+  return {pos: pv.pos, look: pv.look, up: up.clone(), fov: lens, focus, aperture: 0.06, near: Math.max(0.05, Math.min(1.2, focus * 0.2))};
+};
+
 // The camera of a shot at time t: on its subject (the focus actor, or the vehicle when nobody is in the shot), by the
 // camera the story asked for (as camOf turns it), and the wide view of the place when there is nothing to film.
+// the big thing a shot with nobody in it is about: its first creature, else its first design, else its first big thing
+export const subjectBig = (shot: LPShot, set: SetDef, t: number): {b: Big; st: BigState} | undefined => {
+  if (shot.actors.length) return undefined;
+  const all = (shot.big ?? []).map((b0, k) => ({b: scaledBig(b0, shot), k}));
+  // a creature before an egg it hatches from, before anything else
+  const pick = all.find(({b}) => isCreature(b) && !/egg|shell/i.test(b.made ?? '')) ?? all.find(({b}) => isCreature(b)) ?? all.find(({b}) => b.kind === 'made' && !isVehicle(b)) ?? all[0]; // (a vehicle under way has its own cameras: rides, before this)
+  if (!pick) return undefined;
+  return {b: pick.b, st: bigState(pick.b, set, [], actionTime(shot, t), actionTime(shot, shot.duration), pick.k)};
+};
+
 export const planFor = (shot: LPShot, set: SetDef, placed: Placed[], rides: (Ride | undefined)[], aspect: number, t: number) => {
   const who = placed[Math.min(placed.length - 1, Math.max(0, shot.focus ?? 0))];
   // (someone who leaps off a vehicle in this shot is filmed as himself the whole shot, not as the vehicle)
@@ -1132,7 +1234,9 @@ export const planFor = (shot: LPShot, set: SetDef, placed: Placed[], rides: (Rid
       ? rideCam(cam, ride, who, set, shot, aspect, t, seed)
       : who
         ? camFor(cam, who, placed, set, aspect, t, shot.duration, seed)
-        : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
+        : subjectBig(shot, set, t)
+          ? bigCam(shot.camera, subjectBig(shot, set, t)!.b, subjectBig(shot, set, t)!.st, set, aspect, t, shot.duration, seed)
+          : {pos: V(set.wide.pos), look: V(set.wide.look), up: new THREE.Vector3(0, 1, 0), fov: 40, focus: 5, aperture: 0.1};
   return {plan, who, ride, cam, insert: CUT_CAMS.has(cam)};
 };
 
@@ -1425,7 +1529,7 @@ const onVehicle = (shot: LPShot, k: number) => {
 // The effects with their start in action seconds, and where each one happens.
 const fxPlan = (shot: LPShot, set: SetDef, placed: Placed[], who: Placed | undefined, bigs: {b: Big; st: BigState}[], ta: number, da: number, ride?: Ride) =>
   (shot.fx ?? []).map((f: Fx, i) => {
-    const at = f.at !== undefined ? actionTime(shot, f.at) : ['rain', 'wind'].includes(f.kind) ? 0 : da * 0.4;
+    const at = f.at !== undefined ? actionTime(shot, f.at) : ['rain', 'wind'].includes(f.kind) ? 0 : f.kind === 'meteor' ? da * 0.1 : da * 0.4;
     const fallen = bigs.find((x) => x.b.motion === 'fall' || x.b.motion === 'crushed');
     let point: THREE.Vector3;
     if (f.spot) {
@@ -1630,6 +1734,10 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   void holderFor;
   const {plan, who, ride, insert, cam} = planFor(shot, set, placed, rides, aspect, t);
   const fx = fxPlan(shot, set, placed, who, bigs, ta, da, ride ?? rides.find((r) => r?.under));
+  for (const f of fx) {
+    f.ctx.eye = plan.pos.clone();
+    f.ctx.look = plan.look.clone();
+  }
   // someone seated in it: an open roadster (the driver seen at the wheel), else a coupe
   const seated = new Set(placed.filter((p) => p.ride !== undefined && p.pose.y < 0.75 && ['drive', 'ride'].includes(p.actor.action)).map((p) => p.ride!));
   // never inside a bus driving by: the camera moves toward what it looks at, for the whole shot, with a wider lens
@@ -1656,7 +1764,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       <color attach="background" args={[look.sky[1]]} />
       {set.outdoor ? <fogExp2 attach="fog" args={[look.sky[1], look.fog * (set.sky ? 0.3 : 1)]} /> : null}
       <CamRig plan={plan} exposure={look.exposure} />
-      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : V(set.wide.look)} eye={plan.pos} />
+      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : subjectBig(shot, set, t)?.st.pos.clone() ?? V(set.wide.look)} eye={plan.pos} />
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
       {things.map((th, i) => (
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />

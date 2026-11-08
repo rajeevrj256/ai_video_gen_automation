@@ -59,7 +59,7 @@ export type Holder = {action: string; root: V3; ry: number; head: THREE.Vector3;
 // (a plane, a jet, a helicopter, a motorbike, a boat) is designed for the film as low-poly parts (`made`) and built here.
 export const UNDERWAY = new Set(['race', 'drift', 'spin', 'reverse', 'jump', 'fly', 'climb', 'dive', 'bank', 'roll']);
 const AIRBORNE = new Set(['fly', 'climb', 'dive', 'bank', 'roll']);
-export type Travel = 'ground' | 'air' | 'water' | 'none';
+export type Travel = 'ground' | 'air' | 'water' | 'legs' | 'none';
 let MADE: Record<string, Made> = {};
 export const setMade = (m?: Record<string, Made>) => {
   MADE = m ?? {};
@@ -67,7 +67,19 @@ export const setMade = (m?: Record<string, Made>) => {
 export const madeOf = (b: Big): Made | undefined => (b.kind === 'made' && b.made ? MADE[b.made] : undefined);
 export const sizeOf = (b: Big): V3 => madeOf(b)?.dims ?? SIZE[b.kind] ?? [1, 1, 1];
 export const travelOf = (b: Big): Travel => (b.kind === 'made' ? madeOf(b)?.travel ?? 'none' : VEHICLE.has(b.kind) ? 'ground' : 'none');
-export const isVehicle = (b: Big) => travelOf(b) !== 'none';
+export const isVehicle = (b: Big) => travelOf(b) !== 'none' && travelOf(b) !== 'legs';
+// an animal or creature the writer designed (dinosaurs, a dragon, a wolf): its parts have moving roles
+export const isCreature = (b: Big) => {
+  const m = madeOf(b);
+  return !!m && (m.travel === 'legs' || m.parts.some((p) => !!p.move));
+};
+export const CREATURE_MOTIONS = new Set(['walk', 'charge', 'roar', 'hatch']);
+// how fast a creature goes when it walks or charges (m/s): a big one strides further, so it goes faster but looks slow
+export const creatureSpeed = (b: Big) => {
+  const [, h, l] = sizeOf(b);
+  const walk = 0.8 + 0.13 * Math.max(l, h);
+  return b.motion === 'charge' ? walk * 2.6 : walk;
+};
 // under way: it travels on its own path and anyone on it travels with it (the camera too); a vehicle with someone at
 // the wheel drives that way even when it only 'drive's
 export const underway = (b: Big, ridden: boolean) => isVehicle(b) && (UNDERWAY.has(b.motion) || (ridden && (b.motion === 'drive' || b.motion === 'stop')));
@@ -361,6 +373,33 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
     return hung;
   }
   const across = (h: Holder) => h.ry + (size[2] > size[0] ? Math.PI / 2 : 0); // its long side across his shoulders
+  if (CREATURE_MOTIONS.has(b.motion)) {
+    if (b.motion === 'walk' || b.motion === 'charge') {
+      // across the place along its walk, at its spot at its moment, facing the way it goes; a herd's next one a little
+      // behind and to the side of the one before
+      const dir = set.walk === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+      st.pos = ground.clone().addScaledVector(dir, creatureSpeed(b) * (t - ev));
+      st.ry = Math.atan2(dir.x, dir.z);
+      st.pos.y += b.motion === 'charge' ? 0.025 * size[1] * Math.abs(Math.sin(t * 2 * Math.PI * strideOf(b))) : 0;
+      st.contact = st.pos.clone().setY(0);
+      return st;
+    }
+    if (b.motion === 'hatch') {
+      const egg = madeOf(b)?.parts.some((p) => p.move === 'shell_top');
+      if (egg) {
+        // it trembles more and more, then bursts at its moment and settles
+        const before = t < ev ? Math.min(1, Math.max(0, (t - (ev - 2.2)) / 2.2)) : 0;
+        st.rz = before * 0.06 * Math.sin(t * 34) + (t >= ev ? 0.04 * Math.exp(-(t - ev) * 5) * Math.sin(t * 40) : 0);
+        st.rx = before * 0.04 * Math.sin(t * 27 + 1);
+      } else {
+        // a creature hatching: inside the shell until just after it bursts, then it rises out of it
+        const up = E((t - ev - 0.25) / 0.9);
+        st.pos.y = -size[1] * 0.95 * (1 - up);
+      }
+      return st;
+    }
+    return st; // roar: it stands where it is (its head and jaw roar, in the model)
+  }
   switch (b.motion) {
     case 'fall': {
       const dt = ev - t;
@@ -960,20 +999,146 @@ const MadePartView: React.FC<{p: MadePart; spin: number}> = ({p, spin}) => {
     </group>
   );
 };
-export const MadeModel: React.FC<{m: Made; spin: number}> = ({m, spin}) => (
-  <group>
-    {m.parts.map((p, i) => (
-      <MadePartView key={i} p={p} spin={spin} />
-    ))}
-  </group>
-);
+// ---------------------------------------------------------------- animals and creatures: their moving parts
+// The user's dinosaur script came out with no dinosaur that moved (and the man in every shot). A creature is a design
+// whose parts have roles (head, neck, jaw, tail, legs, arms, wings, an egg's top): the parts of one role turn together
+// about one pivot (a leg about its hip, the head about the back of its skull, the jaw about its hinge, the tail about
+// its root, a wing about its inner edge), the head and jaw ride on the neck, the jaw on the head.
+export type CreatureAnim = {t: number; gait: number; stride: number; roar: number; hatch: number; flap: number};
+const strideOf = (b: Big) => {
+  const h = Math.max(0.4, sizeOf(b)[1]);
+  return (b.motion === 'charge' ? 2.5 : 1.5) / Math.sqrt(h);
+};
+export const creatureAnim = (b: Big, st: BigState, t: number): CreatureAnim => {
+  const at = b.at ?? 0.6;
+  const gait = b.motion === 'walk' ? 1 : b.motion === 'charge' ? 1.5 : 0;
+  const roar = b.motion === 'roar' ? E((t - at + 0.15) / 0.3) * (1 - E((t - at - 1.5) / 0.45)) : b.motion === 'charge' ? 0.2 : 0;
+  const hatch = b.motion === 'hatch' ? (t < at ? -1 : Math.min(1, (t - at) / 0.7)) : -1;
+  const flap = travelOf(b) === 'air' && (st.speed ?? 0) > 0.1 ? 1 : 0;
+  return {t, gait, stride: strideOf(b), roar, hatch, flap};
+};
+type RoleBox = {lo: V3; hi: V3};
+const ROLE_BOXES = new WeakMap<Made, Record<string, RoleBox>>();
+const partCorners = (p: MadePart): V3[] => {
+  const [a, b, c] = p.size;
+  const ext: V3 = p.shape === 'cylinder' || p.shape === 'cone' ? [Math.max(a, p.shape === 'cylinder' ? c : 0) / 2, b / 2, Math.max(a, p.shape === 'cylinder' ? c : 0) / 2] : [a / 2, b / 2, c / 2];
+  const e = new THREE.Euler(...((p.turn ?? [0, 0, 0]).map((v) => v * D2R) as V3));
+  const out: V3[] = [];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    const v = new THREE.Vector3(sx * ext[0], sy * ext[1], sz * ext[2]).applyEuler(e);
+    out.push([p.at[0] + v.x, p.at[1] + v.y, p.at[2] + v.z]);
+  }
+  return out;
+};
+const roleBoxes = (m: Made) => {
+  let boxes = ROLE_BOXES.get(m);
+  if (!boxes) {
+    boxes = {};
+    for (const p of m.parts) {
+      if (!p.move) continue;
+      const bx = boxes[p.move] ?? {lo: [1e9, 1e9, 1e9] as V3, hi: [-1e9, -1e9, -1e9] as V3};
+      for (const c of partCorners(p)) for (let k = 0; k < 3; k++) {
+        bx.lo[k] = Math.min(bx.lo[k], c[k]);
+        bx.hi[k] = Math.max(bx.hi[k], c[k]);
+      }
+      boxes[p.move] = bx;
+    }
+    ROLE_BOXES.set(m, boxes);
+  }
+  return boxes;
+};
+const mid = (a: number, b: number) => (a + b) / 2;
+const pivotOf = (role: string, bx: RoleBox): V3 => {
+  const {lo, hi} = bx;
+  const cx = mid(lo[0], hi[0]);
+  const cz = mid(lo[2], hi[2]);
+  if (role === 'head') return [cx, mid(lo[1], hi[1]), lo[2]];
+  if (role === 'neck') return [cx, lo[1], lo[2]];
+  if (role === 'jaw') return [cx, hi[1], lo[2]];
+  if (role === 'tail') return [cx, mid(lo[1], hi[1]), hi[2]];
+  if (role.startsWith('wing')) return [Math.abs(lo[0]) < Math.abs(hi[0]) ? lo[0] : hi[0], mid(lo[1], hi[1]), cz];
+  if (role === 'shell_top') return [cx, lo[1], cz];
+  return [cx, hi[1], cz]; // legs and arms hang from their top
+};
+const PHASE: Record<string, number> = {leg_l: 0, leg_fl: 0, leg_br: 0, arm_r: 0, leg_r: Math.PI, leg_fr: Math.PI, leg_bl: Math.PI, arm_l: Math.PI};
+const roleTurn = (role: string, a: CreatureAnim, h: number): {r: V3; lift?: number; hide?: boolean} => {
+  const w = 2 * Math.PI * a.stride * a.t;
+  const idle = 1 - Math.min(1, a.gait);
+  if (role.startsWith('leg')) return {r: [a.gait * 0.42 * Math.sin(w + (PHASE[role] ?? 0)), 0, 0]};
+  if (role.startsWith('arm')) return {r: [0.12 * Math.sin(a.t * 1.3 + (PHASE[role] ?? 0)) + a.gait * 0.2 * Math.sin(w + (PHASE[role] ?? 0)) - 0.4 * a.roar, 0, 0]};
+  if (role === 'tail') return {r: [-0.04 + 0.03 * Math.sin(a.t * 0.9), 0.13 * Math.sin(a.t * 1.05) * idle + a.gait * 0.16 * Math.sin(w), 0]};
+  if (role === 'neck') return {r: [-0.22 * a.roar + 0.04 * Math.sin(a.t * 0.6) + a.gait * 0.03 * Math.sin(2 * w), 0.09 * Math.sin(a.t * 0.33) * (1 - a.roar), 0]};
+  if (role === 'head') return {r: [-0.42 * a.roar + 0.05 * Math.sin(a.t * 0.75) + a.gait * 0.04 * Math.sin(2 * w), 0.16 * Math.sin(a.t * 0.45) * (1 - a.roar) * idle, 0.03 * Math.sin(a.t * 0.5)]};
+  if (role === 'jaw') return {r: [0.04 + 0.05 * Math.max(0, Math.sin(a.t * 0.8)) + 0.72 * a.roar, 0, 0]};
+  if (role === 'wing_l' || role === 'wing_r') {
+    const side = role === 'wing_l' ? 1 : -1;
+    // flapping in flight, folded and stirring when it stands (positive x is the creature's left: a turn about z lifts it)
+    return {r: [0, 0, side * (a.flap ? 0.62 * Math.sin(2 * Math.PI * 1.4 * a.t) + 0.1 : 0.06 * Math.sin(a.t * 0.9) - 0.15)]};
+  }
+  if (role === 'shell_top') {
+    if (a.hatch <= 0) return {r: [0, 0, 0]};
+    return {r: [1.8 * a.hatch, 0, 0.6 * a.hatch], lift: 2.4 * h * a.hatch * (1.2 - 0.6 * a.hatch), hide: a.hatch >= 0.98};
+  }
+  return {r: [0, 0, 0]};
+};
+// the order the moving parts hang from each other: the head rides the neck, the jaw the head
+const PARENT: Record<string, string> = {head: 'neck', jaw: 'head'};
+const parentOf = (r: string, boxes: Record<string, RoleBox>) => {
+  let p = PARENT[r];
+  while (p && !boxes[p]) p = PARENT[p];
+  return p;
+};
+const RoleGroup: React.FC<{m: Made; role: string; anim?: CreatureAnim; spin: number; boxes: Record<string, RoleBox>}> = ({m, role, anim, spin, boxes}) => {
+  const bx = boxes[role];
+  const pv = pivotOf(role, bx);
+  const turn = anim ? roleTurn(role, anim, m.dims[1]) : {r: [0, 0, 0] as V3};
+  if (turn.hide) return null;
+  const kids = Object.keys(boxes).filter((r) => parentOf(r, boxes) === role);
+  return (
+    <group position={[pv[0], pv[1] + (turn.lift ?? 0), pv[2]]}>
+      <group rotation={turn.r}>
+        <group position={[-pv[0], -pv[1], -pv[2]]}>
+          {m.parts.map((p, i) => (p.move === role ? <MadePartView key={i} p={p} spin={spin} /> : null))}
+          {kids.map((r) => (
+            <RoleGroup key={r} m={m} role={r} anim={anim} spin={spin} boxes={boxes} />
+          ))}
+        </group>
+      </group>
+    </group>
+  );
+};
+// Where a big thing's head (or its front top) is in the world, and how big the head is: the camera's close-ups.
+export const headOf = (b: Big, st: BigState): {p: THREE.Vector3; size: number} => {
+  const [w, h, l] = sizeOf(b);
+  const m = madeOf(b);
+  const bx = m ? roleBoxes(m).head ?? roleBoxes(m).neck : undefined;
+  const local = bx ? new THREE.Vector3(mid(bx.lo[0], bx.hi[0]), mid(bx.lo[1], bx.hi[1]), mid(bx.lo[2], bx.hi[2]))
+    : new THREE.Vector3(0, h * 0.75, l * 0.35);
+  const size = bx ? Math.max(bx.hi[0] - bx.lo[0], bx.hi[1] - bx.lo[1], bx.hi[2] - bx.lo[2], 0.25) : Math.max(0.4, Math.min(w, h) * 0.5);
+  return {p: local.applyMatrix4(vehicleMatrix(st)), size};
+};
+export const MadeModel: React.FC<{m: Made; spin: number; anim?: CreatureAnim}> = ({m, spin, anim}) => {
+  const boxes = roleBoxes(m);
+  // a role hangs from its parent when the design has that parent (the head from the neck; the jaw from the head, else
+  // from the neck), else from the body
+  const top = Object.keys(boxes).filter((r) => !parentOf(r, boxes));
+  const bob = anim ? anim.gait * 0.018 * m.dims[1] * Math.abs(Math.sin(2 * Math.PI * anim.stride * anim.t)) : 0;
+  return (
+    <group position={[0, bob, 0]}>
+      {m.parts.map((p, i) => (!p.move ? <MadePartView key={i} p={p} spin={spin} /> : null))}
+      {top.map((r) => (
+        <RoleGroup key={r} m={m} role={r} anim={anim} spin={spin} boxes={boxes} />
+      ))}
+    </group>
+  );
+};
 
-export const BigModel: React.FC<{kind: BigKind; color?: string; seed: number; open?: boolean; turn?: number; steer?: number; made?: Made; pedals?: Pedals; speed?: number}> = ({kind, color, seed, open = false, turn = 0, steer = 0, made, pedals, speed = 0}) => {
+export const BigModel: React.FC<{kind: BigKind; color?: string; seed: number; open?: boolean; turn?: number; steer?: number; made?: Made; pedals?: Pedals; speed?: number; anim?: CreatureAnim}> = ({kind, color, seed, open = false, turn = 0, steer = 0, made, pedals, speed = 0, anim}) => {
   const c = color || PAINT[Math.abs(seed) % PAINT.length];
   void open; // (a car is always the closed coupe now; whoever drives is seen through its glass)
   switch (kind) {
     case 'made':
-      return made ? <MadeModel m={made} spin={turn} /> : null;
+      return made ? <MadeModel m={made} spin={turn} anim={anim} /> : null;
     case 'car':
       return <SportsCar c={color || SPORT_PAINT[Math.abs(seed) % SPORT_PAINT.length]} turn={turn} steer={steer} pedals={pedals} speed={speed} />;
     case 'bus':
@@ -1070,7 +1235,7 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boole
       <group position={st.pos} rotation={new THREE.Euler(st.rx, st.ry, st.rz, 'YXZ')}>
         <group position={[-st.pivot[0], -st.pivot[1], -st.pivot[2]]} scale={st.squash}>
           <group scale={MODEL_SCALE[b.kind] ?? 1}>
-            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} speed={st.speed ?? 0} />
+            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} speed={st.speed ?? 0} anim={isCreature(b) ? creatureAnim(b, st, t) : undefined} />
           </group>
           {night && b.kind === 'car' ? (
             <>

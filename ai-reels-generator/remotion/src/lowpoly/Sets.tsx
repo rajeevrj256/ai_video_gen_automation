@@ -1316,6 +1316,197 @@ const skySet: SetDef = {
   },
 };
 
+
+// ---------------------------------------------------------------- places for animals and creatures
+// The user's dinosaur script asked for a prehistoric jungle, an open plain for a herd and a cave deep underground.
+// All three are big (a T-Rex is 12 m long) and keep a clear way along x where creatures walk and charge.
+const Fern: React.FC<{p: V3; s: number; c: string; seed: number}> = ({p, s, c, seed}) => {
+  const rand = rng(seed);
+  const n = 6 + Math.floor(rand() * 3);
+  return (
+    <group position={p} scale={s} rotation={[0, rand() * 6.28, 0]}>
+      {Array.from({length: n}, (_, i) => (
+        <group key={i} rotation={[0, (i / n) * Math.PI * 2, 0]}>
+          <mesh position={[0, 0.45, 0.6]} rotation={[0.9 + rand() * 0.3, 0, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.32, 0.03, 1.4]} />
+            <primitive object={mat(c)} attach="material" />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+};
+const Palm: React.FC<{p: V3; s: number; seed: number; c: string}> = ({p, s, seed, c}) => {
+  const rand = rng(seed);
+  const lean = (rand() - 0.5) * 0.25;
+  return (
+    <group position={p} scale={s} rotation={[0, rand() * 6.28, lean]}>
+      <Cyl p={[0, 2.5, 0]} r1={0.16} r2={0.26} h={5} c="#6b5236" seg={6} />
+      {Array.from({length: 7}, (_, i) => (
+        <group key={i} position={[0, 5, 0]} rotation={[0, (i / 7) * Math.PI * 2, 0]}>
+          <mesh position={[0, -0.3, 1.2]} rotation={[0.55, 0, 0]} castShadow>
+            <boxGeometry args={[0.55, 0.04, 2.6]} />
+            <primitive object={mat(c)} attach="material" />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+};
+const Volcano: React.FC<{p: V3; look: Look; t?: number}> = ({p, look}) => (
+  <group position={p}>
+    <mesh position={[0, 16, 0]} receiveShadow>
+      <coneGeometry args={[34, 32, 7]} />
+      <primitive object={mat(shadeOf('#4a3b33', look.shade))} attach="material" />
+    </mesh>
+    <mesh position={[0, 31.5, 0]}>
+      <cylinderGeometry args={[4.2, 4.2, 0.6, 7]} />
+      <primitive object={mat('#ff6a2a', {emissive: '#ff4d1a', glow: 1.6})} attach="material" />
+    </mesh>
+    {[0, 1, 2, 3, 4].map((i) => (
+      <mesh key={i} geometry={SMOKE} position={[i * 2.2 - 3, 36 + i * 5, -i * 1.5]} scale={4 + i * 2.2}>
+        <primitive object={mat(shadeOf('#8d8681', look.shade))} attach="material" />
+      </mesh>
+    ))}
+  </group>
+);
+const SMOKE = facetedBall(1, 1, 0.2, 21);
+const ROCK = facetedBall(1, 1, 0.3, 7);
+
+const jungle: SetDef = {
+  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -5, z: 0, ry: 0}, right: {x: 5, z: 0, ry: 0}, far: {x: 0, z: -16, ry: 0}},
+  wide: {pos: [4, 6, 30], look: [0, 3, 0]},
+  sun: [-12, 20, 8],
+  outdoor: true,
+  walk: 'x',
+  reach: 60,
+  surface: [2, 0, 3],
+  Draw: ({look, seed}) => {
+    const rand = rng(seed + 31);
+    // thick on both sides of a trampled clearing along x (z between -6 and 6 stays open for the creatures)
+    const spots = Array.from({length: 70}, () => {
+      const side = rand() < 0.5 ? -1 : 1;
+      return {x: -70 + rand() * 140, z: side * (7 + rand() * 30) - (side < 0 ? 4 : 0), s: 0.8 + rand() * 1.6, k: rand()};
+    });
+    return (
+      <group>
+        <Sky look={look} r={220} />
+        <B p={[0, -0.05, 0]} s={[260, 0.1, 260]} c={shadeOf('#3d5a2c', look.shade)} noShadow />
+        <B p={[0, -0.03, 0]} s={[200, 0.06, 11]} c={shadeOf('#6b5a3c', look.shade)} noShadow />
+        <Grass x0={-40} x1={40} z0={-30} z1={-6.5} seed={seed} n={1400} c={shadeOf('#2f5a2a', look.shade)} />
+        <Grass x0={-40} x1={40} z0={6.5} z1={20} seed={seed + 2} n={900} c={shadeOf('#2f5a2a', look.shade)} />
+        {spots.map((t, i) =>
+          // the camera's side (+z) keeps only ferns: a palm or a tree there stood between the lens and the creature
+          t.k < 0.45 || (t.z > 0 && t.z < 34) ? (
+            <Fern key={i} p={[t.x, 0, t.z]} s={t.z > 0 ? 0.5 + t.s * 0.25 : t.s * 1.6} c={shadeOf(i % 2 ? '#2f6b34' : '#4a7d36', look.shade)} seed={seed + i} />
+          ) : t.k < 0.8 ? (
+            <Palm key={i} p={[t.x, 0, t.z]} s={t.s * 1.4} seed={seed + i} c={shadeOf(i % 3 ? '#3f7a3a' : '#5b8a3a', look.shade)} />
+          ) : (
+            <Tree key={i} p={[t.x, 0, t.z]} seed={seed + i * 3} s={t.s * 3} tone={shadeOf('#2f5532', look.shade)} />
+          ),
+        )}
+        {[-18, -6, 9, 22].map((x, i) => (
+          <mesh key={i} geometry={ROCK} position={[x, 0.6, i % 2 ? 7.5 : -7.5]} scale={[1.6, 1.1, 1.3]} castShadow receiveShadow>
+            <primitive object={mat(shadeOf('#6d6a62', look.shade))} attach="material" />
+          </mesh>
+        ))}
+        <Volcano p={[-40, 0, -150]} look={look} />
+        <Mountains z={-170} seed={seed} c={shadeOf('#3c4a3a', look.shade * 0.9)} />
+      </group>
+    );
+  },
+};
+
+const plain: SetDef = {
+  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -6, z: 2, ry: 0}, right: {x: 6, z: -2, ry: 0}, far: {x: 0, z: -18, ry: 0}},
+  wide: {pos: [6, 7, 34], look: [0, 2.5, 0]},
+  sun: [-14, 18, 10],
+  outdoor: true,
+  walk: 'x',
+  reach: 80,
+  surface: [2, 0, 3],
+  Draw: ({look, seed}) => {
+    const rand = rng(seed + 41);
+    const trees = Array.from({length: 9}, (_, i) => ({x: -80 + i * 19 + rand() * 8, z: -30 - rand() * 40, s: 2 + rand() * 1.5}));
+    return (
+      <group>
+        <Sky look={look} r={240} />
+        <B p={[0, -0.05, 0]} s={[300, 0.1, 300]} c={shadeOf('#8a8c4a', look.shade)} noShadow />
+        <Grass x0={-50} x1={50} z0={-40} z1={20} seed={seed} n={2200} c={shadeOf('#6f7a3a', look.shade)} />
+        {trees.map((t, i) => (
+          <Tree key={i} p={[t.x, 0, t.z]} seed={seed + i * 5} s={t.s} tone={shadeOf('#4f6a32', look.shade)} />
+        ))}
+        {[-30, 14, 38].map((x, i) => (
+          <mesh key={i} geometry={ROCK} position={[x, 0.5, -12 - i * 6]} scale={[2.2, 1.2, 1.8]} castShadow receiveShadow>
+            <primitive object={mat(shadeOf('#8a8173', look.shade))} attach="material" />
+          </mesh>
+        ))}
+        <Volcano p={[60, 0, -190]} look={look} />
+        <Mountains z={-150} seed={seed + 3} c={shadeOf('#5d6070', look.shade * 0.9)} />
+      </group>
+    );
+  },
+};
+
+const cave: SetDef = {
+  spots: {center: {x: 0, z: 0, ry: 0}, left: {x: -3, z: 0, ry: 0}, right: {x: 3, z: 0, ry: 0}, far: {x: 0, z: -9, ry: 0}},
+  wide: {pos: [3, 3.5, 12], look: [0, 1.2, 0]},
+  sun: [0, 14, -2], // the shaft of light from the hole above
+  outdoor: false,
+  walk: 'x',
+  reach: 20,
+  surface: [1.5, 0, 1.5],
+  lamp: [0, 9, -1],
+  Draw: ({look, seed}) => {
+    const rand = rng(seed + 51);
+    // a ring of rock all round (a camera anywhere inside sees rock, never the sky), a low ceiling with one hole
+    const ring = Array.from({length: 26}, (_, i) => {
+      const a = (i / 26) * Math.PI * 2;
+      const r = 15 + rand() * 4;
+      return {x: Math.cos(a) * r, z: Math.sin(a) * r - 2, s: 4 + rand() * 3, h: 5 + rand() * 6};
+    });
+    const crystals = Array.from({length: 14}, () => ({x: (rand() - 0.5) * 24, z: -4 - rand() * 10, h: 0.6 + rand() * 1.6, r: rand() * 0.6 - 0.3}));
+    const rock = shadeOf('#4b4540', Math.max(0.5, look.shade));
+    return (
+      <group>
+        <B p={[0, -0.05, -2]} s={[60, 0.1, 60]} c={shadeOf('#3a3530', Math.max(0.5, look.shade))} noShadow />
+        {ring.map((q, i) => (
+          <mesh key={i} geometry={ROCK} position={[q.x, q.h / 2 - 0.5, q.z]} scale={[q.s, q.h, q.s]} receiveShadow castShadow>
+            <primitive object={mat(rock)} attach="material" />
+          </mesh>
+        ))}
+        {Array.from({length: 18}, (_, i) => {
+          const a = (i / 18) * Math.PI * 2;
+          const r = 6 + (i % 3) * 3.5;
+          return (
+            <mesh key={`c${i}`} geometry={ROCK} position={[Math.cos(a) * r, 12, Math.sin(a) * r - 2]} scale={[6, 2.2, 6]} receiveShadow>
+              <primitive object={mat(shadeOf('#35302c', Math.max(0.5, look.shade)))} attach="material" />
+            </mesh>
+          );
+        })}
+        <B p={[0, 13.5, -2]} s={[60, 1, 60]} c="#26221f" noShadow />
+        {/* the shaft of light from the hole above, dust hanging in it */}
+        <mesh position={[0, 6, -1]}>
+          <cylinderGeometry args={[1.4, 2.6, 12, 10, 1, true]} />
+          <meshBasicMaterial color="#f5e2b8" transparent opacity={0.13} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, 0.01, -1]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[2.4, 16]} />
+          <meshBasicMaterial color="#f2dcb0" transparent opacity={0.22} depthWrite={false} />
+        </mesh>
+        {crystals.map((c, i) => (
+          <mesh key={`k${i}`} position={[c.x, c.h / 2, c.z]} rotation={[0, 0, c.r]}>
+            <coneGeometry args={[0.22, c.h, 5]} />
+            <primitive object={mat('#4fd1c5', {emissive: '#2bb3a8', glow: 1.3})} attach="material" />
+          </mesh>
+        ))}
+        <pointLight position={[-6, 1.5, -8]} color="#4fd1c5" intensity={6} distance={14} decay={1.5} />
+        <pointLight position={[7, 1.2, -9]} color="#4fd1c5" intensity={5} distance={12} decay={1.5} />
+      </group>
+    );
+  },
+};
+
 export const SETS: Record<SetName, SetDef> = {
   bedroom,
   hallway,
@@ -1335,6 +1526,9 @@ export const SETS: Record<SetName, SetDef> = {
   alley,
   lab,
   sky: skySet,
+  jungle,
+  plain,
+  cave,
   void: voidSet,
 };
 

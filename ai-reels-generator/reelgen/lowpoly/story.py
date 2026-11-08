@@ -24,7 +24,7 @@ from ..sfx import drop_removed
 log = logging.getLogger(__name__)
 
 SetName = Literal["bedroom", "hallway", "street", "park", "kitchen", "living", "office", "bathroom", "gym", "cafe", "busstop", "rooftop",
-                  "construction", "highway", "bridge", "alley", "lab", "sky", "void"]
+                  "construction", "highway", "bridge", "alley", "lab", "sky", "jungle", "plain", "cave", "void"]
 LightName = Literal["night", "lamp", "dawn", "morning", "day", "evening", "dark"]
 CamName = Literal["face", "face-top", "top", "medium", "wide", "side", "front", "back", "low", "detail", "aerial", "orbit", "crash-zoom",
                   "chase", "lead", "tracking", "pass-by", "heli", "drone", "cockpit", "bumper", "pedal", "wheel", "speedo"]
@@ -42,15 +42,19 @@ HoldName = Literal["none", "phone", "mug", "book", "laptop", "shoes", "bag", "ke
 ThingName = Literal["phone", "alarm", "mug", "laptop", "book", "shoes", "plate", "bag", "plant", "bottle", "calendar", "note", "pizza"]
 SoundName = Literal["alarm", "footsteps", "door", "knock", "notify", "buzz", "typing", "tap", "ding", "chime", "bell", "page", "rain",
                     "thud", "heartbeat", "tick", "coins", "cheer", "pop", "scribble", "swoosh", "send",
-                    "impact", "crash", "glass", "crack", "creak", "skid", "siren", "wind", "fire", "sparks", "flyby", "crowd"]
+                    "impact", "crash", "glass", "crack", "creak", "skid", "siren", "wind", "fire", "sparks", "flyby", "crowd", "roar", "stomp", "flap"]
 Mood = Literal["calm", "emotional", "uplifting", "curious", "mystery", "dark", "suspense", "energetic"]
 BigName = Literal["car", "bus", "truck", "beam", "crate", "boulder", "barbell", "pipe", "door", "ball", "made"]
 MotionName = Literal["still", "fall", "caught", "lifted", "held", "thrown", "stop", "drive", "crushed", "hang", "shake",
-                     "race", "drift", "spin", "reverse", "jump", "fly", "climb", "dive", "bank", "roll"]
+                     "race", "drift", "spin", "reverse", "jump", "fly", "climb", "dive", "bank", "roll",
+                     "walk", "charge", "roar", "hatch"]
 GROUND_UNDERWAY = {"race", "drift", "spin", "reverse", "jump"}  # = UNDERWAY in Big.tsx, on the ground...
+CREATURE_MOTIONS = {"walk", "charge", "roar", "hatch"}  # what an animal or creature design does (= Big.tsx)
+MOVES = Literal["", "head", "neck", "jaw", "tail", "leg_l", "leg_r", "leg_fl", "leg_fr", "leg_bl", "leg_br", "arm_l", "arm_r",
+                "wing_l", "wing_r", "shell_top"]
 AIR_MOTIONS = {"fly", "climb", "dive", "bank", "roll"}  # ...and in the air
 VEHICLES = {"car", "bus", "truck"}  # built in; a design ('made') that travels is one too
-FxName = Literal["shockwave", "crack", "dust", "speed", "sparks", "debris", "glass", "smoke", "fire", "shake", "flash", "alarm", "rain", "wind"]
+FxName = Literal["shockwave", "crack", "dust", "speed", "sparks", "debris", "glass", "smoke", "fire", "shake", "flash", "alarm", "rain", "wind", "meteor"]
 VoiceKind = Literal["man", "young-man", "woman", "young-woman", "older-man", "older-woman", "child", "deep-man", "british-man",
                     "british-woman"]
 KINDS = ("life", "fiction")
@@ -75,6 +79,9 @@ SPOTS: dict[str, set[str]] = {
     "alley": {"center", "left", "right", "far", "door", "chair"},
     "lab": {"center", "left", "right", "desk", "chair", "counter", "far", "door"},
     "sky": {"center", "left", "right", "far"},
+    "jungle": {"center", "left", "right", "far"},
+    "plain": {"center", "left", "right", "far"},
+    "cave": {"center", "left", "right", "far"},
     "void": {"center", "left", "right", "chair"},
 }
 SEATS = {"bed", "chair", "desk", "couch"}
@@ -208,13 +215,21 @@ class LPPart(BaseModel):
     glass: bool = Field(False, description="see-through: a canopy, a windscreen")
     spin: Literal["", "x", "y", "z"] = Field("", description="turns fast about this axis while it moves: a propeller (z), "
                                                              "a rotor (y), a wheel (x)")
+    move: MOVES = Field("", description="an animal or creature's moving part (every part of that body part gets the same "
+                                        "role, and moves together): head (with its eyes, horns, upper teeth), neck, jaw (the "
+                                        "lower jaw: it opens to roar), tail, legs (a two-legged creature: leg_l, leg_r; four "
+                                        "legs: leg_fl, leg_fr, leg_bl, leg_br; each leg's parts hang from its top), arm_l, "
+                                        "arm_r, wing_l, wing_r (they flap), shell_top (an egg's top half, which bursts off "
+                                        "when it hatches); '' for the body and anything rigid")
 
 
 class LPMade(BaseModel):
     name: str = Field(description="what the shots call it in big.made: 'the jet', 'Victor's plane', 'the motorbike'")
     what: str = Field(description="one line: what it is")
-    travel: Literal["ground", "air", "water", "none"] = Field(description="how it moves when it goes: on the ground, flying, "
-                                                                           "on water, or not at all (a big object)")
+    travel: Literal["ground", "air", "water", "legs", "none"] = Field(
+        description="how it moves when it goes: a vehicle on the ground, anything flying (a plane, or a creature with "
+                    "wings), on water, 'legs' = an animal or creature that walks on its legs, or not at all (a big object, "
+                    "an egg)")
     parts: list[LPPart] = Field(description="8-40 parts, front toward +z, its bottom at y = 0, centred")
     seats: list[list[float]] = Field(default_factory=list, description="[x, seat height, z] where people sit, the driver's or "
                                                                         "pilot's first; on top of or inside the body so head "
@@ -247,6 +262,8 @@ class Story(BaseModel):
                                                                 "hasn't got (a plane, a jet, a helicopter, a motorbike, a "
                                                                 "boat), designed from parts; empty for most films")
     kind: Literal["life", "fiction"] = "life"
+    hero: bool = Field(True, description="the channel's man is in this film; false when the brief has no people in it (a "
+                                         "film about animals, creatures or a place) or none who could be him")
 
 
 # Two or more people in a shot (the user: the son should look at and point to his dad on the chair, not walk off; and
@@ -439,13 +456,162 @@ and far; a cinematic rhythm.
 'crowd' for frightened people, 'wind', 'fire', 'heartbeat' before the moment, 'impact'); the editor adds the usual ones \
 to actions. The score: `score` parts that follow the story (calm for his life, mystery for the discovery, energetic \
 for the tests, suspense for the danger, emotional for the consequences, a quiet end).
-""" + VEHICLE_RULES + STAGING + """
+""" + VEHICLE_RULES + "{creatures}" + STAGING + """
 LENGTH: {length}."""
 
 FICTION_SHORT = ("a 9:16 Short of {seconds} seconds: {shots} shots of 1.5-4 s, about {words} words in all (dialogue and a "
                  "little narration); hook in the first 2 seconds, the turn in the middle, the question at the end")
 FICTION_FILM = ("a 16:9 film of {minutes} minutes: {shots} shots of 2-5 s, about {words} words in all, most shots short and "
                 "full of action, a few quiet ones that let a feeling land")
+
+# The user's script 'WHAT IF DINOSAURS NEVER WENT EXTINCT?' (reel_8_1): every shot showed the man (the dinosaurs the
+# writer named as actors were turned into him, and an empty shot got him), a T-Rex and an asteroid became him on a
+# bench and a pebble: "why script not matched on video, why humans??". Animals and creatures are now designs with
+# moving parts, and a film can be without him.
+CREATURES = """
+ANIMALS AND CREATURES (dinosaurs, a dragon, a whale, a wolf, a giant insect, a robot that walks): the editor has none built in. Design each one the film needs in `made` (travel 'legs' for anything that walks, 'air' for anything that flies, 'water' for anything that swims, 'none' for an egg or a fossil) from 10-40 parts, front toward +z, its bottom at y = 0, and give every moving body part its `move` role so the editor can animate it: the head (with its eyes, teeth and horns, all 'head'), the lower 'jaw' (it opens when it roars), the 'neck', the 'tail', the legs ('leg_l'/'leg_r' for two legs, 'leg_fl'/'leg_fr'/'leg_bl'/'leg_br' for four; each leg a long part hanging from its hip, its foot at y = 0), 'arm_l'/'arm_r', 'wing_l'/'wing_r'; an egg's top half is 'shell_top'. Real sizes against the man (2 m): a T-Rex about 12 m long and 4.5 m high, a Brachiosaurus about 22 m long with its head 12 m up on a long neck, a Triceratops about 8 m long and 3 m high with three horns and a frill, a Velociraptor about 2 m long and 0.8 m high, a Pterosaur with 8 m wings; colours of real animals (muted greens, browns, greys, sand). No seats. An egg is ONE egg shape, never two balls stacked: its body a sphere about [1.0, 1.3, 1.0] centred at y 0.65, and its 'shell_top' a slightly smaller sphere [0.96, 0.75, 0.96] centred at y 0.95 inside the top of it (in the same colour); a few darker speckles are fine, no sticks.
+- In shots it is a big thing of kind 'made' with `made` = its name and a motion: 'still' (it breathes, its tail and head move), 'walk' (it walks across the place, legs striding), 'charge' (runs flat out), 'roar' (head up, jaw wide at `at`, the ground shakes), 'hatch' (an egg: it shakes, cracks and its top bursts off at `at`; a creature in the same spot with 'hatch' rises out of the shell after it), 'fly' / 'climb' / 'dive' / 'bank' for anything with wings, 'fall'. A herd: the same design three or four times in one shot on different spots ('left', 'center', 'right', 'far').
+- A shot of only animals or creatures (no actors) is right: the camera is on the first big thing in the shot, and 'face' is close on its head, 'medium' all of it, 'wide' the place with it, 'low' up at it from the ground, 'side', 'front', 'back', 'aerial' from above, 'orbit' around it, 'detail' on its eye, 'crash-zoom' pushing in on its face.
+- Places for them: 'jungle' (a dense prehistoric jungle: giant ferns, palms, a smoking volcano far away), 'plain' (an open grassland to the mountains, for a herd), 'cave' (deep underground, dark rock, a shaft of light, glowing crystals), and the man's places too: 'street' and 'highway' with the city, 'park'.
+- 'meteor' in `fx`: a burning asteroid streaking across the sky (outdoors).
+"""
+
+SCRIPT_RULES = """
+
+THE USER'S OWN SCRIPT: the brief is the user's finished script, section by section (a visual and the narrator's words). It is the film: stage it exactly, in order, and invent nothing it doesn't ask for.
+- The spoken lines are given below, numbered: put them in shots IN THIS ORDER, WORD FOR WORD (never a word changed, added, dropped or moved to another speaker), one numbered line per shot. Every shot with a line has `speaker` 'narrator' unless the script says who speaks.
+- Each section's VISUAL is what its shots show: split it into the shots it describes (one per sentence of the visual is a good guide) and give the visual's extra moments silent shots ('' line) with a `pause` of 1-2.5 s. What the visual names is on screen: its creatures, vehicles, objects, places and effects. A visual that names no person has no person in it: no actors at all, and the man only if the script is about him. If no section names a person, set `hero` false.
+- Words the script puts on screen ('TEXT: ...') go in `stamp` of a silent shot at that place (they are shown, never spoken); 'CUT TO BLACK' is a silent shot in 'dark' light with nothing in it but that text.
+- The title, description and tags come from the script's own title and subject.
+"""
+
+SCRIPT_LINE_WORDS = 12  # = LPShot.line's limit
+
+
+def _say(text: str) -> str:
+    text = re.sub(r"\*\*|__|\*|_", "", text)
+    return re.sub(r"\s+", " ", text.strip().strip('"“”').strip())
+
+
+def _line_pieces(text: str, most: int = SCRIPT_LINE_WORDS) -> list[str]:
+    """The narrator's words cut into shot lines of at most `most` words, at sentence ends, then at '...' / ',' / '—',
+    never changing a word."""
+    out = []
+    for sent in re.findall(r"[^.!?…]+(?:\.\.\.|[.!?…]+)?[\"”]?\s*", text):
+        sent = sent.strip()
+        if not sent:
+            continue
+        words = sent.split()
+        while len(words) > most:
+            # the last break (a comma, an ellipsis, a dash) within the limit, else the limit itself
+            cut = max((i + 1 for i, w in enumerate(words[:most]) if re.search(r"(,|\.\.\.|…|—|-|;|:)$", w) and i >= 2), default=most)
+            out.append(" ".join(words[:cut]))
+            words = words[cut:]
+        if words:
+            out.append(" ".join(words))
+    return out
+
+
+SECTION = re.compile(r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(\d+\s*[–-]\s*\d+\s*(?:sec|s|seconds)\b[^\n]*|scene\s*\d+[^\n]*|shot\s*\d+[^\n]*)$", re.I | re.M)
+LABEL = re.compile(r"^\s*(?:\*\*)?\s*(visual|narrator|voice[- ]?over|vo|text|on[- ]screen(?: text)?)\b[^:\n]*:?\s*(?:\*\*)?\s*:?\s*(.*)$", re.I)
+
+
+def parse_script(brief: str) -> list[dict] | None:
+    """A shot-by-shot script (sections with 'Visual:' and 'Narrator:' parts, like the user's dinosaur script), as
+    sections {head, visual, lines, text}; None for an ordinary brief."""
+    if len(re.findall(r"^\s*(?:\*\*)?\s*(?:narrator|voice[- ]?over|vo)\b", brief or "", re.I | re.M)) < 2:
+        return None
+    sections, cur, part = [], None, None
+    for raw in (brief or "").splitlines():
+        line = raw.strip()
+        if not line or re.fullmatch(r"[-*_=]{3,}", line):
+            part = None if not line else part
+            continue
+        if SECTION.match(line):
+            cur = {"head": _say(line.lstrip("#")), "visual": [], "say": [], "text": []}
+            sections.append(cur)
+            part = None
+            continue
+        if cur is None:
+            if line.startswith("#"):
+                continue  # the script's title
+            cur = {"head": "", "visual": [], "say": [], "text": []}
+            sections.append(cur)
+        m = LABEL.match(line)
+        if m:
+            kind = m.group(1).lower()
+            part = "visual" if kind == "visual" else "text" if kind.startswith(("text", "on")) else "say"
+            rest = _say(m.group(2))
+            if rest:
+                cur[part].append(rest)
+            continue
+        bare = _say(line)
+        if re.fullmatch(r"cut to black\.?", bare, re.I):
+            cur["text"].append("CUT TO BLACK")
+            continue
+        if bare:
+            cur[part or "visual"].append(bare)
+    out = []
+    for c in sections:
+        said = " ".join(c["say"])
+        out.append({"head": c["head"], "visual": " ".join(c["visual"]), "lines": _line_pieces(said) if said else [],
+                    "text": [t for t in c["text"] if t.upper() != "CUT TO BLACK"], "black": "CUT TO BLACK" in c["text"]})
+    out = [c for c in out if c["visual"] or c["lines"] or c["text"]]
+    return out if sum(len(c["lines"]) for c in out) >= 2 else None
+
+
+def script_block(sections: list[dict]) -> str:
+    """The script as the writer is given it: each section's visual and its numbered lines."""
+    rows, n = [], 0
+    for i, c in enumerate(sections, 1):
+        rows.append(f"SECTION {i}{' (' + c['head'] + ')' if c['head'] else ''}")
+        if c["visual"]:
+            rows.append(f"  VISUAL: {c['visual']}")
+        for ln in c["lines"]:
+            n += 1
+            rows.append(f"  LINE {n}: {ln}")
+        for t in c["text"]:
+            rows.append(f"  ON SCREEN (a stamp, not spoken): {t}")
+        if c["black"]:
+            rows.append("  CUT TO BLACK")
+    return "\n".join(rows)
+
+
+def script_lines(sections: list[dict]) -> list[str]:
+    return [ln for c in sections for ln in c["lines"]]
+
+
+def _words(s: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", s.lower().replace("’", "'"))
+
+
+def keep_script_lines(story: Story, lines: list[str]) -> list[str]:
+    """The script's words exactly as written, whatever the writer did with them: the shots' spoken lines in order are
+    set to the script's lines (a shot left over goes silent, a line left over gets a silent shot's place, else a new
+    shot after the last). Returns notes."""
+    notes = []
+    spoken = [s for s in story.shots if s.line.strip()]
+    if [_words(s.line) for s in spoken] == [_words(x) for x in lines]:
+        for s, x in zip(spoken, lines):
+            s.line = x
+        return notes
+    notes.append("the narration was put back word for word as the script has it")
+    k = 0
+    for s in story.shots:
+        if not s.line.strip():
+            continue
+        if k < len(lines):
+            s.line = lines[k]
+            k += 1
+        else:
+            s.line = ""
+            s.speaker = "narrator"
+    for x in lines[k:]:
+        last = story.shots[-1] if story.shots else None
+        story.shots.append(LPShot(line=x, set=last.set if last else "void", light=last.light if last else "day",
+                                  camera=last.camera if last else "wide", actors=[], big=list(last.big) if last else []))
+    return notes
+
 
 TOPICS = [
     "the 5 A.M. run that never happens", "one more episode before bed", "the gym bag packed every night, never opened",
@@ -734,7 +900,7 @@ editor's vocabulary, the length, the staging). Return the whole storyboard, chan
 def revise(cfg: Config, story: Story, instruction: str, *, short: bool, seconds: int, minutes: float) -> Story:
     """The same storyboard with the user's changes (one call, no web); everything they didn't ask about kept."""
     fiction = story.kind == "fiction"
-    system = _system(fiction, short, seconds, minutes) + REVISE
+    system = _system(fiction, short, seconds, minutes) + ("" if fiction else CREATURES) + REVISE
     prompt = (f"THE STORYBOARD AS IT IS:\n{story.model_dump_json(indent=1)}\n\nTHE USER'S CHANGES:\n{instruction.strip()}"
               f"{_known(cfg)}")
     out = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
@@ -832,7 +998,9 @@ TAKE = ("\n\n" + TAKE_MARK + " (one of several storyboards written from the same
         "it this way, and the prompt still holds):\n{take}")
 
 
-def _system(fiction: bool, short: bool, seconds: int, minutes: float) -> str:
+def _system(fiction: bool, short: bool, seconds: int, minutes: float, script: bool = False) -> str:
+    if script:  # the user's own script: their words and visuals, whatever the kind of film
+        return _system(fiction, short, seconds, minutes) + ("" if fiction else CREATURES) + SCRIPT_RULES
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     if fiction:
         if short:
@@ -840,7 +1008,7 @@ def _system(fiction: bool, short: bool, seconds: int, minutes: float) -> str:
         else:
             shots = round(minutes * 60 / 3.0)
             length = FICTION_FILM.format(minutes=f"{minutes:g}", shots=f"{shots - 8}-{shots + 8}", words=int(minutes * 60 * 1.3))
-        return FICTION.format(spots=spots, length=length)
+        return FICTION.format(spots=spots, length=length, creatures=CREATURES)
     if short:
         shots = max(7, round(seconds / 3.0))
         length = SHORT.format(seconds=seconds, shots=shots, words=int(seconds * 1.85))
@@ -854,7 +1022,11 @@ def _asking(cfg: Config, topic: str, fiction: bool, take: str = "") -> tuple[str
     """What the writer is asked for, the films already made (never again), and those films."""
     past = recent(cfg)
     made = "\n".join(f"- {p['title']} ({p['problem']})" for p in past[-40:]) or "- none yet"
-    if fiction:
+    sections = parse_script(topic)
+    if sections:
+        ask_for = (f"THE USER'S SCRIPT (as they wrote it):\n{topic}\n\nITS SECTIONS, VISUALS AND NUMBERED SPOKEN LINES (use "
+                   f"every line word for word, in order):\n{script_block(sections)}")
+    elif fiction:
         ask_for = (f"THE BRIEF (the user's own; follow it closely):\n{topic}" if topic else
                    "Invent an original sci-fi or fantasy premise for him (an ordinary man meets something extraordinary), "
                    "different from the films already made.")
@@ -869,15 +1041,20 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
     """The story, shot by shot (a film over LONG_FROM minutes: outline, then act by act). `take`: this storyboard's own
     way of telling it, one of several drafts the user chooses from (boards.py)."""
     fiction = kind == "fiction"
-    system = _system(fiction, short, seconds, minutes)
+    sections = parse_script(topic)
+    system = _system(fiction, short, seconds, minutes, script=bool(sections))
     ask_for, made, past = _asking(cfg, topic, fiction, take)
-    if not short and minutes > LONG_FROM:
+    if sections:
+        progress(f"Your script: {len(sections)} sections, {len(script_lines(sections))} spoken lines, staged as written")
+    if not short and minutes > LONG_FROM and not sections:
         story = write_long(cfg, ask_for, made, minutes=minutes, fiction=fiction, progress=progress, save_to=save_to)
         story.kind = "fiction" if fiction else "life"
         return story
     prompt = f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
     story = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
     near = too_close(story, past) if not topic and not take else ""
+    if sections:
+        keep_script_lines(story, script_lines(sections))
     if near:
         progress(f"That story is too close to '{near}'; writing a different one")
         story = ask(cfg.ai_backend, cfg.claude_model, system, prompt + f"\n\nYour first idea was too close to '{near}'. Pick a "
@@ -916,7 +1093,7 @@ def pitches(cfg: Config, topic: str, *, kind: str, short: bool, seconds: int, mi
     """`n` clearly different takes on one prompt, each the seed of one storyboard draft (written in parallel, they would
     otherwise not know about each other and could tell the same story three times)."""
     fiction = kind == "fiction"
-    system = _system(fiction, short, seconds, minutes) + PITCH.format(n=n)
+    system = _system(fiction, short, seconds, minutes, script=bool(parse_script(topic))) + PITCH.format(n=n)
     ask_for, made, _ = _asking(cfg, topic, fiction)
     prompt = (f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
               + (f"\n\nStoryboards already written for this prompt (every new take must differ from each of them):\n{others}"
@@ -986,12 +1163,15 @@ def design_for_editor(m: LPMade) -> dict:
             d["glass"] = True
         if p.spin:
             d["spin"] = p.spin
+        if p.move:
+            d["move"] = p.move
         out.append(d)
     seats = [[round(float(x[0]) + shift[0], 3), round(max(0.0, float(x[1]) + shift[1]), 3), round(float(x[2]) + shift[2], 3)]
              for x in m.seats if len(x) >= 3][:6]
-    if not seats:
+    creature = m.travel == "legs" or any(p.move for p in parts)
+    if not seats and not creature:
         seats = [[0.0, round(dims[1] * 0.45, 3), round(dims[2] * 0.1, 3)]]
-    if m.travel == "air":
+    if m.travel == "air" and not creature:
         # a closed cockpit over every seat (the user: "add ceiling on the car or aircraft": the pilots sat on top of
         # the planes with their heads and shoulders out): a glass canopy where Claude's design has none over his head
         boxes = []
@@ -1106,13 +1286,21 @@ def _vehicles(story: Story, s: LPShot) -> list[str]:
         s.big = keep
     for b in s.big:
         way = travel_of(story, b)
+        if way == "legs":  # an animal or creature: it walks, charges, roars, hatches; never races or flies
+            if b.motion in GROUND_UNDERWAY or b.motion in AIR_MOTIONS or b.motion in ("drive", "stop"):
+                b.motion = "charge" if b.motion in GROUND_UNDERWAY else "walk"
+            continue
+        if b.motion in CREATURE_MOTIONS and b.motion != "hatch" and way != "air":
+            b.motion = "still" if way == "none" else "drive"
+        elif b.motion in ("walk", "charge", "roar") and way == "air":
+            b.motion = "fly"
         if way == "air" and (b.motion in GROUND_UNDERWAY or b.motion in ("drive", "stop")):
             b.motion = "fly"
         elif way in ("ground", "water") and b.motion in AIR_MOTIONS:
             b.motion = "race"
         elif way == "none" and (b.motion in GROUND_UNDERWAY or b.motion in AIR_MOTIONS):
             b.motion = "still"
-    vehicles = [k for k, b in enumerate(s.big) if travel_of(story, b) != "none"]
+    vehicles = [k for k, b in enumerate(s.big) if travel_of(story, b) not in ("none", "legs")]
     drivers: dict[int, int] = {}
     for a in s.actors:
         if a.on and (a.on > len(s.big) or (a.on - 1) not in vehicles):
@@ -1205,9 +1393,24 @@ def repair(story: Story) -> list[str]:
                 if a.action == "carried":
                     a.action = "lie"
         s.actors.sort(key=lambda a: a.action == "carried")  # the one carried after the one carrying him
+        # someone who isn't in the cast: a creature the writer named as an actor ('T-Rex') is left out (it is a design,
+        # never the man: the user's dinosaur script showed him in every shot); in a film with him, anyone else unknown
+        # is him
+        made_names = {_key(m.name) for m in story.made}
+        keep = []
         for a in s.actors:
             if a.who != "hero" and _key(a.who) not in names:
+                if not story.hero or _key(a.who) in made_names or re.search(
+                        r"saur|rex|raptor|dino|dragon|creature|monster|beast|animal|wolf|lion|tiger|bird|whale|shark|egg|baby", a.who, re.I):
+                    notes.append(f"Shot {i + 1}: '{a.who}' isn't a person in the film; left out")
+                    continue
                 a.who = "hero"
+            if a.who == "hero" and not story.hero:
+                notes.append(f"Shot {i + 1}: the film has no man in it; he was left out")
+                continue
+            keep.append(a)
+        s.actors = keep
+        for a in s.actors:
             if a.spot not in SPOTS[s.set]:
                 a.spot = "bed" if a.action.startswith("lie") and "bed" in SPOTS[s.set] else "center"
             if a.action == "lie" and fiction and "bed" not in SPOTS[s.set]:
@@ -1222,7 +1425,7 @@ def repair(story: Story) -> list[str]:
         notes += [f"Shot {i + 1}: {n}" for n in _vehicles(story, s)]
         # a shot with nobody in it: fine when a vehicle or something else is there (the camera follows the car); a
         # shot of nothing at all gets him
-        if not s.actors and not s.big and not s.fx:
+        if not s.actors and not s.big and not s.fx and story.hero and not s.stamp:
             s.actors = [LPActor(who="hero", action="stand", expression="neutral", spot="center")]
             notes.append(f"Shot {i + 1} had nothing in it; he stands there.")
         notes += [f"Shot {i + 1}: {n}" for n in _stage(story, s)]
@@ -1289,7 +1492,13 @@ def restage(cfg: Config, story: Story, progress=log.info) -> Story:
     staging."""
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     fiction = story.kind == "fiction"
-    system = (FICTION if fiction else RULES).format(spots=spots, length="the same shots as given, one staging each") + RESTAGE
+    system = ((FICTION if fiction else RULES).format(spots=spots, length="the same shots as given, one staging each", creatures=CREATURES)
+              + ("" if fiction else CREATURES) + RESTAGE)
+    if story.made:
+        system += "\nThis film's own designs (big things of kind 'made', names exactly): " + "; ".join(
+            f"{m.name} ({m.what}, {m.travel})" for m in story.made) + "\n"
+    if not story.hero:
+        system += "\nThis film has no people in it: no actors at all, only its creatures, things and places.\n"
     cast = "\n".join(f"- {c.name}: {c.who}" for c in story.cast) or "- nobody else"
     new = [s.model_copy(deep=True) for s in story.shots]
     for start in range(0, len(new), RESTAGE_BATCH):
@@ -1314,7 +1523,7 @@ def restage(cfg: Config, story: Story, progress=log.info) -> Story:
 
 
 # cameras that can show a moment, by what the subject does (`new_angles`); aerial only outdoors
-OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "bridge", "alley", "sky"}  # = outdoor: true in Sets.tsx
+OUTDOOR_SETS = {"street", "park", "busstop", "rooftop", "construction", "highway", "bridge", "alley", "sky", "jungle", "plain"}  # = outdoor: true in Sets.tsx
 _LYING_ACTS = {"lie", "lie-side", "lie-phone", "sit-up"}
 _MOVING_ACTS = {"walk", "run", "jog", "dash", "flee", "carry"}
 _POWER_ACTS = {"catch", "lift", "throw", "push-stop", "super-jump", "land", "punch", "fall", "crush"}

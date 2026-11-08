@@ -1,7 +1,7 @@
 """The low-poly films' sounds: the Sticky films' synthesised ones (reelgen/sticky/sounds.py, read only) plus what action
 and fiction need, made here the same way (no files to license): a heavy impact, a metal crash, breaking glass, the
 ground cracking, straining metal, a tyre skid, a siren, wind, fire, sparks, a fly-by and a frightened crowd. No boom
-and no riser (the user's standing rule): the weight comes from the impact, the crash and a short rumble."""
+and no riser (the user's standing rule): the weight comes from the impact and the crash. Animals: a roar, heavy footfalls, wing beats."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -199,12 +199,56 @@ def _propeller() -> np.ndarray:
     return _loopable(_lowpass(drone * 0.4 + air, 2600))
 
 
+
+# Animals and creatures (the user's dinosaur script: a T-Rex roaring, a herd, pterosaurs, an egg hatching).
+def _roar() -> np.ndarray:
+    """A huge animal's roar: a rough growl that swells up in pitch and falls away, its throat (a rattling low voice)
+    under a breathy roar of noise shaped by an open mouth."""
+    t = _t(2.2)
+    shape = np.sin(np.pi * np.clip(t / 2.0, 0, 1)) ** 0.6
+    f = 62 + 46 * shape + 6 * np.sin(2 * np.pi * 5.5 * t)
+    saw = 2 * ((np.cumsum(f) / RATE) % 1) - 1
+    rasp = 1 + 0.7 * _lowpass(_noise(61, len(t)), 40) / 0.25  # the rattle of the throat
+    voice = _lowpass(saw * np.clip(rasp, 0.2, 2.2), 1400)
+    breath = _noise(62, len(t))
+    breath = _lowpass(breath, 2600) - _lowpass(breath, 380)
+    env = np.minimum(t / 0.18, 1) * np.clip((2.2 - t) / 0.9, 0, 1) ** 1.3
+    return (voice * 0.8 + breath * 0.55 * (0.4 + shape)) * env
+
+
+def _stomp() -> np.ndarray:
+    """One heavy footfall: a deep thud through the ground and the crunch of what it lands on."""
+    t = _t(0.7)
+    low = np.sin(2 * np.pi * np.cumsum(38 + 40 * np.exp(-t * 18)) / RATE) * np.exp(-t * 7.5)
+    hit = _lowpass(_noise(63, len(t)), 320) * np.exp(-t * 26)
+    crunch = (_noise(64, len(t)) - _lowpass(_noise(64, len(t)), 900)) * np.exp(-t * 30) * 0.25
+    return low + hit * 1.2 + crunch
+
+
+def _flap() -> np.ndarray:
+    """A big wing beat: a soft whump of air."""
+    t = _t(0.45)
+    air = _noise(65, len(t))
+    air = _lowpass(air, 700) - _lowpass(air, 90)
+    return air * np.sin(np.pi * t / 0.45) ** 2
+
+
+def _wings() -> np.ndarray:
+    """Wings beating steadily (a bed under a flying creature): a beat every 0.7 s."""
+    beat = _flap()
+    out = np.zeros(int(RATE * 2.8))
+    for k in range(4):
+        a = int(RATE * 0.7 * k)
+        out[a:a + len(beat)] += beat[: len(out) - a]
+    return out
+
 MAKERS = {
     **sticky.MAKERS,
     "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45), "rev": (lambda: _real(car.rev(), _rev), 0.6),
     "impact": (sfx._impact, 0.75), "crash": (_crash, 0.7), "glass": (_glass, 0.5), "crack": (_crack, 0.6), "creak": (_creak, 0.45),
     "skid": (_skid, 0.45), "siren": (_siren, 0.3), "wind": (_wind, 0.35), "fire": (_fire, 0.35), "sparks": (_sparks, 0.35),
-    "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "rumble": (lambda: sfx._rumble(1.6), 0.55),
+    "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "roar": (_roar, 0.8), "stomp": (_stomp, 0.8), "flap": (_flap, 0.5),
+    "wings": (_wings, 0.45), "rumble": (lambda: sfx._rumble(1.6), 0.55),
 }
 
 

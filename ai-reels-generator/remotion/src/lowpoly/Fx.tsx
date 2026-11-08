@@ -4,7 +4,7 @@
 // the screen's (LowPoly.tsx). Times are the shot's action time; each effect starts at its `at`.
 import React from 'react';
 import * as THREE from 'three';
-import {facetedBall, rng} from './Man';
+import {facetedBall, mat, rng} from './Man';
 import type {FxKind} from './types';
 
 type V3 = [number, number, number];
@@ -60,6 +60,8 @@ export type FxCtx = {
   seed: number;
   dust: string; // the ground's dust colour
   indoor: boolean; // no rain inside a room (the window shows the weather)
+  eye?: THREE.Vector3; // the camera, and what it looks at (a meteor falls across the sky the camera sees)
+  look?: THREE.Vector3;
 };
 
 const Shockwave: React.FC<{c: FxCtx}> = ({c}) => {
@@ -280,6 +282,52 @@ const Alarm: React.FC<{c: FxCtx}> = ({c}) => {
   return <pointLight position={c.point.clone().add(new THREE.Vector3(1.5, 2.6, 2)).toArray()} color={red ? '#ff2a2a' : '#2a6bff'} intensity={5} distance={12} decay={1.4} />;
 };
 
+// A burning asteroid streaking down the sky far beyond the scene (the user's dinosaur script: "an asteroid appears in the
+// sky"): a glowing faceted rock with a fire trail of puffs fading behind it, across the shot from its moment.
+const METEOR_ROCK = facetedBall(1, 1, 0.25, 33);
+const Meteor: React.FC<{c: FxCtx}> = ({c}) => {
+  const tau = c.t - c.at;
+  if (tau < 0) return null;
+  const span = Math.max(1.5, c.dur - c.at);
+  // (a narrow tall frame sees little of the sky's width: it falls steeply, near the middle of the view)
+  // across the sky the camera sees: 70 m out beyond what it looks at, falling from the upper corner toward the horizon
+  // (placed in the world it was off the narrow tall frame whenever the camera stood to one side)
+  const eye = c.eye ?? c.around.clone().add(new THREE.Vector3(0, 3, 20));
+  const look = c.look ?? c.around.clone();
+  const fwd = look.clone().sub(eye).setY(0);
+  if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+  fwd.normalize();
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+  const pitch = Math.atan2(look.y - eye.y, Math.hypot(look.x - eye.x, look.z - eye.z));
+  const at = (q: number) =>
+    eye.clone().addScaledVector(fwd, 70).addScaledVector(right, -11 + 20 * q).setY(eye.y + 70 * Math.tan(pitch + 0.27 - 0.09 * q));
+  const q = Math.min(1.15, tau / span);
+  const head = at(q);
+  return (
+    <group>
+      {/* (no fog on it: far away in the haze it vanished; drawn over the jungle's crowns, which hid it, as the sky's
+          brightest thing; and no light of its own, which lit the ground orange) */}
+      <mesh geometry={METEOR_ROCK} position={head.toArray()} scale={2.4}>
+        <meshBasicMaterial color="#ffd08a" fog={false} depthTest={false} />
+      </mesh>
+      <mesh geometry={METEOR_ROCK} position={head.toArray()} scale={4}>
+        <meshBasicMaterial color="#ff8a3a" transparent opacity={0.35} depthWrite={false} fog={false} depthTest={false} />
+      </mesh>
+      {Array.from({length: 16}, (_, i) => {
+        const back = q - (i + 1) * 0.022;
+        if (back < 0) return null;
+        const p = at(back);
+        const k = 1 - i / 16;
+        return (
+          <mesh key={i} geometry={METEOR_ROCK} position={p.toArray()} scale={1.9 * k + 0.4}>
+            <meshBasicMaterial color={i < 4 ? '#ffd28a' : i < 9 ? '#ff8a3a' : '#8a7a70'} transparent opacity={0.75 * k} depthWrite={false} fog={false} depthTest={false} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+};
+
 export const FxView: React.FC<{kind: FxKind; c: FxCtx}> = ({kind, c}) => {
   switch (kind) {
     case 'shockwave':
@@ -306,6 +354,8 @@ export const FxView: React.FC<{kind: FxKind; c: FxCtx}> = ({kind, c}) => {
       return <Wind c={c} />;
     case 'alarm':
       return <Alarm c={c} />;
+    case 'meteor':
+      return c.indoor ? null : <Meteor c={c} />;
     default:
       return null; // shake and flash: the camera and the screen
   }

@@ -21,6 +21,9 @@ export type SetName =
   | 'alley' // a narrow brick alley at night: dumpster, fire escape, puddles
   | 'lab' // a white lab with a glowing chamber and screens
   | 'sky' // high above a sea of clouds: for anything that flies, a skydive, a fight on a plane's wing
+  | 'jungle' // a dense prehistoric jungle: giant ferns, palms, a smoking volcano far away
+  | 'plain' // an open grassland to the mountains: a herd crossing it
+  | 'cave' // deep underground: dark rock, a shaft of light, glowing crystals
   | 'void'; // a plain warm studio floor: for a thought, a title
 
 export type Light = 'night' | 'lamp' | 'dawn' | 'morning' | 'day' | 'evening' | 'dark';
@@ -180,7 +183,12 @@ export type BigMotion =
   | 'climb' // noses up and climbs
   | 'dive' // noses down and dives
   | 'bank' // turns, leaning into the turn
-  | 'roll'; // a full barrel roll at its moment
+  | 'roll' // a full barrel roll at its moment
+  // animals and creatures (a design that travels on 'legs', or flies with wings)
+  | 'walk' // walks across the place, legs striding
+  | 'charge' // runs flat out
+  | 'roar' // stands, head up, jaw wide at its moment
+  | 'hatch'; // an egg shakes, cracks and its top bursts off at its moment; a creature with 'hatch' rises out of it
 export type Big = {kind: BigKind; spot: Spot; motion: BigMotion; at?: number; color?: string; made?: string};
 
 // Something the writer designed for this film (a plane, a jet, a helicopter, a motorbike, a boat...), built at render
@@ -195,16 +203,21 @@ export type MadePart = {
   glow?: boolean;
   glass?: boolean;
   spin?: '' | 'x' | 'y' | 'z'; // propellers, rotors, wheels: turns about this axis while it moves
+  move?: MoveRole; // an animal's moving part: all the parts of one role move together
 };
+export type MoveRole =
+  | 'head' | 'neck' | 'jaw' | 'tail'
+  | 'leg_l' | 'leg_r' | 'leg_fl' | 'leg_fr' | 'leg_bl' | 'leg_br'
+  | 'arm_l' | 'arm_r' | 'wing_l' | 'wing_r' | 'shell_top';
 export type Made = {
   parts: MadePart[];
   seats: [number, number, number][]; // where people sit, the driver's / pilot's first (the seat's top, under him)
   top: number; // the height of the surface someone can stand on (a roof, a wing)
-  travel: 'ground' | 'air' | 'water' | 'none';
+  travel: 'ground' | 'air' | 'water' | 'legs' | 'none'; // legs: an animal or creature that walks
   dims: [number, number, number]; // width, height, length (from the parts)
 };
 
-export type FxKind = 'shockwave' | 'crack' | 'dust' | 'speed' | 'sparks' | 'debris' | 'glass' | 'smoke' | 'fire' | 'shake' | 'flash' | 'alarm' | 'rain' | 'wind';
+export type FxKind = 'shockwave' | 'crack' | 'dust' | 'speed' | 'sparks' | 'debris' | 'glass' | 'smoke' | 'fire' | 'shake' | 'flash' | 'alarm' | 'rain' | 'wind' | 'meteor';
 export type Fx = {kind: FxKind; at?: number; spot?: Spot};
 
 export type LPShot = {
