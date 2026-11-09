@@ -7,6 +7,7 @@
 import '@fontsource/anton/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/700.css';
+import '@fontsource/special-elite/400.css';
 import React, {useEffect, useLayoutEffect, useMemo, useState} from 'react';
 import {AbsoluteFill, continueRender, delayRender, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import {ThreeCanvas} from '@remotion/three';
@@ -1873,13 +1874,48 @@ const StoolUnder: React.FC<{pl: Placed}> = ({pl}) => (
 const useFonts = () => {
   const [handle] = useState(() => delayRender('Loading Anton'));
   useEffect(() => {
-    Promise.all(['400 60px Anton', '500 30px Inter', '700 30px Inter'].map((f) => document.fonts.load(f).catch(() => undefined))).finally(() => continueRender(handle));
+    Promise.all(['400 60px Anton', '500 30px Inter', '700 30px Inter', '400 30px "Special Elite"'].map((f) => document.fonts.load(f).catch(() => undefined))).finally(() => continueRender(handle));
   }, [handle]);
 };
 
 // 🎭 A movie's character intro: the number, a bar wiping in, the name in big capitals rising letter by letter, the role
 // under it spaced wide in the colour they wear; it comes up just after their segment starts and leaves before it
 // ends. Bottom left, or bottom right for every second person; centred low in a tall frame.
+// 🎭 The crime-caper intro's card (the user: "mafia style intro", "make it cinematic"): on the freeze a slash of the
+// colour they wear tears across the frame, the name SLAMS on huge and tilted with a hard shadow, and the role is typed
+// under it on a paper tag; no counter (the user: "remove 9/20 char count").
+const CaperCard: React.FC<{c: NameCard; t: number; vertical: boolean; width: number}> = ({c, t, vertical, width}) => {
+  const a = t - c.start;
+  const out = interpolate(t, [c.end - 0.12, c.end], [1, 0], clamp);
+  const band = interpolate(a, [0, 0.12], [0, 1], {...clamp, easing: (x) => 1 - (1 - x) ** 3});
+  const slam = interpolate(a, [0.04, 0.16], [0, 1], {...clamp, easing: (x) => 1 - (1 - x) ** 3});
+  const scale = slam < 1 ? 2.4 - 1.4 * slam : 1 + 0.04 * Math.exp(-(a - 0.16) * 18) * Math.sin((a - 0.16) * 40);
+  const name = c.name.toUpperCase();
+  const size = Math.min(vertical ? 230 : 280, (width * (vertical ? 0.86 : 0.6)) / Math.max(3, name.length * 0.5));
+  const role = c.role.toUpperCase();
+  const typed = Math.floor(interpolate(a, [0.2, 0.2 + Math.min(0.55, role.length * 0.03)], [0, role.length], clamp));
+  const bottom = vertical ? 470 : 200;
+  return (
+    <div style={{position: 'absolute', left: 0, right: 0, bottom, height: size * 1.9, opacity: out}}>
+      <div style={{position: 'absolute', left: vertical ? -40 : -60, bottom: size * 0.42, height: size * 0.62, width: `${band * (vertical ? 118 : 70)}%`,
+        background: c.color, transform: 'skewX(-14deg) rotate(-4deg)', transformOrigin: 'left center', boxShadow: '10px 10px 0 rgba(0,0,0,0.55)'}} />
+      <div style={{position: 'absolute', left: vertical ? 0 : 110, right: vertical ? 0 : undefined, bottom: size * 0.5, textAlign: vertical ? 'center' : 'left',
+        fontFamily: 'Anton, Impact, sans-serif', fontSize: size, lineHeight: 1, color: '#fff', whiteSpace: 'nowrap', letterSpacing: 2,
+        opacity: slam > 0 ? 1 : 0, transform: `rotate(-4deg) scale(${scale})`, transformOrigin: vertical ? 'center' : 'left center',
+        textShadow: '7px 7px 0 #000, 0 0 40px rgba(0,0,0,0.5)'}}>
+        {name}
+      </div>
+      <div style={{position: 'absolute', left: vertical ? 0 : 130, right: vertical ? 0 : undefined, bottom: size * 0.1, textAlign: vertical ? 'center' : 'left'}}>
+        <span style={{display: typed ? 'inline-block' : 'none', fontFamily: '"Special Elite", "Courier New", monospace', fontSize: vertical ? 50 : 46,
+          color: '#16130f', background: '#efe6d2', padding: '6px 16px', transform: 'rotate(-4deg)', boxShadow: '5px 5px 0 rgba(0,0,0,0.6)',
+          letterSpacing: 2, whiteSpace: 'nowrap'}}>
+          {role.slice(0, typed)}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const NameCardView: React.FC<{c: NameCard | undefined; t: number; vertical: boolean}> = ({c, t, vertical}) => {
   if (!c) return null;
   const len = c.end - c.start;
@@ -1903,10 +1939,6 @@ const NameCardView: React.FC<{c: NameCard | undefined; t: number; vertical: bool
         transform: `translateY(${(1 - out) * 18}px)`,
       }}
     >
-      <div style={{fontFamily: 'Inter, sans-serif', fontWeight: 700, fontSize: vertical ? 30 : 26, letterSpacing: 6, color: 'rgba(255,255,255,0.75)',
-        opacity: interpolate(a, [0, 0.3], [0, 1], clamp), textShadow: '0 2px 10px rgba(0,0,0,0.6)'}}>
-        {String(c.index).padStart(2, '0')} / {String(c.total).padStart(2, '0')}
-      </div>
       <div style={{height: 6, width: 150 * bar, background: c.color, margin: vertical ? '14px auto 10px' : right ? '14px 0 10px auto' : '14px 0 10px 0',
         boxShadow: '0 0 18px rgba(0,0,0,0.5)'}} />
       <div style={{fontFamily: 'Anton, Impact, sans-serif', fontSize: size, lineHeight: 1.02, color: '#fff', letterSpacing: 2,
@@ -1958,6 +1990,49 @@ const Words: React.FC<{c: Caption | undefined; vertical: boolean; t: number}> = 
   );
 };
 
+// 🎭 The cast intro's camera work on the picture itself: a whip pan in and out (a sideways smear), a push in during the
+// sped-up action, and on the freeze a snap zoom with a dutch tilt, a shake as the name lands, and the colour drained.
+const caperLook = (shot: LPShot, local: number, frozen: boolean, width: number): React.CSSProperties => {
+  if (shot.freeze === undefined && !shot.whipIn && !shot.whipOut) return {};
+  let x = 0, blur = 0, scale = 1, rot = 0, filter = '';
+  const W = 0.14;
+  if (shot.whipIn && local < W) {
+    const k = 1 - local / W;
+    x += k * k * 0.35 * width;
+    blur += k * 14;
+  }
+  if (shot.whipOut && local > shot.duration - W) {
+    const k = (local - (shot.duration - W)) / W;
+    x -= k * k * 0.35 * width;
+    blur += k * 14;
+  }
+  if (shot.freeze !== undefined) {
+    if (!frozen) scale = 1 + 0.05 * (local / Math.max(0.3, shot.freeze));
+    else {
+      const a = local - shot.freeze;
+      const snap = Math.min(1, a / 0.07);
+      scale = 1.05 + 0.07 * snap;
+      rot = -2.5 * snap;
+      const shake = a < 0.3 ? (1 - a / 0.3) * 9 : 0;
+      x += shake * Math.sin(a * 90);
+      filter = `saturate(${0.75 + 0.25 * (1 - snap)}) contrast(1.32) brightness(1.08)`;
+    }
+  }
+  if (!frozen && shot.grade === 'caper') filter = 'contrast(1.12) saturate(1.15)';
+  return {transform: `translateX(${x}px) scale(${scale}) rotate(${rot}deg)`, filter: `${filter}${blur ? ` blur(${blur}px)` : ''}` || undefined};
+};
+
+// Black bars top and bottom: a 2.39:1 film frame in 16:9, a thinner pair in a tall Short.
+const Letterbox: React.FC<{vertical: boolean}> = ({vertical}) => {
+  const h = vertical ? 150 : Math.round((1080 - 1920 / 2.39) / 2);
+  return (
+    <>
+      <div style={{position: 'absolute', left: 0, right: 0, top: 0, height: h, background: '#000'}} />
+      <div style={{position: 'absolute', left: 0, right: 0, bottom: 0, height: h, background: '#000'}} />
+    </>
+  );
+};
+
 const Grain: React.FC<{frame: number}> = ({frame}) => (
   <svg width="100%" height="100%" style={{position: 'absolute', inset: 0, mixBlendMode: 'overlay', opacity: 0.32}}>
     <filter id={`lpg${frame % 8}`}>
@@ -1979,6 +2054,10 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
   if (i < 0) i = t < (shots[0]?.start ?? 0) ? 0 : shots.length - 1;
   const shot = shots[i];
   const local = t - shot.start;
+  // 🎭 the cast intro: the action plays sped up, then the picture freezes on the beat (the name slams on)
+  const frozen = shot.freeze !== undefined && local >= shot.freeze;
+  const sceneT = shot.freeze !== undefined ? Math.min(local, shot.freeze) * (shot.ramp ?? 1) : local;
+  const card = (props.cards ?? []).find((c) => t >= c.start && t < c.end);
   const cap = props.captions.find((c) => t >= c.start && t < c.end);
   const fadeIn = shot.fadeIn ? interpolate(local, [0, shot.fadeIn], [1, 0], clamp) : 0;
   const fadeOut = shot.fadeOut ? interpolate(local, [shot.duration - shot.fadeOut, shot.duration], [0, 1], clamp) : 0;
@@ -1989,11 +2068,19 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
   const alarm = fxAt.find((f) => f.kind === 'alarm' && actionTime(shot, local) >= f.at) ? (Math.sin(actionTime(shot, local) * 9) > 0 ? 'rgba(255,40,40,0.13)' : 'rgba(40,90,255,0.11)') : '';
   return (
     <AbsoluteFill style={{background: '#000'}}>
-      <ThreeCanvas width={width} height={height} shadows gl={{antialias: true}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
-        <ShotScene shot={shot} t={local} props={props} aspect={width / height} />
-      </ThreeCanvas>
+      <AbsoluteFill style={caperLook(shot, local, frozen, width)}>
+        <ThreeCanvas width={width} height={height} shadows gl={{antialias: true}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
+          <ShotScene shot={shot} t={sceneT} props={props} aspect={width / height} />
+        </ThreeCanvas>
+      </AbsoluteFill>
+      {shot.grade === 'caper' ? (
+        <AbsoluteFill style={{background: 'linear-gradient(135deg, rgba(0,110,130,0.55), rgba(0,0,0,0) 45%, rgba(255,140,40,0.5))', mixBlendMode: 'soft-light',
+          opacity: frozen ? 1 : 0.85}} />
+      ) : null}
+      {frozen && local - shot.freeze! < 0.2 ? <AbsoluteFill style={{background: '#fff', opacity: 0.85 * (1 - (local - shot.freeze!) / 0.2)}} /> : null}
       <AbsoluteFill style={{background: 'radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.42) 100%)'}} />
       <Grain frame={frame} />
+      {props.cinematic ? <Letterbox vertical={props.vertical} /> : null}
       {alarm ? <AbsoluteFill style={{background: alarm, mixBlendMode: 'screen'}} /> : null}
       {flash > 0.01 ? <AbsoluteFill style={{background: '#fffaf0', opacity: flash}} /> : null}
       <AbsoluteFill style={{background: '#000', opacity: black}} />
@@ -2015,7 +2102,7 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
         </div>
       ) : null}
       <Words c={cap} vertical={props.vertical} t={t} />
-      <NameCardView c={(props.cards ?? []).find((c) => t >= c.start && t < c.end)} t={t} vertical={props.vertical} />
+      {card?.style === 'caper' ? <CaperCard c={card} t={t} vertical={props.vertical} width={width} /> : <NameCardView c={card} t={t} vertical={props.vertical} />}
     </AbsoluteFill>
   );
 };

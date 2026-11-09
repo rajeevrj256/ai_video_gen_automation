@@ -67,7 +67,7 @@ def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress, genre: s
     out = work / "music"
     out.mkdir(parents=True, exist_ok=True)
     made: dict[int, Path] = {}
-    if aimusic.available(cfg):
+    if aimusic.available(cfg) and not any(s.get("bpm") for s in sections):  # (a fixed beat: composed, so the cuts land on it)
         recent = set(aimusic.recent_genres(cfg))
         # a movie keeps the style its first part had (its theme); a standalone film takes one the last films didn't use
         genre = genre if genre in aimusic.GENRES else random.Random(seed).choice([g for g in GENRES if g not in recent] or list(GENRES))
@@ -84,7 +84,7 @@ def _tracks(cfg, sections: list[dict], work: Path, seed: int, progress, genre: s
         seconds = s["end"] - s["start"] + 2
         mood = s["mood"] if s["mood"] in music.MOOD_SPECS else "calm"
         made[i] = music.compose(mood, [music.Section(0, seconds, INTENSITY.get(s["act"], 0.4))], seconds, seed * 31 + i,
-                                out / f"act{i:02d}.wav")
+                                out / f"act{i:02d}{'-%dbpm' % round(s['bpm']) if s.get('bpm') else ''}.wav", bpm=s.get("bpm"))
     return made, (genre if made and any(p.name.endswith("-ai.wav") for p in made.values()) else "")
 
 

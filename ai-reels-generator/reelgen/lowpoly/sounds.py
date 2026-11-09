@@ -245,7 +245,8 @@ def _wings() -> np.ndarray:
 MAKERS = {
     **sticky.MAKERS,
     "engine": (_engine, 0.5), "jet": (_jet, 0.45), "propeller": (_propeller, 0.45), "rev": (lambda: _real(car.rev(), _rev), 0.6),
-    "impact": (sfx._impact, 0.75), "crash": (_crash, 0.7), "glass": (_glass, 0.5), "crack": (_crack, 0.6), "creak": (_creak, 0.45),
+    "impact": (sfx._impact, 0.75), "shutter": (sfx._hook_shutter, 0.5), "whip": (sfx._hook_whip, 0.55),
+    "scratch": (sfx._scratch, 0.5), "crash": (_crash, 0.7), "glass": (_glass, 0.5), "crack": (_crack, 0.6), "creak": (_creak, 0.45),
     "skid": (_skid, 0.45), "siren": (_siren, 0.3), "wind": (_wind, 0.35), "fire": (_fire, 0.35), "sparks": (_sparks, 0.35),
     "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "roar": (_roar, 0.8), "stomp": (_stomp, 0.8), "flap": (_flap, 0.5),
     "wings": (_wings, 0.45), "rumble": (lambda: sfx._rumble(1.6), 0.55),

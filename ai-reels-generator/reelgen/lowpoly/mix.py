@@ -42,6 +42,7 @@ UNDER_VOICE = {
     "wind": 27, "rain": 24, "fire": 24, "siren": 27, "sparks": 22, "crowd": 22,
     "engine": 13, "jet": 14, "propeller": 15,  # a vehicle under way: the shot's own bed, the loudest one
     "rev": 8,  # the foot on the accelerator in a cut-in: over the engine bed
+    "shutter": 8, "whip": 9, "scratch": 8,  # the cast intro's freezes and whip cuts
     "roar": 5, "stomp": 9, "flap": 13, "wings": 15,  # animals: a roar is the moment itself
 }
 BEDS = {"wind", "rain", "fire", "siren", "sparks", "crowd", "tick", "engine", "jet", "propeller", "wings"}  # lower still under speech

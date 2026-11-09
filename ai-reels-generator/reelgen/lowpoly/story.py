@@ -257,6 +257,8 @@ class IntroCard(BaseModel):
     first: int  # the segment's first shot (0-based)
     shots: int  # how many shots in a row
     seconds: float  # each of those shots' length
+    freeze: float = 0.0  # seconds into the segment's last shot where the picture freezes and the name slams in (on a beat)
+    bpm: float = 0.0  # the beat the cuts and freezes land on (the score is composed at it)
 
 
 class Story(BaseModel):

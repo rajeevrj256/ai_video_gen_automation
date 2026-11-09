@@ -30,6 +30,7 @@ IntroSet = Literal["bedroom", "hallway", "street", "park", "kitchen", "living", 
                    "rooftop", "construction", "alley", "lab"]
 IntroAction = Literal["stand", "walk", "sit", "phone", "type", "read", "drink", "eat", "look-out", "wave", "point", "cheer", "nod",
                       "think", "stretch", "shrug", "jog", "pushup", "lift", "talk", "crouch", "kneel", "look-hands", "reach"]
+FREEZE_CAMS = ["medium", "low", "front", "crash-zoom", "face"]  # the name lands on a face, never a wide or an orbit
 AWAY_SPOTS = {"counter", "window", "mirror", "door"}  # spots where people face away from the room: their back to us
 HERO_WHO = "the man every film is about: quiet, kind, always half a step behind his own life"
 
@@ -64,7 +65,7 @@ class IntroPlan(BaseModel):
     people: list[IntroPerson]
 
 
-SYSTEM = """You stage a movie-style CAST INTRODUCTION for a low-poly 3D animated channel: one person after another,
+SYSTEM = """You stage a crime-caper film's CAST INTRODUCTION (fast, cinematic, full of attitude) for a low-poly 3D animated channel: one person after another,
 each in the place that is theirs, doing the one thing that says who they are, while their name and role come up on
 screen. No dialogue, no narration: music only.
 
@@ -80,7 +81,11 @@ For each person, in the order given:
   (sit, type, read with a seat) need a seat spot of the place (chair, couch, desk, bed); otherwise use center, left
   or right (never counter, window, mirror or door: people face away there and we'd see their back). Expressions show
   their personality.
-- `role`: 2-5 words in their relation to him and their job, as a film's intro card shows it.
+- `role`: 2-5 words, the way a crime-caper film's freeze-frame intro tags a character: who they are to him and what
+  they're known for, with attitude, in your own words for each person (the shape of 'THE LANDLORD. ALWAYS COLLECTS.',
+  'HIS COUSIN. TALKS TOO MUCH.'; never copy these).
+- The picture freezes a beat or two into each person's last shot and their name slams on: make that shot's action land
+  early and hit a pose (a look to us, a point, a nod, a lift, a sip, a cheer), with an expression full of attitude.
 Only the person being introduced is in their shots."""
 
 
@@ -100,11 +105,40 @@ def people(cfg: Config, names: list[str], hero_name: str) -> list[dict]:
     return out
 
 
-def split(seconds: float, n: int) -> tuple[int, float]:
-    """Shots per person and each shot's length: the minute divided equally, ~3.5 s a shot, 1-3 shots each."""
+BPM = (100, 124)  # the groove the cuts and freezes land on: a crime-caper strut, not a march
+RAMP = 1.35  # the action plays this much faster before it freezes (a speed ramp into the freeze-frame)
+
+
+def beat_grid(seconds: float, n: int) -> tuple[int, float, float, float]:
+    """(shots per person, each shot's length, bpm, where the last shot freezes): every person the same time, each
+    shot a whole number of beats, so every cut and every freeze lands on the beat of the composed score (the user: "intro
+    must be energetic, not just slide changes, mafia style"). ~3.5 s a shot, 1-3 shots each; the minute may come out a
+    little over or under to stay on the beat."""
     seg = seconds / n
     per = max(1, min(MAX_SHOTS, round(seg / SHOT_SECONDS)))
-    return per, seg / per
+    want = seg / per
+    best = None
+    for beats in range(2, 13):
+        bpm = 60 * beats / want
+        for b in (int(bpm), int(bpm) + 1):
+            if BPM[0] <= b <= BPM[1]:
+                cost = abs(beats * 60 / b - want) * 10 + abs(b - 112) / 40
+                if best is None or cost < best[0]:
+                    best = (cost, beats, b)
+    if best is None:  # (a very long or short shot: the nearest tempo)
+        beats = max(2, round(want * 112 / 60))
+        best = (0, beats, max(BPM[0], min(BPM[1], round(60 * beats / want))))
+    _, beats, bpm = best
+    beat = 60 / bpm
+    each = beats * beat
+    freeze = max(1, round(beats * 0.38)) * beat  # a beat or two of action, then the freeze and the name
+    return per, round(each, 4), float(bpm), round(freeze, 4)
+
+
+def split(seconds: float, n: int) -> tuple[int, float]:
+    """Shots per person and each shot's length (on the beat grid)."""
+    per, each, _, _ = beat_grid(seconds, n)
+    return per, each
 
 
 def _role(who: str) -> str:
@@ -157,8 +191,10 @@ def cameras(plan_cams: list[list[str]], sets: list[str], seed: int = 0) -> list[
     for cams, place in zip(plan_cams, sets):
         pool = order + (sorted(OUTDOOR_ONLY) if place in OUTDOOR else [])
         mine: list[str] = []
-        for c in cams:
+        for j, c in enumerate(cams):
             free = [x for x in pool if x not in mine and x != prev]
+            if j == len(cams) - 1:  # the freeze-frame: always a camera that has their face, close enough to read
+                free = [x for x in free if x in FREEZE_CAMS] or [x for x in FREEZE_CAMS if x != prev]
             least = min(used[x] for x in free)
             fresh = [x for x in free if used[x] == least]
             pick = c if c in fresh else fresh[0]
@@ -195,6 +231,7 @@ def assemble(plan: IntroPlan, cast: list[dict], per: int, each: float, seconds: 
     """The Story the timeline and editor know: the people in order, each with exactly `per` shots of `each` seconds,
     every camera different, and the cards."""
     fall = fallback_plan(cast, per)
+    _, each, bpm, freeze = beat_grid(seconds, len(cast))
     by = {S._key(p.name): p for p in plan.people}
     staged = []
     for k, p in enumerate(cast):
@@ -211,7 +248,7 @@ def assemble(plan: IntroPlan, cast: list[dict], per: int, each: float, seconds: 
             story_cast.append(S.LPCast(name=p["name"], who=p["who"] or "a friend", design=S.LPDesign(**(p["design"] or {})),
                                        voice=p.get("voice", "man") if p.get("voice") in S.VOICES else "man"))
         cards.append(S.IntroCard(who=who, name=p["name"], role=(mine.role or _role(p["who"])).strip()[:40], first=len(story_shots),
-                                 shots=per, seconds=round(each, 3)))
+                                 shots=per, seconds=each, freeze=freeze, bpm=bpm))
         for sh, cam in zip(shots, cs):
             story_shots.append(S.LPShot(
                 line="", speaker="narrator", set=mine.set, light=mine.light, camera=cam, subject=who,

@@ -257,6 +257,9 @@ def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_ra
     return []
 
 
+RAMP = 1.35  # = intro.RAMP: the action plays this much faster before the freeze
+
+
 def _card_colour(hex_: str) -> str:
     """The colour someone wears, lifted toward white when it is too dark to read on screen (a black suit)."""
     try:
@@ -541,15 +544,39 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     shown = captions if mode == "on" else [c for c in captions if c.get("stamp")] if mode == "stamps" else []
     props = {"fps": FPS, "duration": total, "vertical": vertical, "watermark": watermark, "seed": seed, "cast": cast, "shots": shots,
              "captions": shown, "dof": True}
-    if story.intro:  # each person's name and role over their segment, in the colour they wear
+    if story.intro:  # 🎭 the cast intro, crime-caper style (intro.py): whip in, a beat of sped-up action, FREEZE + name
         props["cards"] = []
+        intro_cues = []
+        n_cards = len(story.intro)
         for k, c in enumerate(story.intro):
             if c.first >= len(shots):
                 continue
-            last = shots[min(len(shots), c.first + c.shots) - 1]
-            props["cards"].append({"start": shots[c.first]["start"], "end": round(last["start"] + last["duration"], 3), "name": c.name,
-                                   "role": c.role, "index": k + 1, "total": len(story.intro),
+            seg = shots[c.first:c.first + c.shots]
+            last = seg[-1]
+            if c.freeze:
+                last["freeze"] = round(c.freeze, 3)
+                last["ramp"] = RAMP
+                freeze_at = last["start"] + c.freeze
+            else:
+                freeze_at = seg[0]["start"]
+            if k:
+                seg[0]["whipIn"] = True
+                intro_cues.append({"sound": "whip", "at": round(max(0.0, seg[0]["start"] - 0.16), 3), "volume": 0.9})
+            if k < n_cards - 1:
+                last["whipOut"] = True
+            for sh in seg:
+                sh["grade"] = "caper"
+            intro_cues.append({"sound": "scratch" if k == 0 else "impact", "at": round(freeze_at - (0.05 if k == 0 else 0.0), 3),
+                               "volume": 0.8 if k == 0 else 0.95})
+            intro_cues.append({"sound": "shutter", "at": round(freeze_at, 3), "volume": 0.9})
+            props["cards"].append({"start": round(freeze_at, 3), "end": round(last["start"] + last["duration"], 3), "name": c.name,
+                                   "role": c.role, "index": k + 1, "total": n_cards, "style": "caper",
                                    "color": _card_colour(cast.get("hero" if c.who == "hero" else _key(c.who), HERO)["top"])})
+        cues.extend(intro_cues)
+        props["cinematic"] = True  # letterbox, grade, heavier grain (LowPoly.tsx)
+        bpm = next((c.bpm for c in story.intro if c.bpm), 0)
+        if bpm:  # one groove for the whole intro, composed at the cuts' tempo so every cut and freeze lands on a beat
+            sections[:] = [{"start": 0.0, "end": total, "mood": "suspense", "act": "climb", "quiet": [], "bpm": bpm}]
     used = {b.made for x in story.shots for b in x.big if b.kind == "made"}
     if used:  # the things the writer designed, built by the editor from their parts
         props["made"] = {m.name: design_for_editor(m) for m in story.made if m.name in used}

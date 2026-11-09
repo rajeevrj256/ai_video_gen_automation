@@ -222,6 +222,11 @@ export type Fx = {kind: FxKind; at?: number; spot?: Spot};
 
 export type LPShot = {
   start: number; // seconds
+  freeze?: number; // 🎭 cast intro: seconds into the shot where the picture freezes (the name slams on)
+  ramp?: number; // the action's speed before the freeze
+  whipIn?: boolean; // a whip pan into the shot
+  whipOut?: boolean; // a whip pan out of it
+  grade?: 'caper'; // the cast intro's crime-film grade
   duration: number;
   set: SetName;
   light: Light;
@@ -248,7 +253,7 @@ export type Insert = {cam: 'pedal' | 'wheel' | 'speedo'; from: number; to: numbe
 export type Caption = {start: number; end: number; text: string; red?: boolean; stamp?: boolean};
 
 // 🎭 a cast intro's card: the person's name and role over their segment (reelgen/lowpoly/intro.py)
-export type NameCard = {start: number; end: number; name: string; role: string; index: number; total: number; color: string};
+export type NameCard = {start: number; end: number; name: string; role: string; index: number; total: number; color: string; style?: 'caper'};
 
 export type LowPolyProps = {
   fps: number;
@@ -263,4 +268,5 @@ export type LowPolyProps = {
   dof?: boolean; // depth of field (on unless a slow machine turns it off)
   made?: Record<string, Made>; // things the writer designed for this film, by name
   cards?: NameCard[];
+  cinematic?: boolean; // letterbox bars, a film grade, heavier grain (the cast intro)
 };

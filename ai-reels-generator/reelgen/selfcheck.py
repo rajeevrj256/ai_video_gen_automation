@@ -576,17 +576,26 @@ def lowpoly_intro() -> None:
             story = I.assemble(plan, cast, per, each, seconds)
             S.repair(story)
             props = build(story, {}, vertical=False, watermark="", seed=1, words="off")[0]
-            assert abs(props["duration"] - seconds) < 0.01, props["duration"]
+            assert abs(props["duration"] - seconds) < seconds * 0.08, props["duration"]
             assert len(props["cards"]) == len(cast)
+            bpm = story.intro[0].bpm
+            for c in story.intro:  # every shot a whole number of beats, every freeze on a beat (the score is composed at it)
+                for x in (c.seconds, c.freeze):
+                    assert abs(x * bpm / 60 - round(x * bpm / 60)) < 0.01, (x, bpm)
+            assert props["cinematic"] and all(s.get("grade") == "caper" for s in props["shots"])
             cams = [s["camera"] for s in props["shots"]]
             assert all(a != b for a, b in zip(cams, cams[1:])), cams
             for c in story.intro:
                 mine = cams[c.first:c.first + c.shots]
                 assert len(set(mine)) == len(mine), mine
-            assert len(set(cams[: len(I.POOL)])) == min(len(cams), len(I.POOL)), cams
+            ring = len(I.FREEZE_CAMS) if per == 1 else len(I.POOL)  # (one shot each: every shot is a freeze, face-on)
+            assert len(set(cams[:ring])) == min(len(cams), ring), cams
+            segs = set()
             for c, card in zip(story.intro, props["cards"]):
-                seg = props["shots"][c.first]
-                assert abs(card["start"] - seg["start"]) < 0.01 and abs(card["end"] - card["start"] - seconds / len(cast)) < 0.02
+                first, last = props["shots"][c.first], props["shots"][c.first + c.shots - 1]
+                segs.add(round(card["end"] - first["start"], 2))
+                assert abs(card["start"] - (last["start"] + last["freeze"])) < 0.01 and card["style"] == "caper"
+            assert len(segs) == 1, segs  # everyone the same time on screen
             assert not any(a["spot"] in I.AWAY_SPOTS for s in props["shots"] for a in s["actors"])
             assert props["cards"][0]["name"] == ("Ethan" if not names or "hero" in names else cast[0]["name"])
 

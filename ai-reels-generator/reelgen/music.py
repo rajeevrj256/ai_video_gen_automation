@@ -254,10 +254,12 @@ def _chord(scale: list[int], degree: int, root: int, octave: int = 0) -> list[fl
     return notes
 
 
-def compose(mood: str, sections: list[Section], seconds: float, seed: int, out: Path) -> Path:
+def compose(mood: str, sections: list[Section], seconds: float, seed: int, out: Path, bpm: float | None = None) -> Path:
+    """`bpm` fixes the tempo (the low-poly cast intro cuts and freezes on its beats); else the mood picks one."""
     spec = MOOD_SPECS.get(mood, MOOD_SPECS["calm"])
     rng = np.random.default_rng(seed)
-    bpm = int(rng.integers(spec.bpm[0], spec.bpm[1] + 1))
+    picked = int(rng.integers(spec.bpm[0], spec.bpm[1] + 1))
+    bpm = float(bpm) if bpm else picked
     beat = 60 / bpm
     bar = beat * 4
     step = beat / 4
