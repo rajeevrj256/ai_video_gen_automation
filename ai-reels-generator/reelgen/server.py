@@ -389,6 +389,19 @@ def lan_ips() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
+def _true_shape(report: dict) -> dict:
+    """The player is shaped by `format`; a 9:16 low-poly film or cast intro used to be filed as 'long', so the page put
+    the tall video in a 16:9 box (the user: "why it generated this frame even choose 9:16"). The file's own size wins."""
+    probe = (report.get("checks") or {}).get("probe") or {}
+    try:
+        w, h = int(probe.get("width") or 0), int(probe.get("height") or 0)
+    except (TypeError, ValueError):
+        return report
+    if w and h:
+        report["format"] = "short" if h > w else "long" if report.get("format") == "short" and w > h else report.get("format")
+    return report
+
+
 def list_videos(cfg: Config) -> list[dict]:
     videos = []
     if cfg.output_dir.exists():
@@ -398,6 +411,7 @@ def list_videos(cfg: Config) -> list[dict]:
             except (OSError, json.JSONDecodeError):
                 continue
             data["id"] = report.parent.name
+            _true_shape(data)
             data.pop("checks", None)
             data["category"] = categorize(data)  # saved one, or a keyword guess for older videos
             videos.append(data)
@@ -946,7 +960,7 @@ def create_app(cfg: Config) -> FastAPI:
     def video(video_id: str):
         report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
         report["category"] = categorize(report)
-        return report
+        return _true_shape(report)
 
     @app.post("/api/videos/{video_id}/post-text")
     def write_post_text(video_id: str, body: dict | None = None):

@@ -240,7 +240,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     move(work, final)
     narration = " ".join(s.line.strip() for s in story.shots if s.line.strip())
     report = {
-        "id": final.name, "format": "short" if vertical and short else "long", "length": "short" if short else "lowpoly",
+        "id": final.name, "format": "short" if vertical else "long",  # (the page shapes its player by this: a 9:16 film was filed as long) "length": "short" if short else "lowpoly",
         "source": "lowpoly", "topic": story.problem, "topic_source": req.topic.strip() and "your topic" or "Claude's pick",
         "style": "story", "category": "Life & People", "title": story.title.strip(), "why_chosen": story.problem,
         "narration": narration, "created_at": stamp, "verified": not issues, "score": None, "issues": issues,
