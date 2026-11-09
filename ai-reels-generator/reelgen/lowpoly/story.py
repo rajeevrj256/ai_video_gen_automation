@@ -49,6 +49,7 @@ MotionName = Literal["still", "fall", "caught", "lifted", "held", "thrown", "sto
                      "race", "drift", "spin", "reverse", "jump", "fly", "climb", "dive", "bank", "roll",
                      "walk", "charge", "roar", "hatch"]
 GROUND_UNDERWAY = {"race", "drift", "spin", "reverse", "jump"}  # = UNDERWAY in Big.tsx, on the ground...
+OVERGROWN_SETS = {"street", "highway", "busstop", "rooftop", "bridge", "alley"}  # = OVERGROWN in Sets.tsx
 CREATURE_MOTIONS = {"walk", "charge", "roar", "hatch"}  # what an animal or creature design does (= Big.tsx)
 MOVES = Literal["", "head", "neck", "jaw", "tail", "leg_l", "leg_r", "leg_fl", "leg_fr", "leg_bl", "leg_br", "arm_l", "arm_r",
                 "wing_l", "wing_r", "shell_top"]
@@ -200,6 +201,10 @@ class LPShot(BaseModel):
     big: list[LPBig] = Field(default_factory=list, description="big objects in the shot and what they do (fiction)")
     fx: list[LPFx] = Field(default_factory=list, description="effects (fiction): most come with the actions by themselves")
     slowmo: bool = Field(False, description="the action in slow motion (the key rescue moment, a catch); give it a longer pause")
+    overgrown: Literal["", "ruined", "growing"] = Field(
+        "", description="the city taken back by nature: 'ruined' = abandoned and overgrown (vines down the buildings and over "
+                        "rusted cars, dark windows, grass, ferns and jungle trees breaking through the road); 'growing' = it "
+                        "happens during the shot (the modern place turning into jungle as we watch); '' = as it is")
 
 
 class LPPart(BaseModel):
@@ -474,6 +479,10 @@ ANIMALS AND CREATURES (dinosaurs, a dragon, a whale, a wolf, a giant insect, a r
 - A shot of only animals or creatures (no actors) is right: the camera is on the first big thing in the shot, and 'face' is close on its head, 'medium' all of it, 'wide' the place with it, 'low' up at it from the ground, 'side', 'front', 'back', 'aerial' from above, 'orbit' around it, 'detail' on its eye, 'crash-zoom' pushing in on its face.
 - Places for them: 'jungle' (a dense prehistoric jungle: giant ferns, palms, a smoking volcano far away), 'plain' (an open grassland to the mountains, for a herd), 'cave' (deep underground, dark rock, a shaft of light, glowing crystals), and the man's places too: 'street' and 'highway' with the city, 'park'.
 - 'meteor' in `fx`: a burning asteroid streaking across the sky (outdoors).
+- A city taken back by nature: `overgrown` 'ruined' on a 'street', 'highway', 'busstop', 'rooftop', 'bridge' or 'alley' \
+shot (abandoned: vines down the buildings and over rusted cars, dark windows, grass, ferns and jungle trees through \
+the road); 'growing' when the script has the city turning into jungle (it grows over the shot as we watch, from the \
+modern city to the jungle). Every shot after the change stays 'ruined'.
 """
 
 SCRIPT_RULES = """
@@ -1422,6 +1431,8 @@ def repair(story: Story) -> list[str]:
                     a.action = "sit"
             if a.to and a.to not in SPOTS[s.set]:
                 a.to = None
+        if s.overgrown and s.set not in OVERGROWN_SETS:
+            s.overgrown = ""  # only the city's places are drawn taken back by nature (= Overgrowth in Sets.tsx)
         notes += [f"Shot {i + 1}: {n}" for n in _vehicles(story, s)]
         # a shot with nobody in it: fine when a vehicle or something else is there (the camera follows the car); a
         # shot of nothing at all gets him
@@ -1457,6 +1468,7 @@ class ShotStaging(BaseModel):
     big: list[LPBig] = Field(default_factory=list)
     fx: list[LPFx] = Field(default_factory=list)
     slowmo: bool = False
+    overgrown: Literal["", "ruined", "growing"] = ""
 
 
 class Restaging(BaseModel):

@@ -1225,7 +1225,25 @@ const Trail: React.FC<{puffs: {p: THREE.Vector3; age: number}[]}> = ({puffs}) =>
   </group>
 );
 
-export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boolean; t?: number; night?: boolean; pedals?: Pedals; children?: React.ReactNode}> = ({b, st, seed, open = false, t = 0, night = false, pedals, children}) => {
+// A car left to the jungle: its paint dull and rusting, moss on its roof and bonnet, vines hanging down its sides.
+const Overrun: React.FC<{size: V3; k: number; seed: number}> = ({size, k, seed}) => {
+  if (k <= 0) return null;
+  const [w, h, l] = size;
+  const vine = ['#2f5a2a', '#3d6b30', '#26482a'];
+  return (
+    <group>
+      <Box p={[0, h * 0.98, -l * 0.08]} s={[w * 0.82 * k, 0.07, l * 0.42 * k]} c="#46622f" />
+      <Box p={[0, h * 0.62, l * 0.3]} s={[w * 0.7 * k, 0.06, l * 0.22 * k]} c="#3f5c2c" r={[-0.12, 0, 0]} />
+      {[-1, 1].flatMap((sd) =>
+        [-0.32, -0.08, 0.18, 0.38].map((z, i) => (
+          <Box key={`${sd}${i}`} p={[sd * (w / 2 - 0.02), h * (0.62 - 0.2 * k), z * l]} s={[0.04, h * 0.4 * k, 0.18 + ((seed + i) % 3) * 0.08]} c={vine[(i + seed) % 3]} />
+        )),
+      )}
+    </group>
+  );
+};
+
+export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boolean; t?: number; night?: boolean; pedals?: Pedals; children?: React.ReactNode; wild?: number}> = ({b, st, seed, open = false, t = 0, night = false, pedals, children, wild = 0}) => {
   const size = sizeOf(b);
   const made = madeOf(b);
   // wheels turn with the distance; a designed thing's propellers and rotors spin fast whenever it is under way
@@ -1235,7 +1253,7 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boole
       <group position={st.pos} rotation={new THREE.Euler(st.rx, st.ry, st.rz, 'YXZ')}>
         <group position={[-st.pivot[0], -st.pivot[1], -st.pivot[2]]} scale={st.squash}>
           <group scale={MODEL_SCALE[b.kind] ?? 1}>
-            <BigModel kind={b.kind} color={b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} speed={st.speed ?? 0} anim={isCreature(b) ? creatureAnim(b, st, t) : undefined} />
+            <BigModel kind={b.kind} color={wild > 0.4 && VEHICLE.has(b.kind) ? ['#6f5a43', '#5f574c', '#7a6048'][Math.abs(seed) % 3] : b.color} seed={seed} open={open} turn={turn} steer={st.steer ?? 0} made={made} pedals={pedals} speed={st.speed ?? 0} anim={isCreature(b) ? creatureAnim(b, st, t) : undefined} />
           </group>
           {night && b.kind === 'car' ? (
             <>
@@ -1245,6 +1263,7 @@ export const BigView: React.FC<{b: Big; st: BigState; seed: number; open?: boole
               <pointLight position={[0, 0.55, -size[2] / 2 - 3.0]} color="#ffd2b0" intensity={3} distance={6} decay={1.3} />
             </>
           ) : null}
+          {VEHICLE.has(b.kind) && wild > 0 && !st.speed ? <Overrun size={size} k={Math.min(1, wild * 1.3)} seed={seed} /> : null}
           {children}
         </group>
       </group>

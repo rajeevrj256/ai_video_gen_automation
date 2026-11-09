@@ -16,7 +16,7 @@ import {BokehPass} from 'three/examples/jsm/postprocessing/BokehPass.js';
 import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
-import {LOOKS, SETS, spotOf, ThingView, type SetDef} from './Sets';
+import {LOOKS, Overgrowth, SETS, spotOf, ThingView, type SetDef} from './Sets';
 import {
   bigState,
   BigView,
@@ -1757,6 +1757,8 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
     plan.pos.add(j);
     plan.look.add(j.multiplyScalar(0.6));
   }
+  // the city taken back by nature: all the way, or growing over the shot from the modern city to the jungle
+  const wild = shot.overgrown === 'ruined' ? 1 : shot.overgrown === 'growing' ? Math.min(1, Math.max(0, (ta / Math.max(0.5, da)) * 1.15)) : 0;
   const things = shot.things ?? [];
   const s = V(set.surface);
   return (
@@ -1766,11 +1768,12 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       <CamRig plan={plan} exposure={look.exposure} />
       <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : subjectBig(shot, set, t)?.st.pos.clone() ?? V(set.wide.look)} eye={plan.pos} />
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
+      {wild > 0 ? <Overgrowth set={shot.set} g={wild} look={look} seed={(shot.seed ?? 1) % 997} /> : null}
       {things.map((th, i) => (
         <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
       ))}
       {bigs.map(({b, st, i}) => (
-        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} pedals={{...pressAt(shot, t, i), at: placed.find((p) => p.ride === i && p.pedalAt)?.pedalAt}} />
+        <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} pedals={{...pressAt(shot, t, i), at: placed.find((p) => p.ride === i && p.pedalAt)?.pedalAt}} wild={wild} />
       ))}
       {fx.map((f, i) => (
         <FxView key={`fx${i}`} kind={f.kind} c={f.ctx} />

@@ -236,6 +236,7 @@ export type LPShot = {
   big?: Big[];
   fx?: Fx[];
   slowmo?: boolean; // the action at 0.4x while the words run at speed
+  overgrown?: 'ruined' | 'growing'; // the city taken back by nature (growing: it happens over the shot)
   // a split-second cut-in inside the shot, as in an action film: his foot hitting the accelerator or the brake, or his
   // hands yanking the wheel, then back to the shot's own camera on what it does (seconds into the shot; `on` = the car)
   insert?: Insert; // (videos made before `inserts`)

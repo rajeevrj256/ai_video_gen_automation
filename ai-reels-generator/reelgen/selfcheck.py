@@ -301,8 +301,11 @@ def lowpoly_lists() -> None:
                                 big=[S.LPBig(kind="made", made="T-Rex", motion="roar")]),
                        S.LPShot(line="what if it never hit", set="jungle", light="day", camera="wide", actors=[]),
                        S.LPShot(line="", set="cave", light="dark", camera="wide", actors=[], stamp="WOULD YOU SURVIVE?")])
+    dino.shots[1].overgrown = "ruined"  # a jungle isn't a city: nothing to overgrow
     S.keep_script_lines(dino, lines)
     S.repair(dino)
+    if dino.shots[1].overgrown:
+        fail("lowpoly: 'overgrown' kept on a place that isn't the city's")
     if [x.line for x in dino.shots if x.line] != lines or any(x.actors for x in dino.shots) or dino.shots[0].big[0].motion != "roar":
         fail(f"lowpoly creature film: {[(x.line, [a.who for a in x.actors], [b.motion for b in x.big]) for x in dino.shots]}")
     if any(p.get("glass") for p in S.design_for_editor(bird)["parts"]) or S.design_for_editor(bird)["seats"] \

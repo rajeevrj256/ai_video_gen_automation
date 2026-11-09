@@ -1507,6 +1507,126 @@ const cave: SetDef = {
   },
 };
 
+
+// ---------------------------------------------------------------- a city taken back by nature
+// The user's dinosaur script: "A modern city slowly transforms into a prehistoric landscape. Cars disappear beneath
+// giant jungle vines." The city looked like a normal modern city. Over the city's places this draws what nature takes
+// back: vines hanging down the walls and the far buildings, the lit windows gone dark, moss, grass and ferns through
+// the road, jungle trees breaking out of the pavement. `g` is how far it has gone (1 = abandoned; growing over a shot
+// for a transformation), each piece arriving at its own moment so it spreads rather than switching on.
+export const OVERGROWN = new Set(['street', 'highway', 'busstop', 'rooftop', 'bridge', 'alley']);
+const VINE = ['#2f5a2a', '#3d6b30', '#26482a', '#4a7a36'];
+const grown = (g: number, delay: number) => Math.max(0, Math.min(1, (g - delay) / 0.35));
+const Vine: React.FC<{p: V3; len: number; k: number; c: string; seed: number}> = ({p, len, k, c, seed}) => {
+  if (k <= 0) return null;
+  const rand = rng(seed);
+  const L = len * k;
+  const n = Math.max(1, Math.round(L / 0.5));
+  return (
+    <group position={p}>
+      <mesh position={[0, -L / 2, 0]} castShadow>
+        <boxGeometry args={[0.07, L, 0.05]} />
+        <primitive object={mat(c)} attach="material" />
+      </mesh>
+      {Array.from({length: n}, (_, i) => (
+        <mesh key={i} geometry={LEAF} position={[(rand() - 0.5) * 0.35, -((i + 0.5) / n) * L, 0.06]} scale={0.18 + rand() * 0.16}>
+          <primitive object={mat(c)} attach="material" />
+        </mesh>
+      ))}
+    </group>
+  );
+};
+const LEAF = facetedBall(1, 0, 0.25, 41);
+const Tuft: React.FC<{p: V3; k: number; c: string; s?: number}> = ({p, k, c, s = 1}) =>
+  k <= 0 ? null : (
+    <group position={p} scale={[s, s * k, s]}>
+      {[[0, 0], [0.12, 0.08], [-0.1, 0.06], [0.05, -0.11], [-0.07, -0.08]].map(([x, z], i) => (
+        <mesh key={i} position={[x, 0.22, z]} rotation={[z * 2, 0, -x * 2]}>
+          <coneGeometry args={[0.05, 0.45 + (i % 2) * 0.2, 3]} />
+          <primitive object={mat(c)} attach="material" />
+        </mesh>
+      ))}
+    </group>
+  );
+export const Overgrowth: React.FC<{set: string; g: number; look: Look; seed: number}> = ({set, g, look, seed}) => {
+  if (g <= 0.001 || !OVERGROWN.has(set)) return null;
+  const rand = rng(seed + 77);
+  const sh = (c: string) => shadeOf(c, look.shade);
+  const vine = (i: number) => sh(VINE[i % VINE.length]);
+  const moss = sh('#4a5e33');
+  const pieces: React.ReactNode[] = [];
+  // grass and ferns through the ground, everywhere but a creature's walking line
+  const ground = set === 'street' ? {z0: -2, z1: 8} : set === 'highway' ? {z0: -14, z1: 9} : {z0: -8, z1: 6};
+  for (let i = 0; i < (set === 'highway' ? 320 : 200); i++) {
+    const x = -45 + rand() * 90;
+    const z = ground.z0 + rand() * (ground.z1 - ground.z0);
+    const d = rand() * 0.6;
+    pieces.push(<Tuft key={`t${i}`} p={[x, 0, z]} k={grown(g, d)} c={i % 3 ? moss : vine(i)} s={0.8 + rand() * 1.6} />);
+  }
+  for (let i = 0; i < 14; i++) {
+    const x = -40 + rand() * 80;
+    const z = ground.z0 + rand() * (ground.z1 - ground.z0);
+    const k = grown(g, 0.1 + rand() * 0.5);
+    if (k > 0) pieces.push(<B key={`m${i}`} p={[x, 0.01, z]} s={[1.5 + rand() * 3, 0.02, 0.8 + rand() * 2]} c={sh('#3b4a2c')} r={[0, rand() * 3, 0]} noShadow />);
+  }
+  // jungle trees breaking out of it, away from the camera's side
+  const treeZ = set === 'street' ? -1.9 : set === 'highway' ? -7 : -6;
+  for (let i = 0; i < 14; i++) {
+    const x = -42 + i * 6.3 + rand() * 3;
+    const k = grown(g, 0.25 + rand() * 0.5);
+    if (k <= 0) continue;
+    const z = treeZ - rand() * (set === 'street' ? 0.2 : 6);
+    pieces.push(
+      i % 3 === 0 ? (
+        <Tree key={`tr${i}`} p={[x, 0, z]} seed={seed + i} s={(1.6 + rand()) * k} tone={sh('#2f5532')} />
+      ) : i % 3 === 1 ? (
+        <Palm key={`pa${i}`} p={[x, 0, z]} s={(0.9 + rand() * 0.7) * k} seed={seed + i} c={vine(i)} />
+      ) : (
+        <Fern key={`fe${i}`} p={[x, 0, z + 0.3]} s={(1.4 + rand()) * k} c={vine(i)} seed={seed + i} />
+      ),
+    );
+  }
+  if (set === 'street') {
+    // vines down the shop fronts, the lit windows gone dark behind them, and over the far buildings
+    for (let i = 0; i < 46; i++) {
+      const x = -64 + i * 2.8 + rand() * 1.4;
+      pieces.push(<Vine key={`v${i}`} p={[x, 7, -2.12]} len={2 + rand() * 5} k={grown(g, rand() * 0.55)} c={vine(i)} seed={seed + i} />);
+    }
+    for (let i = 0; i < 40; i++) {
+      const x = -64 + i * 3.2;
+      pieces.push(
+        <mesh key={`w${i}`} position={[x, 1.75, -2.165]}>
+          <planeGeometry args={[2.55, 2.35]} />
+          <meshBasicMaterial color="#141a14" transparent opacity={0.88 * grown(g, 0.15 + (i % 5) * 0.08)} depthWrite={false} />
+        </mesh>,
+      );
+    }
+    for (const [bx, w, h] of [[-40, 12, 12], [-20, 12, 18], [20, 12, 12], [40, 12, 18]]) {
+      for (let j = 0; j < 7; j++) {
+        pieces.push(<Vine key={`bv${bx}${j}`} p={[bx - w / 2 + 0.8 + j * (w / 7), 6 + h / 2 - 0.2, -10.9]} len={h * (0.4 + rand() * 0.5)} k={grown(g, 0.2 + rand() * 0.5)} c={vine(j)} seed={seed + j + bx} />);
+      }
+    }
+  }
+  if (set === 'highway') {
+    // the guard rails smothered, the far towers curtained in green
+    for (const z of [-4.75, 4.75]) {
+      for (let i = 0; i < 40; i++) {
+        const k = grown(g, rand() * 0.6);
+        if (k > 0) pieces.push(<B key={`r${z}${i}`} p={[-80 + i * 4 + rand() * 2, 0.62, z]} s={[1.5 + rand() * 2, 0.5 * k, 0.16]} c={vine(i)} />);
+      }
+    }
+    for (let i = 0; i < 14; i++) {
+      const bx = -90 + i * 14;
+      const h = 18 + (i % 3) * 8;
+      const front = -60 - (i % 2) * 10 + 4.05;
+      for (let j = 0; j < 6; j++) {
+        pieces.push(<B key={`hb${i}${j}`} p={[bx - 4 + j * 1.6, 9 + (i % 3) * 4 - h / 2 + (h * 0.7 * grown(g, 0.2 + j * 0.05)) / 2, front]} s={[1.4, h * 0.7 * grown(g, 0.2 + j * 0.05) + 0.01, 0.1]} c={vine(j)} noShadow />);
+      }
+    }
+  }
+  return <group>{pieces}</group>;
+};
+
 export const SETS: Record<SetName, SetDef> = {
   bedroom,
   hallway,

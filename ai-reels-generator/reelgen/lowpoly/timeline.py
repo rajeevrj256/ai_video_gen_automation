@@ -350,6 +350,8 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
             shot["fx"] = fx
         if s.slowmo:
             shot["slowmo"] = True
+        if s.overgrown:
+            shot["overgrown"] = s.overgrown
         if i == 0:
             shot["fadeIn"] = 0.35
         if i == n - 1:
