@@ -42,6 +42,7 @@ import {
   type RoadPlace,
   type Nudge,
   headOf,
+  outlineOf,
   isCreature,
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
@@ -486,6 +487,29 @@ export type CamPlan = {pos: THREE.Vector3; look: THREE.Vector3; up: THREE.Vector
 const distFor = (w: number, h: number, fov: number, aspect: number) => {
   const tan = Math.tan(((fov / 2) * Math.PI) / 180);
   return Math.max(h / 2 / tan, w / 2 / tan / aspect);
+};
+
+// The camera moved back along its line of sight (never closer) until every point is inside the frame with a margin:
+// 86% of the half-width and 84% of the half-height.
+const fitAll = (pos: THREE.Vector3, look: THREE.Vector3, pts: THREE.Vector3[], fov: number, aspect: number) => {
+  const back = pos.clone().sub(look);
+  const d0 = back.length();
+  if (d0 < 1e-3) return pos;
+  const fw = back.clone().negate().normalize();
+  const rt = new THREE.Vector3().crossVectors(fw, new THREE.Vector3(0, 1, 0));
+  if (rt.lengthSq() < 1e-6) rt.set(1, 0, 0);
+  rt.normalize();
+  const upv = new THREE.Vector3().crossVectors(rt, fw);
+  const ty = Math.tan(((fov / 2) * Math.PI) / 180) * 0.84;
+  const tx = Math.tan(((fov / 2) * Math.PI) / 180) * aspect * 0.86;
+  // a point at offset r from the look point, seen from distance d along fw: fits when |r.rt| <= tx (d - r.fw), etc.
+  let need = d0;
+  for (const p of pts) {
+    const r = p.clone().sub(look);
+    const z = r.dot(fw);
+    need = Math.max(need, Math.abs(r.dot(rt)) / tx + z, Math.abs(r.dot(upv)) / ty + z);
+  }
+  return look.clone().addScaledVector(back.normalize(), Math.min(need, d0 * 4));
 };
 
 const ease = (p: number) => (p <= 0 ? 0 : p >= 1 ? 1 : p * p * (3 - 2 * p));
@@ -1128,12 +1152,18 @@ export const bigCam = (cam: Cam, b: Big, st: BigState, set: SetDef, aspect: numb
   const head = headOf(b, st);
   const up = new THREE.Vector3(0, 1, 0);
   const fov = 40;
+  // all of it, head included: the camera looks at the middle of its outline (a long neck puts the head far from the
+  // body's centre) and steps back until every point is inside the frame
+  const outline = outlineOf(b, st);
+  const lo = outline.reduce((a, p) => a.min(p), outline[0].clone());
+  const hi = outline.reduce((a, p) => a.max(p), outline[0].clone());
+  const mid3 = lo.clone().add(hi).multiplyScalar(0.5);
   const whole = (k: number, dir: THREE.Vector3, high = 0) => {
     // in a tall frame a long animal is seen three-quarters on: its length needn't fit across the narrow width
     const D = distFor(Math.max(w, l) * (aspect < 1 ? 0.55 : 1.05), h * 1.25, fov, aspect) * k;
-    const pos = c.clone().addScaledVector(dir.clone().normalize(), D);
+    const pos = mid3.clone().addScaledVector(dir.clone().normalize(), D);
     pos.y = Math.max(0.6, c.y * 0.55 + h * 0.15 + high * D);
-    return {pos, look: c.clone().add(new THREE.Vector3(0, h * 0.08, 0))};
+    return {pos, look: mid3.clone()};
   };
   const close = (k: number) => {
     const D = distFor(head.size * 2.4 * k, head.size * 2.4 * k, 34, aspect);
@@ -1199,6 +1229,7 @@ export const bigCam = (cam: Cam, b: Big, st: BigState, set: SetDef, aspect: numb
   // a slow push, so a held shot still breathes
   const push = 1 - 0.05 * ease(t / Math.max(1, dur));
   pv.pos = pv.look.clone().add(pv.pos.clone().sub(pv.look).multiplyScalar(push));
+  if (cam !== 'face' && cam !== 'detail' && !(cam === 'crash-zoom' && t > dur * 0.2)) pv.pos = fitAll(pv.pos, pv.look, outline, lens, aspect);
   pv.pos.y = Math.max(0.3, pv.pos.y);
   const focus = pv.pos.distanceTo(cam === 'face' || cam === 'detail' ? head.p : c);
   void set;

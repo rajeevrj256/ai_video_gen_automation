@@ -366,6 +366,9 @@ const street: SetDef = {
         <B p={[0, -0.05, -0.6]} s={[140, 0.1, 3.2]} c={shadeOf('#6e7179', k)} noShadow />
         <B p={[0, 0.04, 1.05]} s={[140, 0.12, 0.2]} c={shadeOf('#9a9ca2', k)} />
         <B p={[0, -0.1, 5]} s={[140, 0.1, 8]} c={shadeOf('#2f3238', k)} noShadow />
+        {/* the far pavement and the ground beyond it: a camera stepped back for a big animal saw past the road's end */}
+        <B p={[0, -0.05, 13]} s={[140, 0.1, 8]} c={shadeOf('#6e7179', k)} noShadow />
+        <B p={[0, -0.12, 41]} s={[140, 0.1, 48]} c={shadeOf('#55585e', k)} noShadow />
         <Wall p={[0, 3.5, -2.2]} w={140} h={7} ry={0} c={shadeOf('#5d6068', k)} />
         {xs.map((x, i) => (
           <group key={x}>
@@ -656,6 +659,8 @@ const busstop: SetDef = {
         <B p={[0, -0.05, -2]} s={[140, 0.1, 6]} c={shadeOf('#74777e', look.shade)} noShadow />
         <B p={[0, 0.04, 1.0]} s={[140, 0.12, 0.2]} c={shadeOf('#9a9ca2', look.shade)} />
         <B p={[0, -0.1, 6]} s={[140, 0.1, 10]} c={shadeOf('#30333a', look.shade)} noShadow />
+        <B p={[0, -0.05, 15]} s={[140, 0.1, 8]} c={shadeOf('#74777e', look.shade)} noShadow />
+        <B p={[0, -0.12, 43]} s={[140, 0.1, 48]} c={shadeOf('#55585e', look.shade)} noShadow />
         <B p={[0, 1.2, -2.05]} s={[3.4, 2.4, 0.04]} c="#a8c3cf" />
         <B p={[0, 2.45, -1.6]} s={[3.6, 0.1, 1.2]} c="#3a3d44" />
         <B p={[-1.75, 1.2, -1.6]} s={[0.08, 2.4, 0.08]} c="#3a3d44" />

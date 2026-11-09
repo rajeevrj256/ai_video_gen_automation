@@ -359,9 +359,13 @@ export const bigState = (b: Big, set: SetDef, people: Holder[], t: number, dur: 
   const size = sizeOf(b);
   const sp = spotOf(set, b.spot);
   const onLane = road !== undefined;
-  const ground = !road ? new THREE.Vector3(sp.x, 0, sp.z)
+  // a big creature in a street walks the road, not the pavement: on a spot by the shop fronts the buildings stood
+  // through its legs (the user's Brachiosaurus)
+  const roadway = !road && set.road !== undefined && isCreature(b) && size[1] > 2.2;
+  const ground = roadway ? (set.walk === 'x' ? new THREE.Vector3(sp.x, 0, set.road!) : new THREE.Vector3(set.road!, 0, sp.z))
+    : !road ? new THREE.Vector3(sp.x, 0, sp.z)
     : set.walk === 'x' ? new THREE.Vector3(sp.x + road.shift, 0, road.lane) : new THREE.Vector3(road.lane, 0, sp.z + road.shift);
-  const st: BigState = {pos: ground.clone(), ry: onLane ? (set.walk === 'x' ? Math.PI / 2 : 0) : sp.ry, rx: 0, rz: 0, pivot: [0, 0, 0], squash: [1, 1, 1],
+  const st: BigState = {pos: ground.clone(), ry: onLane || roadway ? (set.walk === 'x' ? Math.PI / 2 : 0) : sp.ry, rx: 0, rz: 0, pivot: [0, 0, 0], squash: [1, 1, 1],
     contact: ground.clone(), landed: true};
   const who = holderFor(b, people);
   const ev = b.at ?? dur * 0.4;
@@ -1106,6 +1110,21 @@ const RoleGroup: React.FC<{m: Made; role: string; anim?: CreatureAnim; spin: num
       </group>
     </group>
   );
+};
+// Points around the whole of a big thing in the world (every part's corners for a design, else its box), and its head:
+// what a camera on it must keep in frame (a long creature's head was cut off at the frame's edge).
+export const outlineOf = (b: Big, st: BigState): THREE.Vector3[] => {
+  const m = madeOf(b);
+  const mx = vehicleMatrix(st);
+  const pts: THREE.Vector3[] = [];
+  if (m) for (const p of m.parts) for (const c of partCorners(p)) pts.push(new THREE.Vector3(c[0], c[1], c[2]).applyMatrix4(mx));
+  else {
+    const [w, h, l] = sizeOf(b);
+    for (const x of [-w / 2, w / 2]) for (const y of [0, h]) for (const z of [-l / 2, l / 2]) pts.push(new THREE.Vector3(x, y, z).applyMatrix4(mx));
+  }
+  const hd = headOf(b, st);
+  for (const d of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1]]) pts.push(hd.p.clone().add(new THREE.Vector3(d[0], d[1], d[2]).multiplyScalar(hd.size * 0.75)));
+  return pts;
 };
 // Where a big thing's head (or its front top) is in the world, and how big the head is: the camera's close-ups.
 export const headOf = (b: Big, st: BigState): {p: THREE.Vector3; size: number} => {
