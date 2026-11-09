@@ -591,6 +591,7 @@ class LowPolyBody(BaseModel):
     count: int = 1
     people: list[str] = []  # 🎭 cast intro: who ('hero' for him); empty = everyone
     hero_name: str = "Ethan"  # 🎭 his name on his card
+    film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster
     drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
     ai: AIPick | None = None
 
@@ -1684,7 +1685,7 @@ def create_app(cfg: Config) -> FastAPI:
                 "words": body.words if body.words in ("on", "stamps", "off") else "on"}
         if intro:
             given.update({"topic": "", "people": [p.strip()[:60] for p in body.people if p.strip()][:30],
-                          "hero_name": body.hero_name.strip()[:40] or "Ethan"})
+                          "hero_name": body.hero_name.strip()[:40] or "Ethan", "film_title": body.film_title.strip()[:40]})
         return given
 
     @app.post("/api/lowpoly")

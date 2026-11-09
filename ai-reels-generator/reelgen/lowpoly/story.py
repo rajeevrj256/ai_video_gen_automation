@@ -282,6 +282,7 @@ class Story(BaseModel):
     kind: Literal["life", "fiction"] = "life"
     hero: bool = Field(True, description="the channel's man is in this film; false when the brief has no people in it (a "
                                          "film about animals, creatures or a place) or none who could be him")
+    poster: SkipJsonSchema[dict] = {}  # 🎭 the cast intro's closing poster: title, tagline, the face over the city
     intro: SkipJsonSchema[list[IntroCard]] = []  # 🎭 a cast intro's segments (intro.py), never asked of the writer
 
 

@@ -44,11 +44,14 @@ class LowPolyRequest:
     words: str = "on"  # words on screen: on (subtitles + time stamps, like the original) | stamps (time stamps only) | off
     people: list[str] = field(default_factory=list)  # 🎭 cast intro (kind 'intro'): who, 'hero' for him; empty = everyone
     hero_name: str = "Ethan"  # 🎭 his name on his card
+    film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster ('' = the intro's own title)
 
 
 def _thumb_time(props: dict) -> float:
     """A face close-up near the middle, else 40% in."""
     shots = props["shots"]
+    if shots and shots[-1].get("poster"):  # a cast intro: its closing poster, once the title is on
+        return shots[-1]["start"] + min(2.5, shots[-1]["duration"] - 0.5)
     for s in shots[len(shots) // 3:] + shots[: len(shots) // 3]:
         if s["camera"] in ("face", "face-top"):
             return s["start"] + s["duration"] * 0.5
@@ -139,7 +142,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     elif intro:
         from . import intro as I
 
-        story = I.write(cfg, req.people, req.seconds, req.hero_name, progress)
+        story = I.write(cfg, req.people, req.seconds, req.hero_name, progress, film_title=req.film_title)
         S.lock_cast(cfg, story)
         S.save(story, story_path)
         save("written")

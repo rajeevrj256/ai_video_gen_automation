@@ -257,6 +257,8 @@ def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_ra
     return []
 
 
+POSTER_PEOPLE = ["hero", "mia", "sam", "his mum", "his dad"]  # who stands on the cast intro's closing poster
+POSTER_SECONDS = 4.5  # the closing poster holds about this long (a whole number of beats)
 RAMP = 1.35  # = intro.RAMP: the action plays this much faster before the freeze
 
 
@@ -572,6 +574,32 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
             props["cards"].append({"start": round(freeze_at, 3), "end": round(last["start"] + last["duration"], 3), "name": c.name,
                                    "role": c.role, "index": k + 1, "total": n_cards, "style": "caper",
                                    "color": _card_colour(cast.get("hero" if c.who == "hero" else _key(c.who), HERO)["top"])})
+        if story.poster and props["cards"]:  # the closing poster: everyone in one shot, on the beat after the last segment
+            bpm0 = next((c.bpm for c in story.intro if c.bpm), 0) or 112
+            hold = round(round(POSTER_SECONDS * bpm0 / 60) * 60 / bpm0, 3)
+            last = shots[-1]
+            last.pop("fadeOut", None)
+            last["whipOut"] = True
+            start = round(last["start"] + last["duration"], 3)
+            # the poster has his family and best friend only (the user: "add main one hero and their sister and best
+            # friend only and mom dad"); in a cast without them, the first five introduced
+            everyone = [("hero" if c.who == "hero" else _key(c.who), c.name) for c in story.intro]
+            family = [p for k in POSTER_PEOPLE for p in everyone if p[0] == k]
+            chosen = family if len(family) >= 2 else everyone[:5]
+            people, names = [k for k, _ in chosen], [n for _, n in chosen]
+            shots.append({"start": start, "duration": hold, "set": "void", "light": "day", "camera": "wide", "actors": [], "things": [],
+                          "focus": 0, "seed": seed + 977, "whipIn": True, "fadeOut": 0.9, "grade": "caper",
+                          "poster": {"title": story.poster.get("title") or story.title, "tagline": "",  # (the user: "remove everyone has a part to play")
+                                     "credits": "A low-poly film · starring " + " · ".join(names), "date": "Coming soon",
+                                     "people": people, "face": "hero",
+                                     "car": cast.get("hero", HERO)["top"], "car2": "#1d2433"}})
+            intro_cues += [{"sound": "whip", "at": round(start - 0.16, 3), "volume": 0.9},
+                           {"sound": "impact", "at": round(start + 0.5, 3), "volume": 1.0},
+                           # fighter jets streaking over the city (Poster.tsx)
+                           {"sound": "flyby", "at": round(start + 0.2, 3), "volume": 0.8},
+                           {"sound": "flyby", "at": round(start + min(2.2, hold - 1.2), 3), "volume": 0.65}]
+            total = round(start + hold, 3)
+            props["duration"] = total
         cues.extend(intro_cues)
         props["cinematic"] = True  # letterbox, grade, heavier grain (LowPoly.tsx)
         bpm = next((c.bpm for c in story.intro if c.bpm), 0)

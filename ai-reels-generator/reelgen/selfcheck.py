@@ -576,7 +576,11 @@ def lowpoly_intro() -> None:
             story = I.assemble(plan, cast, per, each, seconds)
             S.repair(story)
             props = build(story, {}, vertical=False, watermark="", seed=1, words="off")[0]
-            assert abs(props["duration"] - seconds) < seconds * 0.08, props["duration"]
+            poster = props["shots"][-1]  # the closing film poster (Poster.tsx): after everyone's segment, daylight, the family
+            assert poster.get("poster") and poster["light"] == "day" and poster["whipIn"], poster
+            assert poster["poster"]["title"] and not poster["poster"]["tagline"]
+            assert abs(poster["start"] - seconds) < seconds * 0.08, poster["start"]
+            props["shots"] = props["shots"][:-1]
             assert len(props["cards"]) == len(cast)
             bpm = story.intro[0].bpm
             for c in story.intro:  # every shot a whole number of beats, every freeze on a beat (the score is composed at it)

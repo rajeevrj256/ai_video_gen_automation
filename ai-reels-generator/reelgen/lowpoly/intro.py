@@ -62,6 +62,7 @@ class IntroPlan(BaseModel):
     hashtags: list[str]
     mood: S.Mood
     music_prompt: str = Field(description="the theme's feeling in a few words (a warm, building character theme...)")
+    tagline: str = Field("", description="the closing movie poster's tagline, 3-7 words, an action film's ('ONE CITY. NO SMALL PARTS.')")
     people: list[IntroPerson]
 
 
@@ -205,7 +206,7 @@ def cameras(plan_cams: list[list[str]], sets: list[str], seed: int = 0) -> list[
     return out
 
 
-def write(cfg: Config, names: list[str], seconds: float, hero_name: str, progress=lambda m: None) -> S.Story:
+def write(cfg: Config, names: list[str], seconds: float, hero_name: str, progress=lambda m: None, film_title: str = "") -> S.Story:
     from ..llm import ask
 
     cast = people(cfg, names, hero_name)
@@ -224,7 +225,10 @@ def write(cfg: Config, names: list[str], seconds: float, hero_name: str, progres
         log.warning("Cast intro plan failed (%s); staging it in code", e)
         progress(f"Claude couldn't stage it ({str(e)[:120]}); staging it in code")
         plan = fallback_plan(cast, per)
-    return assemble(plan, cast, per, each, seconds)
+    story = assemble(plan, cast, per, each, seconds)
+    if film_title.strip():  # the film's own name on the poster (the user: "The Unwritten")
+        story.poster["title"] = film_title.strip()[:40]
+    return story
 
 
 def assemble(plan: IntroPlan, cast: list[dict], per: int, each: float, seconds: float, seed: int = 0) -> S.Story:
@@ -265,4 +269,8 @@ def assemble(plan: IntroPlan, cast: list[dict], per: int, each: float, seconds: 
                     thumbnail_text="MEET THE CAST", mood=plan.mood, end_mood=plan.mood, music_prompt=plan.music_prompt,
                     cast=story_cast, shots=story_shots, score=score, kind="fiction", hero=any(p["key"] == "hero" for p in cast))
     story.intro = cards
+    # the closing poster: the whole cast in one action-movie one-sheet, the rival's face (else his) over the city
+    keys = {S._key(p["name"]) for p in cast}
+    story.poster = {"title": story.title, "tagline": (plan.tagline or "EVERYONE HAS A PART TO PLAY").strip()[:60],
+                    "face": "victor crane" if "victor crane" in keys else "hero"}
     return story

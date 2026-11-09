@@ -722,6 +722,8 @@ Plain paragraphs are read by the narrator."></textarea>
           <div><label for="lpIVertical">Shape</label>
             <select id="lpIVertical"><option value="true" selected>9:16, like the Shorts</option><option value="false">16:9 for YouTube</option></select></div>
         </div>
+        <label for="lpIFilm">Film title on the closing poster</label>
+        <input class="edit" id="lpIFilm" maxlength="40" value="The Unwritten" placeholder="e.g. The Unwritten">
         <label for="lpIHero">His name on his card</label>
         <input class="edit" id="lpIHero" maxlength="40" value="Ethan" placeholder="e.g. Ethan">
       </div>
@@ -3622,7 +3624,7 @@ const lpFill = () => {
     opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
     `<div><label><input type="checkbox" id="lpP-glasses"> Glasses</label> <label><input type="checkbox" id="lpP-beard"> Beard</label> <label><input type="checkbox" id="lpP-kid"> A child</label></div>`;
   try { const k = localStorage.getItem("lpKind"); lpKindSet(k === "fiction" || k === "intro" ? k : "life"); } catch (e) { lpKindSet("life"); }
-  try { const h = localStorage.getItem("lpIHero"); if (h) $("#lpIHero").value = h; } catch (e) {}
+  try { const h = localStorage.getItem("lpIHero"); if (h) $("#lpIHero").value = h; const f = localStorage.getItem("lpIFilm"); if (f) $("#lpIFilm").value = f; } catch (e) {}
   lpLoadCast();
 };
 $("#lpMode").onclick = (e) => {
@@ -3652,8 +3654,8 @@ $("#lpBtn").onclick = async () => {
     const people = lpIChosen();
     if (!people.length) { $("#lpMsg").textContent = "Tick at least one person for the cast intro."; return; }
     Object.assign(body, { format: "film", topic: "", seconds: Number($("#lpISeconds").value), vertical: $("#lpIVertical").value === "true",
-      people, hero_name: $("#lpIHero").value, count: 1 });
-    try { localStorage.setItem("lpIHero", body.hero_name); } catch (e) {}
+      people, hero_name: $("#lpIHero").value, film_title: $("#lpIFilm").value, count: 1 });
+    try { localStorage.setItem("lpIHero", body.hero_name); localStorage.setItem("lpIFilm", body.film_title); } catch (e) {}
   }
   try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); } catch (e) {}
   $("#lpBtn").disabled = true;

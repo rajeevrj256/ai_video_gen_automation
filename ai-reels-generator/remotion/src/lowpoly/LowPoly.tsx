@@ -50,6 +50,7 @@ import {
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
 import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot, NameCard} from './types';
+import {PosterScene, PosterWords} from './Poster';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 type V3 = [number, number, number];
@@ -2070,7 +2071,11 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
     <AbsoluteFill style={{background: '#000'}}>
       <AbsoluteFill style={caperLook(shot, local, frozen, width)}>
         <ThreeCanvas width={width} height={height} shadows gl={{antialias: true}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
-          <ShotScene shot={shot} t={sceneT} props={props} aspect={width / height} />
+          {shot.poster ? (
+            <PosterScene shot={shot} t={local} cast={props.cast} tall={props.vertical} CamRig={CamRig} />
+          ) : (
+            <ShotScene shot={shot} t={sceneT} props={props} aspect={width / height} />
+          )}
         </ThreeCanvas>
       </AbsoluteFill>
       {shot.grade === 'caper' ? (
@@ -2102,6 +2107,7 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
         </div>
       ) : null}
       <Words c={cap} vertical={props.vertical} t={t} />
+      {shot.poster ? <PosterWords p={shot.poster} t={local} tall={props.vertical} width={width} /> : null}
       {card?.style === 'caper' ? <CaperCard c={card} t={t} vertical={props.vertical} width={width} /> : <NameCardView c={card} t={t} vertical={props.vertical} />}
     </AbsoluteFill>
   );
