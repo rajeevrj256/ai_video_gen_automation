@@ -5,6 +5,8 @@
 // three at a time in Anton capitals, time stamps take the caption's place, the last line can be red; the channel's
 // name sits at the top. Picture only: reelgen/lowpoly/ mixes the sound.
 import '@fontsource/anton/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/700.css';
 import React, {useEffect, useLayoutEffect, useMemo, useState} from 'react';
 import {AbsoluteFill, continueRender, delayRender, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import {ThreeCanvas} from '@remotion/three';
@@ -46,7 +48,7 @@ import {
   isCreature,
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
-import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot} from './types';
+import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot, NameCard} from './types';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 type V3 = [number, number, number];
@@ -1871,8 +1873,60 @@ const StoolUnder: React.FC<{pl: Placed}> = ({pl}) => (
 const useFonts = () => {
   const [handle] = useState(() => delayRender('Loading Anton'));
   useEffect(() => {
-    document.fonts.load('400 60px Anton').catch(() => undefined).finally(() => continueRender(handle));
+    Promise.all(['400 60px Anton', '500 30px Inter', '700 30px Inter'].map((f) => document.fonts.load(f).catch(() => undefined))).finally(() => continueRender(handle));
   }, [handle]);
+};
+
+// 🎭 A movie's character intro: the number, a bar wiping in, the name in big capitals rising letter by letter, the role
+// under it spaced wide in the colour they wear; it comes up just after their segment starts and leaves before it
+// ends. Bottom left, or bottom right for every second person; centred low in a tall frame.
+const NameCardView: React.FC<{c: NameCard | undefined; t: number; vertical: boolean}> = ({c, t, vertical}) => {
+  if (!c) return null;
+  const len = c.end - c.start;
+  const a = t - c.start - Math.min(0.35, len * 0.08);
+  const out = interpolate(t, [c.end - Math.min(0.45, len * 0.12), c.end - 0.05], [1, 0], clamp);
+  const bar = interpolate(a, [0, 0.35], [0, 1], {...clamp, easing: (x) => 1 - (1 - x) ** 3});
+  const right = !vertical && c.index % 2 === 0;
+  const align = vertical ? 'center' : right ? 'right' : 'left';
+  const size = Math.min(vertical ? 118 : 132, (vertical ? 980 : 1100) / Math.max(4, c.name.length * 0.62));
+  const letters = [...c.name.toUpperCase()];
+  const role = interpolate(a, [0.45, 0.8], [0, 1], clamp);
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: vertical ? 60 : right ? undefined : 110,
+        right: vertical ? 60 : right ? 110 : undefined,
+        bottom: vertical ? 380 : 120,
+        textAlign: align,
+        opacity: out,
+        transform: `translateY(${(1 - out) * 18}px)`,
+      }}
+    >
+      <div style={{fontFamily: 'Inter, sans-serif', fontWeight: 700, fontSize: vertical ? 30 : 26, letterSpacing: 6, color: 'rgba(255,255,255,0.75)',
+        opacity: interpolate(a, [0, 0.3], [0, 1], clamp), textShadow: '0 2px 10px rgba(0,0,0,0.6)'}}>
+        {String(c.index).padStart(2, '0')} / {String(c.total).padStart(2, '0')}
+      </div>
+      <div style={{height: 6, width: 150 * bar, background: c.color, margin: vertical ? '14px auto 10px' : right ? '14px 0 10px auto' : '14px 0 10px 0',
+        boxShadow: '0 0 18px rgba(0,0,0,0.5)'}} />
+      <div style={{fontFamily: 'Anton, Impact, sans-serif', fontSize: size, lineHeight: 1.02, color: '#fff', letterSpacing: 2,
+        textShadow: '0 6px 28px rgba(0,0,0,0.7)', whiteSpace: 'nowrap'}}>
+        {letters.map((ch, k) => {
+          const p = interpolate(a, [0.12 + k * 0.035, 0.42 + k * 0.035], [0, 1], {...clamp, easing: (x) => 1 - (1 - x) ** 3});
+          return (
+            <span key={k} style={{display: 'inline-block', opacity: p, transform: `translateY(${(1 - p) * 40}px)`, whiteSpace: 'pre'}}>
+              {ch}
+            </span>
+          );
+        })}
+      </div>
+      <div style={{fontFamily: 'Inter, sans-serif', fontWeight: 500, fontSize: vertical ? 34 : 30, letterSpacing: 8, marginTop: 10,
+        color: '#fff', opacity: role, transform: `translateX(${(right ? 1 : -1) * (1 - role) * 30}px)`, textShadow: '0 2px 12px rgba(0,0,0,0.8)'}}>
+        <span style={{color: c.color, filter: 'brightness(1.35) saturate(1.2)'}}>▍</span>
+        {c.role.toUpperCase()}
+      </div>
+    </div>
+  );
 };
 
 const Words: React.FC<{c: Caption | undefined; vertical: boolean; t: number}> = ({c, vertical, t}) => {
@@ -1961,6 +2015,7 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
         </div>
       ) : null}
       <Words c={cap} vertical={props.vertical} t={t} />
+      <NameCardView c={(props.cards ?? []).find((c) => t >= c.start && t < c.end)} t={t} vertical={props.vertical} />
     </AbsoluteFill>
   );
 };

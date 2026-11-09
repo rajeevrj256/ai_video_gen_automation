@@ -247,6 +247,9 @@ export type Insert = {cam: 'pedal' | 'wheel' | 'speedo'; from: number; to: numbe
 
 export type Caption = {start: number; end: number; text: string; red?: boolean; stamp?: boolean};
 
+// 🎭 a cast intro's card: the person's name and role over their segment (reelgen/lowpoly/intro.py)
+export type NameCard = {start: number; end: number; name: string; role: string; index: number; total: number; color: string};
+
 export type LowPolyProps = {
   fps: number;
   duration: number;
@@ -259,4 +262,5 @@ export type LowPolyProps = {
   seed: number;
   dof?: boolean; // depth of field (on unless a slow machine turns it off)
   made?: Record<string, Made>; // things the writer designed for this film, by name
+  cards?: NameCard[];
 };

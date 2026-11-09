@@ -257,6 +257,21 @@ def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_ra
     return []
 
 
+def _card_colour(hex_: str) -> str:
+    """The colour someone wears, lifted toward white when it is too dark to read on screen (a black suit)."""
+    try:
+        r, g, b = (int(hex_.lstrip("#")[k:k + 2], 16) for k in (0, 2, 4))
+    except ValueError:
+        return "#e8c15a"
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    if lum >= 110:
+        return hex_
+    if lum < 45:  # black or near it: the gold of a film's titles
+        return "#e8c15a"
+    k = (110 - lum) / (255 - lum)
+    return "#" + "".join(f"{round(v + (255 - v) * k):02x}" for v in (r, g, b))
+
+
 def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: str, seed: int,
           tail: float = TAIL, pauses: float = 1.0, words: str = "on") -> tuple[dict, list[dict], list[dict], list[dict]]:
     """props, voice clips [{at, path}], sound cues [{sound, at, volume, length?}], music sections. `tail` and `pauses`
@@ -268,6 +283,8 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     for c in story.cast:
         cast[_key(c.name)] = editor_design(c.design)
     n = len(story.shots)
+    # 🎭 a cast intro (intro.py): every shot of a person's segment is the same length, so everyone has equal time
+    forced = {c.first + j: c.seconds for c in story.intro for j in range(c.shots)}
     prev_race = False  # the shot before had him racing his car (a chase's next shot gets no second foot on the pedal)
     for i, s in enumerate(story.shots):
         a = audio.get(i)
@@ -279,6 +296,8 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         if i == n - 1:
             dur += FADE_END
         dur = max(1.3, dur)
+        if i in forced:
+            dur = forced[i]
         act_at, big_at = moments(s, dur)
         speaker = "hero" if s.speaker == "hero" else _key(s.speaker) if s.speaker and s.speaker != "narrator" else ""
         actors = []
@@ -522,6 +541,15 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     shown = captions if mode == "on" else [c for c in captions if c.get("stamp")] if mode == "stamps" else []
     props = {"fps": FPS, "duration": total, "vertical": vertical, "watermark": watermark, "seed": seed, "cast": cast, "shots": shots,
              "captions": shown, "dof": True}
+    if story.intro:  # each person's name and role over their segment, in the colour they wear
+        props["cards"] = []
+        for k, c in enumerate(story.intro):
+            if c.first >= len(shots):
+                continue
+            last = shots[min(len(shots), c.first + c.shots) - 1]
+            props["cards"].append({"start": shots[c.first]["start"], "end": round(last["start"] + last["duration"], 3), "name": c.name,
+                                   "role": c.role, "index": k + 1, "total": len(story.intro),
+                                   "color": _card_colour(cast.get("hero" if c.who == "hero" else _key(c.who), HERO)["top"])})
     used = {b.made for x in story.shots for b in x.big if b.kind == "made"}
     if used:  # the things the writer designed, built by the editor from their parts
         props["made"] = {m.name: design_for_editor(m) for m in story.made if m.name in used}

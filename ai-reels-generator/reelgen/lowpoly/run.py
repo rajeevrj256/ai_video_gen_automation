@@ -7,7 +7,7 @@ import logging
 import subprocess
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +42,8 @@ class LowPolyRequest:
     watermark: str = ""  # the channel's name at the top ('' = none, the default)
     dof: bool = True  # depth of field (off renders faster on a slow machine)
     words: str = "on"  # words on screen: on (subtitles + time stamps, like the original) | stamps (time stamps only) | off
+    people: list[str] = field(default_factory=list)  # 🎭 cast intro (kind 'intro'): who, 'hero' for him; empty = everyone
+    hero_name: str = "Ethan"  # 🎭 his name on his card
 
 
 def _thumb_time(props: dict) -> float:
@@ -120,7 +122,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         state["stage"] = stage
         ck.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
-    short = req.format != "film"
+    intro = req.kind == "intro"  # 🎭 the cast introduced one by one (intro.py): a film, music only
+    short = req.format != "film" and not intro
     fiction = req.kind == "fiction"
     vertical = short or bool(req.vertical)
     seconds = max(20, min(60, int(req.seconds)))
@@ -133,6 +136,13 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         state["board_said"] = True
     if story_path.exists():
         story = S.load(story_path)
+    elif intro:
+        from . import intro as I
+
+        story = I.write(cfg, req.people, req.seconds, req.hero_name, progress)
+        S.lock_cast(cfg, story)
+        S.save(story, story_path)
+        save("written")
     else:
         about = req.topic.strip()
         about = (about[:90] + "...") if len(about) > 90 else about
@@ -163,7 +173,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     # a re-make keeps the first version's seed: the same composed music and walk rhythm
     seed = int(state.get("seed") or uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
     look = dict(vertical=vertical, watermark="" if req.watermark.strip().lower() == OLD_MARK else req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on")
-    if not audio or not all(Path(v["path"]).exists() for v in audio.values()):
+    if (not audio and any(x.line.strip() for x in story.shots)) or not all(Path(v["path"]).exists() for v in audio.values()):
         pace = int(req.pace)
         audio = _record(cfg, story, req, work, progress, pace)
         if short:  # a Short keeps to its length: breaths tightened first, then spoken a little faster once
@@ -190,7 +200,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     mixed = state.get("mix") if soundtrack.exists() else None
     if not mixed:
         progress("Making the music and the sound")
-        brief = (f"cinematic film score for an animated sci-fi short film: {story.problem}; {story.music_prompt}" if story.kind == "fiction"
+        brief = (f"cinematic main-title theme for a movie's cast introduction, each character revealed in turn, building; {story.music_prompt}"
+                 if story.intro else f"cinematic film score for an animated sci-fi short film: {story.problem}; {story.music_prompt}" if story.kind == "fiction"
                  else f"soft score for a narrated low-poly animated short about {story.problem}; {story.music_prompt}")
         mix_cfg = cfg
         if restaging and not str(restaging.get("music", "")).startswith("AI music"):
@@ -225,7 +236,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     (work / "audio.json").write_text(json.dumps({str(k): {**v, "path": str(Path(v["path"]).relative_to(work)) if Path(v["path"]).is_relative_to(work)
                                                          else v["path"]} for k, v in audio.items()}, ensure_ascii=False), encoding="utf-8")
     ck.unlink(missing_ok=True)
-    final = cfg.output_dir / f"{stamp}-{slugify(story.title.strip('. '))}-lowpoly{'-short' if short else ''}{('-again' if restaging.get('mode') == 'same' else '-angles') if restaging else ''}"
+    final = cfg.output_dir / f"{stamp}-{slugify(story.title.strip('. '))}-lowpoly{'-short' if short else '-intro' if intro else ''}{('-again' if restaging.get('mode') == 'same' else '-angles') if restaging else ''}"
     move(work, final)
     narration = " ".join(s.line.strip() for s in story.shots if s.line.strip())
     report = {
@@ -238,8 +249,9 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "sound_levels": mixed.get("levels"), "mix_version": mixed.get("mix_version"),
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
-        "cast": [c.name for c in story.cast], "story_kind": story.kind, "storyboard": board, "staging_fixes": notes,
+        "cast": [c.name for c in story.cast], "story_kind": "intro" if story.intro else story.kind, "storyboard": board, "staging_fixes": notes,
         "designed": [m.name for m in story.made],
+        "cast_intro": [{"name": c.name, "role": c.role, "seconds": round(c.seconds * c.shots, 2)} for c in story.intro] or None,
         "voices": sorted({a.get("voice", "") for a in audio.values()} - {""}), "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),
         "youtube_tags": story.tags, "youtube_hashtags": story.hashtags[:3], "caption": story.description.strip(),
         "hashtags": story.hashtags,

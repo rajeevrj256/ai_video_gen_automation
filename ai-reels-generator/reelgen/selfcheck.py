@@ -552,6 +552,45 @@ def lowpoly_vehicles() -> None:
             fail(f"lowpoly vehicles: the {name} set has no gap or no place a jump takes off")
 
 
+def lowpoly_intro() -> None:
+    """🎭 Cast intro (lowpoly/intro.py), offline with the code's own plan: the time divided equally, every camera
+    different within a person and from the shot before, the whole pool used before a camera repeats, a card per
+    person over exactly their segment, nobody shown from behind."""
+    import tempfile
+    from dataclasses import replace
+
+    from .config import Config
+    from .lowpoly import intro as I
+    from .lowpoly import story as S
+    from .lowpoly.timeline import build
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = replace(Config(), output_dir=Path(tmp))
+        for seconds, names in ((60, ["hero", "Mia", "Kai", "Nora", "Rafi"]), (60, []), (30, ["Mia"])):
+            cast = I.people(cfg, names, "Ethan")
+            per, each = I.split(seconds, len(cast))
+            plan = I.fallback_plan(cast, per)
+            for p in plan.people:  # the writer asking for the same camera and a facing-away spot every time
+                for sh in p.shots:
+                    sh.camera, sh.spot = "medium", "counter"
+            story = I.assemble(plan, cast, per, each, seconds)
+            S.repair(story)
+            props = build(story, {}, vertical=False, watermark="", seed=1, words="off")[0]
+            assert abs(props["duration"] - seconds) < 0.01, props["duration"]
+            assert len(props["cards"]) == len(cast)
+            cams = [s["camera"] for s in props["shots"]]
+            assert all(a != b for a, b in zip(cams, cams[1:])), cams
+            for c in story.intro:
+                mine = cams[c.first:c.first + c.shots]
+                assert len(set(mine)) == len(mine), mine
+            assert len(set(cams[: len(I.POOL)])) == min(len(cams), len(I.POOL)), cams
+            for c, card in zip(story.intro, props["cards"]):
+                seg = props["shots"][c.first]
+                assert abs(card["start"] - seg["start"]) < 0.01 and abs(card["end"] - card["start"] - seconds / len(cast)) < 0.02
+            assert not any(a["spot"] in I.AWAY_SPOTS for s in props["shots"] for a in s["actors"])
+            assert props["cards"][0]["name"] == ("Ethan" if not names or "hero" in names else cast[0]["name"])
+
+
 def lowpoly_boards() -> None:
     """✍ Storyboards to read first (lowpoly/boards.py), offline: a draft read shot by shot, rejecting the last open one
     asks for a new round (not after an approval), a rejected one can still be approved but only once, an approved one
@@ -636,6 +675,7 @@ def main() -> int:
     lowpoly_lists()
     lowpoly_vehicles()
     lowpoly_boards()
+    lowpoly_intro()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from ..config import Config
 from ..llm import ask
@@ -248,6 +249,16 @@ class ScorePart(BaseModel):
     energy: Literal["low", "medium", "high"]
 
 
+class IntroCard(BaseModel):
+    """🎭 Cast intro: one person's segment (their shots in a row) and the movie-style card shown over it."""
+    who: str  # 'hero' or the person's name
+    name: str  # as shown
+    role: str  # as shown, small under the name
+    first: int  # the segment's first shot (0-based)
+    shots: int  # how many shots in a row
+    seconds: float  # each of those shots' length
+
+
 class Story(BaseModel):
     title: str = Field(description="2-5 words, the feeling or the promise ('The Ten-Minute Promise')")
     problem: str = Field(description="the everyday struggle in one plain line")
@@ -269,6 +280,7 @@ class Story(BaseModel):
     kind: Literal["life", "fiction"] = "life"
     hero: bool = Field(True, description="the channel's man is in this film; false when the brief has no people in it (a "
                                          "film about animals, creatures or a place) or none who could be him")
+    intro: SkipJsonSchema[list[IntroCard]] = []  # 🎭 a cast intro's segments (intro.py), never asked of the writer
 
 
 # Two or more people in a shot (the user: the son should look at and point to his dad on the chair, not walk off; and

@@ -84,6 +84,7 @@
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .segmented { display: flex; gap: 6px; background: var(--panel-2); padding: 4px; border-radius: 12px; }
   .lp-cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin: 8px 0; }
+  .lp-ipeople { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0; } .lp-ichk { display: inline-flex !important; gap: 6px; align-items: center; font-weight: 400; margin: 0 !important; white-space: nowrap; width: auto !important; } .lp-ichk input { width: auto !important; margin: 0 !important; flex: none; }
   /* ✍ storyboards to read first (reelgen/lowpoly/boards.py) */
   .lp-enh { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 12px 0 4px; }
   .lp-enh > label { display: flex; gap: 8px; align-items: center; margin: 0; font-weight: 700; }
@@ -709,8 +710,22 @@ Plain paragraphs are read by the narrator."></textarea>
         every shot (his room, the hallway, the street at night, the park at dawn, the office...); anyone else in the story keeps their look
         in later videos. Or choose Fiction and give him your own cinematic story.</p>
       <label>Kind of story</label>
-      <div class="segmented" id="lpKind"><button data-kind="life" class="on">🏠 Everyday life</button><button data-kind="fiction">🚀 Fiction (your brief)</button></div>
+      <div class="segmented" id="lpKind"><button data-kind="life" class="on">🏠 Everyday life</button><button data-kind="fiction">🚀 Fiction (your brief)</button><button data-kind="intro">🎭 Cast intro</button></div>
       <p class="hint" id="lpKindHint"></p>
+      <div id="lpIntroBox" hidden>
+        <label>Who's in it</label>
+        <div id="lpIPeople" class="lp-ipeople"></div>
+        <p class="hint" id="lpISplit"></p>
+        <div class="grid2">
+          <div><label for="lpISeconds">Length</label>
+            <select id="lpISeconds"><option value="30">30 s</option><option value="45">45 s</option><option value="60" selected>1 min</option><option value="90">1.5 min</option><option value="120">2 min</option></select></div>
+          <div><label for="lpIVertical">Shape</label>
+            <select id="lpIVertical"><option value="false" selected>16:9 for YouTube</option><option value="true">9:16, like the Shorts</option></select></div>
+        </div>
+        <label for="lpIHero">His name on his card</label>
+        <input class="edit" id="lpIHero" maxlength="40" value="Ethan" placeholder="e.g. Ethan">
+      </div>
+      <div id="lpNotIntro">
       <label>Make</label>
       <div class="segmented" id="lpMode"><button data-mode="short" class="on">📱 Short 9:16</button><button data-mode="film">🎞 Film (3-15 min)</button></div>
       <label for="lpTopic" id="lpTopicLabel">The struggle (optional)</label>
@@ -735,6 +750,7 @@ Plain paragraphs are read by the narrator."></textarea>
       </div>
       <label for="lpWords">Subtitles</label>
       <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select>
+      </div>
       <label for="lpMark">Channel name at the top</label>
       <input class="edit" id="lpMark" value="" maxlength="40" placeholder="empty = none">
       <details id="lpCastBox">
@@ -754,7 +770,7 @@ Plain paragraphs are read by the narrator."></textarea>
           <button id="lpPSave">Save this person</button> <span class="hint" id="lpPMsg"></span>
         </details>
       </details>
-      <div class="lp-enh">
+      <div class="lp-enh" id="lpEnhRow">
         <label><input type="checkbox" id="lpEnhance"> ✍ Read the storyboard first</label>
         <div id="lpEnhanceBox" hidden>
           <p class="hint">Claude writes different storyboards from your prompt, each its own take (another angle, other places,
@@ -3517,6 +3533,8 @@ const LP_PVOICES = [["man", "A man"], ["young-man", "A young man"], ["woman", "A
   ["older-woman", "An older woman"], ["child", "A child"], ["deep-man", "A deep man's voice"], ["british-man", "A British man"], ["british-woman", "A British woman"]];
 const LP_KIND_HINT = {
   life: "One small everyday struggle, told by a calm narrator like the original.",
+  intro: "Every person in the recurring cast introduced like a movie's opening: each in their own place doing what says who they are, from camera angles that never repeat, " +
+    "their name and role coming up on screen, music only. The time is shared equally: tick who's in it below.",
   fiction: "Your own story: paste your brief (any length, even the whole story) and Claude writes and directs it as a cinematic film with dialogue in each person's own voice, " +
     "super strength, speed and jumps, cars, trucks and steel beams, shockwaves, sparks, slow motion, aerial and orbit cameras, and new places (a building site, a highway, a night alley, a lab).",
 };
@@ -3530,7 +3548,27 @@ const lpFace = (p) => {
   return `<svg viewBox="0 0 56 64" width="48" height="54" aria-hidden="true"><rect x="10" y="40" width="36" height="24" rx="5" fill="${L.top}"/>` +
     `${hair}<circle cx="28" cy="24" r="13" fill="${L.skin}"/><circle cx="23" cy="23" r="1.8" fill="#141416"/><circle cx="33" cy="23" r="1.8" fill="#141416"/>${glasses}${beard}${hat}</svg>`;
 };
+// 🎭 Cast intro: who's in it (him first, then the recurring cast), and how the time divides between them
+let lpCastData = [];
+const lpIntroPeople = () => {
+  const was = {};
+  $("#lpIPeople").querySelectorAll("input").forEach((x) => { was[x.value] = x.checked; });
+  const all = [{name: "hero", label: "Him (the hero)"}, ...lpCastData.map((p) => ({name: p.name, label: p.name}))];
+  $("#lpIPeople").innerHTML = all.map((p) => `<label class="lp-ichk"><input type="checkbox" value="${esc(p.name)}"${was[p.name] === false ? "" : " checked"}> ${esc(p.label)}</label>`).join("");
+  lpISplit();
+};
+const lpIChosen = () => [...$("#lpIPeople").querySelectorAll("input:checked")].map((x) => x.value);
+const lpISplit = () => {
+  const n = lpIChosen().length, sec = Number($("#lpISeconds").value);
+  if (!n) { $("#lpISplit").textContent = "Tick at least one person."; return; }
+  const seg = sec / n, per = Math.max(1, Math.min(3, Math.round(seg / 3.5)));
+  $("#lpISplit").textContent = `${n} ${n === 1 ? "person" : "people"} · ${seg.toFixed(1)} s each (${per} shot${per > 1 ? "s" : ""} of ${(seg / per).toFixed(1)} s, every one from another camera)`;
+};
+$("#lpIPeople").addEventListener("change", lpISplit);
+$("#lpISeconds").onchange = lpISplit;
 const lpLoadCast = () => api("/api/lowpoly/cast").then((c) => {
+  lpCastData = c;
+  lpIntroPeople();
   $("#lpCastN").textContent = c.length;
   const voice = Object.fromEntries(LP_PVOICES);
   $("#lpCast").innerHTML = c.map((p) => `<div class="lp-person">${lpFace(p)}<div><b>${esc(p.name)}</b> <span class="hint">${p.from === "yours" ? "· yours" : p.from === "film" ? "· from a film" : ""}</span>` +
@@ -3556,8 +3594,10 @@ $("#lpPSave").onclick = async () => {
 };
 const lpKindSet = (kind) => {
   $("#lpKind").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.kind === kind));
-  const fiction = kind === "fiction";
+  const fiction = kind === "fiction", intro = kind === "intro";
   $("#lpKindHint").textContent = LP_KIND_HINT[kind];
+  $("#lpIntroBox").hidden = !intro; $("#lpNotIntro").hidden = intro; $("#lpEnhRow").hidden = intro;
+  if (intro) { $("#lpEnhance").checked = false; lpEnhanceSet(); }
   $("#lpTopicLabel").textContent = fiction ? "Your story brief (optional, any length)" : "The struggle (optional)";
   $("#lpTopic").rows = fiction ? 9 : 2;
   $("#lpTopic").placeholder = fiction ? "Paste your film's brief: the title, what happens, the look and feel you want. Leave empty and Claude invents an original sci-fi story for him."
@@ -3581,7 +3621,8 @@ const lpFill = () => {
   $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +
     opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
     `<div><label><input type="checkbox" id="lpP-glasses"> Glasses</label> <label><input type="checkbox" id="lpP-beard"> Beard</label> <label><input type="checkbox" id="lpP-kid"> A child</label></div>`;
-  try { lpKindSet(localStorage.getItem("lpKind") === "fiction" ? "fiction" : "life"); } catch (e) { lpKindSet("life"); }
+  try { const k = localStorage.getItem("lpKind"); lpKindSet(k === "fiction" || k === "intro" ? k : "life"); } catch (e) { lpKindSet("life"); }
+  try { const h = localStorage.getItem("lpIHero"); if (h) $("#lpIHero").value = h; } catch (e) {}
   lpLoadCast();
 };
 $("#lpMode").onclick = (e) => {
@@ -3607,6 +3648,13 @@ $("#lpBtn").onclick = async () => {
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
     pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value),
     drafts: Number($("#lpDrafts").value), ai: aiValue("lowpoly") };
+  if (body.kind === "intro") {
+    const people = lpIChosen();
+    if (!people.length) { $("#lpMsg").textContent = "Tick at least one person for the cast intro."; return; }
+    Object.assign(body, { format: "film", topic: "", seconds: Number($("#lpISeconds").value), vertical: $("#lpIVertical").value === "true",
+      people, hero_name: $("#lpIHero").value, count: 1 });
+    try { localStorage.setItem("lpIHero", body.hero_name); } catch (e) {}
+  }
   try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); } catch (e) {}
   $("#lpBtn").disabled = true;
   try {
