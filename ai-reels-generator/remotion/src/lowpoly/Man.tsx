@@ -213,7 +213,7 @@ const Glasses: React.FC<{color: string}> = ({color}) => {
 export const SKIN_GLOW = 0.16;
 const skinMat = (c: string) => mat(c, {emissive: c, glow: SKIN_GLOW});
 
-const FaceView: React.FC<{f: Face; design: Design}> = ({f, design}) => {
+const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, design, detail}) => {
   const z = D.head * 0.935;
   const skin = skinMat(design.skin);
   const dark = mat('#141416', {rough: 0.5});
@@ -223,7 +223,17 @@ const FaceView: React.FC<{f: Face; design: Design}> = ({f, design}) => {
   const eye = (sx: number) => (
     <group key={sx} position={[sx * 0.118, 0.015, z]} rotation={[0, sx * 0.3, 0]}>
       <mesh geometry={disc(er)} material={white} scale={[1, 0.82, 1]} position={[0, 0, 0.004]} />
-      <mesh geometry={disc(er * 0.86)} material={dark} scale={[1, 0.88, 1]} position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]} />
+      {detail ? (
+        // the poster's close-up eye: a brown iris, a pupil, a catchlight and a lash line (a film still, not a sticker)
+        <group position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]}>
+          <mesh geometry={disc(er * 0.74)} material={mat('#5b3a22', {rough: 0.35})} scale={[1, 0.95, 1]} />
+          <mesh geometry={disc(er * 0.4)} material={dark} position={[0, 0, 0.003]} />
+          <mesh geometry={disc(er * 0.17)} material={mat('#ffffff', {emissive: '#ffffff', glow: 0.9})} position={[er * 0.28, er * 0.28, 0.006]} />
+          <mesh geometry={box(er * 2.25, er * 0.28, 0.02)} material={dark} position={[sx * 0.004, er * 0.78, 0.004]} rotation={[0, 0, sx * 0.08]} />
+        </group>
+      ) : (
+        <mesh geometry={disc(er * 0.86)} material={dark} scale={[1, 0.88, 1]} position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]} />
+      )}
       {f.lid > 0.02 ? (
         // the eyelid: a skin-coloured block coming down over the top of the eye
         <mesh
@@ -234,7 +244,7 @@ const FaceView: React.FC<{f: Face; design: Design}> = ({f, design}) => {
       ) : null}
       {f.lid >= 1 ? <mesh geometry={box(er * 1.9, 0.012, 0.01)} material={dark} position={[0, -er * 0.3, 0.024]} /> : null}
       <mesh
-        geometry={box(0.115, 0.026, 0.03)}
+        geometry={box(detail ? 0.13 : 0.115, detail ? 0.034 : 0.026, 0.03)}
         material={brow}
         position={[0, 0.115 + f.brow, 0.03]}
         rotation={[0, 0, sx * -f.tilt]}
@@ -380,7 +390,8 @@ export const Man: React.FC<{
   ry: number;
   hold?: Hold;
   seed: number;
-}> = ({design, pose: p, face: f, root, ry, hold = 'none', seed}) => {
+  detail?: boolean; // the poster's close-ups: eyes with an iris, a catchlight and lashes (FaceView)
+}> = ({design, pose: p, face: f, root, ry, hold = 'none', seed, detail}) => {
   const skin = skinMat(design.skin);
   const top = mat(design.top);
   const topDark = mat(new THREE.Color(design.top).multiplyScalar(0.82).getStyle());
@@ -421,7 +432,7 @@ export const Man: React.FC<{
           <group position={[0, HEAD_Y, 0]} rotation={p.head}>
             <mesh geometry={head} material={skin} castShadow receiveShadow scale={[1, 0.97, 0.98]} />
             {design.hairStyle !== 'bald' ? <mesh geometry={hairGeo(design.hairStyle, seed)} material={hair} castShadow /> : null}
-            <FaceView f={f} design={design} />
+            <FaceView f={f} design={design} detail={detail} />
             {design.glasses ? <Glasses color="#2f2d2c" /> : null}
             {design.beard ? <M g={box(0.42, 0.16, 0.2)} m={hair} p={[0, -0.24, 0.18]} /> : null}
             {design.hat && design.hat !== 'none' ? <Hat kind={design.hat} /> : null}

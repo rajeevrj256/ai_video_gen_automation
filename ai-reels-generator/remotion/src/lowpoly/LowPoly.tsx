@@ -50,7 +50,7 @@ import {
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
 import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot, NameCard} from './types';
-import {PosterScene, PosterWords} from './Poster';
+import {PosterBusts, PosterScene, PosterWords} from './Poster';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 type V3 = [number, number, number];
@@ -2078,6 +2078,9 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
           )}
         </ThreeCanvas>
       </AbsoluteFill>
+      {shot.poster ? (
+        <PosterBusts p={shot.poster} t={local} dur={shot.duration} cast={props.cast} tall={props.vertical} width={width} height={height} CamRig={CamRig} />
+      ) : null}
       {shot.grade === 'caper' ? (
         <AbsoluteFill style={{background: 'linear-gradient(135deg, rgba(0,110,130,0.55), rgba(0,0,0,0) 45%, rgba(255,140,40,0.5))', mixBlendMode: 'soft-light',
           opacity: frozen ? 1 : 0.85}} />
@@ -2085,7 +2088,7 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
       {frozen && local - shot.freeze! < 0.2 ? <AbsoluteFill style={{background: '#fff', opacity: 0.85 * (1 - (local - shot.freeze!) / 0.2)}} /> : null}
       <AbsoluteFill style={{background: 'radial-gradient(ellipse at 50% 48%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.42) 100%)'}} />
       <Grain frame={frame} />
-      {props.cinematic ? <Letterbox vertical={props.vertical} /> : null}
+      {props.cinematic && !shot.poster ? <Letterbox vertical={props.vertical} /> : null}
       {alarm ? <AbsoluteFill style={{background: alarm, mixBlendMode: 'screen'}} /> : null}
       {flash > 0.01 ? <AbsoluteFill style={{background: '#fffaf0', opacity: flash}} /> : null}
       <AbsoluteFill style={{background: '#000', opacity: black}} />
