@@ -572,7 +572,7 @@ class LowPolyBody(BaseModel):
     vertical: bool = False  # film in 9:16
     voice: str = ""
     pace: int = 0
-    watermark: str = "Life of a man"
+    watermark: str = ""
     words: str = "on"  # on (subtitles + time stamps) | stamps (time stamps only) | off
     count: int = 1
     drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from

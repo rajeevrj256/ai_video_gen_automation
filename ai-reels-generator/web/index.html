@@ -736,7 +736,7 @@ Plain paragraphs are read by the narrator."></textarea>
       <label for="lpWords">Subtitles</label>
       <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select>
       <label for="lpMark">Channel name at the top</label>
-      <input class="edit" id="lpMark" value="Life of a man" maxlength="40" placeholder="empty = none">
+      <input class="edit" id="lpMark" value="" maxlength="40" placeholder="empty = none">
       <details id="lpCastBox">
         <summary>👥 Recurring cast: the people every film can use (<span id="lpCastN">0</span>)</summary>
         <p class="hint">Claude uses these people by name when a story needs someone like them, so they look and sound the same in
@@ -3575,7 +3575,7 @@ const lpFill = () => {
   $("#lpVoice").innerHTML = LP_VOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
   addMyVoice($("#lpVoice"));
   try { const saved = localStorage.getItem("lpVoice"); if (saved && [...$("#lpVoice").options].some((o) => o.value === saved)) $("#lpVoice").value = saved; } catch (e) {}
-  try { const m = localStorage.getItem("lpMark"); if (m !== null) $("#lpMark").value = m; } catch (e) {}
+  try { const m = localStorage.getItem("lpMark"); if (m !== null && m.trim().toLowerCase() !== "life of a man") $("#lpMark").value = m; } catch (e) {}
   try { const w = localStorage.getItem("lpWords"); if (w && [...$("#lpWords").options].some((o) => o.value === w)) $("#lpWords").value = w; } catch (e) {}
   $("#lpPVoice").innerHTML = LP_PVOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
   $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +

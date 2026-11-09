@@ -26,6 +26,9 @@ TIGHT_TAIL = 0.2  # the breath after each line when a Short runs long (else time
 MAX_FASTER = 18  # at most this much faster than asked (percent)
 
 
+OLD_MARK = "life of a man"  # the channel name every video got by default before
+
+
 @dataclass
 class LowPolyRequest:
     topic: str = ""  # the struggle (life) or the user's whole brief (fiction, any length); empty = Claude picks
@@ -36,7 +39,7 @@ class LowPolyRequest:
     vertical: bool = False  # film only: 9:16 instead of 16:9
     voice: str = ""  # '' = DEFAULT_VOICE
     pace: int = 0  # speaking speed in percent (-20..+20)
-    watermark: str = "Life of a man"  # the channel's name at the top ('' = none)
+    watermark: str = ""  # the channel's name at the top ('' = none, the default)
     dof: bool = True  # depth of field (off renders faster on a slow machine)
     words: str = "on"  # words on screen: on (subtitles + time stamps, like the original) | stamps (time stamps only) | off
 
@@ -159,7 +162,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     audio = {int(k): v for k, v in state.get("audio", {}).items()}
     # a re-make keeps the first version's seed: the same composed music and walk rhythm
     seed = int(state.get("seed") or uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
-    look = dict(vertical=vertical, watermark=req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on")
+    look = dict(vertical=vertical, watermark="" if req.watermark.strip().lower() == OLD_MARK else req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on")
     if not audio or not all(Path(v["path"]).exists() for v in audio.values()):
         pace = int(req.pace)
         audio = _record(cfg, story, req, work, progress, pace)
@@ -280,6 +283,8 @@ def prepare_restage(cfg: Config, folder: Path, mode: str) -> str:
         req["pace"] = int(str(report.get("voice_rate", req.get("pace", 0))).rstrip("%"))
     except ValueError:
         pass
+    if str(req.get("watermark") or "").strip().lower() == OLD_MARK:
+        req["watermark"] = ""  # the old default nobody typed (the user: "remove it")
     req = asdict(LowPolyRequest(**{k: v for k, v in req.items() if k in LowPolyRequest.__dataclass_fields__}))
     state = {"stage": "written", "stamp": stamp, "request": req, "seed": int(props.get("seed") or 0) or None,
              "pace": req.get("pace", 0),
