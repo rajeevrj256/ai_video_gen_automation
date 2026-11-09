@@ -257,7 +257,8 @@ def cut_in(s, dur: float, big_at: list[float | None], prev: dict | None, prev_ra
     return []
 
 
-POSTER_PEOPLE = ["hero", "mia", "sam", "his mum", "his dad"]  # who stands on the cast intro's closing poster
+POSTER_PEOPLE = ["hero", "mia", "sam"]  # the three on the cast intro's closing poster (the user's own one-sheet: Ethan, Mia, Sam)
+POSTER_TAGLINES = {"the unwritten": "Some stories were never meant to be written"}  # the user's line, for their film only
 POSTER_SECONDS = 4.5  # the closing poster holds about this long (a whole number of beats)
 RAMP = 1.35  # = intro.RAMP: the action plays this much faster before the freeze
 
@@ -585,12 +586,14 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
             # friend only and mom dad"); in a cast without them, the first five introduced
             everyone = [("hero" if c.who == "hero" else _key(c.who), c.name) for c in story.intro]
             family = [p for k in POSTER_PEOPLE for p in everyone if p[0] == k]
-            chosen = family if len(family) >= 2 else everyone[:5]
+            chosen = family if len(family) >= 2 else everyone[:3]
             people, names = [k for k, _ in chosen], [n for _, n in chosen]
             shots.append({"start": start, "duration": hold, "set": "void", "light": "day", "camera": "wide", "actors": [], "things": [],
                           "focus": 0, "seed": seed + 977, "whipIn": True, "fadeOut": 0.9, "grade": "caper",
-                          "poster": {"title": story.poster.get("title") or story.title, "tagline": "",  # (the user: "remove everyone has a part to play")
-                                     "credits": "A low-poly film · starring " + " · ".join(names), "date": "Coming soon",
+                          "poster": {"title": (title := story.poster.get("title") or story.title),
+                                     # laid out like the user's own poster: a kicker, the title, STARRING names, the tagline
+                                     "tagline": POSTER_TAGLINES.get(title.strip().lower(), ""), "kicker": "A low-poly action film",
+                                     "credits": "starring " + " · ".join(names), "names": names, "date": "Coming soon",
                                      "people": people, "face": "hero",
                                      "car": cast.get("hero", HERO)["top"], "car2": "#1d2433"}})
             intro_cues += [{"sound": "whip", "at": round(start - 0.16, 3), "volume": 0.9},

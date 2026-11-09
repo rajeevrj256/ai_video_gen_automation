@@ -256,7 +256,7 @@ export type Caption = {start: number; end: number; text: string; red?: boolean; 
 
 // 🎭 a cast intro's card: the person's name and role over their segment (reelgen/lowpoly/intro.py)
 // 🎭 The cast intro's closing poster (Poster.tsx): everyone in one composition, a car behind, a giant face over the city.
-export type Poster = {title: string; tagline: string; credits: string; date: string; people: string[]; face?: string; car?: string; car2?: string};
+export type Poster = {title: string; tagline: string; credits: string; date: string; people: string[]; face?: string; car?: string; car2?: string; names?: string[]; kicker?: string};
 
 export type NameCard = {start: number; end: number; name: string; role: string; index: number; total: number; color: string; style?: 'caper'};
 
