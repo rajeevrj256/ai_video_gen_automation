@@ -592,6 +592,7 @@ class LowPolyBody(BaseModel):
     people: list[str] = []  # 🎭 cast intro: who ('hero' for him); empty = everyone
     hero_name: str = "Ethan"  # 🎭 his name on his card
     film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster
+    hero_look: str = "classic"  # 🧪 classic (the code-built man) | model (the 3D model of Ethan, lowpoly/models/)
     drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
     ai: AIPick | None = None
 
@@ -1682,7 +1683,8 @@ def create_app(cfg: Config) -> FastAPI:
                 "format": "film" if film else "short", "seconds": max(20, min(120 if intro else 60, int(body.seconds))),
                 "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
-                "words": body.words if body.words in ("on", "stamps", "off") else "on"}
+                "words": body.words if body.words in ("on", "stamps", "off") else "on",
+                "hero_look": body.hero_look if body.hero_look in ("classic", "model") else "classic"}
         if intro:
             given.update({"topic": "", "people": [p.strip()[:60] for p in body.people if p.strip()][:30],
                           "hero_name": body.hero_name.strip()[:40] or "Ethan", "film_title": body.film_title.strip()[:40]})

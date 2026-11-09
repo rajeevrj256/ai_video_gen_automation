@@ -6,6 +6,7 @@ import React, {useMemo} from 'react';
 import * as THREE from 'three';
 import type {Design, Hold} from './types';
 import {HIP, type Face, type Limb, type Pose} from './poses';
+import {ModelMan, SKELETONS} from './Model';
 
 // Sizes in the man's units (he is about 2 tall to the top of his hair).
 export const D = {
@@ -373,6 +374,23 @@ const Hat: React.FC<{kind: 'hardhat' | 'cap'}> = ({kind}) => {
 
 // The whole man. `root` = where his pelvis's spot is (floor, seat or bed surface) and which way he faces.
 export const Man: React.FC<{
+  design: Design;
+  pose: Pose;
+  face: Face;
+  root: [number, number, number];
+  ry: number;
+  hold?: Hold;
+  seed: number;
+}> = (props) =>
+  props.design.model && SKELETONS[props.design.model] ? (
+    <ModelMan model={props.design.model} pose={props.pose} face={props.face} root={props.root} ry={props.ry} hold={props.hold}
+      height={props.design.height} Held={HeldThing} />
+  ) : (
+    <ClassicMan {...props} />
+  );
+
+// The code-built body: every design without a 3D model (the classic look).
+const ClassicMan: React.FC<{
   design: Design;
   pose: Pose;
   face: Face;

@@ -750,6 +750,8 @@ Plain paragraphs are read by the narrator."></textarea>
         <div><label for="lpPace">Speaking speed</label>
           <select id="lpPace"><option value="-10">Slower (-10%)</option><option value="-5">A bit slower</option><option value="0" selected>Normal</option><option value="5">A bit faster</option><option value="10">Faster (+10%)</option></select></div>
       </div>
+      <label for="lpLook">Ethan's look</label>
+      <select id="lpLook"><option value="classic" selected>Classic: the code-built man</option><option value="model">🧪 3D model (test): made from your picture of him</option></select>
       <label for="lpWords">Subtitles</label>
       <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select>
       </div>
@@ -3619,6 +3621,7 @@ const lpFill = () => {
   try { const saved = localStorage.getItem("lpVoice"); if (saved && [...$("#lpVoice").options].some((o) => o.value === saved)) $("#lpVoice").value = saved; } catch (e) {}
   try { const m = localStorage.getItem("lpMark"); if (m !== null && m.trim().toLowerCase() !== "life of a man") $("#lpMark").value = m; } catch (e) {}
   try { const w = localStorage.getItem("lpWords"); if (w && [...$("#lpWords").options].some((o) => o.value === w)) $("#lpWords").value = w; } catch (e) {}
+  try { const l = localStorage.getItem("lpLook"); if (l && [...$("#lpLook").options].some((o) => o.value === l)) $("#lpLook").value = l; } catch (e) {}
   $("#lpPVoice").innerHTML = LP_PVOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
   $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +
     opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
@@ -3649,6 +3652,7 @@ $("#lpBtn").onclick = async () => {
   const body = { kind: lpKindIs(), format: film ? "film" : "short", topic: $("#lpTopic").value, seconds: Number($("#lpSeconds").value),
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
     pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value),
+    hero_look: $("#lpLook").value,
     drafts: Number($("#lpDrafts").value), ai: aiValue("lowpoly") };
   if (body.kind === "intro") {
     const people = lpIChosen();
@@ -3657,7 +3661,7 @@ $("#lpBtn").onclick = async () => {
       people, hero_name: $("#lpIHero").value, film_title: $("#lpIFilm").value, count: 1 });
     try { localStorage.setItem("lpIHero", body.hero_name); localStorage.setItem("lpIFilm", body.film_title); } catch (e) {}
   }
-  try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); } catch (e) {}
+  try { localStorage.setItem("lpVoice", body.voice); localStorage.setItem("lpMark", body.watermark); localStorage.setItem("lpWords", body.words); localStorage.setItem("lpLook", body.hero_look); } catch (e) {}
   $("#lpBtn").disabled = true;
   try {
     if (enhance) {

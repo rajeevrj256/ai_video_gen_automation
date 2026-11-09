@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import time
 import uuid
@@ -45,6 +46,26 @@ class LowPolyRequest:
     people: list[str] = field(default_factory=list)  # 🎭 cast intro (kind 'intro'): who, 'hero' for him; empty = everyone
     hero_name: str = "Ethan"  # 🎭 his name on his card
     film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster ('' = the intro's own title)
+    hero_look: str = "classic"  # 🧪 classic = the code-built man (as before) | model = the 3D model of him (HERO_MODEL)
+
+
+# 🧪 The 3D model of him (branch claude/lowpoly-3d-ethan; the user: "lets do for one char and animation ethan ... not
+# delete old code or old style of ethan"): made by an image-to-3D generator from an A-pose picture of him, given a
+# skeleton by the editor (remotion/src/lowpoly/Model.tsx SKELETONS['ethan']). Chosen per video (`hero_look`); the
+# classic code-built man stays the default and every other person keeps the classic body.
+HERO_MODEL = "ethan"
+MODELS = Path(__file__).parent / "models"
+
+
+def use_model(props: dict, work: Path, look: str) -> None:
+    """With `look` 'model': him drawn as the 3D model (the file copied next to props.json, the render's public folder)."""
+    if look != "model" or not (MODELS / f"{HERO_MODEL}.glb").exists():
+        return
+    (work / "models").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(MODELS / f"{HERO_MODEL}.glb", work / "models" / f"{HERO_MODEL}.glb")
+    hero = props.get("cast", {}).get("hero")
+    if hero is not None:
+        hero["model"] = HERO_MODEL
 
 
 def _thumb_time(props: dict) -> float:
@@ -197,6 +218,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         tighten = {"tail": TIGHT_TAIL, "pauses": 0.5}
     props, clips, cues, sections = build(story, audio, **look, **tighten)
     props["dof"] = bool(req.dof)
+    use_model(props, work, getattr(req, "hero_look", "classic"))
     progress(f"'{story.title}': {len(props['shots'])} shots, " + (f"{props['duration']:.0f} s" if props["duration"] < 90 else
              f"{props['duration'] / 60:.1f} min") + f", {'9:16' if vertical else '16:9'} · {story.problem}")
     soundtrack = work / "soundtrack.wav"
@@ -252,7 +274,7 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "sound_levels": mixed.get("levels"), "mix_version": mixed.get("mix_version"),
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,
-        "cast": [c.name for c in story.cast], "story_kind": "intro" if story.intro else story.kind, "storyboard": board, "staging_fixes": notes,
+        "cast": [c.name for c in story.cast], "story_kind": "intro" if story.intro else story.kind, "storyboard": board, "hero_look": "3D model (ethan)" if props["cast"].get("hero", {}).get("model") else "classic", "staging_fixes": notes,
         "designed": [m.name for m in story.made],
         "cast_intro": [{"name": c.name, "role": c.role, "seconds": round(c.seconds * c.shots, 2)} for c in story.intro] or None,
         "voices": sorted({a.get("voice", "") for a in audio.values()} - {""}), "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),

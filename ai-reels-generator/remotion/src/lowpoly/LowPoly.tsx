@@ -18,6 +18,7 @@ import {RenderPass} from 'three/examples/jsm/postprocessing/RenderPass.js';
 import {BokehPass} from 'three/examples/jsm/postprocessing/BokehPass.js';
 import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
+import {modelHead} from './Model';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, Overgrowth, SETS, spotOf, ThingView, type SetDef} from './Sets';
 import {
@@ -250,7 +251,7 @@ const kin = (a: Actor, action: Action, k: number, shot: LPShot, design: Design, 
   const qHead = new THREE.Quaternion().setFromEuler(new THREE.Euler(...ps.head));
   const q = qRoot.clone().multiply(qPelvis).multiply(qTorso);
   const pelvis = V(root).add(new THREE.Vector3(0, ps.y * scale, 0));
-  const head = pelvis.clone().add(new THREE.Vector3(0, HEAD_Y * scale, 0).applyQuaternion(q));
+  const head = pelvis.clone().add(new THREE.Vector3(0, (modelHead(design.model) ?? HEAD_Y) * scale, 0).applyQuaternion(q));
   const qh = q.clone().multiply(qHead);
   const faceDir = new THREE.Vector3(0, 0, 1).applyQuaternion(qh);
   const headUp = new THREE.Vector3(0, 1, 0).applyQuaternion(qh);

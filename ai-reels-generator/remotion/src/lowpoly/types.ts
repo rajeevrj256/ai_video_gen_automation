@@ -134,6 +134,7 @@ export type Design = {
   beard?: boolean;
   height?: number; // 1 = the hero; a kid 0.7
   hat?: 'none' | 'hardhat' | 'cap';
+  model?: string; // 🧪 a real 3D model drawn instead of the code-built body (Model.tsx SKELETONS); else the classic look
 };
 
 export type Actor = {
