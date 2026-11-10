@@ -121,6 +121,27 @@ class LPCast(BaseModel):
     voice: VoiceKind = Field("man", description="the kind of voice they speak in, when they have lines")
 
 
+class LPMessage(BaseModel):
+    me: bool = Field(False, description="true = sent by the person holding the phone (right, blue); false = received")
+    text: str = Field(description="the message as typed, short and real-sounding ('Where are you??', 'Dinner's cold')")
+
+
+# What a held phone shows (the user: "on this video there [is a] family message 'where are you', but [the] phone [is]
+# showing just blank, must use what need to show on phone"); drawn on the screen by Man.tsx `phoneScreen`.
+SCREEN_KINDS = ["chat", "call", "notification", "alarm", "lock", "feed", "map"]
+
+
+class LPScreen(BaseModel):
+    kind: Literal["chat", "call", "notification", "alarm", "lock", "feed", "map"] = Field(
+        description="chat = a conversation; call = an incoming call; notification = the lock screen with a message on it; "
+                    "alarm = an alarm ringing; lock = the lock screen only; feed = scrolling posts; map = directions")
+    name: str = Field("", description="who: the contact's name as it would be saved ('Mom', 'Dad', 'Mia', 'Boss'); for "
+                                      "feed and map what it is ('Home', 'City Hospital'); never a brand or real app name")
+    messages: list[LPMessage] = Field(default_factory=list, description="chat: 1-6 messages in order, the last arriving "
+                                      "during the shot; notification: the one message; feed: 1-3 post captions")
+    time: str = Field("", description="the phone's clock ('11:47') or the alarm's time; empty = the shot's stamp")
+
+
 class LPActor(BaseModel):
     who: str = Field(description="'hero' for him, else a cast member's name exactly")
     action: ActionName
@@ -136,6 +157,9 @@ class LPActor(BaseModel):
     look_at: str = Field("", description="the person in this shot they look at, talk to, point at or walk up to: 'hero' or "
                                          "that person's name exactly; empty when nobody in particular. They turn to face "
                                          "them (seated or walking: their head turns)")
+    screen: LPScreen | None = Field(None, description="with a phone in hand ('phone', 'lie-phone', or hold 'phone'): what "
+                                    "its screen shows, from the story (the message the line is about, who is calling); none "
+                                    "when it doesn't matter")
     on: int = Field(0, description="0 = on the ground; n = in or on this shot's n-th big thing (1 = the first in `big`): "
                                    "'drive' at its wheel or controls, 'ride' in a passenger seat, any other action standing "
                                    "on it (a car's roof, a plane's wing: 'brace', 'punch', 'jump-off'...); they go with it")
@@ -341,6 +365,12 @@ inside it; film it with 'cockpit' (his face through the windscreen), 'back' (his
 'pass-by'. A passenger: 'ride' with the same `on`.
 - Things: 'alarm' with its time as `label` on the bedside table, a 'phone' with `glow`, a 'mug', a 'laptop'; held \
 things go in `hold` (a phone in his hand, a mug).
+- The phone's screen: whenever someone holds a phone and the story is about what's on it, give that actor a `screen` \
+that shows exactly that, so the viewer can read it: a family chat 'Mom' with 'Where are you?' and 'Dinner's ready', \
+a missed 'call' from 'Dad', a 'notification' from 'Boss', the 'alarm' at '5:30', directions on a 'map'. Messages are \
+short and real-sounding, the person's own replies `me` true; a message the line reacts to comes last (it arrives \
+during the shot, with a 'notify' sound). Film it with 'detail' (his view of the screen) when the words matter. Never a \
+brand, a real app or a real person's name on a screen.
 - Sounds: the world's own sounds where they happen: 'alarm' on the alarm, 'footsteps' are added to walks by the editor, \
 'door', 'notify'/'buzz' for a phone, 'typing', 'tick' for time passing. A few, not on every shot.
 """ + STAGING + """

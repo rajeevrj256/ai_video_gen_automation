@@ -149,6 +149,17 @@ export type Actor = {
   at?: number; // seconds into the shot of his key moment (the catch, the jump, the landing, the punch)
   look?: string; // a key of cast: the person in this shot he looks at, talks to, points at or walks up to
   on?: number; // index into the shot's big things: the vehicle he is in (drive, ride) or standing on (any other action)
+  screen?: PhoneScreen; // what the phone in his hand shows (Man.tsx phoneScreen; story.LPScreen)
+};
+
+// A held phone's screen, written by Claude for the story: a chat, a call, a notification... (story.SCREEN_KINDS)
+export type ScreenKind = 'chat' | 'call' | 'notification' | 'alarm' | 'lock' | 'feed' | 'map';
+export type PhoneScreen = {
+  kind: ScreenKind;
+  name: string; // the contact, the caller, the alarm's label, the place on the map
+  messages: {me: boolean; text: string}[];
+  time: string; // the phone's clock
+  arrive?: number; // seconds into the shot when the last message (or the call) arrives
 };
 
 export type Thing = {

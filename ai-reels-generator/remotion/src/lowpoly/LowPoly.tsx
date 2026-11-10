@@ -1823,6 +1823,8 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
             ry={pl.local ? pl.local.ry : pl.ry}
             hold={pl.hold}
             seed={pl.actor.who === 'hero' ? 7 : pl.seed}
+            screen={pl.actor.screen}
+            screenT={t}
           />
         );
         // in or on a vehicle: drawn in its frame, so he turns, pitches and rolls with it

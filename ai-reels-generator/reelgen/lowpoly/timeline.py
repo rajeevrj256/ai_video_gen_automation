@@ -82,6 +82,7 @@ VEHICLE = {"car", "bus", "truck"}
 HEAVY = VEHICLE | {"beam", "boulder", "crate", "pipe"}
 OUTDOOR = {"street", "park", "busstop", "rooftop", "construction", "highway", "bridge", "alley"}
 SCORE_ACT = {"low": "thesis", "medium": "loop", "high": "climb"}
+SCREEN_ARRIVE = 0.3  # a phone's last message pops in this far into its shot (Man.tsx phoneScreen `arrive`)
 JUMP_TIME = 1.25  # = the jump's time in the air in Big.tsx (profile 'jump', T)  # energy -> the music's act (sticky.mixdown.INTENSITY)
 # Split-second cut-ins inside a shot where he drives a car (LowPoly.tsx `planFor`/`pressAt`, Big.tsx `yankOf`): his foot
 # slams the accelerator before it races off or jumps, moves across and stamps on the brake before it stops, his hands
@@ -312,6 +313,14 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                  "spot": actor.spot, "facing": actor.facing, "hold": actor.hold, "covered": actor.covered}
             if actor.to:
                 d["to"] = actor.to
+            if actor.screen is not None:  # what the phone in his hand shows (Man.tsx phoneScreen)
+                scr = d["screen"] = actor.screen.model_dump()
+                if not scr["time"] and re.match(r"^\d{1,2}:\d{2}", s.stamp.strip()):
+                    scr["time"] = s.stamp.strip().split()[0]  # the phone's clock agrees with the shot's time stamp
+                if scr["kind"] in ("chat", "notification") and scr["messages"] or scr["kind"] == "call":
+                    # the last message (or the call) arrives a moment into the shot, with the phone's sound
+                    scr["arrive"] = round(min(SCREEN_ARRIVE * dur, 1.4), 3)
+                    cues.append({"sound": "buzz" if scr["kind"] == "call" else "notify", "at": round(t + scr["arrive"], 3), "volume": 0.8})
             if actor.look_at:
                 d["look"] = "hero" if actor.look_at == "hero" else _key(actor.look_at)
             if at is not None:

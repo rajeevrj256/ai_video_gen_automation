@@ -4,7 +4,7 @@
 // (reference Short 'Life of a Man'); every film uses the same one (cast 'hero').
 import React, {useMemo} from 'react';
 import * as THREE from 'three';
-import type {Design, Hold} from './types';
+import type {Design, Hold, PhoneScreen} from './types';
 import {HIP, type Face, type Limb, type Pose} from './poses';
 
 // Sizes in the man's units (he is about 2 tall to the top of his hair).
@@ -286,9 +286,286 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
   );
 };
 
-// A phone's lit screen: a chat (a name bar, grey and blue bubbles), drawn once.
+// A phone's lit screen. With no story screen: a generic chat, drawn once. With one (story.LPScreen): what the story
+// needs there (a 'Mom' chat with 'Where are you?', a call from Dad, the 5:30 alarm...), drawn on a canvas per screen
+// and per moment (before / after the last message arrives), cached.
+const SW = 540;
+const SH = 1056; // the screen plane is 0.088 x 0.172
+const FONT = 'Inter, "Helvetica Neue", Arial, sans-serif';
+const screens = new Map<string, THREE.CanvasTexture>();
+
+const wrap = (g: CanvasRenderingContext2D, text: string, width: number) => {
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (g.measureText(next).width > width && cur) {
+      lines.push(cur);
+      cur = w;
+    } else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 4);
+};
+const round = (g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, col: string) => {
+  g.fillStyle = col;
+  g.beginPath();
+  g.roundRect(x, y, w, h, r);
+  g.fill();
+};
+const initial = (name: string) => (name.trim()[0] ?? '?').toUpperCase();
+const avatar = (g: CanvasRenderingContext2D, x: number, y: number, r: number, name: string, col = '#7b8ba3') => {
+  g.fillStyle = col;
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#fff';
+  g.font = `700 ${Math.round(r * 1.05)}px ${FONT}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(initial(name), x, y + r * 0.04);
+};
+const statusBar = (g: CanvasRenderingContext2D, time: string, dark: boolean) => {
+  g.fillStyle = dark ? '#fff' : '#111';
+  g.font = `600 30px ${FONT}`;
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  g.fillText(time, 40, 40);
+  for (let i = 0; i < 4; i++) g.fillRect(410 + i * 13, 50 - (i + 1) * 6, 9, (i + 1) * 6); // signal
+  round(g, 470, 26, 44, 24, 6, dark ? '#fff' : '#111'); // battery
+  round(g, 473, 29, 30, 18, 4, dark ? '#2a2f38' : '#eef2f7');
+  round(g, 473, 29, 22, 18, 4, dark ? '#fff' : '#111');
+};
+const clockText = (time: string, fallback = '11:47') => (/^\d{1,2}:\d{2}/.test(time.trim()) ? time.trim().split(/\s/)[0] : fallback);
+
+const drawScreen = (g: CanvasRenderingContext2D, sc: PhoneScreen, shown: boolean) => {
+  const time = clockText(sc.time);
+  const msgs = sc.messages.filter((m) => m.text.trim());
+  const visible = shown || sc.arrive === undefined ? msgs : msgs.slice(0, -1);
+  g.textAlign = 'left';
+  g.textBaseline = 'alphabetic';
+  switch (sc.kind) {
+    case 'chat': {
+      g.fillStyle = '#eef1f5';
+      g.fillRect(0, 0, SW, SH);
+      g.fillStyle = '#f8f9fb';
+      g.fillRect(0, 0, SW, 190);
+      statusBar(g, time, false);
+      g.fillStyle = '#2f7cf6';
+      g.font = `400 54px ${FONT}`;
+      g.fillText('‹', 26, 140);
+      avatar(g, SW / 2, 118, 38, sc.name || '?');
+      g.fillStyle = '#111';
+      g.font = `600 28px ${FONT}`;
+      g.textAlign = 'center';
+      g.fillText(sc.name || 'Message', SW / 2, 182);
+      g.textAlign = 'left';
+      // bubbles from the bottom up, so the newest is always in view
+      g.font = `400 34px ${FONT}`;
+      let y = SH - 290; // the hand holding it covers the bottom fifth
+      for (let i = visible.length - 1; i >= 0 && y > 220; i--) {
+        const m = visible[i];
+        const lines = wrap(g, m.text, 330);
+        const w = Math.max(...lines.map((l) => g.measureText(l).width)) + 48;
+        const h = lines.length * 44 + 30;
+        y -= h;
+        const x = m.me ? SW - 26 - w : 26;
+        round(g, x, y, w, h, 30, m.me ? '#2f7cf6' : '#dfe3ea');
+        g.fillStyle = m.me ? '#fff' : '#111';
+        lines.forEach((l, k) => g.fillText(l, x + 24, y + 50 + k * 44));
+        y -= 18;
+      }
+      if (!shown && sc.arrive !== undefined && msgs.length) {
+        // they are typing: three dots where the last message will land
+        round(g, 26, SH - 370, 120, 66, 33, '#dfe3ea');
+        g.fillStyle = '#8b93a1';
+        for (let k = 0; k < 3; k++) {
+          g.beginPath();
+          g.arc(60 + k * 26, SH - 337, 9, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.fillStyle = '#f8f9fb';
+      g.fillRect(0, SH - 100, SW, 100);
+      round(g, 30, SH - 82, SW - 60, 60, 30, '#fff');
+      g.fillStyle = '#a3aab6';
+      g.font = `400 28px ${FONT}`;
+      g.fillText('Message', 60, SH - 42);
+      return;
+    }
+    case 'call': {
+      const grd = g.createLinearGradient(0, 0, 0, SH);
+      grd.addColorStop(0, '#2d3a4f');
+      grd.addColorStop(1, '#0d1118');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, SW, SH);
+      statusBar(g, time, true);
+      avatar(g, SW / 2, 330, 110, sc.name || '?', '#56657d');
+      g.fillStyle = '#fff';
+      g.textAlign = 'center';
+      g.font = `600 56px ${FONT}`;
+      g.fillText(sc.name || 'Unknown', SW / 2, 530);
+      g.fillStyle = '#b8c2d3';
+      g.font = `400 32px ${FONT}`;
+      g.fillText(shown ? 'incoming call…' : 'mobile', SW / 2, 585);
+      const btn = (x: number, col: string, label: string) => {
+        g.fillStyle = col;
+        g.beginPath();
+        g.arc(x, SH - 330, 62, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#d5dbe5';
+        g.font = `400 26px ${FONT}`;
+        g.fillText(label, x, SH - 232);
+      };
+      btn(140, '#e5483d', 'Decline');
+      btn(SW - 140, '#34c759', 'Accept');
+      g.fillStyle = '#fff';
+      g.font = `700 54px ${FONT}`;
+      g.fillText('✕', 140, SH - 312);
+      g.fillText('✓', SW - 140, SH - 312);
+      return;
+    }
+    case 'feed': {
+      g.fillStyle = '#f2f3f5';
+      g.fillRect(0, 0, SW, SH);
+      statusBar(g, time, false);
+      let y = 100;
+      const posts = visible.length ? visible : [{me: false, text: ''}];
+      posts.slice(-3).forEach((m, k) => {
+        round(g, 20, y, SW - 40, 300, 20, '#fff');
+        avatar(g, 66, y + 46, 24, sc.name || 'A', ['#c47a5a', '#5a8fc4', '#7ac45a'][k % 3]);
+        g.fillStyle = '#111';
+        g.font = `600 26px ${FONT}`;
+        g.textAlign = 'left';
+        g.fillText(sc.name || 'friend', 104, y + 56);
+        const pic = g.createLinearGradient(0, y + 86, 0, y + 210);
+        pic.addColorStop(0, ['#f4b183', '#9cc3e6', '#a9d18e'][k % 3]);
+        pic.addColorStop(1, ['#c55a11', '#2e75b6', '#548235'][k % 3]);
+        g.fillStyle = pic;
+        g.fillRect(36, y + 86, SW - 72, 124);
+        g.fillStyle = '#222';
+        g.font = `400 28px ${FONT}`;
+        wrap(g, m.text, SW - 90).slice(0, 2).forEach((l, i) => g.fillText(l, 40, y + 250 + i * 34));
+        y += 320;
+      });
+      return;
+    }
+    case 'map': {
+      g.fillStyle = '#e8ecdf';
+      g.fillRect(0, 0, SW, SH);
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 26;
+      for (const [x1, y1, x2, y2] of [[0, 300, SW, 260], [0, 640, SW, 700], [150, 0, 120, SH], [400, 0, 430, SH]]) {
+        g.beginPath();
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
+        g.stroke();
+      }
+      g.fillStyle = '#b9d9a5';
+      g.fillRect(200, 360, 170, 220);
+      g.strokeStyle = '#2f7cf6';
+      g.lineWidth = 14;
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(130, 780);
+      g.lineTo(130, 660);
+      g.lineTo(415, 690);
+      g.lineTo(415, 290);
+      g.stroke();
+      g.fillStyle = '#2f7cf6';
+      g.beginPath();
+      g.arc(130, 780, 20, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#e5483d'; // the pin
+      g.beginPath();
+      g.arc(415, 250, 30, Math.PI, 0);
+      g.lineTo(415, 310);
+      g.closePath();
+      g.fill();
+      statusBar(g, time, false);
+      round(g, 20, 80, SW - 40, 160, 24, '#fff'); // the destination at the top: the hand covers the bottom
+      g.fillStyle = '#111';
+      g.font = `600 34px ${FONT}`;
+      g.fillText(sc.name || 'Destination', 50, 142);
+      g.fillStyle = '#34a853';
+      g.font = `400 28px ${FONT}`;
+      g.fillText(visible[0]?.text || '12 min', 50, 192);
+      return;
+    }
+    default: {
+      // lock screen, a notification on it, or the alarm ringing
+      const grd = g.createLinearGradient(0, 0, SW, SH);
+      grd.addColorStop(0, sc.kind === 'alarm' ? '#3b2a1e' : '#1f3550');
+      grd.addColorStop(1, '#0b0f17');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, SW, SH);
+      statusBar(g, time, true);
+      g.fillStyle = '#fff';
+      g.textAlign = 'center';
+      if (sc.kind === 'alarm') {
+        g.font = `300 150px ${FONT}`;
+        g.fillText(clockText(sc.time, '5:30'), SW / 2, 380);
+        g.font = `500 40px ${FONT}`;
+        g.fillText(sc.name || 'Alarm', SW / 2, 470);
+        round(g, 70, SH - 500, SW - 140, 100, 50, '#f29d38');
+        round(g, 70, SH - 370, SW - 140, 100, 50, 'rgba(255,255,255,0.18)');
+        g.fillStyle = '#fff';
+        g.font = `600 40px ${FONT}`;
+        g.fillText('Snooze', SW / 2, SH - 436);
+        g.fillText('Stop', SW / 2, SH - 306);
+        return;
+      }
+      g.font = `200 160px ${FONT}`;
+      g.fillText(time, SW / 2, 270);
+      g.font = `400 32px ${FONT}`;
+      g.fillStyle = '#c8d0dc';
+      g.fillText('Tuesday', SW / 2, 380);
+      if (sc.kind === 'notification' && visible.length) {
+        let y = 440;
+        for (const m of visible.slice(-3)) {
+          g.font = `400 32px ${FONT}`;
+          const lines = wrap(g, m.text, SW - 170).slice(0, 3);
+          const h = 100 + lines.length * 40;
+          round(g, 24, y, SW - 48, h, 30, 'rgba(240,243,248,0.92)');
+          avatar(g, 78, y + 56, 30, sc.name || '?');
+          g.textAlign = 'left';
+          g.fillStyle = '#111';
+          g.font = `700 30px ${FONT}`;
+          g.fillText(sc.name || 'Message', 124, y + 52);
+          g.fillStyle = '#6b7380';
+          g.font = `400 24px ${FONT}`;
+          g.textAlign = 'right';
+          g.fillText('now', SW - 50, y + 50);
+          g.textAlign = 'left';
+          g.fillStyle = '#222';
+          g.font = `400 32px ${FONT}`;
+          lines.forEach((l, k) => g.fillText(l, 124, y + 96 + k * 40));
+          y += h + 16;
+        }
+      }
+      return;
+    }
+  }
+};
+
 let screenTex: THREE.CanvasTexture | null = null;
-const phoneScreen = () => {
+const phoneScreen = (sc?: PhoneScreen, t = 0) => {
+  if (sc) {
+    const shown = sc.arrive === undefined || t >= sc.arrive;
+    const key = `${JSON.stringify(sc)}|${shown}`;
+    let tex = screens.get(key);
+    if (!tex) {
+      const c = document.createElement('canvas');
+      c.width = SW;
+      c.height = SH;
+      drawScreen(c.getContext('2d')!, sc, shown);
+      tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      screens.set(key, tex);
+    }
+    return tex;
+  }
   if (!screenTex) {
     const c = document.createElement('canvas');
     c.width = 180;
@@ -326,15 +603,15 @@ export const PHONE_AT: [number, number, number] = [0, -0.085, 0.045];
 export const PHONE_TILT = -0.4;
 
 // Things held in the hand, drawn at the hand.
-export const HeldThing: React.FC<{hold: Hold; glow?: boolean}> = ({hold}) => {
+export const HeldThing: React.FC<{hold: Hold; glow?: boolean; screen?: PhoneScreen; screenT?: number}> = ({hold, screen, screenT}) => {
   switch (hold) {
     case 'phone':
       return (
         <group position={PHONE_AT} rotation={[PHONE_TILT, 0, 0]}>
           <M g={box(0.1, 0.19, 0.016)} m={mat('#1a1b1f', {rough: 0.4})} />
-          <mesh position={[0, 0, 0.0085]}>
+          <mesh position={[0, 0, 0.0085]} rotation={[0, 0, Math.PI]}>
             <planeGeometry args={[0.088, 0.172]} />
-            <meshBasicMaterial map={phoneScreen()} toneMapped={false} />
+            <meshBasicMaterial map={phoneScreen(screen, screenT)} toneMapped={false} />
           </mesh>
         </group>
       );
@@ -391,7 +668,9 @@ export const Man: React.FC<{
   hold?: Hold;
   seed: number;
   detail?: boolean; // the poster's close-ups: eyes with an iris, a catchlight and lashes (FaceView)
-}> = ({design, pose: p, face: f, root, ry, hold = 'none', seed, detail}) => {
+  screen?: PhoneScreen; // what a held phone shows (story.LPScreen)
+  screenT?: number; // seconds into the shot (the last message arrives at screen.arrive)
+}> = ({design, pose: p, face: f, root, ry, hold = 'none', seed, detail, screen, screenT}) => {
   const skin = skinMat(design.skin);
   const top = mat(design.top);
   const topDark = mat(new THREE.Color(design.top).multiplyScalar(0.82).getStyle());
@@ -406,7 +685,7 @@ export const Man: React.FC<{
       <mesh geometry={cached(`hand-${seed}`, () => facetedBall(D.hand, 0, 0.08, seed + 5))} material={skin} position={[0, -D.hand * 0.7, 0]} castShadow />
       {hold && hold !== 'none' && side === 'R' ? (
         <group position={[0, -D.hand * 1.2, 0]}>
-          <HeldThing hold={hold} />
+          <HeldThing hold={hold} screen={screen} screenT={screenT} />
         </group>
       ) : null}
     </group>

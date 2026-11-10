@@ -238,6 +238,10 @@ def lowpoly_lists() -> None:
         ours = set(typing.get_args(py))
         if ours != theirs:
             fail(f"lowpoly {ts_name}: only in story.py {sorted(ours - theirs)}, only in types.ts {sorted(theirs - ours)}")
+    shown = re.search(r"export type ScreenKind =(.*?);", ts, re.S)  # a held phone's screens (Man.tsx drawScreen)
+    if not shown or set(re.findall(r"'([a-z]+)'", shown.group(1))) != set(S.SCREEN_KINDS) \
+            or set(typing.get_args(S.LPScreen.model_fields["kind"].annotation)) != set(S.SCREEN_KINDS):
+        fail("lowpoly phone screens differ between story.SCREEN_KINDS, LPScreen.kind and types.ts ScreenKind")
     things = re.search(r"kind: ('phone'[^;]+);", ts)
     if not things or set(re.findall(r"'([a-z]+)'", things.group(1))) != set(typing.get_args(S.ThingName)):
         fail("lowpoly Thing kinds differ between story.py ThingName and types.ts")
