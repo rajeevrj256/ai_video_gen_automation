@@ -60,11 +60,11 @@ class UpdateBody(BaseModel):
 
 def job_label(job: dict) -> str:
     inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input") or job.get("sticky_input")
-           or job.get("lowpoly_input") or job.get("story_input") or job.get("shoot_input") or {})
+           or job.get("lowpoly_input") or job.get("story_input") or job.get("shoot_input") or job.get("journey_input") or {})
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     if job.get("lowpoly_boards"):
         return f"{job.get('topic') or 'Claude picks'} · Low-poly storyboards"
-    kind = ("Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
+    kind = ("Journey" if job.get("journey_input") else "Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
     return f"{what} · {kind}"
@@ -267,6 +267,9 @@ class JobManager:
             elif job.get("sticky_input"):  # Sticky Films (reelgen/sticky/), new or resumed: a pipeline of its own
                 from .sticky.run import StickyRequest, run_sticky_job
                 reports = run_sticky_job(cfg, StickyRequest(**job["sticky_input"]), job["count"], progress, job.get("sticky_resume"))
+            elif job.get("journey_input"):  # 🌱 Journey Shorts (reelgen/journey/), new or resumed
+                from .journey.run import JourneyRequest, run_journey_job
+                reports = run_journey_job(cfg, JourneyRequest(**job["journey_input"]), job["count"], progress, job.get("journey_resume"))
             elif job.get("lowpoly_input"):  # Low-poly films (reelgen/lowpoly/), new or resumed
                 from .lowpoly.run import LowPolyRequest, run_lowpoly_job
                 reports = run_lowpoly_job(cfg, LowPolyRequest(**job["lowpoly_input"]), job["count"], progress, job.get("lowpoly_resume"))
@@ -573,6 +576,19 @@ class StickyBody(BaseModel):
     format: str = "film"  # film (16:9) | short (9:16)
     seconds: int = 45  # Short: 20-60
     hero: str = ""  # Short: '' = the recurring Shorts hero, 'new', or a Sticky movie's title (its cast)
+    ai: AIPick | None = None
+
+
+class JourneyBody(BaseModel):
+    """🌱 Journey (reelgen/journey/): one real thing's journey through time as a photoreal time-lapse Short."""
+    idea: str = ""  # e.g. 'a tomato that falls off a truck'; empty = Claude picks
+    seconds: int = 60
+    top: str = ""
+    bottom: str = ""
+    words: bool = True
+    labels: bool = False
+    engine: str = "auto"  # auto | cloud | local
+    count: int = 1
     ai: AIPick | None = None
 
 
@@ -1675,6 +1691,23 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
                            sticky_input=given, captions=False, ai=body.ai)
 
+    @app.get("/api/journey/status")
+    def journey_status():
+        from . import anim_engine, hfcloud
+        return {"cloud": hfcloud.ready(), "engine": anim_engine.installed()}
+
+    @app.post("/api/journey")
+    def journey(body: JourneyBody):
+        from .journey.run import ENGINES, can_make
+        engine = body.engine if body.engine in ENGINES else "auto"
+        why = can_make(engine)
+        if why:
+            raise HTTPException(400, why)
+        given = {"idea": body.idea.strip()[:600], "seconds": max(30, min(90, int(body.seconds))), "top": body.top.strip()[:80],
+                 "bottom": body.bottom.strip()[:80], "words": bool(body.words), "labels": bool(body.labels), "engine": engine}
+        return jobs.submit(given["idea"][:80] or None, max(1, min(body.count, 5)), "journey", "facts", "journey",
+                           journey_input=given, captions=False, ai=body.ai)
+
     def lowpoly_given(body: LowPolyBody) -> dict:
         intro = body.kind == "intro"  # 🎭 the cast introduced one by one (lowpoly/intro.py): a film of 30-120 s
         film = body.format == "film" or intro
@@ -2487,6 +2520,14 @@ def create_app(cfg: Config) -> FastAPI:
                 raise HTTPException(400, "Nothing saved to resume for these films; make them again.")
             return jobs.submit(job["topic"], len(saved) or fresh, "resume", "story", "sticky",
                                sticky_input=job["sticky_input"], sticky_resume=saved or None, captions=False, ai=job.get("ai"))
+        if job.get("journey_input"):  # a Journey job resumes its own saved videos (journey-checkpoint.json)
+            from .journey.run import unfinished as unfinished_journeys
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_journeys(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these videos; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", "facts", "journey",
+                               journey_input=job["journey_input"], journey_resume=saved or None, captions=False, ai=job.get("ai"))
         if job.get("lowpoly_input"):  # a low-poly job resumes its own saved videos (lowpoly-checkpoint.json)
             from .lowpoly.run import unfinished as unfinished_lowpoly
             saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_lowpoly(cfg) and f not in busy_folders()]

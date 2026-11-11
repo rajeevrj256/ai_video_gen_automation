@@ -444,7 +444,7 @@
         <button class="chip on" data-len="">All lengths</button><button class="chip" data-len="short">📱 Short</button><button class="chip" data-len="medium" title="16:9, under 7 minutes">🎞️ Medium · under 7 min</button><button class="chip" data-len="long" title="16:9, 7 minutes or more">🎬 Long · 7 min+</button>
       </div></details>
       <details class="fgroup" open><summary>Type <span class="fnow" id="fnowType">All types</span></summary><div class="chips">
-        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="sticky">🎞 Sticky</button><button class="chip" data-type="lowpoly">🧊 Low-poly</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button><button class="chip" data-type="shoot">🎥 Filmed by you</button><button class="chip" data-type="clip">✂️ Shorts from your videos</button>
+        <button class="chip on" data-type="">All types</button><button class="chip" data-type="ai">✨ Made by AI</button><button class="chip" data-type="stick">🧍 Stick</button><button class="chip" data-type="sticky">🎞 Sticky</button><button class="chip" data-type="lowpoly">🧊 Low-poly</button><button class="chip" data-type="journey">🌱 Journey</button><button class="chip" data-type="toon">🎨 Toon</button><button class="chip" data-type="anim">🎬 Animated</button><button class="chip" data-type="storyshorts">📱 Shorts+</button><button class="chip" data-type="script">📜 Your script</button><button class="chip" data-type="shoot">🎥 Filmed by you</button><button class="chip" data-type="clip">✂️ Shorts from your videos</button>
       </div></details>
       <details class="fgroup" open><summary>Status <span class="fnow" id="fnowOk">Any status</span></summary><div class="chips">
         <button class="chip on" data-ok="">Any status</button><button class="chip" data-ok="1">✓ Verified</button><button class="chip" data-ok="0">⚠️ Needs a check</button>
@@ -701,6 +701,42 @@ Plain paragraphs are read by the narrator."></textarea>
     </div>
   </section>
 
+  <section class="view" id="view-journey">
+    <div class="panel">
+      <h2>🌱 Journey</h2>
+      <p class="hint">A photoreal time-lapse Short, like a camera left on the ground for weeks: one real thing's journey in one
+        place (a tomato falls off a truck, rots by the road, its seeds sprout in the rain and grow into a plant full of tomatoes).
+        The 16:9 picture sits in the middle of the 9:16 frame over a blurred copy of itself, with one line above and one below.
+        No voice and no music: only the real sounds of the place. Every stage is fact-checked against real sources (what it looks
+        like, the order, how long it takes), every picture is checked by Claude, and everything runs on free tools.</p>
+      <p class="hint" id="jyEngines">Checking what can draw and animate here…</p>
+      <label for="jyIdea">What goes on the journey (optional)</label>
+      <textarea class="edit" id="jyIdea" rows="2" placeholder="e.g. a tomato that falls off a truck / an acorn a squirrel forgot / a forest after a fire. Leave empty and Claude picks one no earlier video used."></textarea>
+      <div class="grid2">
+        <div><label for="jySeconds">Length</label>
+          <select id="jySeconds"><option value="30">30 s</option><option value="45">45 s</option><option value="60" selected>60 s</option><option value="75">75 s</option><option value="90">90 s</option></select></div>
+        <div><label for="jyCount">How many</label>
+          <select id="jyCount"><option>1</option><option>2</option><option>3</option></select></div>
+      </div>
+      <label>The two lines</label>
+      <div class="grid2">
+        <input class="edit" id="jyTop" placeholder="Above (empty = Claude writes it)">
+        <input class="edit" id="jyBottom" placeholder="Below (empty = Claude writes it)">
+      </div>
+      <div class="grid2">
+        <div><label for="jyWords">Words on screen</label>
+          <select id="jyWords"><option value="true" selected>The two lines</option><option value="false">None</option></select></div>
+        <div><label for="jyLabels">Time under the picture</label>
+          <select id="jyLabels"><option value="false" selected>Off</option><option value="true">On ('WEEK 6' at each stage)</option></select></div>
+      </div>
+      <label for="jyEngine">Made with</label>
+      <select id="jyEngine"><option value="auto" selected>Hugging Face while its free minutes last, then this computer</option>
+        <option value="cloud">Only Hugging Face (stops for the day when the free minutes run out; Resume tomorrow)</option>
+        <option value="local">Only this computer's AI engine (slow on a small graphics card)</option></select>
+      <button class="primary" id="jyBtn">🌱 Make it</button>
+      <p class="hint" id="jyMsg"></p>
+    </div>
+  </section>
   <section class="view" id="view-lowpoly">
     <div class="panel">
       <h2>Low-poly · Life of a Man</h2>
@@ -1357,6 +1393,7 @@ Plain paragraphs are read by the narrator."></textarea>
   <button data-view="script"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Script</button>
   <button data-view="stick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><path d="M12 8v7M12 15l-4 6M12 15l4 6M7 11h10"/></svg>Stick</button>
   <button data-view="sticky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M8 14c-2 1.5-3 4-3 7h14c0-3-1-5.5-3-7"/><circle cx="10.3" cy="7.6" r=".6"/><circle cx="13.7" cy="7.6" r=".6"/></svg>Sticky</button>
+  <button data-view="journey"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21v-8"/><path d="M12 13c0-4 3-7 8-7 0 5-3 8-8 7z"/><path d="M12 15c0-3-2.5-5.5-7-5.5 0 4 2.5 6.5 7 5.5z"/></svg>Journey</button>
   <button data-view="lowpoly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l7 4.5v6L12 17l-7-4.5v-6z"/><path d="M5 6.5l7 4.5 7-4.5M12 11v6"/><path d="M8 20h8"/></svg>Low-poly</button>
   <button data-view="toon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a8 7 0 0 1 16 0c0 4-3.6 7-8 7-1.2 0-2.3-.2-3.3-.6L4 19l1-3.5A6.6 6.6 0 0 1 4 11z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/><path d="M9.5 13.5c1.4 1 3.6 1 5 0"/></svg>Toon</button>
   <button data-view="anim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5l2 4M12 5l2 4M17 5l2 4"/><path d="M10 12.5v4l3.5-2z"/></svg>Anim</button>
@@ -1470,7 +1507,7 @@ function show(view) {
   const tab = document.querySelector(`nav button[data-view="${view}"]`);
   $("#navNow").textContent = tab ? "· " + tab.textContent.trim() : "";  // phones: which tab this is, beside the title
   navMenu(false);
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => { lpFill(); lpLoadBoards(); } }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => { lpFill(); lpLoadBoards(); }, journey: jyStatus }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -1542,7 +1579,7 @@ function renderLibrary() {
     && (!libLen || lenOf(v) === libLen)
     && (libOk === "" || (libOk === "todo" ? !v.review : libOk === "accepted" ? !!v.review : libOk === "posted" ? !!v.posted
       : libOk === "unposted" ? !v.posted : String(+!!v.verified) === libOk))
-    && (!libType || (libType === "ai" ? !["stick", "sticky", "lowpoly", "script", "toon", "anim", "storyshorts", "shoot", "clip"].includes(v.source) : v.source === libType));
+    && (!libType || (libType === "ai" ? !["stick", "sticky", "lowpoly", "journey", "script", "toon", "anim", "storyshorts", "shoot", "clip"].includes(v.source) : v.source === libType));
   const shown = library.filter(match).sort((a, b) =>
     (libSort === "old" ? 1 : -1) * String(a.created_at || "").localeCompare(String(b.created_at || "")));
   // Category chips count what the other filters leave.
@@ -2102,7 +2139,7 @@ async function openVideo(id) {
     <button id="lpRestageBoard" style="width:100%;margin-top:8px">🎬 New storyboard: Claude directs every shot again (cameras, actions, who looks at whom)</button>
     <button id="lpRestageAngles" style="width:100%;margin-top:8px">🎥 New camera angles only (the same staging, no Claude tokens)</button>
     <button id="lpRestageSame" style="width:100%;margin-top:8px">♻️ Re-generate the same (the same shots and cameras, made again with the newest fixes; no Claude tokens)</button>` : ""}
-    <div ${["stick", "sticky", "lowpoly", "anim", "storyshorts", "shoot", "clip"].includes(v.source) ? "hidden" : ""}>
+    <div ${["stick", "sticky", "lowpoly", "journey", "anim", "storyshorts", "shoot", "clip"].includes(v.source) ? "hidden" : ""}>
     <h4 class="section">Voice, speed &amp; subtitles</h4>
     <p class="hint">Re-edit this video: another voice, another speaking speed, or subtitles on/off. Only the voice is recorded again and the same slides, memes, pictures and music are re-timed to it: nothing is generated again, no Claude tokens. Recording again also reads numbers in English words (“one lakh”, not “ek lakh”).</p>
     <div class="row">
@@ -2583,8 +2620,10 @@ const ANIM_STEPS = [["Script", /writing the script/], ["Fact-check", /[Ff]act-ch
 const STORY_STEPS = [["Script", /writing the story|storyboarding|Your story/], ["Fact-check", /[Ff]act-check|Re-checking/], ["Voice", /Recording the voiceover|Recording voiceover|faster/],
   ["Pictures", /Drawing the pictures|Checking the|Redrawing|stock footage|background photos/], ["Animation", /motion prompts|Animating|Sharpening/], ["Music", /^Music|Music \(|Composing the music/],
   ["Editing", /Editing part/], ["Checks", /Verifying part/]];
+const JOURNEY_STEPS = [["Writing", /is writing the journey/], ["Fact-check", /[Ff]act-checking|Corrected/], ["Pictures", /Drawing|picture|keyframes/],
+  ["Motion", /[Aa]nimating|Sharpening the clips|Joining/], ["Sound", /sounds of the place/], ["Editing", /Editing/], ["Checks", /Checking the video/]];
 const LOWPOLY_STEPS = [["Writing", /is writing the/], ["Voice", /Recording the (narration|voices)/], ["Sound", /music and the sound/], ["Editing", /Editing/], ["Checks", /Checking the video/]];
-const stepsOf = (j) => j.length === "lowpoly" ? LOWPOLY_STEPS : j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : j.length === "shoot" ? SHOOT_STEPS : j.length === "sticky" ? STICKY_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
+const stepsOf = (j) => j.length === "journey" ? JOURNEY_STEPS : j.length === "lowpoly" ? LOWPOLY_STEPS : j.length === "storyshorts" ? STORY_STEPS : j.length === "anim" ? ANIM_STEPS : j.length === "script" ? SCRIPT_STEPS : j.length === "shoot" ? SHOOT_STEPS : j.length === "sticky" ? STICKY_STEPS : String(j.length).startsWith("stick") ? STICK_STEPS : j.length === "toon" ? TOON_STEPS : STEPS;
 const LABEL = { queued: "Waiting", running: "Working", done: "Finished", partial: "", failed: "Failed", paused: "⏸️ Paused", stopped: "⏹ Stopped: app closed" };
 // Token counts: every Claude step reports input + output + cached tokens.
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n || 0);
@@ -2698,7 +2737,7 @@ function aiValue(key) {
 }
 // The pickers on the tabs, placed above each Make button.
 [["create", "#genBtn", { writes: "script, hook, fixes" }], ["shoot", "#shCreate", { writes: "shot plan", check: false }], ["script", "#svBtn", { writes: "storyboard" }],
- ["stick", "#stBtn", { writes: "episode, storyboard", checkEffort: "low" }], ["sticky", "#syBtn", { writes: "film", check: false }], ["lowpoly", "#lpBtn", { writes: "story", check: false }], ["toon", "#toBtn", { writes: "script" }],
+ ["stick", "#stBtn", { writes: "episode, storyboard", checkEffort: "low" }], ["sticky", "#syBtn", { writes: "film", check: false }], ["lowpoly", "#lpBtn", { writes: "story", check: false }], ["journey", "#jyBtn", { writes: "journey", checks: "the fact-check and picture check" }], ["toon", "#toBtn", { writes: "script" }],
  ["anim", "#anBtn", { writes: "script" }], ["story", "#ssBtn", { writes: "story, storyboard" }], ["divine", "#dvBtn", { writes: "story" }]].forEach(([key, btn, opts]) => {
   const b = document.querySelector(btn);
   if (b) b.insertAdjacentHTML("beforebegin", aiPicker(key, opts));
@@ -2722,7 +2761,7 @@ function jobCard(j) {
   const boards = !!j.lowpoly_boards;  // ✍ a round of low-poly storyboards to read (no video)
   const what = (j.topic ? esc(j.topic) : boards ? "Claude picks the story" : "Trending topic") + (STYLE_TAG[j.style] && !boards ? ` · ${STYLE_TAG[j.style]}` : "")
     + (boards ? ` · ✍ Low-poly storyboards to read` : j.length === "long" ? " · 🎬 Long" : j.length === "medium" ? " · 🎞️ Medium" : j.length === "script" ? " · 📜 Your script"
-      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "sticky" ? (j.sticky_input?.format === "short" ? " · 🎞 Sticky Short (9:16)" : " · 🎞 Sticky film") : j.length === "lowpoly" ? (j.lowpoly_input?.format === "film" ? " · 🧊 Low-poly film" : " · 🧊 Low-poly Short (9:16)") : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📱 Shorts+ (${j.count} part${j.count > 1 ? "s" : ""})` : "");
+      : j.length === "stick" ? " · 🧍 Stick episode" : j.length === "stick-short" ? " · 🧍 Stick Short" : j.length === "sticky" ? (j.sticky_input?.format === "short" ? " · 🎞 Sticky Short (9:16)" : " · 🎞 Sticky film") : j.length === "journey" ? " · 🌱 Journey (9:16)" : j.length === "lowpoly" ? (j.lowpoly_input?.format === "film" ? " · 🧊 Low-poly film" : " · 🧊 Low-poly Short (9:16)") : j.length === "toon" ? " · 🎨 Toon" : j.length === "anim" ? " · 🎬 Animated" : j.length === "storyshorts" ? ` · 📱 Shorts+ (${j.count} part${j.count > 1 ? "s" : ""})` : "");
   const active = vids.filter((v) => v.state === "running");
   const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : jobStart);
 
@@ -3512,6 +3551,29 @@ $("#syBtn").onclick = async () => {
     show("create");
   } catch (e) { $("#syMsg").textContent = "Couldn't start it: " + e.message; }
   finally { $("#syBtn").disabled = false; }
+};
+
+// 🌱 Journey (reelgen/journey/): a photoreal time-lapse Short of one real thing's journey, only the place's sounds.
+async function jyStatus() {
+  try {
+    const s = await api("/api/journey/status");
+    $("#jyEngines").textContent = s.cloud && s.engine ? "✅ Hugging Face token saved and the AI engine installed: both can be used."
+      : s.cloud ? "✅ Hugging Face token saved (free daily minutes). The AI engine isn't installed, so a day's minutes are the limit (Resume continues the next day)."
+      : s.engine ? "✅ The AI engine is installed: everything is made on this computer (slow on a 4 GB card: about 2-3 hours for a minute). A free Hugging Face token (Anim tab) makes the motion much better and faster."
+      : "⚠️ Nothing here can draw photoreal pictures yet: install the free AI engine in the Anim tab, or save a free Hugging Face token there.";
+  } catch (e) { $("#jyEngines").textContent = ""; }
+}
+$("#jyBtn").onclick = async () => {
+  const body = { idea: $("#jyIdea").value, seconds: Number($("#jySeconds").value), count: Number($("#jyCount").value),
+    top: $("#jyTop").value, bottom: $("#jyBottom").value, words: $("#jyWords").value === "true",
+    labels: $("#jyLabels").value === "true", engine: $("#jyEngine").value, ai: aiValue("journey") };
+  $("#jyBtn").disabled = true;
+  try {
+    await api("/api/journey", { method: "POST", body: JSON.stringify(body) });
+    $("#jyMsg").textContent = "Started. Follow it on the Create tab.";
+    show("create");
+  } catch (e) { $("#jyMsg").textContent = "Couldn't start it: " + e.message; }
+  finally { $("#jyBtn").disabled = false; }
 };
 
 // Low-poly films (reelgen/lowpoly/): the user's own 3D man from 'Life of a Man', narrated; a Short or a 3-15 min film.

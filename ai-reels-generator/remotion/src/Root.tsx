@@ -24,6 +24,9 @@ import type {StickyProps} from './sticky/types';
 import {LowPoly} from './lowpoly/LowPoly';
 import {lowpolyDemoProps} from './lowpoly/demo';
 import type {LowPolyProps} from './lowpoly/types';
+import {Journey} from './journey/Journey';
+import {journeyDemoProps} from './journey/demo';
+import type {JourneyProps} from './journey/types';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
@@ -42,6 +45,10 @@ const calculateLowPolyMetadata: CalculateMetadataFunction<LowPolyProps> = ({prop
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
   width: props.vertical ? 1080 : 1920, // Shorts 9:16, films 16:9
   height: props.vertical ? 1920 : 1080,
+});
+const calculateJourneyMetadata: CalculateMetadataFunction<JourneyProps> = ({props}) => ({
+  durationInFrames: Math.max(1, Math.round(props.duration * props.fps)),
+  fps: props.fps,
 });
 const calculateStickMetadata: CalculateMetadataFunction<StickProps> = ({props}) => ({
   fps: props.fps,
@@ -165,6 +172,17 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={lowpolyDemoProps}
     calculateMetadata={calculateLowPolyMetadata}
+  />
+  {/* 🌱 Journey: a photoreal time-lapse in a 9:16 frame (reelgen/journey/) */}
+  <Composition
+    id="Journey"
+    component={Journey}
+    width={1080}
+    height={1920}
+    fps={30}
+    durationInFrames={180}
+    defaultProps={journeyDemoProps}
+    calculateMetadata={calculateJourneyMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition

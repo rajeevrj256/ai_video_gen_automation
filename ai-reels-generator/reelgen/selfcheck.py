@@ -221,6 +221,24 @@ def visual_templates() -> None:
         fail(f"Briefing layouts missing from LVisual.type or types.ts VisualType: {missing}")
 
 
+def journey_lists() -> None:
+    """🌱 Journey: every sound the writer may pick is a recording in journey/sounds/ (or the synthesised wind), every
+    recording has a credit line, and the sound names are the schema's."""
+    import typing
+
+    from .journey import sound, story
+
+    names = set(typing.get_args(story.SoundName))
+    if names != set(story.BED_NAMES + story.SPOT_NAMES):
+        fail(f"journey: SoundName and BED_NAMES+SPOT_NAMES differ: {sorted(names ^ set(story.BED_NAMES + story.SPOT_NAMES))}")
+    credits = (sound.BANK / "CREDITS.txt").read_text(encoding="utf-8")
+    for n in sorted(names - {"wind"}):
+        if not (list(sound.BANK.glob(f"{n}.ogg")) or list(sound.BANK.glob(f"{n}-*.ogg"))):
+            fail(f"journey: no recording for '{n}' in reelgen/journey/sounds")
+        if n.split("-")[0] not in credits:
+            fail(f"journey: '{n}' has no line in sounds/CREDITS.txt")
+
+
 def lowpoly_lists() -> None:
     """The low-poly writer offers exactly what the editor draws (story.py Literals = lowpoly/types.ts unions), every
     set's spots exist in Sets.tsx, and the hero is the same man in Python and in the editor."""
@@ -690,6 +708,7 @@ def main() -> int:
     hook_templates()
     visual_templates()
     lowpoly_lists()
+    journey_lists()
     lowpoly_vehicles()
     lowpoly_boards()
     lowpoly_intro()

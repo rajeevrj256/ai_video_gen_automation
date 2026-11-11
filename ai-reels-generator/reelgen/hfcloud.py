@@ -117,14 +117,20 @@ def draw(job: dict, work: Path, progress: Progress, stop: Callable[[], None], si
     for n, it in enumerate(todo, 1):
         out = Path(it["out"])
         refs, prompt = [], it["prompt"]
-        if it.get("ref") and Path(it["ref"]).exists():
+        if it.get("edit") and it.get("init") and Path(it["init"]).exists():
+            # 🌱 Journey: the same photograph a while later (the time-lapse's next stage), not a new picture
+            refs = [it["init"]]
+            prompt = (f"Edit this photograph: the same scene some time later. Change only this: {it['edit']} Keep "
+                      "everything else exactly as it is: the same camera position, angle, lens and framing, the same "
+                      f"place, ground and background. Photorealistic, a real photo. The result: {it['prompt']}")
+        elif it.get("ref") and Path(it["ref"]).exists():
             refs.append(it["ref"])
             prompt = f"Use this character exactly as drawn (same head, eyes, clothes, colours). {prompt}"
-        if it.get("init") and Path(it["init"]).exists():
+        if it.get("init") and Path(it["init"]).exists() and not it.get("edit"):
             refs.append(it["init"])
             prompt += (" Keep the same place, light and colours as in the last picture, seen from a new angle."
                        if len(refs) > 1 else " Same place as in this picture, a new moment and angle.")
-        if refs:
+        if refs and not it.get("edit"):
             prompt += " Completely new picture: a new pose, natural lighting on the character, a soft shadow."
         gallery = [{"image": handle_file(r), "caption": None} for r in refs]
         seed = int(it.get("seed", 7)) % 2147483647
@@ -177,4 +183,74 @@ def animate(job: dict, work: Path, progress: Progress, stop: Callable[[], None],
         subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-sseof", "-0.1", "-i", str(out), "-frames:v", "1",
                         "-q:v", "2", str(out.with_suffix(".last.jpg"))], check=False, capture_output=True)
         _ok(out)
+    progress(f"☁️ {len(todo)} clips animated in {(time.time() - t0) / 60:.1f} min")
+
+
+# ---------- 🌱 Journey: clips that go from one picture to the next ----------
+
+FLF_SPACE = "multimodalart/wan-2-2-first-last-frame"  # Wan 2.2 14B, first + last frame, 8 steps (ZeroGPU)
+FLF_LONGEST = 5.0  # 81 frames at 16 fps
+FLF_NEGATIVE = ("static, still image, frozen, blurry, low quality, jpeg artifacts, text, watermark, subtitles, "
+                "morphing objects, distorted, extra objects, camera shake, cartoon")
+
+
+def flf_space() -> str:
+    return (os.environ.get("REEL_HF_FLF_SPACE") or FLF_SPACE).strip()
+
+
+def _save_clip(video, out: Path) -> None:
+    from .video import FFMPEG
+    if isinstance(video, dict):
+        video = video.get("video") or video.get("path")
+    tmp = out.with_suffix(".tmp.mp4")
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(video), "-an", "-c:v", "copy", str(tmp)],
+                   check=True, capture_output=True)
+    shutil.move(str(tmp), out)
+    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-sseof", "-0.1", "-i", str(out), "-frames:v", "1",
+                    "-q:v", "2", str(out.with_suffix(".last.jpg"))], check=False, capture_output=True)
+    _ok(out)
+
+
+def between(job: dict, work: Path, progress: Progress, stop: Callable[[], None]) -> None:
+    """Every clip of a Journey on Hugging Face, in order (a clip may start on the last frame of the one before):
+    with an `end` picture on the Wan 2.2 first-and-last-frame Space, without one (the opening, or the first shot
+    after a cut) on the LTX Space from its first picture. Raises CloudOut when the day's minutes are used up; the
+    clips made so far are kept."""
+    from gradio_client import handle_file
+
+    todo = [s for s in job.get("clips", []) if not _done(Path(s["out"]))]
+    if not todo:
+        return
+    clients: dict[str, object] = {}
+
+    def client(space: str):
+        if space not in clients:
+            clients[space] = _client(space)
+        return clients[space]
+
+    t0 = time.time()
+    for n, s in enumerate(todo, 1):
+        out = Path(s["out"])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if not Path(s["image"]).exists():
+            raise RuntimeError(f"Clip {s['id']}: its first picture {Path(s['image']).name} is missing")
+        seed = int(s.get("seed", 42)) % 2147483647
+        if s.get("end"):
+            secs = max(1.0, min(FLF_LONGEST, float(s.get("seconds", 5))))
+            progress(f"☁️ Animating stage {s['id']} ({secs:g} s, first and last frame) on Hugging Face ({n} of {len(todo)})")
+            c = client(flf_space())
+
+            def make(c=c, s=s, secs=secs, seed=seed):
+                return c.submit(handle_file(s["image"]), handle_file(s["end"]), s["prompt"], FLF_NEGATIVE, secs, 8, 1.0,
+                                1.0, seed, False, api_name="/generate_video")
+        else:
+            secs = max(1.0, min(LONGEST, round(float(s.get("seconds", 5)) * 2) / 2))
+            progress(f"☁️ Animating stage {s['id']} ({secs:g} s) on Hugging Face ({n} of {len(todo)})")
+            c = client(spaces()[1])
+
+            def make(c=c, s=s, secs=secs, seed=seed):
+                return c.submit(s["prompt"], handle_file(s["image"]), CLIP_H, CLIP_W, secs, seed, "conv", False, False,
+                                True, api_name="/run")
+        result = _call(make, f"Clip {s['id']}", stop)
+        _save_clip(result[0] if isinstance(result, (list, tuple)) else result, out)
     progress(f"☁️ {len(todo)} clips animated in {(time.time() - t0) / 60:.1f} min")

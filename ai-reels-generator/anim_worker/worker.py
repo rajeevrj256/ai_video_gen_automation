@@ -763,11 +763,15 @@ def clips(job: dict) -> None:
         frames = int(s.get("frames", 97))
         frames = max(9, (frames - 1) // 8 * 8 + 1)  # LTX takes 8k+1 frames
         g = torch.Generator("cpu").manual_seed(int(s.get("seed", 0)))
+        conditions = [LTXVideoCondition(image=image, frame_index=0)]
+        if s.get("end") and Path(s["end"]).exists():  # 🌱 Journey: the clip ends on the next stage's picture
+            end = ImageOps.fit(Image.open(s["end"]).convert("RGB"), (W, H), Image.LANCZOS)
+            conditions.append(LTXVideoCondition(image=end, frame_index=frames - 1))
         if watch["on"]:
             torch.cuda.reset_peak_memory_stats()
         try:
             result = pipe(
-                conditions=[LTXVideoCondition(image=image, frame_index=0)],
+                conditions=conditions,
                 # precomputed embeddings aren't moved by the pipeline: put them where its own would be
                 prompt_embeds=emb["embeds"].to(device=pipe._execution_device, dtype=compute),
                 prompt_attention_mask=emb["mask"].bool().to(pipe._execution_device),
