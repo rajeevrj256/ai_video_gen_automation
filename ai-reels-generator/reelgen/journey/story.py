@@ -46,6 +46,11 @@ class JStage(BaseModel):
     change: Literal["small", "medium", "large"] = Field(description="How much the picture differs from the stage before "
                                                                     "(small = a little wrinkling, large = a plant where "
                                                                     "there were seeds)")
+    size: float = Field(0.3, description="How tall the subject stands in this stage, as a fraction of the picture's "
+                                         "height (a fallen fruit 0.15-0.3, a seedling 0.3-0.5, a grown plant 0.6-0.9)")
+    keeps: bool = Field(False, description="True when the original subject is still there in this stage, with "
+                                           "something growing out of it (a palm shoot from the coconut); false when it "
+                                           "has changed itself or is gone (the tomato rotted into the soil)")
     cut: bool = Field(False, description="True only for a new camera set-up (stage 1's wide event shot -> the close "
                                          "ground camera); every other stage continues the same shot")
     motion: str = Field(description="What moves during this stage's clip, for the video model, 15-40 words: a time-lapse "

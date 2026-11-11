@@ -373,6 +373,7 @@ def keyframes(job: dict) -> None:
     W, H = job.get("width", 1024), job.get("height", 576)
     steps = job.get("steps", 4)
     blank = Image.new("RGB", (224, 224), (128, 128, 128))
+    inpaint = None  # made the first time an item has a mask (Journey)
     black, short = "", False
     n = 0
     for it in todo:
@@ -392,6 +393,16 @@ def keyframes(job: dict) -> None:
                 strength = float(it.get("strength", 0.6))
                 image = i2i(image=Image.open(init).convert("RGB").resize((W, H)), strength=strength,
                             num_inference_steps=max(steps, math.ceil(steps / strength)), **common).images[0]
+                mask = it.get("mask")
+                if mask and Path(mask).exists():
+                    # 🌱 Journey: the light changed over the whole frame (above, gently), then the subject drawn
+                    # anew inside its mask (a sprout, a young palm) while the place around it stays as it is
+                    if inpaint is None:
+                        from diffusers import StableDiffusionXLInpaintPipeline
+                        inpaint = StableDiffusionXLInpaintPipeline.from_pipe(pipe, torch_dtype=dtype)
+                    ms = float(it.get("mask_strength", 0.95))
+                    image = inpaint(image=image, mask_image=Image.open(mask).convert("L").resize((W, H)), width=W, height=H,
+                                    strength=ms, num_inference_steps=max(steps, math.ceil(steps / ms)), **common).images[0]
             else:
                 image = pipe(width=W, height=H, num_inference_steps=steps, **common).images[0]
         except NaNLatents as exc:
@@ -414,7 +425,7 @@ def keyframes(job: dict) -> None:
         say("item", stage="keyframes", n=n, of=len(todo), id=it.get("id", ""), secs=round(time.time() - t0, 1))
     if not black and not short:
         return
-    del pipe, i2i
+    del pipe, i2i, inpaint
     common = None
     gc.collect()
     if torch.cuda.is_available():

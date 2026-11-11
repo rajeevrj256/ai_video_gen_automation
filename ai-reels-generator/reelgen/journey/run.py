@@ -46,6 +46,18 @@ def can_make(engine: str = "auto") -> str:
     return ""
 
 
+def grade(j: S.Journey, starts: list[float]) -> list[dict]:
+    """Each stage's light for the editor, with a lightning flash where the stage's thunder falls."""
+    out = []
+    for k, s in enumerate(j.stages):
+        g = {"at": starts[k], "until": round(starts[k] + s.seconds, 3), "light": s.light}
+        thunder = [x for x in s.sounds if x.name == "thunder"]
+        if thunder:
+            g["flash"] = round(starts[k] + thunder[0].at * s.seconds, 3)
+        out.append(g)
+    return out
+
+
 def run_journey(cfg: Config, req: JourneyRequest, progress, resume: str | None = None) -> dict:
     from ..llm import meter_records, summarize_usage
     from ..pipeline import _render_slot, pause_point, slugify
@@ -108,6 +120,8 @@ def run_journey(cfg: Config, req: JourneyRequest, progress, resume: str | None =
              "top": j.top_text if req.words else "", "bottom": j.bottom_text if req.words else "",
              "labels": [{"at": starts[k] + 0.2, "until": starts[k] + s.seconds - 0.1, "text": s.elapsed.upper()}
                         for k, s in enumerate(j.stages)] if req.labels else []}
+    if state.get("drew") == "local":  # this computer's pictures can't repaint a sky: the editor grades each stage's light
+        props["grade"] = grade(j, starts)
     out = work / "reel.mp4"
     if state.get("stage") != "rendered" or not out.exists():
         progress("Editing the Short")

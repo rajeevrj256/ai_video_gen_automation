@@ -3,6 +3,11 @@
 // fertile ground'). The picture and its blurred copy are made by reelgen/journey/motion.py; the sound is mixed apart.
 export type JourneyLabel = {at: number; until: number; text: string}; // seconds; e.g. 'WEEK 6' (off by default)
 
+// Light and weather drawn by the editor, per stage (pictures from this computer's engine can't repaint a sky: a test's
+// storm stage came out as the sunny base), cross-faded at the joins like a time-lapse's light.
+export type JourneyLight = 'dawn' | 'morning' | 'midday' | 'golden' | 'overcast' | 'storm' | 'rain' | 'dusk' | 'night';
+export type JourneyGrade = {at: number; until: number; light: JourneyLight; flash?: number}; // flash: seconds, a lightning strike
+
 export type JourneyProps = {
   fps: number;
   duration: number; // seconds
@@ -11,5 +16,6 @@ export type JourneyProps = {
   top: string; // the line above the picture ('' = none)
   bottom: string; // the line below
   labels?: JourneyLabel[];
+  grade?: JourneyGrade[];
   silent?: boolean;
 };

@@ -117,9 +117,10 @@ def draw(job: dict, work: Path, progress: Progress, stop: Callable[[], None], si
     for n, it in enumerate(todo, 1):
         out = Path(it["out"])
         refs, prompt = [], it["prompt"]
-        if it.get("edit") and it.get("init") and Path(it["init"]).exists():
+        src = it.get("edit_from") or it.get("init")
+        if it.get("edit") and src and Path(src).exists():
             # 🌱 Journey: the same photograph a while later (the time-lapse's next stage), not a new picture
-            refs = [it["init"]]
+            refs = [src]
             prompt = (f"Edit this photograph: the same scene some time later. Change only this: {it['edit']} Keep "
                       "everything else exactly as it is: the same camera position, angle, lens and framing, the same "
                       f"place, ground and background. Photorealistic, a real photo. The result: {it['prompt']}")
