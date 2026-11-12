@@ -66,7 +66,7 @@ SKY = {
     "storm": "dark heavy thunderstorm clouds, a low grey-black sky, sheets of heavy rain falling",
     "rain": "low grey rain clouds, steady rain falling",
     "dusk": "a dusk sky, the last orange glow fading into deep blue",
-    "night": "a night sky, deep dark blue, a bright moon and faint stars",
+    "night": "a clear dark night sky, deep navy blue, a small bright moon and faint stars, no clouds",
 }
 GROUND = {  # (words, how far from the base); a light that changes only the sky leaves the ground alone
     "storm": ("the same ground soaked dark by heavy rain, raindrops splashing on it, rain falling", 0.4),
@@ -112,6 +112,8 @@ RELIGHT = {  # brightness, colour, (r, g, b) multiplied in
     "midday": (1.04, 1.02, (1.0, 1.0, 1.0)),
 }
 
+SKY_DIM = {"night": 0.72, "dusk": 0.9}
+
 
 def relight(picture: Path, light: str) -> None:
     """Grade the ground of a picture to its light, once (`.lit` next to it, newer than the picture)."""
@@ -127,7 +129,8 @@ def relight(picture: Path, light: str) -> None:
     a = np.asarray(graded).astype(np.float32) * np.array([r, g, bl], np.float32)
     keep = (np.asarray(Image.open(sky).convert("L").resize(img.size)).astype(np.float32) / 255)[..., None] if sky.exists() \
         else np.zeros((img.height, img.width, 1), np.float32)
-    out = np.asarray(img).astype(np.float32) * keep + a * (1 - keep)
+    sky_dim = SKY_DIM.get(light, 1.0)  # a night sky drawn too bright (a glowing cloud) is brought down to its ground
+    out = np.asarray(img).astype(np.float32) * sky_dim * keep + a * (1 - keep)
     Image.fromarray(out.clip(0, 255).astype(np.uint8)).save(picture, quality=95)
     lit.write_text(light)
 
