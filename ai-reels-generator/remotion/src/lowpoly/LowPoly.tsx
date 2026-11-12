@@ -1304,8 +1304,8 @@ const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) =
 // night or a lamp-lit room the most, a bright day only a little.
 export type Grade = {teal: number; warm: number; contrast: number; bloom: number};
 export const GRADES: Record<string, Grade> = {
-  night: {teal: 0.5, warm: 0.42, contrast: 0.22, bloom: 0.62},
-  lamp: {teal: 0.5, warm: 0.44, contrast: 0.22, bloom: 0.5},
+  night: {teal: 0.5, warm: 0.42, contrast: 0.22, bloom: 0.42},
+  lamp: {teal: 0.5, warm: 0.44, contrast: 0.22, bloom: 0.4},
   dark: {teal: 0.46, warm: 0.3, contrast: 0.2, bloom: 0.55},
   evening: {teal: 0.34, warm: 0.4, contrast: 0.18, bloom: 0.36},
   dawn: {teal: 0.3, warm: 0.34, contrast: 0.16, bloom: 0.38},
@@ -1497,7 +1497,7 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
       <directionalLight position={rimPos.toArray()} target={tgt} color={rimColor} intensity={rimK} />
       {lamp > 0 && set.lamp ? (
         // a warm pool round the lamp that falls off into the dark (a lamp lighting the whole room flattened it)
-        <pointLight position={set.lamp} color="#ffa04f" intensity={lamp * 2.2} distance={6.5} decay={2} castShadow={false} />
+        <pointLight position={set.lamp} color="#ffa04f" intensity={lamp * 1.4} distance={5.5} decay={2} castShadow={false} />
       ) : null}
       {dark
         ? glow.map((g, i) => <pointLight key={`glow${i}`} position={g.toArray()} color="#9cc4ff" intensity={0.45} distance={1.1} decay={2} />)

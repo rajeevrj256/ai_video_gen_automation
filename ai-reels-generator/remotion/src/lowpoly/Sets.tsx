@@ -406,7 +406,7 @@ const night = (look: Look) => look.shade < 0.8;
 // on its nightstand to his left, the bed to his right with a blanket thrown over its side, posters, a shelf with a
 // plant and fairy lights, papers on the floor, grey-blue walls.
 const bedroom: SetDef = {
-  lamp: [-1.15, 1.0, -2.55],
+  lamp: [-1.65, 1.0, -2.55],
   spots: {
     bed: {x: 1.55, z: -1.45, ry: 0, bed: 0.55, seat: 0.55, stand: [0.35, -1.0]},
     center: {x: -0.3, z: 0.5, ry: 0},
@@ -420,7 +420,7 @@ const bedroom: SetDef = {
   sun: [-1.5, 4.5, -6],
   outdoor: false,
   walk: 'x',
-  surface: [-1.3, 0.58, -2.5],
+  surface: [-1.8, 0.58, -2.5],
   Draw: ({look}) => (
     <group>
       <Room floor="#7a5e4a" wall="#a9b0ad" side="#9ea6a4" look={look} />
@@ -435,19 +435,19 @@ const bedroom: SetDef = {
         <primitive object={mat(shadeOf('#c9d1d8', look.shade))} attach="material" />
       </mesh>
       {/* the nightstand and its lamp */}
-      <B p={[-1.3, 0.27, -2.5]} s={[0.6, 0.54, 0.45]} c={shadeOf('#6e4a33', look.shade)} />
-      <B p={[-1.3, 0.36, -2.27]} s={[0.5, 0.02, 0.01]} c={shadeOf('#3e2a1e', look.shade)} />
-      <Cyl p={[-1.15, 0.66, -2.6]} r1={0.05} r2={0.07} h={0.16} c="#3c3a38" seg={6} />
-      <Cyl p={[-1.15, 0.88, -2.6]} r1={0.13} r2={0.2} h={0.26} c="#f0d3a6" seg={8} glow={look.lamp > 0 ? 1.05 : 0} />
-      <B p={[-1.45, 0.58, -2.45]} s={[0.12, 0.07, 0.09]} c={shadeOf('#d9d6cf', look.shade)} />
+      <B p={[-1.8, 0.27, -2.5]} s={[0.6, 0.54, 0.45]} c={shadeOf('#6e4a33', look.shade)} />
+      <B p={[-1.8, 0.36, -2.27]} s={[0.5, 0.02, 0.01]} c={shadeOf('#3e2a1e', look.shade)} />
+      <Cyl p={[-1.65, 0.66, -2.6]} r1={0.05} r2={0.07} h={0.16} c="#3c3a38" seg={6} />
+      <Cyl p={[-1.65, 0.88, -2.6]} r1={0.13} r2={0.2} h={0.26} c="#e8c896" seg={8} glow={look.lamp > 0 ? 0.55 : 0} />
+      <B p={[-1.95, 0.58, -2.45]} s={[0.12, 0.07, 0.09]} c={shadeOf('#d9d6cf', look.shade)} />
       {/* the window behind him, moonlight spilling round it at night */}
-      <Window p={[-0.45, 1.75, -2.95]} w={1.25} h={1.35} ry={0} look={look} frame="#e6e2da" />
+      <Window p={[-0.45, 1.75, -2.95]} w={1.25} h={1.35} ry={0} look={look} frame="#c9c6bf" />
       {look.shade < 0.8 ? <pointLight position={[-0.45, 1.8, -2.4]} color="#7fa2e6" intensity={1.4} distance={3.2} decay={2} /> : null}
       <B p={[-0.6, 0.012, 0.75]} s={[1.9, 0.02, 1.25]} c={shadeOf('#4f5e70', look.shade)} noShadow />
       <B p={[-3.1, 1.15, -1.2]} s={[0.6, 2.3, 1.3]} c={shadeOf('#8c6a4f', look.shade)} />
       <B p={[-2.79, 1.15, -1.2]} s={[0.02, 2.1, 0.02]} c="#5a3e2c" />
       {/* posters, the shelf with its plant and the fairy lights strung under it */}
-      <Poster p={[-2.05, 1.95, -2.95]} w={0.62} seed={2} look={look} />
+      <Poster p={[-2.3, 2.05, -2.95]} w={0.56} seed={2} look={look} />
       <Poster p={[0.75, 2.1, -2.95]} w={0.5} seed={5} look={look} />
       <Poster p={[2.2, 2.05, -2.95]} w={0.56} seed={3} look={look} />
       <Poster p={[3.45, 2.0, -0.6]} ry={-Math.PI / 2} w={0.5} seed={1} look={look} />
