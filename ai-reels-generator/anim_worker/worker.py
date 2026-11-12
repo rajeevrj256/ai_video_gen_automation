@@ -374,6 +374,7 @@ def keyframes(job: dict) -> None:
     steps = job.get("steps", 4)
     blank = Image.new("RGB", (224, 224), (128, 128, 128))
     inpaint = None  # made the first time an item has a mask (Journey)
+    depth = None  # the small depth model, the first time a pass needs the sky (Journey)
     black, short = "", False
     n = 0
     for it in todo:
@@ -400,6 +401,10 @@ def keyframes(job: dict) -> None:
                 if it.get("mask"):
                     passes.append({"mask": it["mask"], "strength": it.get("mask_strength", 0.95)})
                 for ps in passes:
+                    if ps["mask"] == "sky":  # the sky (and the far sea) of THIS picture, found from its depth
+                        if depth is None:
+                            depth = _depth_model("cpu")
+                        ps = {**ps, "mask": far_mask(depth, image, float(ps.get("horizon", 0.4)), it["out"])}
                     if not Path(ps["mask"]).exists():
                         continue
                     if inpaint is None:
@@ -1163,6 +1168,33 @@ def _depth(proc, model, image, device):
     d = ((d - lo) / (hi - lo + 1e-6)).clamp(0, 1)
     d = F.max_pool2d(d[None, None], 9, stride=1, padding=4)
     return F.avg_pool2d(d, 15, stride=1, padding=7)[0, 0]
+
+
+def far_mask(depth, image, horizon: float, out: str) -> str:
+    """🌱 Journey's sky: the farthest part of the picture (sky, far sea) above a little below the horizon Claude
+    marked, so a storm or a night sky is drawn there and the trees, the sand and the subject stay as they are (a
+    rectangle over the top redrew the trees and moved the whole beach)."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    proc, model = depth
+    d = _raw_depth(proc, model, image).numpy()
+    lo, hi = float(np.percentile(d, 1)), float(np.percentile(d, 99))
+    far = (d - lo) / (hi - lo + 1e-6) < 0.05
+    rows = np.arange(image.height)[:, None] < (min(0.85, horizon + 0.08) * image.height)
+    m = Image.fromarray(((far & rows) * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(6))
+    path = str(Path(out).with_suffix(".sky.png"))
+    m.save(path)
+    return path
+
+
+def _raw_depth(proc, model, image):
+    import torch
+    import torch.nn.functional as F
+
+    with torch.no_grad():
+        d = model(**proc(images=image, return_tensors="pt")).predicted_depth[None]
+        return F.interpolate(d.float(), size=(image.height, image.width), mode="bicubic", align_corners=False)[0, 0]
 
 
 def _move(camera: str, t: float, seed: int) -> tuple[float, float, float]:

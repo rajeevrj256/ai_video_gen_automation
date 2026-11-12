@@ -50,12 +50,12 @@ def light_strength(base_light: str, light: str) -> float:
     picture), so the weather is drawn in its own passes (`weather_passes`)."""
     if light == base_light:
         return 0.22
-    return 0.35
+    return 0.26
 
 
 # The weather drawn INTO the photograph, never laid over it: the editor's white rain lines and colour washes looked
 # fake (the user: "why fake rain"). A stage whose light differs from its base picture's gets the sky above the
-# horizon drawn anew (storm clouds, a night sky) and the ground around the subject (wet sand and splashes, moonlight),
+# horizon drawn anew (storm clouds, a night sky) and the ground around the subject a little (wet sand, moonlight),
 # each with its own words; the subject is drawn after, inside its own mask. The video model then makes the rain fall.
 SKY = {
     "dawn": "a pale dawn sky, the first pink and orange light low on the horizon",
@@ -69,18 +69,14 @@ SKY = {
     "night": "a night sky, deep dark blue, a bright moon and faint stars",
 }
 GROUND = {  # (words, how far from the base); a light that changes only the sky leaves the ground alone
-    "storm": ("rain-soaked dark wet ground, raindrops splashing into puddles, heavy rain falling", 0.6),
-    "rain": ("wet ground, raindrops splashing, small puddles, steady rain falling", 0.55),
-    "night": ("the ground at night in cool blue moonlight, deep soft shadows", 0.75),
-    "dusk": ("the ground in dim blue dusk light, soft long shadows", 0.6),
-    "golden": ("the ground in warm low golden sunlight, long shadows", 0.45),
-    "dawn": ("the ground in soft pink dawn light, long faint shadows", 0.45),
+    "storm": ("the same ground soaked dark by heavy rain, raindrops splashing on it, rain falling", 0.4),
+    "rain": ("the same ground wet and darker from steady rain, raindrops splashing", 0.36),
+    "night": ("the same ground at night in cool blue moonlight, deep soft shadows", 0.55),
+    "dusk": ("the same ground in dim blue dusk light, soft long shadows", 0.42),
+    "golden": ("the same ground in warm low golden sunlight, long shadows", 0.34),
+    "dawn": ("the same ground in soft pink dawn light, long faint shadows", 0.34),
 }
 DEFAULT_HORIZON = 0.35
-
-
-def sky_path(work: Path, k: int) -> Path:
-    return work / "keyframes" / f"s{k:02d}.png"
 
 
 def ground_path(work: Path, k: int) -> Path:
@@ -88,13 +84,10 @@ def ground_path(work: Path, k: int) -> Path:
 
 
 def write_weather_masks(work: Path, k: int, horizon: float, box: list[float], size: float, base_size: float) -> None:
-    """The sky above the horizon, and the ground below it without the subject's own mask (drawn after)."""
+    """The ground below the horizon without the subject's own mask (drawn after)."""
     from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
     hz = max(0.05, min(0.8, float(horizon)))
-    sky = Image.new("L", (W, H), 0)
-    ImageDraw.Draw(sky).rectangle([0, 0, W, (hz + 0.03) * H], fill=255)
-    sky.filter(ImageFilter.GaussianBlur(14)).save(sky_path(work, k))
     ground = Image.new("L", (W, H), 0)
     ImageDraw.Draw(ground).rectangle([0, (hz + 0.01) * H, W, H], fill=255)
     tmp = ground_path(work, k).with_suffix(".subj.png")
@@ -104,12 +97,15 @@ def write_weather_masks(work: Path, k: int, horizon: float, box: list[float], si
     ground.filter(ImageFilter.GaussianBlur(14)).save(ground_path(work, k))
 
 
-def weather_passes(j: Journey, work: Path, k: int, base: int) -> list[dict]:
+def weather_passes(j: Journey, work: Path, k: int, base: int, horizons: dict) -> list[dict]:
+    """The sky is found by the worker in the picture itself (its farthest part, from a small depth model, above the
+    horizon); the ground's mask is written here."""
     light, was = j.stages[k].light, j.stages[base].light
     if light == was:
         return []
     look = f"{j.place.strip().rstrip('.')}. {LOOK}"
-    out = [{"mask": str(sky_path(work, k)), "strength": 1.0, "prompt": f"{SKY[light]}, {look}"}]
+    hz = float(horizons.get(f"k{base:02d}", DEFAULT_HORIZON))
+    out = [{"mask": "sky", "horizon": hz, "strength": 1.0, "prompt": f"{SKY[light]}, {look}"}]
     if light in GROUND:
         words, how = GROUND[light]
         out.append({"mask": str(ground_path(work, k)), "strength": how, "prompt": f"{words}, {look}"})
@@ -175,7 +171,7 @@ def job(j: Journey, work: Path, seed: int, fixes: dict | None = None, boxes: dic
                       edit=s.what.strip(), edit_from=str(path(work, k - 1)), mask=str(mask_path(work, k)),
                       mask_strength=1.0 if s.size >= 1.8 * j.stages[base].size else MASK_STRENGTH,
                       box=boxes.get(f"k{base:02d}") or DEFAULT_BOX, size=s.size, base_size=j.stages[base].size,
-                      keep=bool(s.keeps), passes=weather_passes(j, work, k, base),
+                      keep=bool(s.keeps), passes=weather_passes(j, work, k, base, horizons or {}),
                       horizon=float((horizons or {}).get(f"k{base:02d}", DEFAULT_HORIZON)))
         fix = fixes.get(it["id"])
         if fix:
