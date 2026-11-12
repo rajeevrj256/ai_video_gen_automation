@@ -230,9 +230,11 @@ def make(cfg: Config, j: Journey, work: Path, seed: int, state: dict, progress, 
     base = [it["id"] for it in job(j, work, seed)["shots"] if "init" not in it]
     drew = state.get("drew") or ""
     for phase, ids in (("base", base), ("chain", None)):
-        if state.get(f"pics_{phase}"):
-            continue
         boxes = state.setdefault("boxes", {})
+        if state.get(f"pics_{phase}"):  # checked before: only draw what's missing (a resume, a deleted picture)
+            got = draw(_only(job(j, work, seed, fixes, boxes), ids), work, progress, engine, stop)
+            drew = drew if got == "done" and drew else got
+            continue
         missing = [i for i in base if i not in boxes and (work / "keyframes" / f"{i}.jpg").exists()]
         if phase == "chain" and missing:  # a base picture redrawn last wasn't looked at: where is its subject?
             try:
