@@ -40,7 +40,7 @@ export type Look = {
 };
 
 export const LOOKS: Record<Light, Look> = {
-  night: {sky: ['#111a30', '#2a3756'], hemi: ['#6c7ca6', '#3a3646', 1.15], key: ['#a9bbee', 2.1], fill: ['#7080b4', 0.5], window: ['#2a3e6a', 1.0], lamp: 0, fog: 0.01, exposure: 1.1, shade: 0.7},
+  night: {sky: ['#111a30', '#2a3756'], hemi: ['#6c7ca6', '#3a3646', 1.15], key: ['#a9bbee', 2.1], fill: ['#7080b4', 0.5], window: ['#3d5a92', 1.35], lamp: 1.3, fog: 0.01, exposure: 1.1, shade: 0.7},
   lamp: {sky: ['#0b0f1c', '#1b2238'], hemi: ['#5a5f78', '#3e3238', 0.8], key: ['#8a9ad0', 0.7], fill: ['#ffb36b', 0.4], window: ['#17213c', 0.7], lamp: 2.2, fog: 0.012, exposure: 1.12, shade: 0.75},
   dawn: {sky: ['#a98a9c', '#e8ad98'], hemi: ['#f0c0b4', '#4e5a42', 1.0], key: ['#ffbf96', 2.3], fill: ['#a7a7d6', 0.35], window: ['#ffd2b8', 1.3], lamp: 0, fog: 0.008, exposure: 1.0, shade: 0.92},
   morning: {sky: ['#d9c4a8', '#f4dcb8'], hemi: ['#e2c2a0', '#5e4635', 0.85], key: ['#ffd29c', 3.2], fill: ['#a99c94', 0.25], window: ['#fff0d6', 2.2], lamp: 0, fog: 0.008, exposure: 1.0, shade: 1},
@@ -50,7 +50,9 @@ export const LOOKS: Record<Light, Look> = {
 };
 
 type V3 = [number, number, number];
-const shadeOf = (c: string, k: number) => (k >= 0.999 ? c : new THREE.Color(c).multiplyScalar(k).getStyle());
+// darker at night, and a little bluer: moonlight is cool (the film look's walls go blue-grey, not dim beige)
+const NIGHT_TONE = new THREE.Color('#2c3a52');
+const shadeOf = (c: string, k: number) => (k >= 0.999 ? c : new THREE.Color(c).multiplyScalar(k).lerp(NIGHT_TONE, Math.min(0.3, (1 - k) * 0.6)).getStyle());
 
 // Boxes and shapes: cast and catch shadows, flat shaded.
 export const B: React.FC<{p: V3; s: V3; c: string; r?: V3; glow?: number; noShadow?: boolean}> = ({p, s, c, r, glow, noShadow}) => (
@@ -100,9 +102,126 @@ const Room: React.FC<{w?: number; d?: number; h?: number; floor: string; wall: s
       <Wall p={[-w / 2, h / 2, 0]} w={6} h={h} ry={Math.PI / 2} c={shadeOf(side ?? wall, k * 0.94)} />
       <Wall p={[w / 2, h / 2, 0]} w={6} h={h} ry={-Math.PI / 2} c={shadeOf(side ?? wall, k * 0.94)} />
       <B p={[0, 0.06, -2.97]} s={[w, 0.12, 0.04]} c={shadeOf('#e9e1d4', k)} noShadow />
+      {/* the ceiling, seen only from below (a camera over the room looks through it): an open top showed the night
+          sky's blue as a flat colour over the walls */}
+      <mesh position={[0, h, -d / 2 + 3]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[w, 6]} />
+        <primitive object={mat(shadeOf(side ?? wall, k * 0.86))} attach="material" />
+      </mesh>
     </group>
   );
 };
+
+// A poster for a bedroom wall: a picture only (no words: an image model's would be gibberish, and real titles are
+// someone's), a night sky, a moon or a sun, mountains, a few stars, in its own colours; drawn once per seed.
+const posters = new Map<string, THREE.CanvasTexture>();
+const POSTER_SKIES: [string, string, string][] = [
+  ['#10203a', '#2f5d7c', '#e9d9a6'], ['#2b1838', '#c2566a', '#ffd39a'], ['#0e2a2a', '#3f8a7a', '#f2efe0'], ['#1d1b33', '#5b4f9a', '#f7c873'],
+];
+export const posterTexture = (seed: number) => {
+  const key = String(seed);
+  let t = posters.get(key);
+  if (!t) {
+    const r = rng(seed * 7 + 3);
+    const [top, low, moon] = POSTER_SKIES[seed % POSTER_SKIES.length];
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 360;
+    const g = c.getContext('2d')!;
+    const sky = g.createLinearGradient(0, 0, 0, 360);
+    sky.addColorStop(0, top);
+    sky.addColorStop(1, low);
+    g.fillStyle = sky;
+    g.fillRect(0, 0, 256, 360);
+    g.fillStyle = 'rgba(255,255,255,0.75)';
+    for (let i = 0; i < 40; i++) g.fillRect(r() * 256, r() * 200, 1.6, 1.6);
+    g.fillStyle = moon;
+    g.beginPath();
+    g.arc(70 + r() * 120, 80 + r() * 60, 26 + r() * 18, 0, Math.PI * 2);
+    g.fill();
+    for (let layer = 0; layer < 3; layer++) {
+      g.fillStyle = new THREE.Color(top).lerp(new THREE.Color('#000000'), 0.25 + layer * 0.22).getStyle();
+      g.beginPath();
+      g.moveTo(0, 360);
+      let x = 0;
+      while (x <= 256) {
+        g.lineTo(x, 200 + layer * 45 + r() * 50);
+        x += 30 + r() * 40;
+      }
+      g.lineTo(256, 360);
+      g.fill();
+    }
+    g.strokeStyle = 'rgba(255,255,255,0.9)';
+    g.lineWidth = 10;
+    g.strokeRect(0, 0, 256, 360);
+    t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    posters.set(key, t);
+  }
+  return t;
+};
+
+const Poster: React.FC<{p: V3; ry?: number; w: number; seed: number; look: Look}> = ({p, ry = 0, w, seed, look}) => (
+  <mesh position={p} rotation={[0, ry, 0.012 * ((seed % 3) - 1)]} receiveShadow>
+    <planeGeometry args={[w, w * 1.4]} />
+    <meshStandardMaterial map={posterTexture(seed)} color={new THREE.Color('#ffffff').multiplyScalar(look.shade)} roughness={0.85} flatShading />
+  </mesh>
+);
+
+// Warm fairy lights hung along a wall in a few sagging loops (they bloom in the film look), on day and night.
+const FairyLights: React.FC<{from: V3; to: V3; n: number; sag: number; look: Look}> = ({from, to, n, sag, look}) => {
+  const on = look.shade < 0.95 ? 2.6 : 1.2;
+  return (
+    <group>
+      {Array.from({length: n}, (_, i) => {
+        const k = i / (n - 1);
+        const loop = Math.sin(k * Math.PI * 3) ** 2; // three loops
+        const x = from[0] + (to[0] - from[0]) * k;
+        const y = from[1] + (to[1] - from[1]) * k - sag * loop;
+        const z = from[2] + (to[2] - from[2]) * k;
+        return (
+          <mesh key={i} position={[x, y, z]}>
+            <icosahedronGeometry args={[0.028, 0]} />
+            <primitive object={mat('#ffd58a', {emissive: '#ffc46a', glow: on})} attach="material" />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+};
+
+// A potted plant on a little wall shelf.
+const ShelfPlant: React.FC<{p: V3; look: Look}> = ({p, look}) => (
+  <group position={p}>
+    <B p={[0, 0, 0]} s={[0.8, 0.04, 0.24]} c={shadeOf('#8a6346', look.shade)} />
+    <Cyl p={[0.18, 0.1, 0]} r1={0.09} r2={0.07} h={0.16} c={shadeOf('#b8674a', look.shade)} seg={7} />
+    {[0, 1, 2, 3, 4].map((i) => (
+      <mesh key={i} position={[0.18 + Math.sin(i * 1.7) * 0.07, 0.25 + (i % 2) * 0.06, Math.cos(i * 1.7) * 0.05]} rotation={[0.3 * Math.sin(i), i * 1.2, 0.5 * Math.cos(i * 2.1)]} castShadow>
+        <coneGeometry args={[0.05, 0.22, 4]} />
+        <primitive object={mat(shadeOf(i % 2 ? '#4f7d4a' : '#3e6b3f', look.shade))} attach="material" />
+      </mesh>
+    ))}
+    <B p={[-0.2, 0.08, 0]} s={[0.12, 0.13, 0.16]} c={shadeOf('#3f5a74', look.shade)} />
+    <B p={[-0.06, 0.06, 0]} s={[0.1, 0.09, 0.15]} c={shadeOf('#c9b28a', look.shade)} />
+  </group>
+);
+
+// Loose sheets of paper on the floor (a lived-in room).
+const Papers: React.FC<{at: [number, number, number][]; look: Look}> = ({at, look}) => (
+  <group>
+    {at.map(([x, z, r], i) => (
+      <group key={i}>
+        <B p={[x, 0.006, z]} s={[0.3, 0.006, 0.4]} r={[0, r, 0]} c={shadeOf('#ecebe4', look.shade)} noShadow />
+        {i % 2 ? (
+          <mesh position={[x + 0.25, 0.05, z - 0.1]} castShadow>
+            <primitive object={facetedBall(0.06, 0, 0.3, 31 + i)} attach="geometry" />
+            <primitive object={mat(shadeOf('#e4e2da', look.shade))} attach="material" />
+          </mesh>
+        ) : null}
+      </group>
+    ))}
+  </group>
+);
 
 // Text on a little canvas, for a clock's digits, a note, a calendar page (kept per text).
 const textures = new Map<string, THREE.CanvasTexture>();
@@ -305,12 +424,18 @@ const bedroom: SetDef = {
       <Bed x={-0.6} look={look} />
       <B p={[0.75, 0.27, -2.5]} s={[0.55, 0.54, 0.45]} c={shadeOf('#7c5439', look.shade)} />
       <Cyl p={[0.95, 0.66, -2.62]} r1={0.06} r2={0.08} h={0.16} c="#d9d2c4" seg={6} />
-      <Cyl p={[0.95, 0.86, -2.62]} r1={0.12} r2={0.18} h={0.22} c="#f4e3c4" seg={6} glow={look.lamp > 0 ? 1.4 : 0} />
+      <Cyl p={[0.95, 0.86, -2.62]} r1={0.12} r2={0.18} h={0.22} c="#f4e3c4" seg={6} glow={look.lamp > 0 ? 1.8 : 0} />
       <Window p={[3.48, 1.65, -1.0]} w={1.5} h={1.25} ry={-Math.PI / 2} look={look} />
       <B p={[-0.6, 0.012, 0.75]} s={[1.7, 0.02, 1.15]} c={shadeOf('#b0583f', look.shade)} noShadow />
       <B p={[-3.1, 1.15, -1.2]} s={[0.6, 2.3, 1.3]} c={shadeOf('#9c7556', look.shade)} />
       <B p={[-2.79, 1.15, -1.2]} s={[0.02, 2.1, 0.02]} c="#5a3e2c" />
-      <B p={[1.9, 1.9, -2.95]} s={[0.9, 0.65, 0.04]} c={shadeOf('#7d8d94', look.shade)} />
+      {/* a lived-in room (the user's concept still): posters, a plant on a shelf, fairy lights over the bed, papers */}
+      <Poster p={[1.85, 1.95, -2.95]} w={0.62} seed={2} look={look} />
+      <Poster p={[-2.05, 2.15, -2.95]} w={0.5} seed={5} look={look} />
+      <Poster p={[3.45, 1.95, 0.75]} ry={-Math.PI / 2} w={0.5} seed={3} look={look} />
+      <ShelfPlant p={[2.75, 1.25, -2.85]} look={look} />
+      <FairyLights from={[-1.9, 2.55, -2.9]} to={[0.6, 2.55, -2.9]} n={18} sag={0.16} look={look} />
+      <Papers at={[[1.35, 1.45, 0.4], [-0.35, 1.75, -0.5], [2.5, 1.15, 1.1]]} look={look} />
     </group>
   ),
 };
@@ -374,7 +499,9 @@ const street: SetDef = {
           <group key={x}>
             <mesh position={[x, 1.75, -2.18]}>
               <planeGeometry args={[2.5, 2.3]} />
-              <meshBasicMaterial color={n ? new THREE.Color('#fff4e0').multiplyScalar(1.15) : new THREE.Color('#e9eef3').multiplyScalar(0.9)} />
+              {/* shop windows: a warm lit inside at night, warm reflections at dusk, grey-blue glass by day (they were
+                  near white, and the film look's glow turned them into blank panels) */}
+              <meshBasicMaterial color={n ? new THREE.Color('#ffd69c') : look.shade < 0.95 ? new THREE.Color('#cf9d74').multiplyScalar(0.85) : new THREE.Color('#aebcc8').multiplyScalar(0.85)} />
             </mesh>
             <B p={[x + 1.6, 3.5, -2.1]} s={[0.22, 7, 0.16]} c={shadeOf('#4c4f57', k)} />
             {i % 3 === 0 ? <B p={[x, 4.6, -2.16]} s={[2.0, 1.2, 0.04]} c={n ? '#ffe9c4' : '#b9c4cf'} glow={n ? 1.2 : 0} /> : null}

@@ -210,7 +210,7 @@ const Glasses: React.FC<{color: string}> = ({color}) => {
 
 // Skin glows a little from within (the reference's faces stay pale and readable in every light, its chins never
 // go black): an emissive lift of the skin's own colour under the light.
-export const SKIN_GLOW = 0.16;
+export const SKIN_GLOW = 0.06; // 0.16 kept the face readable but flat; the face's own key light (LowPoly Lights) lights it now
 const skinMat = (c: string) => mat(c, {emissive: c, glow: SKIN_GLOW});
 
 const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, design, detail}) => {
@@ -232,7 +232,12 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
           <mesh geometry={box(er * 2.25, er * 0.28, 0.02)} material={dark} position={[sx * 0.004, er * 0.78, 0.004]} rotation={[0, 0, sx * 0.08]} />
         </group>
       ) : (
-        <mesh geometry={disc(er * 0.86)} material={dark} scale={[1, 0.88, 1]} position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]} />
+        <group position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]}>
+          <mesh geometry={disc(er * 0.86)} material={dark} scale={[1, 0.88, 1]} />
+          {/* catchlights: a bright one and a small one, so the eyes look alive (the concept still the user picked) */}
+          <mesh geometry={disc(er * 0.2)} material={SPARK} position={[er * 0.3, er * 0.3, 0.004]} />
+          <mesh geometry={disc(er * 0.09)} material={SPARK} position={[-er * 0.28, -er * 0.24, 0.004]} />
+        </group>
       )}
       {f.lid > 0.02 ? (
         // the eyelid: a skin-coloured block coming down over the top of the eye
@@ -282,8 +287,48 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
       {eye(1)}
       <mesh geometry={ball(0.062, 0)} material={skin} position={[0, -0.05, D.head * 0.98]} scale={[0.95, 1, 1.25]} castShadow />
       {mouth}
+      {/* a soft blush on the cheeks, on the head's surface below the outer corners of the eyes */}
+      {[-1, 1].map((sx) => {
+        const x = sx * 0.2;
+        const y = -0.085;
+        const zc = Math.sqrt(Math.max(0, (D.head * 0.975) ** 2 - x * x - y * y));
+        return (
+          <mesh key={`blush${sx}`} geometry={disc(0.06)} material={BLUSH} position={[x, y, zc + 0.004]}
+            rotation={[Math.asin(-y / D.head) * 0.6, Math.asin(x / D.head), 0]} scale={[1.25, 0.8, 1]} />
+        );
+      })}
     </group>
   );
+};
+
+// the eyes' catchlights, and the cheeks' blush (soft, see-through, never casting shadows)
+const SPARK = new THREE.MeshBasicMaterial({color: '#ffffff'});
+const BLUSH = new THREE.MeshStandardMaterial({color: '#f07a7a', transparent: true, opacity: 0.32, roughness: 1, depthWrite: false,
+  polygonOffset: true, polygonOffsetFactor: -2});
+
+// A knitted rib (the sweater's collar, cuffs and hem): vertical stripes of the top's colour, a shade darker.
+const ribs = new Map<string, THREE.Material>();
+export const ribMat = (color: string) => {
+  let m = ribs.get(color);
+  if (!m) {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 8;
+    const g = c.getContext('2d')!;
+    const base = new THREE.Color(color).multiplyScalar(0.78);
+    const deep = new THREE.Color(color).multiplyScalar(0.58);
+    for (let i = 0; i < 16; i++) {
+      g.fillStyle = (i % 2 ? deep : base).getStyle();
+      g.fillRect(i * 4, 0, 4, 8);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.repeat.set(3, 1);
+    m = new THREE.MeshStandardMaterial({map: tex, roughness: 0.95, flatShading: true});
+    ribs.set(color, m);
+  }
+  return m;
 };
 
 // A phone's lit screen. With no story screen: a generic chat, drawn once. With one (story.LPScreen): what the story
@@ -611,7 +656,7 @@ export const HeldThing: React.FC<{hold: Hold; glow?: boolean; screen?: PhoneScre
           <M g={box(0.1, 0.19, 0.016)} m={mat('#1a1b1f', {rough: 0.4})} />
           <mesh position={[0, 0, 0.0085]} rotation={[0, 0, Math.PI]}>
             <planeGeometry args={[0.088, 0.172]} />
-            <meshBasicMaterial map={phoneScreen(screen, screenT)} toneMapped={false} />
+            <meshBasicMaterial map={phoneScreen(screen, screenT)} color="#e6ecf5" toneMapped={false} />
           </mesh>
         </group>
       );
@@ -676,12 +721,15 @@ export const Man: React.FC<{
   const topDark = mat(new THREE.Color(design.top).multiplyScalar(0.82).getStyle());
   const legs = mat(design.trousers);
   const shoe = mat(design.shoes);
-  const hair = mat(design.hair);
+  const hair = mat(design.hair, {rough: 0.82}); // a touch of sheen for the rim light (0.62 flared under the face's key)
   const head = useMemo(() => cached(`head-${seed}`, () => facetedBall(D.head, 1, 0.045, seed)), [seed]);
   const scale = design.height ?? 1;
   const dress = design.topKind === 'dress';
+  const knit = design.topKind === 'sweater' || design.topKind === 'hoodie' || design.topKind === undefined;
+  const rib = ribMat(design.top);
   const hand = (side: 'L' | 'R') => (
     <group>
+      {knit ? <M g={box(D.arm[0] + 0.022, 0.07, D.arm[1] + 0.022)} m={rib} p={[0, 0.03, 0]} /> : null}
       <mesh geometry={cached(`hand-${seed}`, () => facetedBall(D.hand, 0, 0.08, seed + 5))} material={skin} position={[0, -D.hand * 0.7, 0]} castShadow />
       {hold && hold !== 'none' && side === 'R' ? (
         <group position={[0, -D.hand * 1.2, 0]}>
@@ -702,8 +750,18 @@ export const Man: React.FC<{
         {/* the body: the sweater, its hem a shade darker, then the shoulders, neck and head */}
         <group rotation={[p.lean, p.twist, p.side]}>
           <M g={box(...D.torso)} m={top} p={[0, D.torso[1] / 2 + 0.02, 0]} />
-          <M g={box(D.torso[0] + 0.01, 0.06, D.torso[2] + 0.01)} m={topDark} p={[0, 0.05, 0]} />
-          <M g={box(0.24, 0.05, 0.22)} m={topDark} p={[0, D.torso[1] + 0.03, 0]} />
+          {knit ? (
+            <>
+              {/* a ribbed hem, a ribbed collar rolled round the neck */}
+              <M g={box(D.torso[0] + 0.03, 0.08, D.torso[2] + 0.03)} m={rib} p={[0, 0.06, 0]} />
+              <M g={cached('collar', () => new THREE.CylinderGeometry(0.15, 0.16, 0.07, 10))} m={rib} p={[0, D.torso[1] + 0.045, 0]} />
+            </>
+          ) : (
+            <>
+              <M g={box(D.torso[0] + 0.01, 0.06, D.torso[2] + 0.01)} m={topDark} p={[0, 0.05, 0]} />
+              <M g={box(0.24, 0.05, 0.22)} m={topDark} p={[0, D.torso[1] + 0.03, 0]} />
+            </>
+          )}
           {design.topKind === 'suit' ? <M g={box(0.08, 0.32, 0.02)} m={mat('#7a1f25')} p={[0, D.torso[1] - 0.18, D.torso[2] / 2 + 0.01]} /> : null}
           <Limb3 at={[-sx, D.torso[1] - 0.06, 0]} limb={p.armL} len1={D.upper} len2={D.fore} w={D.arm[0]} d={D.arm[1]} m1={top} m2={top} end={hand('L')} />
           <Limb3 at={[sx, D.torso[1] - 0.06, 0]} limb={p.armR} len1={D.upper} len2={D.fore} w={D.arm[0]} d={D.arm[1]} m1={top} m2={top} end={hand('R')} />

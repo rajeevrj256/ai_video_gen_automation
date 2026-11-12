@@ -17,6 +17,8 @@ import {EffectComposer} from 'three/examples/jsm/postprocessing/EffectComposer.j
 import {RenderPass} from 'three/examples/jsm/postprocessing/RenderPass.js';
 import {BokehPass} from 'three/examples/jsm/postprocessing/BokehPass.js';
 import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
+import {ShaderPass} from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import {UnrealBloomPass} from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, Overgrowth, SETS, spotOf, ThingView, type SetDef} from './Sets';
@@ -1292,8 +1294,46 @@ const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) =
   return null;
 };
 
-// Depth of field: the scene rendered, blurred by depth around the focus distance, then tone mapped.
-const Post: React.FC<{focus: number; aperture: number}> = ({focus, aperture}) => {
+// The film look (the user's approved concept still: "add some cinematic light, make it aesthetic"): the scene
+// rendered, blurred by depth around the focus distance, the bright things (a lamp's shade, fairy lights, a window,
+// the phone's screen) blooming softly, tone mapped, then graded like a film: shadows pushed toward teal, highlights
+// toward warm orange, a gentle S-curve of contrast and a lift of the blacks. How strong depends on the light: a
+// night or a lamp-lit room the most, a bright day only a little.
+export type Grade = {teal: number; warm: number; contrast: number; bloom: number};
+export const GRADES: Record<string, Grade> = {
+  night: {teal: 0.5, warm: 0.42, contrast: 0.22, bloom: 0.62},
+  lamp: {teal: 0.5, warm: 0.44, contrast: 0.22, bloom: 0.5},
+  dark: {teal: 0.46, warm: 0.3, contrast: 0.2, bloom: 0.55},
+  evening: {teal: 0.34, warm: 0.4, contrast: 0.18, bloom: 0.36},
+  dawn: {teal: 0.3, warm: 0.34, contrast: 0.16, bloom: 0.38},
+  morning: {teal: 0.22, warm: 0.3, contrast: 0.14, bloom: 0.3},
+  day: {teal: 0.18, warm: 0.2, contrast: 0.12, bloom: 0.22},
+};
+const GRADE_SHADER = {
+  uniforms: {tDiffuse: {value: null}, teal: {value: 0.4}, warm: {value: 0.4}, contrast: {value: 0.2}},
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float teal; uniform float warm; uniform float contrast; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec3 col = c.rgb;
+      float l = dot(col, vec3(0.299, 0.587, 0.114));
+      // split tone: teal in the shadows, warm in the highlights, the middle left alone
+      vec3 tealTone = vec3(0.0, 0.32, 0.4);
+      vec3 warmTone = vec3(1.0, 0.62, 0.32);
+      float sh = (1.0 - smoothstep(0.0, 0.55, l));
+      float hi = smoothstep(0.45, 1.0, l);
+      col = mix(col, col * 0.75 + tealTone * 0.25, sh * teal);
+      col = mix(col, col * 0.8 + warmTone * 0.2 * (0.6 + l), hi * warm);
+      // an S-curve of contrast around the middle grey, the blacks lifted a touch like film
+      vec3 s = col * col * (3.0 - 2.0 * col);
+      col = mix(col, s, contrast);
+      col = col * 0.97 + 0.018;
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
+    }`,
+};
+
+const Post: React.FC<{focus: number; aperture: number; dof: boolean; grade: Grade}> = ({focus, aperture, dof, grade}) => {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
@@ -1303,8 +1343,12 @@ const Post: React.FC<{focus: number; aperture: number}> = ({focus, aperture}) =>
     composer.addPass(new RenderPass(scene, camera));
     const bokeh = new BokehPass(scene, camera, {focus: 3, aperture: 0.002, maxblur: 0.008});
     composer.addPass(bokeh);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.5, 0.9);
+    composer.addPass(bloom);
     composer.addPass(new OutputPass());
-    return {composer, bokeh};
+    const film = new ShaderPass(GRADE_SHADER);
+    composer.addPass(film);
+    return {composer, bokeh, bloom, film};
   }, [gl, scene, camera]);
   useLayoutEffect(() => {
     parts.composer.setPixelRatio(gl.getPixelRatio());
@@ -1313,31 +1357,85 @@ const Post: React.FC<{focus: number; aperture: number}> = ({focus, aperture}) =>
   useEffect(() => () => parts.composer.dispose(), [parts]);
   useFrame(() => {
     const u = (parts.bokeh as unknown as {uniforms: Record<string, {value: number}>}).uniforms;
+    parts.bokeh.enabled = dof;
     u.focus.value = focus;
-    u.aperture.value = aperture * 0.006;
-    u.maxblur.value = 0.009;
+    u.aperture.value = aperture * 0.0075;
+    u.maxblur.value = 0.01;
+    parts.bloom.strength = grade.bloom;
+    const f = parts.film.uniforms as Record<string, {value: number}>;
+    f.teal.value = grade.teal;
+    f.warm.value = grade.warm;
+    f.contrast.value = grade.contrast;
     parts.composer.render();
   }, 1);
   return null;
 };
 
 // The lights: sky and ground fill, the key (casting the soft shadows) from the set's window or sun, a cool or warm
-// fill from the other side, and a lamp when the light calls for one.
-const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: THREE.Vector3}> = ({set, light, target, eye}) => {
+// fill from the other side, and a lamp when the light calls for one. For the film look (the user's concept still)
+// there is also a rim light from behind him, opposite the camera, that outlines his hair and shoulders against the
+// room (cool moonlight at night, warm sun by day); the fill is lower in the dark looks so the shadows are deep; a
+// room's lamp is on at night; and a phone in his hand lights his face a little (`glow`).
+const RIM: Record<string, [string, number]> = {
+  night: ['#8fb4ff', 4.2], lamp: ['#7fa6ff', 3.6], dark: ['#7d9be0', 2.8], evening: ['#ffb27a', 2.0],
+  dawn: ['#ffc6a3', 1.8], morning: ['#ffe0b2', 1.5], day: ['#fff2dc', 1.2],
+};
+const DARK_LOOKS = new Set(['night', 'lamp', 'dark']);
+// The face's key light (the user: "use rembrandt lighting style and short lighting"; a light from the camera's side
+// lit the whole face flat): one warm light about 50° to the side and 27° above, on the side of the face turned AWAY
+// from the camera (short lighting), so the near cheek falls into shadow with a small lit triangle under the eye
+// (Rembrandt). A face turned square to the camera gets it from the room's lamp side (else camera left), 50° round.
+const FACE_KEY: Record<string, [string, number]> = {
+  night: ['#ffad6e', 4.6], lamp: ['#ffa765', 4.8], dark: ['#ffb987', 3.6], evening: ['#ffae74', 3.6],
+  dawn: ['#ffc39c', 3.2], morning: ['#ffdcb2', 2.6], day: ['#ffefd8', 2.0],
+};
+const yAngle = (a: THREE.Vector3, b: THREE.Vector3) => Math.atan2(a.z * b.x - a.x * b.z, a.x * b.x + a.z * b.z);
+const turnY = (v: THREE.Vector3, th: number) => new THREE.Vector3(v.x * Math.cos(th) + v.z * Math.sin(th), 0, -v.x * Math.sin(th) + v.z * Math.cos(th));
+export const faceKeyDir = (head: THREE.Vector3, face: THREE.Vector3, eye: THREE.Vector3, lamp?: [number, number, number]) => {
+  const toCam = eye.clone().sub(head).setY(0);
+  if (toCam.lengthSq() < 1e-4) toCam.set(0, 0, 1);
+  toCam.normalize();
+  const f = face.clone().setY(0);
+  if (f.lengthSq() < 1e-4) f.copy(toCam);
+  f.normalize();
+  const a = yAngle(toCam, f);
+  let key: number;
+  if (Math.abs(a) > 0.17) key = Math.sign(a) * Math.min(1.75, Math.abs(a) + 0.8); // short: past the way he faces
+  else {
+    const toLamp = lamp ? new THREE.Vector3(...lamp).sub(head).setY(0) : null;
+    const s = toLamp && toLamp.lengthSq() > 1e-4 ? Math.sign(yAngle(toCam, toLamp.normalize())) || -1 : -1;
+    key = s * 1.0; // Rembrandt, about 57° round from the camera
+  }
+  return turnY(toCam, key).normalize();
+};
+const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: THREE.Vector3; glow?: THREE.Vector3[]; head?: THREE.Vector3; face?: THREE.Vector3}> = ({set, light, target, eye, glow = [], head, face}) => {
   const look = LOOKS[light as keyof typeof LOOKS] ?? LOOKS.day;
   const tgt = useMemo(() => new THREE.Object3D(), []);
   const sun = V(set.sun).normalize();
   const keyPos = target.clone().addScaledVector(sun, 14);
   const fillPos = target.clone().add(new THREE.Vector3(-sun.x * 8, 5, Math.abs(sun.z) * 4 + 6));
+  // behind him as the camera sees him, a little to the side and above
+  const away = target.clone().sub(eye).setY(0);
+  if (away.lengthSq() < 1e-4) away.set(0, 0, -1);
+  away.normalize();
+  const rimPos = target.clone().addScaledVector(away, 5).add(new THREE.Vector3(away.z * 3.6, 3, -away.x * 3.6));
+  const [rimColor, rimK] = RIM[light] ?? RIM.day;
+  const dark = DARK_LOOKS.has(light);
+  const faceTgt = useMemo(() => new THREE.Object3D(), []);
+  const kd = head ? faceKeyDir(head, face ?? eye.clone().sub(head), eye, set.lamp) : null;
+  // 27° up, under the curls (a key 38° up put his forehead and eyes in the shadow of his own hair)
+  const facePos = head && kd ? head.clone().addScaledVector(kd, 2.6).add(new THREE.Vector3(0, 1.3, 0)) : null;
+  const [faceColor, faceK] = FACE_KEY[light] ?? FACE_KEY.day;
+  const lamp = set.outdoor && light === 'night' ? 0 : look.lamp; // a room's lamp is on at night, a street's light is its own
   return (
     <>
       <primitive object={tgt} position={target.toArray()} />
-      <hemisphereLight args={[look.hemi[0], look.hemi[1], look.hemi[2]]} />
+      <hemisphereLight args={[look.hemi[0], look.hemi[1], look.hemi[2] * (dark && !set.outdoor ? 0.45 : dark ? 0.75 : 0.92)]} />
       <directionalLight
         position={keyPos.toArray()}
         target={tgt}
         color={look.key[0]}
-        intensity={look.key[1]}
+        intensity={look.key[1] * (dark && !set.outdoor && head ? 0.6 : 1)}
         castShadow
         shadow-mapSize={[2048, 2048]}
         shadow-bias={-0.0004}
@@ -1351,14 +1449,43 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
         shadow-camera-far={40}
       />
       <directionalLight position={fillPos.toArray()} target={tgt} color={look.fill[0]} intensity={look.fill[1]} />
-      {/* a soft light from the camera's side, so his face reads in the dark looks too (lamp-lit rooms lost it) */}
-      <directionalLight position={eye.clone().add(new THREE.Vector3(0, 0.6, 0)).toArray()} target={tgt} color="#fff1e2" intensity={look.shade < 0.8 ? 0.8 : 0.35} />
-      {look.lamp > 0 && set.lamp ? (
-        <pointLight position={set.lamp} color="#ffb46b" intensity={look.lamp * 3.2} distance={9} decay={1.6} castShadow={false} />
+      {/* only a faint cool fill from the camera's side now, so the shadow side of the face keeps its shape and never
+          goes black: the face's key below does the lighting */}
+      <directionalLight position={eye.clone().add(new THREE.Vector3(0, 0.6, 0)).toArray()} target={tgt} color={dark ? '#9fb3d9' : '#e8eef6'} intensity={head ? (look.shade < 0.8 ? 0.2 : 0.14) : look.shade < 0.8 ? 0.55 : 0.3} />
+      {head && facePos ? (
+        <>
+          <primitive object={faceTgt} position={head.toArray()} />
+          <spotLight
+            position={facePos.toArray()}
+            target={faceTgt}
+            color={faceColor}
+            intensity={faceK}
+            angle={0.42}
+            penumbra={0.75}
+            decay={0}
+            castShadow
+            shadow-mapSize={[1024, 1024]}
+            shadow-bias={-0.0006}
+            shadow-normalBias={0.015}
+            shadow-camera-near={0.5}
+            shadow-camera-far={7}
+          />
+        </>
       ) : null}
+      <directionalLight position={rimPos.toArray()} target={tgt} color={rimColor} intensity={rimK} />
+      {lamp > 0 && set.lamp ? (
+        // a warm pool round the lamp that falls off into the dark (a lamp lighting the whole room flattened it)
+        <pointLight position={set.lamp} color="#ffa04f" intensity={lamp * 2.6} distance={6.5} decay={2} castShadow={false} />
+      ) : null}
+      {dark
+        ? glow.map((g, i) => <pointLight key={`glow${i}`} position={g.toArray()} color="#9cc4ff" intensity={0.45} distance={1.1} decay={2} />)
+        : null}
     </>
   );
 };
+
+// the room's haze, by the light: a dim warm grey at night, the light's own tone by day
+const HAZE: Record<string, string> = {night: '#1c2230', lamp: '#2a2220', dark: '#12151c', evening: '#4a3a3a', dawn: '#7a6a68', morning: '#9a8a78', day: '#a8a49c'};
 
 const DUST: Partial<Record<string, string>> = {construction: '#b8a58c', highway: '#9d968c', bridge: '#9d968c', alley: '#77746f', street: '#8f8c88', park: '#a99a7c'};
 
@@ -1799,9 +1926,16 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   return (
     <>
       <color attach="background" args={[look.sky[1]]} />
-      {set.outdoor ? <fogExp2 attach="fog" args={[look.sky[1], look.fog * (set.sky ? 0.3 : 1)]} /> : null}
+      {set.outdoor ? (
+        <fogExp2 attach="fog" args={[look.sky[1], look.fog * (set.sky ? 0.3 : 1)]} />
+      ) : (
+        // a little haze in the room: the far walls sink into the dark, the room gets depth
+        <fogExp2 attach="fog" args={[HAZE[shot.light] ?? '#3a3430', look.shade < 0.8 ? 0.055 : 0.03]} />
+      )}
       <CamRig plan={plan} exposure={look.exposure} />
-      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : subjectBig(shot, set, t)?.st.pos.clone() ?? V(set.wide.look)} eye={plan.pos} />
+      <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : subjectBig(shot, set, t)?.st.pos.clone() ?? V(set.wide.look)} eye={plan.pos}
+        glow={placed.filter((p) => p.hold === 'phone').map((p) => p.hand.clone().addScaledVector(p.screen, 0.32).add(new THREE.Vector3(0, 0.12, 0)))}
+        head={who && !insert ? who.head : undefined} face={who?.faceDir} />
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
       {wild > 0 ? <Overgrowth set={shot.set} g={wild} look={look} seed={(shot.seed ?? 1) % 997} /> : null}
       {things.map((th, i) => (
@@ -1845,7 +1979,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       })}
       {/* down in the footwell or close on the wheel: a soft light from beside the lens, or it is all shadow */}
       {insert && cam !== 'speedo' ? <pointLight position={plan.pos.toArray()} color="#fff0dc" intensity={1.6} distance={1.6} decay={1.2} /> : null}
-      {props.dof !== false ? <Post focus={plan.focus} aperture={plan.aperture} /> : null}
+      <Post focus={plan.focus} aperture={plan.aperture} dof={props.dof !== false} grade={GRADES[shot.light] ?? GRADES.day} />
     </>
   );
 };
