@@ -16,13 +16,14 @@ import * as THREE from 'three';
 import {EffectComposer} from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/examples/jsm/postprocessing/RenderPass.js';
 import {BokehPass} from 'three/examples/jsm/postprocessing/BokehPass.js';
+import {GTAOPass} from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {ShaderPass} from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import {UnrealBloomPass} from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import {RectAreaLightUniformsLib} from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 
 RectAreaLightUniformsLib.init(); // the face's soft key is an area light (a big soft source, not a point)
-import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
+import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT, seedOf} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, Overgrowth, SETS, spotOf, ThingView, type SetDef} from './Sets';
 import {
@@ -172,6 +173,11 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   if (action === 'sit' && seat === null) seat = 0.46; // a chair the set doesn't have: drawn under him
   // a spot that faces into the set (the counter, the mirror, a window) turns him round when the camera wants his face
   if ((a.facing ?? 'camera') === 'camera' && Math.cos(ry) < -0.5 && !lying && !moves(a) && action !== 'push-stop' && (FACE_CAMS.has(shot.camera) || TO_ROOM.has(action))) ry += Math.PI;
+  // a film still, not a passport photo (the concept still the user picked): alone and standing in a face or medium
+  // shot, he stands three-quarters, turned to the frame's left toward the face's key (camFor's three-quarter camera
+  // then stands square to the room, the lamp and the window behind him as in the still; a wide shot keeps him as he
+  // stands, its camera elsewhere)
+  if ((a.facing ?? 'camera') === 'camera' && (shot.camera === 'face' || shot.camera === 'medium') && shot.actors.length === 1 && a.on === undefined && seat === null && !lying && !moves(a) && !LONE.has(action) && action !== 'push-stop' && Math.cos(ry) > 0.7) ry -= THREE_Q;
   // standing, he turns to the person he looks at (all the way round: the son points AT his dad on the chair); with
   // nobody named, toward the nearest one a little (fully to help them up), so the camera still sees his face.
   // Sitting, lying, walking or in a power move, his body keeps its way (his head turns, below).
@@ -532,6 +538,20 @@ const frontOf = (f: THREE.Vector3, outdoor: boolean) => {
   return d;
 };
 
+// A film still, not a passport photo (the concept still the user picked): a lone person's face and medium shots see
+// him three-quarters, his face turned to the frame's left, toward the face's key (Lights); when he looks at someone
+// off screen, the camera stands on the far side from them so he looks across the frame toward them.
+export const THREE_Q = 0.6;
+const threeQuarter = (dir: THREE.Vector3, who: Placed) => {
+  let th = THREE_Q;
+  if (who.aim) {
+    const f = who.faceDir.clone().setY(0).normalize();
+    const to = who.aim.clone().sub(who.head).setY(0).normalize();
+    th = -Math.sign(Math.atan2(f.z * to.x - f.x * to.z, f.x * to.x + f.z * to.z) || -1) * THREE_Q;
+  }
+  return new THREE.Vector3(dir.x * Math.cos(th) + dir.z * Math.sin(th), 0, -dir.x * Math.sin(th) + dir.z * Math.cos(th)).normalize();
+};
+
 // A two-shot of him and the one he looks at (the son pointing at his dad on the chair): square to the line between
 // them, so both are the same size and who looks at whom reads at once, from the side where the other one's face shows
 // (and indoors from the open side of the room), far enough back for both whole, seated or standing.
@@ -627,7 +647,7 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
     case 'face': {
       fov = 30;
       const d = distFor(1.05, 0.95, fov, aspect) * push;
-      const dir = frontOf(who.faceDir, set.outdoor);
+      const dir = threeQuarter(frontOf(who.faceDir, set.outdoor), who);
       look = H.clone().add(new THREE.Vector3(0, -0.03, 0));
       pos = look.clone().addScaledVector(dir, d).add(new THREE.Vector3(0, -0.06, 0));
       aperture = 0.9;
@@ -669,7 +689,7 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
       const spread = all.length > 1 ? Math.max(...pts.map((v) => v.distanceTo(mid))) * 2 : 0;
       look = mid.clone().add(new THREE.Vector3(0, -0.32, 0));
       const d = distFor(1.6 + spread, 1.5, fov, aspect) * push;
-      const dir = frontOf(all.length > 1 ? new THREE.Vector3(0, 0, 1) : who.faceDir, set.outdoor);
+      const dir = all.length > 1 ? frontOf(new THREE.Vector3(0, 0, 1), set.outdoor) : threeQuarter(frontOf(who.faceDir, set.outdoor), who);
       pos = look.clone().addScaledVector(dir, d).add(new THREE.Vector3(0, 0.12, 0));
       aperture = 0.6;
       break;
@@ -1336,6 +1356,8 @@ const GRADE_SHADER = {
     }`,
 };
 
+const AO_RADIUS = 0.32;
+const AO_BLEND = 0.6; // 0.85 turned his neck under the chin into a black gap when the key is above
 const Post: React.FC<{focus: number; aperture: number; dof: boolean; grade: Grade}> = ({focus, aperture, dof, grade}) => {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
@@ -1344,6 +1366,12 @@ const Post: React.FC<{focus: number; aperture: number; dof: boolean; grade: Grad
   const parts = useMemo(() => {
     const composer = new EffectComposer(gl);
     composer.addPass(new RenderPass(scene, camera));
+    // soft contact shadows (the concept still: under his chin on the collar, between the curls, where the sleeves
+    // meet the sweater, his feet on the floor), in metres of the scene
+    const ao = new GTAOPass(scene, camera, size.width, size.height);
+    ao.updateGtaoMaterial({radius: AO_RADIUS, distanceExponent: 1.4, thickness: 1, scale: 1.1, samples: 16});
+    ao.blendIntensity = AO_BLEND;
+    composer.addPass(ao);
     const bokeh = new BokehPass(scene, camera, {focus: 3, aperture: 0.002, maxblur: 0.008});
     composer.addPass(bokeh);
     const bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.5, 0.9);
@@ -1384,12 +1412,12 @@ const RIM: Record<string, [string, number]> = {
   dawn: ['#ffc6a3', 1.8], morning: ['#ffe0b2', 1.5], day: ['#fff2dc', 1.2],
 };
 const DARK_LOOKS = new Set(['night', 'lamp', 'dark']);
-// The face's key light (the user: "use rembrandt lighting style and short lighting"; a light from the camera's side
-// lit the whole face flat): one warm light about 50° to the side and 27° above, on the side of the face turned AWAY
-// from the camera (short lighting), so the near cheek falls into shadow with a small lit triangle under the eye
-// (Rembrandt). A face turned square to the camera gets it from the room's lamp side (else camera left), 50° round.
+// The face's key light (the user: "use rembrandt lighting style and short lighting", then "bottom left 45 degree light
+// source" from the concept still's bedside lamp): one warm light 45° to the camera's left (KEY_SIDE), below the face
+// at night indoors and above it otherwise (Lights). A lone person in a face or medium shot stands three-quarters,
+// turned toward it (THREE_Q), so the side of his head nearest the camera falls into soft shadow (short lighting).
 const FACE_KEY: Record<string, [string, number]> = {
-  night: ['#ffad6e', 3.6], lamp: ['#ffa765', 3.8], dark: ['#ffb987', 3.0], evening: ['#ffae74', 3.2],
+  night: ['#ff9a58', 2.9], lamp: ['#ff9850', 3.0], dark: ['#ffad78', 2.6], evening: ['#ffae74', 3.2],
   dawn: ['#ffc39c', 3.2], morning: ['#ffdcb2', 2.6], day: ['#ffefd8', 2.0],
 };
 // A soft coloured ambient under everything (the user: "use ambient diffused light, not fully white light"): the
@@ -1407,26 +1435,20 @@ const SoftKey: React.FC<{pos: THREE.Vector3; at: THREE.Vector3; color: string; i
   light.lookAt(at);
   return <primitive object={light} />;
 };
-const yAngle = (a: THREE.Vector3, b: THREE.Vector3) => Math.atan2(a.z * b.x - a.x * b.z, a.x * b.x + a.z * b.z);
 const turnY = (v: THREE.Vector3, th: number) => new THREE.Vector3(v.x * Math.cos(th) + v.z * Math.sin(th), 0, -v.x * Math.sin(th) + v.z * Math.cos(th));
-export const faceKeyDir = (head: THREE.Vector3, face: THREE.Vector3, eye: THREE.Vector3, lamp?: [number, number, number]) => {
+// The face's key (the user: "bottom left 45 degree light source", from the concept still's bedside lamp): 45° to the
+// camera's left, and at night indoors 35° below the face (a lamp's light, on a 45° line up to the face on screen),
+// else 25° above it (a key from above by day; 38° put his eyes in the shadow of his own hair).
+export const KEY_SIDE = -45;
+export const KEY_LOW = -35;
+export const KEY_HIGH = 25;
+const KEY_DIST = 2.2;
+const keyAtDir = (head: THREE.Vector3, eye: THREE.Vector3, side: number) => {
   const toCam = eye.clone().sub(head).setY(0);
   if (toCam.lengthSq() < 1e-4) toCam.set(0, 0, 1);
-  toCam.normalize();
-  const f = face.clone().setY(0);
-  if (f.lengthSq() < 1e-4) f.copy(toCam);
-  f.normalize();
-  const a = yAngle(toCam, f);
-  let key: number;
-  if (Math.abs(a) > 0.17) key = Math.sign(a) * Math.min(1.75, Math.abs(a) + 0.8); // short: past the way he faces
-  else {
-    const toLamp = lamp ? new THREE.Vector3(...lamp).sub(head).setY(0) : null;
-    const s = toLamp && toLamp.lengthSq() > 1e-4 ? Math.sign(yAngle(toCam, toLamp.normalize())) || -1 : -1;
-    key = s * 1.0; // Rembrandt, about 57° round from the camera
-  }
-  return turnY(toCam, key).normalize();
+  return turnY(toCam.normalize(), side * Math.PI / 180).normalize();
 };
-const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: THREE.Vector3; glow?: THREE.Vector3[]; head?: THREE.Vector3; face?: THREE.Vector3}> = ({set, light, target, eye, glow = [], head, face}) => {
+const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: THREE.Vector3; glow?: THREE.Vector3[]; head?: THREE.Vector3; face?: THREE.Vector3; keyAt?: {side: number; up: number}}> = ({set, light, target, eye, glow = [], head, face, keyAt}) => {
   const look = LOOKS[light as keyof typeof LOOKS] ?? LOOKS.day;
   const tgt = useMemo(() => new THREE.Object3D(), []);
   const sun = V(set.sun).normalize();
@@ -1440,9 +1462,9 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
   const [rimColor, rimK] = RIM[light] ?? RIM.day;
   const dark = DARK_LOOKS.has(light);
   const faceTgt = useMemo(() => new THREE.Object3D(), []);
-  const kd = head ? faceKeyDir(head, face ?? eye.clone().sub(head), eye, set.lamp) : null;
-  // 27° up, under the curls (a key 38° up put his forehead and eyes in the shadow of his own hair)
-  const facePos = head && kd ? head.clone().addScaledVector(kd, 2.6).add(new THREE.Vector3(0, 1.3, 0)) : null;
+  const ka = keyAt ?? {side: KEY_SIDE, up: dark && !set.outdoor ? KEY_LOW : KEY_HIGH};
+  const kd = head ? keyAtDir(head, eye, ka.side) : null;
+  const facePos = head && kd ? head.clone().addScaledVector(kd, KEY_DIST * Math.cos(ka.up * Math.PI / 180)).add(new THREE.Vector3(0, KEY_DIST * Math.sin(ka.up * Math.PI / 180), 0)) : null;
   const [faceColor, faceK] = FACE_KEY[light] ?? FACE_KEY.day;
   const lamp = set.outdoor && light === 'night' ? 0 : look.lamp; // a room's lamp is on at night, a street's light is its own
   return (
@@ -1490,7 +1512,7 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
             shadow-bias={-0.0006}
             shadow-normalBias={0.015}
             shadow-camera-near={0.5}
-            shadow-camera-far={7}
+            shadow-camera-far={KEY_DIST + 0.8}
           />
         </>
       ) : null}
@@ -1957,7 +1979,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       <CamRig plan={plan} exposure={look.exposure} />
       <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : subjectBig(shot, set, t)?.st.pos.clone() ?? V(set.wide.look)} eye={plan.pos}
         glow={placed.filter((p) => p.hold === 'phone').map((p) => p.hand.clone().addScaledVector(p.screen, 0.32).add(new THREE.Vector3(0, 0.12, 0)))}
-        head={who && !insert ? who.head : undefined} face={who?.faceDir} />
+        head={who && !insert ? who.head : undefined} face={who?.faceDir} keyAt={shot.keyLight} />
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
       {wild > 0 ? <Overgrowth set={shot.set} g={wild} look={look} seed={(shot.seed ?? 1) % 997} /> : null}
       {things.map((th, i) => (
@@ -1978,7 +2000,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
             root={pl.local ? pl.local.root : pl.root}
             ry={pl.local ? pl.local.ry : pl.ry}
             hold={pl.hold}
-            seed={pl.actor.who === 'hero' ? 7 : pl.seed}
+            seed={seedOf(pl.actor.who)}
             screen={pl.actor.screen}
             screenT={t}
           />

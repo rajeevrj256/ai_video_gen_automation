@@ -14,7 +14,7 @@ import {interpolate} from 'remotion';
 import {ThreeCanvas} from '@remotion/three';
 import * as THREE from 'three';
 import {BigModel} from './Big';
-import {Man, mat} from './Man';
+import {Man, mat, seedOf} from './Man';
 import {face, pose} from './poses';
 import type {Design, Expr, LPShot, Poster} from './types';
 
@@ -526,7 +526,7 @@ export const PosterScene: React.FC<{
         {order.map((key, i) => (
           <group key={key} position={[xs[i], 0, -0.35]} scale={RIDE_SCALE}>
             <Man design={cast[key]} pose={pose({action: 'ride', t: 0.8 + i, dur: 3, seat: 0.4 / RIDE_SCALE, k: i})} face={face(key === who[0] ? 'determined' : 'angry', t, i + 7)}
-              root={[0, 0, 0]} ry={0} seed={key === 'hero' ? 7 : 20 + i} />
+              root={[0, 0, 0]} ry={0} seed={seedOf(key)} />
           </group>
         ))}
         {[-0.68, 0.68].map((x) => (
@@ -585,7 +585,7 @@ export const PosterBusts: React.FC<{p: Poster; t: number; dur: number; cast: Rec
           const b = BUSTS[i];
           return (
             <Man key={key} design={cast[key]} pose={bustPose(b, 0.6 + i * 0.4 + t * 0.2, i * 1.7)} face={face(b.expr, t, i + 3)} detail
-              root={[b.x, b.y - rise * (i + 1) * 0.4, b.z]} ry={b.turn} seed={key === 'hero' ? 7 : 20 + i} />
+              root={[b.x, b.y - rise * (i + 1) * 0.4, b.z]} ry={b.turn} seed={seedOf(key)} />
           );
         })}
       </ThreeCanvas>

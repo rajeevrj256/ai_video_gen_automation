@@ -13,12 +13,12 @@ export const D = {
   shin: 0.25,
   thigh: 0.27,
   leg: [0.22, 0.24] as const, // width, depth
-  legX: 0.15,
-  torso: [0.64, 0.6, 0.4] as const,
+  legX: 0.13, // legs close together (the concept still: a hand's width apart)
+  torso: [0.7, 0.6, 0.42] as const, // the sweater a little wider than his head (the concept still)
   arm: [0.17, 0.19] as const,
   upper: 0.28,
   fore: 0.25,
-  hand: 0.075,
+  hand: 0.082,
   head: 0.35,
   neck: 0.06,
 };
@@ -68,6 +68,88 @@ export const facetedBall = (r: number, detail: number, wobble: number, seed: num
   return g;
 };
 
+// The head narrows toward the chin like the concept still the user picked (a ball read as a balloon): x and z shrink
+// below the eyes. Features on the lower face sit on the narrowed surface (`taperAt`).
+export const TAPER = 0.17;
+export const taperAt = (y: number) => 1 - TAPER * Math.max(0, -y / D.head);
+// The head of the concept still: flat facets that read as planes (each corner nudged in or out by up to HEAD_WOBBLE,
+// so neighbouring faces meet at clear angles; ±4.5% looked smooth), cheekbones standing out a little, the band where
+// the eyes and glasses sit nudged less (a corner pushed out there buried the eyes), narrowing to the chin.
+const HEAD_WOBBLE = 0.075;
+const EYE_BAND_WOBBLE = 0.025;
+const CHEEKS = [-1, 1].map((sx) => new THREE.Vector3(sx * 0.62, -0.22, 0.75).normalize());
+const headGeo = (seed: number) => {
+  const g = new THREE.IcosahedronGeometry(D.head, 1);
+  const pos = g.attributes.position as THREE.BufferAttribute;
+  const rand = rng(seed);
+  const moved = new Map<string, number>();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+    const key = `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`;
+    if (!moved.has(key)) {
+      const d = v.clone().normalize();
+      const band = d.z > 0.5 && d.y > -0.32 && d.y < 0.42;
+      let k = 1 + (rand() * 2 - 1) * (band ? EYE_BAND_WOBBLE : HEAD_WOBBLE);
+      if (Math.max(...CHEEKS.map((c) => c.dot(d))) > 0.93) k = Math.max(k, 1.035); // cheekbones
+      moved.set(key, k);
+    }
+    const k = moved.get(key)!;
+    const t = taperAt(v.y * k);
+    pos.setXYZ(i, v.x * k * t, v.y * k, v.z * k * t);
+  }
+  g.computeVertexNormals();
+  return g;
+};
+// Each person's own seed, from their name: the same face, hair and hands in every shot and every video (others got
+// a new seed every shot, so their facets and curls changed between cuts). The hero keeps 7, as he always had.
+export const seedOf = (who: string) => {
+  if (who === 'hero') return 7;
+  let h = 2166136261;
+  for (const ch of who.toLowerCase()) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return 100 + ((h >>> 0) % 9000);
+};
+// The skin of the head with a soft blush painted on the cheeks in the shader, by direction from the head's centre (a
+// disc laid over the cheek floated off the flat facets and showed past the far cheek's edge once he stood
+// three-quarters). Everyone's head has it, as everyone had the discs.
+const hairMats = new Map<string, THREE.Material>();
+const hairMat = (c: string) => {
+  let m = hairMats.get(c);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({color: c, flatShading: true, roughness: 0.82, metalness: 0, vertexColors: true});
+    hairMats.set(c, m);
+  }
+  return m;
+};
+const headMats = new Map<string, THREE.Material>();
+const headMat = (skin: string) => {
+  let m = headMats.get(skin);
+  if (!m) {
+    const sm = new THREE.MeshStandardMaterial({color: skin, flatShading: true, roughness: 0.92, metalness: 0, emissive: new THREE.Color(skin), emissiveIntensity: SKIN_GLOW});
+    const dir = new THREE.Vector3(0.19 * taperAt(-0.085), -0.085, 0.27).normalize();
+    sm.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vHeadPos;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHeadPos = position;');
+      const c = (v: number) => v.toFixed(4);
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vHeadPos;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+  vec3 hd = normalize(vHeadPos);
+  float bw = max(exp(-pow(distance(hd, vec3(${c(dir.x)}, ${c(dir.y)}, ${c(dir.z)})) / ${c(BLUSH_R)}, 2.0)),
+                 exp(-pow(distance(hd, vec3(${c(-dir.x)}, ${c(dir.y)}, ${c(dir.z)})) / ${c(BLUSH_R)}, 2.0)));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.87, 0.19, 0.19), bw * ${c(BLUSH_K)});`); // #f07a7a in linear light, as the old disc
+    };
+    sm.customProgramCacheKey = () => 'lowpoly-head-blush';
+    m = sm;
+    headMats.set(skin, m);
+  }
+  return m;
+};
+const BLUSH_R = 0.2; // on the unit sphere: about 7 cm on his head
+const BLUSH_K = 0.55;
+// the head a little smaller than the body's width (the concept still: the torso a touch wider than the head, a short
+// neck showing above the collar); scaled about its centre so every camera and fit that uses HEAD_Y stays
+export const HEAD_SCALE = 0.93;
+
 const geoCache = new Map<string, THREE.BufferGeometry>();
 const cached = (key: string, make: () => THREE.BufferGeometry) => {
   let g = geoCache.get(key);
@@ -79,12 +161,41 @@ const cached = (key: string, make: () => THREE.BufferGeometry) => {
 };
 
 // Curly hair: lumps over the top and the back of the head, the hairline high on the forehead and over the ears.
+// Curly hair clumps: about 60% pointed pyramids (a cone of 3-4 sides, its base and point nudged so no two match), the
+// rest chunky lumps; every clump its own shade of the hair colour, from dark brown to dark orange (a multiplier on the
+// hair's colour, so any hair colour keeps its own range).
+const SPIKES = 0.7;
+const HAIR_SHADES: [number, number, number][] = [[0.62, 0.6, 0.6], [0.8, 0.76, 0.74], [1, 1, 1], [1.08, 0.98, 0.9], [1.18, 1.02, 0.86], [0.92, 0.86, 0.82]];
+const clump = (r: number, rand: () => number) => {
+  // low and wide (tall cones read as punk spikes): the concept's clumps are packed pyramids, their points short
+  const sides = rand() < 0.5 ? 3 : 4;
+  const g = new THREE.ConeGeometry(r * (1.15 + rand() * 0.3), r * (0.85 + rand() * 0.45), sides, 1).toNonIndexed();
+  const pos = g.attributes.position as THREE.BufferAttribute;
+  const moved = new Map<string, [number, number, number]>();
+  for (let i = 0; i < pos.count; i++) {
+    const key = `${pos.getX(i).toFixed(4)},${pos.getY(i).toFixed(4)},${pos.getZ(i).toFixed(4)}`;
+    if (!moved.has(key)) moved.set(key, [(rand() - 0.5) * r * 0.45, (rand() - 0.5) * r * 0.35, (rand() - 0.5) * r * 0.45]);
+    const [dx, dy, dz] = moved.get(key)!;
+    pos.setXYZ(i, pos.getX(i) + dx, pos.getY(i) + dy, pos.getZ(i) + dz);
+  }
+  g.translate(0, r * 0.15, 0); // its base sunk into the clumps under it
+  g.computeVertexNormals();
+  return g;
+};
+const shade = (g: THREE.BufferGeometry, c: [number, number, number]) => {
+  const n = g.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) col.set(c, i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+};
+
 const hairGeo = (style: Design['hairStyle'], seed: number) =>
-  cached(`hair-${style}-${seed}`, () => {
+  cached(`hair4-${style}-${seed}`, () => {
     const rand = rng(seed * 7 + 3);
     const parts: THREE.BufferGeometry[] = [];
     const R = D.head;
-    const lumps = style === 'curly' ? 190 : style === 'short' ? 150 : 130;
+    const lumps = style === 'curly' ? 125 : style === 'short' ? 150 : 130;
     for (let n = 0, tries = 0; n < lumps && tries < 4000; tries++) {
       const u = rand() * 2 - 1;
       const th = rand() * Math.PI * 2;
@@ -95,35 +206,46 @@ const hairGeo = (style: Design['hairStyle'], seed: number) =>
       // the face stays clear: a high fringe, above the ears at the sides, down to the nape at the back
       const ok = front ? d.y > 0.5 + 0.12 * Math.abs(d.x) : side ? d.y > 0.12 + (d.z > 0 ? 0.25 : 0) : d.y > -0.38;
       if (!ok) continue;
-      const curl = style === 'curly' ? 0.048 + rand() * 0.03 : 0.045 + rand() * 0.02;
-      const g = new THREE.IcosahedronGeometry(curl, 0);
+      const curl = style === 'curly' ? 0.062 + rand() * 0.042 : 0.045 + rand() * 0.02;
       const lift = style === 'curly' ? (d.y > 0.6 ? 1.02 + rand() * 0.05 : 0.985 + rand() * 0.04) : 0.97 + rand() * 0.02;
-      g.rotateX(rand() * 3);
-      g.rotateY(rand() * 3);
-      g.translate(d.x * R * lift, d.y * R * lift + (d.y > 0.5 ? 0.02 : 0), d.z * R * lift);
-      parts.push(g.toNonIndexed());
+      let g: THREE.BufferGeometry;
+      if (style === 'curly' && rand() < SPIKES) {
+        // a clump of the concept still: a pyramid with a few sharp, uneven faces, its point outward and a little tilted
+        g = clump(curl, rand);
+        const out = d.clone().add(new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(0.45)).normalize();
+        g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), out));
+      } else {
+        g = new THREE.IcosahedronGeometry(curl, 0);
+        g.rotateX(rand() * 3);
+        g.rotateY(rand() * 3);
+      }
+      const nk = taperAt(d.y * R); // on the head's narrowing below the eyes
+      g.translate(d.x * R * lift * nk, d.y * R * lift + (d.y > 0.5 ? 0.02 : 0), d.z * R * lift * nk);
+      const flat = g.index ? g.toNonIndexed() : g;
+      shade(flat, style === 'curly' ? HAIR_SHADES[Math.floor(rand() * HAIR_SHADES.length)] : [1, 1, 1]);
+      parts.push(flat);
       n++;
     }
     if (style === 'long' || style === 'ponytail' || style === 'bun') {
       const back = new THREE.BoxGeometry(0.62, style === 'long' ? 0.62 : 0.3, 0.16, 1, 2, 1);
       back.translate(0, style === 'long' ? -0.12 : 0.05, -0.27);
-      parts.push(back.toNonIndexed());
+      parts.push(shade(back.toNonIndexed(), [1, 1, 1]));
       if (style === 'long') {
         for (const sx of [-1, 1]) {
           const lock = new THREE.BoxGeometry(0.11, 0.55, 0.22);
           lock.translate(sx * 0.31, -0.12, -0.02);
-          parts.push(lock.toNonIndexed());
+          parts.push(shade(lock.toNonIndexed(), [1, 1, 1]));
         }
       }
       if (style === 'bun') {
         const bun = new THREE.IcosahedronGeometry(0.14, 1);
         bun.translate(0, 0.33, -0.18);
-        parts.push(bun.toNonIndexed());
+        parts.push(shade(bun.toNonIndexed(), [1, 1, 1]));
       }
       if (style === 'ponytail') {
         const tail = new THREE.BoxGeometry(0.13, 0.4, 0.13);
         tail.translate(0, -0.12, -0.42);
-        parts.push(tail.toNonIndexed());
+        parts.push(shade(tail.toNonIndexed(), [1, 1, 1]));
       }
     }
     const merged = mergeAll(parts);
@@ -133,7 +255,7 @@ const hairGeo = (style: Design['hairStyle'], seed: number) =>
 
 // BufferGeometryUtils.mergeGeometries without the import (all parts are non-indexed with position + normal + uv).
 const mergeAll = (parts: THREE.BufferGeometry[]) => {
-  const names = ['position', 'normal'];
+  const names = parts.every((p) => p.getAttribute('color')) ? ['position', 'normal', 'color'] : ['position', 'normal'];
   const out = new THREE.BufferGeometry();
   for (const name of names) {
     const arrays = parts.map((p) => (p.getAttribute(name) as THREE.BufferAttribute).array as Float32Array);
@@ -152,6 +274,8 @@ const mergeAll = (parts: THREE.BufferGeometry[]) => {
 const box = (w: number, h: number, d: number) => cached(`box-${w}-${h}-${d}`, () => new THREE.BoxGeometry(w, h, d));
 const ball = (r: number, detail = 0) => cached(`ball-${r}-${detail}`, () => new THREE.IcosahedronGeometry(r, detail));
 const disc = (r: number) => cached(`disc-${r}`, () => new THREE.CircleGeometry(r, 18));
+// half a ball facing +z (an eye standing out of the face)
+const dome = (r: number) => cached(`dome-${r}`, () => new THREE.SphereGeometry(r, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2));
 
 const M: React.FC<{g: THREE.BufferGeometry; m: THREE.Material; p?: [number, number, number]; r?: [number, number, number]; s?: [number, number, number]}> = ({
   g,
@@ -183,26 +307,28 @@ const Limb3: React.FC<{
 );
 
 const Glasses: React.FC<{color: string}> = ({color}) => {
-  const m = mat(color, {rough: 0.6});
-  const t = 0.026;
-  const w = 0.22;
-  const h = 0.155;
-  const z = D.head * 0.99;
+  // the concept still's frames: thick dark bars a little deep, standing just off the face so the eyes sit inside them
+  const m = mat(color, {rough: 0.55});
+  const t = 0.036;
+  const dz = 0.045;
+  const w = 0.225;
+  const h = 0.16;
+  const z = D.head * 1.01;
   const lens = (cx: number) => (
     <group position={[cx, 0.02, z]} key={cx}>
-      <M g={box(w, t, t)} m={m} p={[0, h / 2, 0]} />
-      <M g={box(w, t, t)} m={m} p={[0, -h / 2, 0]} />
-      <M g={box(t, h, t)} m={m} p={[-w / 2, 0, 0]} />
-      <M g={box(t, h, t)} m={m} p={[w / 2, 0, 0]} />
+      <M g={box(w + t, t, dz)} m={m} p={[0, h / 2, 0]} />
+      <M g={box(w + t, t, dz)} m={m} p={[0, -h / 2, 0]} />
+      <M g={box(t, h, dz)} m={m} p={[-w / 2, 0, 0]} />
+      <M g={box(t, h, dz)} m={m} p={[w / 2, 0, 0]} />
     </group>
   );
   return (
     <group>
-      {lens(-0.125)}
-      {lens(0.125)}
-      <M g={box(0.05, t * 0.9, t)} m={m} p={[0, 0.06, z + 0.005]} />
+      {lens(-0.127)}
+      {lens(0.127)}
+      <M g={box(0.06, t, dz * 0.8)} m={m} p={[0, 0.07, z + 0.004]} />
       {[-1, 1].map((sx) => (
-        <M key={sx} g={box(t * 0.8, t * 0.8, 0.4)} m={m} p={[sx * 0.24, 0.05, 0.15]} r={[0, sx * 0.22, 0]} />
+        <M key={sx} g={box(t * 0.8, t * 0.8, 0.4)} m={m} p={[sx * 0.245, 0.06, 0.16]} r={[0, sx * 0.2, 0]} />
       ))}
     </group>
   );
@@ -210,19 +336,19 @@ const Glasses: React.FC<{color: string}> = ({color}) => {
 
 // Skin glows a little from within (the reference's faces stay pale and readable in every light, its chins never
 // go black): an emissive lift of the skin's own colour under the light.
-export const SKIN_GLOW = 0.06; // 0.16 kept the face readable but flat; the face's own key light (LowPoly Lights) lights it now
+export const SKIN_GLOW = 0.03; // 0.16 kept the face readable but flat; the face's own key light (LowPoly Lights) lights it now
 const skinMat = (c: string) => mat(c, {emissive: c, glow: SKIN_GLOW});
 
 const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, design, detail}) => {
   const z = D.head * 0.935;
   const skin = skinMat(design.skin);
   const dark = mat('#141416', {rough: 0.5});
-  const white = mat('#f4f2ee', {rough: 0.5, emissive: '#f4f2ee', glow: 0.12});
+  const white = mat('#f4f2ee', {rough: 0.5, emissive: '#f4f2ee', glow: 0.05}); // 0.12 bloomed into a halo at night
   const brow = mat(design.hairStyle === 'bald' ? '#5a4030' : design.hair);
-  const er = 0.058 * f.eye;
+  const er = 0.071 * f.eye;
   const eye = (sx: number) => (
     <group key={sx} position={[sx * 0.118, 0.015, z]} rotation={[0, sx * 0.3, 0]}>
-      <mesh geometry={disc(er)} material={white} scale={[1, 0.82, 1]} position={[0, 0, 0.004]} />
+      {detail ? <mesh geometry={disc(er)} material={white} scale={[1, 0.82, 1]} position={[0, 0, 0.004]} /> : null}
       {detail ? (
         // the poster's close-up eye: a brown iris, a pupil, a catchlight and a lash line (a film still, not a sticker)
         <group position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]}>
@@ -232,22 +358,26 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
           <mesh geometry={box(er * 2.25, er * 0.28, 0.02)} material={dark} position={[sx * 0.004, er * 0.78, 0.004]} rotation={[0, 0, sx * 0.08]} />
         </group>
       ) : (
-        <group position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.009]}>
-          <mesh geometry={disc(er * 0.86)} material={dark} scale={[1, 0.88, 1]} />
-          {/* catchlights: a bright one and a small one, so the eyes look alive (the concept still the user picked) */}
-          <mesh geometry={disc(er * 0.2)} material={SPARK} position={[er * 0.3, er * 0.3, 0.004]} />
-          <mesh geometry={disc(er * 0.09)} material={SPARK} position={[-er * 0.28, -er * 0.24, 0.004]} />
+        // the concept still's eyes: white domes standing out of the face, a big glossy black pupil with a white ring
+        // round it, a sharp catchlight (flat discs read as stickers)
+        <group>
+          <mesh geometry={dome(er)} material={white} scale={[1, 0.92, 0.5]} />
+          <group position={[(f.look[0] - sx * 0.004) * 0.8, (f.look[1] - 0.004) * 0.8, er * 0.36]}>
+            <mesh geometry={dome(er * 0.64)} material={PUPIL} scale={[1, 0.96, 0.26]} />
+            <mesh geometry={disc(er * 0.19)} material={SPARK} position={[er * 0.24, er * 0.24, er * 0.18]} />
+            <mesh geometry={disc(er * 0.08)} material={SPARK} position={[-er * 0.22, -er * 0.2, er * 0.17]} />
+          </group>
         </group>
       )}
       {f.lid > 0.02 ? (
         // the eyelid: a skin-coloured block coming down over the top of the eye
         <mesh
-          geometry={box(er * 2.3, er * 1.9 * f.lid, 0.02)}
+          geometry={box(er * 2.3, er * 1.9 * f.lid, er * 0.62)}
           material={skin}
-          position={[0, er * 0.85 - (er * 1.9 * f.lid) / 2 + 0.002, 0.012]}
+          position={[0, er * 0.85 - (er * 1.9 * f.lid) / 2 + 0.002, er * 0.27]}
         />
       ) : null}
-      {f.lid >= 1 ? <mesh geometry={box(er * 1.9, 0.012, 0.01)} material={dark} position={[0, -er * 0.3, 0.024]} /> : null}
+      {f.lid >= 1 ? <mesh geometry={box(er * 1.9, 0.012, 0.01)} material={dark} position={[0, -er * 0.3, er * 0.6]} /> : null}
       <mesh
         geometry={box(detail ? 0.13 : 0.115, detail ? 0.034 : 0.026, 0.03)}
         material={brow}
@@ -257,18 +387,19 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
     </group>
   );
   const mouthY = -0.155;
+  const lowZ = (y: number) => z - D.head * (1 - taperAt(y)) * 0.9;
   const mouth = (() => {
     switch (f.mouth) {
       case 'o':
-        return <mesh geometry={box(0.055, 0.075, 0.02)} material={dark} position={[0, mouthY - 0.01, z - 0.01]} />;
+        return <mesh geometry={box(0.055, 0.075, 0.02)} material={dark} position={[0, mouthY - 0.01, lowZ(mouthY) - 0.01]} />;
       case 'open':
         // talking: a wider, shorter opening than the 'o' of surprise
-        return <mesh geometry={box(0.085, 0.05, 0.02)} material={dark} position={[0, mouthY - 0.005, z - 0.01]} />;
+        return <mesh geometry={box(0.085, 0.05, 0.02)} material={dark} position={[0, mouthY - 0.005, lowZ(mouthY) - 0.01]} />;
       case 'smile':
       case 'frown': {
         const up = f.mouth === 'smile' ? 1 : -1;
         return (
-          <group position={[0, mouthY, z - 0.012]}>
+          <group position={[0, mouthY, lowZ(mouthY) - 0.012]}>
             <mesh geometry={box(0.06, 0.022, 0.02)} material={dark} />
             <mesh geometry={box(0.04, 0.02, 0.02)} material={dark} position={[-0.045, up * 0.012, 0]} rotation={[0, 0, -up * 0.5]} />
             <mesh geometry={box(0.04, 0.02, 0.02)} material={dark} position={[0.045, up * 0.012, 0]} rotation={[0, 0, up * 0.5]} />
@@ -276,35 +407,43 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
         );
       }
       case 'flat':
-        return <mesh geometry={box(0.12, 0.02, 0.02)} material={dark} position={[0.008, mouthY, z - 0.012]} rotation={[0, 0, 0.05]} />;
+        return <mesh geometry={box(0.12, 0.02, 0.02)} material={dark} position={[0.008, mouthY, lowZ(mouthY) - 0.012]} rotation={[0, 0, 0.05]} />;
       default:
-        return <mesh geometry={box(0.1, 0.022, 0.02)} material={dark} position={[0, mouthY, z - 0.012]} />;
+        return <mesh geometry={box(0.088, 0.017, 0.02)} material={dark} position={[0, mouthY, lowZ(mouthY) - 0.012]} />;
     }
   })();
   return (
     <group>
       {eye(-1)}
       {eye(1)}
-      <mesh geometry={ball(0.062, 0)} material={skin} position={[0, -0.05, D.head * 0.98]} scale={[0.95, 1, 1.25]} castShadow />
+      <mesh geometry={NOSE} material={skin} position={[0, -0.055, D.head * 0.94 * taperAt(-0.08)]} scale={1.2} castShadow receiveShadow />
+      {/* small faceted ears, low on the side of the head under the arms of the glasses */}
+      {[-1, 1].map((sx) => (
+        <mesh key={`ear${sx}`} geometry={ball(0.056, 0)} material={skin} position={[sx * D.head * 0.955 * taperAt(-0.04), -0.04, -0.015]} scale={[0.42, 1, 0.72]} rotation={[0, sx * 0.25, 0]} castShadow />
+      ))}
       {mouth}
-      {/* a soft blush on the cheeks, on the head's surface below the outer corners of the eyes */}
-      {[-1, 1].map((sx) => {
-        const x = sx * 0.2;
-        const y = -0.085;
-        const zc = Math.sqrt(Math.max(0, (D.head * 0.975) ** 2 - x * x - y * y));
-        return (
-          <mesh key={`blush${sx}`} geometry={disc(0.06)} material={BLUSH} position={[x, y, zc + 0.004]}
-            rotation={[Math.asin(-y / D.head) * 0.6, Math.asin(x / D.head), 0]} scale={[1.25, 0.8, 1]} />
-        );
-      })}
     </group>
   );
 };
 
 // the eyes' catchlights, and the cheeks' blush (soft, see-through, never casting shadows)
 const SPARK = new THREE.MeshBasicMaterial({color: '#ffffff'});
-const BLUSH = new THREE.MeshStandardMaterial({color: '#f07a7a', transparent: true, opacity: 0.32, roughness: 1, depthWrite: false,
-  polygonOffset: true, polygonOffsetFactor: -2});
+// The concept still's nose: a faceted wedge, its ridge from between the eyes down to a point that stands out over the
+// mouth, wide at the bottom (a 6 cm ball read as a button)
+const NOSE = (() => {
+  const top: [number, number, number] = [0, 0.06, -0.01];
+  const l: [number, number, number] = [-0.058, -0.05, -0.014];
+  const r: [number, number, number] = [0.058, -0.05, -0.014];
+  const tip: [number, number, number] = [0, -0.042, 0.078];
+  const under: [number, number, number] = [0, -0.078, 0.008];
+  const ridge: [number, number, number] = [0, 0.012, 0.052];
+  const tris = [[top, l, ridge], [top, ridge, r], [l, tip, ridge], [ridge, tip, r], [l, under, tip], [tip, under, r]];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tris.flat(2)), 3));
+  g.computeVertexNormals();
+  return g;
+})();
+const PUPIL = new THREE.MeshStandardMaterial({color: '#060608', roughness: 0.3, metalness: 0, flatShading: false});
 
 // A knitted rib (the sweater's collar, cuffs and hem): vertical stripes of the top's colour, a shade darker.
 const ribs = new Map<string, THREE.Material>();
@@ -722,7 +861,9 @@ export const Man: React.FC<{
   const legs = mat(design.trousers);
   const shoe = mat(design.shoes);
   const hair = mat(design.hair, {rough: 0.82}); // a touch of sheen for the rim light (0.62 flared under the face's key)
-  const head = useMemo(() => cached(`head-${seed}`, () => facetedBall(D.head, 1, 0.045, seed)), [seed]);
+  const hairShaded = hairMat(design.hair);
+  const head = useMemo(() => cached(`head4-${seed}`, () => headGeo(seed)), [seed]);
+  const headSkin = headMat(design.skin);
   const scale = design.height ?? 1;
   const dress = design.topKind === 'dress';
   const knit = design.topKind === 'sweater' || design.topKind === 'hoodie' || design.topKind === undefined;
@@ -730,7 +871,7 @@ export const Man: React.FC<{
   const hand = (side: 'L' | 'R') => (
     <group>
       {knit ? <M g={box(D.arm[0] + 0.022, 0.07, D.arm[1] + 0.022)} m={rib} p={[0, 0.03, 0]} /> : null}
-      <mesh geometry={cached(`hand-${seed}`, () => facetedBall(D.hand, 0, 0.08, seed + 5))} material={skin} position={[0, -D.hand * 0.7, 0]} castShadow />
+      <mesh geometry={cached(`hand2-${seed}`, () => facetedBall(D.hand, 0, 0.14, seed + 5))} material={skin} position={[0, -D.hand * 0.7, 0]} castShadow />
       {hold && hold !== 'none' && side === 'R' ? (
         <group position={[0, -D.hand * 1.2, 0]}>
           <HeldThing hold={hold} screen={screen} screenT={screenT} />
@@ -754,7 +895,7 @@ export const Man: React.FC<{
             <>
               {/* a ribbed hem, a ribbed collar rolled round the neck */}
               <M g={box(D.torso[0] + 0.03, 0.08, D.torso[2] + 0.03)} m={rib} p={[0, 0.06, 0]} />
-              <M g={cached('collar', () => new THREE.CylinderGeometry(0.15, 0.16, 0.07, 10))} m={rib} p={[0, D.torso[1] + 0.045, 0]} />
+              <M g={cached('collar2', () => new THREE.CylinderGeometry(0.15, 0.168, 0.085, 12))} m={rib} p={[0, D.torso[1] + 0.05, 0]} />
             </>
           ) : (
             <>
@@ -765,10 +906,10 @@ export const Man: React.FC<{
           {design.topKind === 'suit' ? <M g={box(0.08, 0.32, 0.02)} m={mat('#7a1f25')} p={[0, D.torso[1] - 0.18, D.torso[2] / 2 + 0.01]} /> : null}
           <Limb3 at={[-sx, D.torso[1] - 0.06, 0]} limb={p.armL} len1={D.upper} len2={D.fore} w={D.arm[0]} d={D.arm[1]} m1={top} m2={top} end={hand('L')} />
           <Limb3 at={[sx, D.torso[1] - 0.06, 0]} limb={p.armR} len1={D.upper} len2={D.fore} w={D.arm[0]} d={D.arm[1]} m1={top} m2={top} end={hand('R')} />
-          <M g={cached('neck', () => new THREE.CylinderGeometry(0.11, 0.12, 0.12, 7))} m={skin} p={[0, D.torso[1] + 0.06, 0]} />
-          <group position={[0, HEAD_Y, 0]} rotation={p.head}>
-            <mesh geometry={head} material={skin} castShadow receiveShadow scale={[1, 0.97, 0.98]} />
-            {design.hairStyle !== 'bald' ? <mesh geometry={hairGeo(design.hairStyle, seed)} material={hair} castShadow /> : null}
+          <M g={cached('neck3', () => new THREE.CylinderGeometry(0.088, 0.095, 0.14, 7))} m={skin} p={[0, D.torso[1] + 0.07, 0]} />
+          <group position={[0, HEAD_Y, 0]} rotation={p.head} scale={HEAD_SCALE}>
+            <mesh geometry={head} material={headSkin} castShadow receiveShadow scale={[1, 0.97, 0.98]} />
+            {design.hairStyle !== 'bald' ? <mesh geometry={hairGeo(design.hairStyle, seed)} material={hairShaded} castShadow receiveShadow /> : null}
             <FaceView f={f} design={design} detail={detail} />
             {design.glasses ? <Glasses color="#2f2d2c" /> : null}
             {design.beard ? <M g={box(0.42, 0.16, 0.2)} m={hair} p={[0, -0.24, 0.18]} /> : null}
@@ -782,13 +923,13 @@ export const Man: React.FC<{
 
 export const HERO: Design = {
   skin: '#e6d8cb',
-  hair: '#94593a',
+  hair: '#704632',
   hairStyle: 'curly',
   glasses: true,
-  top: '#b2414e',
+  top: '#9e3529',
   topKind: 'sweater',
-  trousers: '#6a4a33',
-  shoes: '#eeece7',
+  trousers: '#3f2d24',
+  shoes: '#d6cdbd',
 };
 
 export {HIP};

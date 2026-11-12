@@ -96,8 +96,10 @@ COLOURS = {  # muted, like the reference's sweater and trousers
 HAIR = {"black": "#26211f", "dark-brown": "#4a3022", "brown": "#94593a", "auburn": "#8e3f22", "blonde": "#c9a35f", "grey": "#9c9a98",
         "white": "#e2e0dc", "red": "#a8492a"}
 SKIN = {"pale": "#ece2d8", "light": "#e6d8cb", "fair": "#e2c6ab", "tan": "#c99e78", "brown": "#9c6d4c", "dark": "#6b4630"}
-HERO = {"skin": SKIN["light"], "hair": HAIR["brown"], "hairStyle": "curly", "glasses": True, "top": COLOURS["red"], "topKind": "sweater",
-        "trousers": COLOURS["brown"], "shoes": "#eeece7"}
+# his own colours, from the concept still the user picked (brick-red sweater, dark brown trousers, chestnut hair, beige
+# shoes); not the shared COLOURS, so nobody else's "red" changes with him
+HERO = {"skin": SKIN["light"], "hair": "#704632", "hairStyle": "curly", "glasses": True, "top": "#9e3529", "topKind": "sweater",
+        "trousers": "#3f2d24", "shoes": "#d6cdbd"}
 
 
 class LPDesign(BaseModel):
