@@ -308,12 +308,13 @@ const Limb3: React.FC<{
 
 const Glasses: React.FC<{color: string}> = ({color}) => {
   // the concept still's frames: thick dark bars a little deep, standing just off the face so the eyes sit inside them
+  // thinner and a touch smaller than first matched (the user: "spectacles frame are too bulky, make it little small")
   const m = mat(color, {rough: 0.55});
-  const t = 0.036;
-  const dz = 0.045;
-  const w = 0.225;
-  const h = 0.16;
-  const z = D.head * 1.01;
+  const t = 0.026;
+  const dz = 0.03;
+  const w = 0.215;
+  const h = 0.15;
+  const z = D.head * 1.0;
   const lens = (cx: number) => (
     <group position={[cx, 0.02, z]} key={cx}>
       <M g={box(w + t, t, dz)} m={m} p={[0, h / 2, 0]} />
@@ -324,11 +325,11 @@ const Glasses: React.FC<{color: string}> = ({color}) => {
   );
   return (
     <group>
-      {lens(-0.127)}
-      {lens(0.127)}
-      <M g={box(0.06, t, dz * 0.8)} m={m} p={[0, 0.07, z + 0.004]} />
+      {lens(-0.122)}
+      {lens(0.122)}
+      <M g={box(0.05, t * 0.9, dz * 0.8)} m={m} p={[0, 0.065, z + 0.003]} />
       {[-1, 1].map((sx) => (
-        <M key={sx} g={box(t * 0.8, t * 0.8, 0.4)} m={m} p={[sx * 0.245, 0.06, 0.16]} r={[0, sx * 0.2, 0]} />
+        <M key={sx} g={box(t * 0.75, t * 0.75, 0.4)} m={m} p={[sx * 0.235, 0.055, 0.155]} r={[0, sx * 0.2, 0]} />
       ))}
     </group>
   );
