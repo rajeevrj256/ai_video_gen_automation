@@ -45,12 +45,75 @@ DEFAULT_BOX = [0.35, 0.45, 0.65, 0.9]
 
 
 def light_strength(base_light: str, light: str) -> float:
-    """How far the whole frame may move from the base for this stage's light and weather. Even at 0.64 a test's storm
-    stage looked like the sunny base (the model won't repaint a sky from a picture), so the editor grades each
-    stage's light and draws the rain (run.grade); here only a little drift, so the place stays put."""
+    """How far the whole frame may move from the base for this stage's light and weather: only a little, so the place
+    stays put. Even at 0.64 a test's storm stage looked like the sunny base (the model won't repaint a sky from a
+    picture), so the weather is drawn in its own passes (`weather_passes`)."""
     if light == base_light:
         return 0.22
     return 0.35
+
+
+# The weather drawn INTO the photograph, never laid over it: the editor's white rain lines and colour washes looked
+# fake (the user: "why fake rain"). A stage whose light differs from its base picture's gets the sky above the
+# horizon drawn anew (storm clouds, a night sky) and the ground around the subject (wet sand and splashes, moonlight),
+# each with its own words; the subject is drawn after, inside its own mask. The video model then makes the rain fall.
+SKY = {
+    "dawn": "a pale dawn sky, the first pink and orange light low on the horizon",
+    "morning": "a clear fresh morning sky, soft early sunlight",
+    "midday": "a bright clear midday sky, high sun",
+    "golden": "a warm golden-hour sky, a low sun glowing through haze",
+    "overcast": "a flat grey overcast sky, soft diffused light",
+    "storm": "dark heavy thunderstorm clouds, a low grey-black sky, sheets of heavy rain falling",
+    "rain": "low grey rain clouds, steady rain falling",
+    "dusk": "a dusk sky, the last orange glow fading into deep blue",
+    "night": "a night sky, deep dark blue, a bright moon and faint stars",
+}
+GROUND = {  # (words, how far from the base); a light that changes only the sky leaves the ground alone
+    "storm": ("rain-soaked dark wet ground, raindrops splashing into puddles, heavy rain falling", 0.6),
+    "rain": ("wet ground, raindrops splashing, small puddles, steady rain falling", 0.55),
+    "night": ("the ground at night in cool blue moonlight, deep soft shadows", 0.75),
+    "dusk": ("the ground in dim blue dusk light, soft long shadows", 0.6),
+    "golden": ("the ground in warm low golden sunlight, long shadows", 0.45),
+    "dawn": ("the ground in soft pink dawn light, long faint shadows", 0.45),
+}
+DEFAULT_HORIZON = 0.35
+
+
+def sky_path(work: Path, k: int) -> Path:
+    return work / "keyframes" / f"s{k:02d}.png"
+
+
+def ground_path(work: Path, k: int) -> Path:
+    return work / "keyframes" / f"g{k:02d}.png"
+
+
+def write_weather_masks(work: Path, k: int, horizon: float, box: list[float], size: float, base_size: float) -> None:
+    """The sky above the horizon, and the ground below it without the subject's own mask (drawn after)."""
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+    hz = max(0.05, min(0.8, float(horizon)))
+    sky = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(sky).rectangle([0, 0, W, (hz + 0.03) * H], fill=255)
+    sky.filter(ImageFilter.GaussianBlur(14)).save(sky_path(work, k))
+    ground = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(ground).rectangle([0, (hz + 0.01) * H, W, H], fill=255)
+    tmp = ground_path(work, k).with_suffix(".subj.png")
+    write_mask(tmp, box, size, base_size)
+    ground = ImageChops.subtract(ground, Image.open(tmp).convert("L"))
+    tmp.unlink(missing_ok=True)
+    ground.filter(ImageFilter.GaussianBlur(14)).save(ground_path(work, k))
+
+
+def weather_passes(j: Journey, work: Path, k: int, base: int) -> list[dict]:
+    light, was = j.stages[k].light, j.stages[base].light
+    if light == was:
+        return []
+    look = f"{j.place.strip().rstrip('.')}. {LOOK}"
+    out = [{"mask": str(sky_path(work, k)), "strength": 1.0, "prompt": f"{SKY[light]}, {look}"}]
+    if light in GROUND:
+        words, how = GROUND[light]
+        out.append({"mask": str(ground_path(work, k)), "strength": how, "prompt": f"{words}, {look}"})
+    return out
 
 
 def mask_path(work: Path, k: int) -> Path:
@@ -93,9 +156,11 @@ def prompt(j: Journey, k: int, picture: str, chain: bool = False) -> str:
     return f"{'' if opening else camera + ' '}{picture.strip()}{place} {LOOK}"
 
 
-def job(j: Journey, work: Path, seed: int, fixes: dict | None = None, boxes: dict | None = None) -> dict:
+def job(j: Journey, work: Path, seed: int, fixes: dict | None = None, boxes: dict | None = None,
+        horizons: dict | None = None) -> dict:
     """The worker's `keyframes` job (also what hfcloud.draw takes). `fixes`: {id: {"prompt", "round"}} from the check;
-    `boxes`: {base id: [x0, y0, x1, y1]} where the subject is in each base picture (masks are made from them)."""
+    `boxes`: {base id: [x0, y0, x1, y1]} where the subject is in each base picture (masks are made from them);
+    `horizons`: {base id: where its sky ends, a fraction from the top} for the weather masks."""
     fixes, boxes = fixes or {}, boxes or {}
     items, base, points = [], 0, 0
     for k, s in enumerate(j.stages):
@@ -110,7 +175,8 @@ def job(j: Journey, work: Path, seed: int, fixes: dict | None = None, boxes: dic
                       edit=s.what.strip(), edit_from=str(path(work, k - 1)), mask=str(mask_path(work, k)),
                       mask_strength=1.0 if s.size >= 1.8 * j.stages[base].size else MASK_STRENGTH,
                       box=boxes.get(f"k{base:02d}") or DEFAULT_BOX, size=s.size, base_size=j.stages[base].size,
-                      keep=bool(s.keeps))
+                      keep=bool(s.keeps), passes=weather_passes(j, work, k, base),
+                      horizon=float((horizons or {}).get(f"k{base:02d}", DEFAULT_HORIZON)))
         fix = fixes.get(it["id"])
         if fix:
             it["seed"] += 1000 * int(fix.get("round", 1))
@@ -131,6 +197,9 @@ def draw(jb: dict, work: Path, progress, engine: str, stop) -> str:
     for it in jb["shots"]:
         if it.get("mask"):
             write_mask(Path(it["mask"]), it["box"], it["size"], it["base_size"], it.get("keep", False))
+        if it.get("passes"):
+            write_weather_masks(work, int(it["id"][1:]), it.get("horizon", DEFAULT_HORIZON), it["box"], it["size"],
+                                it["base_size"])
     if engine in ("cloud", "auto") and hfcloud.ready():
         try:
             hfcloud.draw(jb, work, progress, stop, size=(W, H))
@@ -159,6 +228,8 @@ class SubjectBox(BaseModel):
     id: str = Field(description="The picture's label")
     box: list[float] = Field(description="Where the subject is: [left, top, right, bottom] as fractions 0-1 of the "
                                          "picture's width and height")
+    horizon: float = Field(-1.0, description="Where the sky ends (the line where it meets the land, trees or sea), as "
+                                            "a fraction of the height from the top; 0 when no sky shows")
 
 
 class PicReview(BaseModel):
@@ -177,10 +248,9 @@ When unsure, let it pass. For each broken one give a new prompt the image model 
 
 
 def check(cfg: Config, j: Journey, work: Path, only: list[str] | None = None, boxes: dict | None = None,
-          weather_later: bool = False) -> list[dict]:
-    """The broken pictures; with `boxes` (a dict) given, also fills it with the subject's box in each picture.
-    `weather_later`: the editor adds light and weather (pictures from this computer, run.grade): don't fail a
-    picture for a missing storm or night."""
+          horizons: dict | None = None) -> list[dict]:
+    """The broken pictures; with `boxes` (a dict) given, also fills it with the subject's box in each picture, and
+    `horizons` with where its sky ends (the weather masks)."""
     from ..animated import _pic_sheets
 
     pics = [(f"k{k:02d}", path(work, k)) for k in range(len(j.stages))]
@@ -195,10 +265,8 @@ def check(cfg: Config, j: Journey, work: Path, only: list[str] | None = None, bo
     prompt = (f"Subject: {j.subject}\nPlace: {j.place}\nCamera: {j.camera}\n\nStages:\n{rows}\n\n"
               "The pictures are attached as contact sheets."
               + ("\nFor every picture that passes, also give `subjects`: the box around the subject itself (the fruit, "
-                 "the seed, the plant), as fractions of that picture." if boxes is not None else "")
-              + ("\nThe light and weather of each stage (storm clouds, rain, night, golden evening) are added to these "
-                 "pictures afterwards by the editor: don't fail a picture for its light, sky or rain; judge the subject "
-                 "(its state, its parts, wet or dry) and the place." if weather_later else ""))
+                 "the seed, the plant), as fractions of that picture, and the `horizon`, where its sky ends."
+                 if boxes is not None else ""))
     review = ask(cfg.ai_backend, cfg.fact_model, CHECK_SYSTEM, prompt, PicReview, images=sheets, allow_web=False,
                  effort=cfg.fact_effort, timeout=900)
     ids = {i for i, _ in pics}
@@ -206,6 +274,8 @@ def check(cfg: Config, j: Journey, work: Path, only: list[str] | None = None, bo
         for sb in review.subjects:
             if sb.id in ids and len(sb.box) == 4 and sb.box[2] > sb.box[0] and sb.box[3] > sb.box[1]:
                 boxes[sb.id] = [round(float(v), 3) for v in sb.box]
+            if horizons is not None and sb.id in ids and 0 < sb.horizon < 0.9:
+                horizons[sb.id] = round(float(sb.horizon), 3)
     return [b.model_dump() for b in review.broken if b.id in ids]
 
 
@@ -230,20 +300,20 @@ def make(cfg: Config, j: Journey, work: Path, seed: int, state: dict, progress, 
     base = [it["id"] for it in job(j, work, seed)["shots"] if "init" not in it]
     drew = state.get("drew") or ""
     for phase, ids in (("base", base), ("chain", None)):
-        boxes = state.setdefault("boxes", {})
+        boxes, horizons = state.setdefault("boxes", {}), state.setdefault("horizons", {})
         if state.get(f"pics_{phase}"):  # checked before: only draw what's missing (a resume, a deleted picture)
-            got = draw(_only(job(j, work, seed, fixes, boxes), ids), work, progress, engine, stop)
+            got = draw(_only(job(j, work, seed, fixes, boxes, horizons), ids), work, progress, engine, stop)
             drew = drew if got == "done" and drew else got
             continue
         missing = [i for i in base if i not in boxes and (work / "keyframes" / f"{i}.jpg").exists()]
         if phase == "chain" and missing:  # a base picture redrawn last wasn't looked at: where is its subject?
             try:
-                check(cfg, j, work, missing, boxes)
+                check(cfg, j, work, missing, boxes, horizons)
             except Exception as exc:  # noqa: BLE001 - the default box then
                 if exc.__class__.__name__ in ("Paused", "Stopped"):
                     raise
                 log.warning("Finding the subject failed: %s", exc)
-        got = draw(_only(job(j, work, seed, fixes, boxes), ids), work, progress, engine, stop)
+        got = draw(_only(job(j, work, seed, fixes, boxes, horizons), ids), work, progress, engine, stop)
         drew = drew if got == "done" and drew else got
         state["drew"] = drew
         only = ids if phase == "base" else [i for i in (f"k{k:02d}" for k in range(len(j.stages))) if i not in base]
@@ -253,7 +323,7 @@ def make(cfg: Config, j: Journey, work: Path, seed: int, state: dict, progress, 
                 for b in blank:
                     for p in (work / "keyframes" / f"{b}.jpg", work / "keyframes" / f"{b}.jpg.ok"):
                         p.unlink(missing_ok=True)
-                draw(_only(job(j, work, seed, fixes, boxes), ids), work, progress, engine, stop)
+                draw(_only(job(j, work, seed, fixes, boxes, horizons), ids), work, progress, engine, stop)
                 if blank_pictures(work, only):
                     raise RuntimeError("The pictures keep coming out black: the graphics card's numbers break (see the log)")
             if not only:
@@ -261,7 +331,7 @@ def make(cfg: Config, j: Journey, work: Path, seed: int, state: dict, progress, 
             progress(("Claude is checking the first pictures" if phase == "base" else "Claude is checking the pictures")
                      + (" again" if rnd else ""))
             try:
-                broken = check(cfg, j, work, only, boxes if phase == "base" else None, weather_later=drew == "local")
+                broken = (check(cfg, j, work, only, boxes, horizons) if phase == "base" else check(cfg, j, work, only))
             except Exception as exc:  # noqa: BLE001 - a check that fails never stops the video
                 if exc.__class__.__name__ in ("Paused", "Stopped"):
                     raise
@@ -278,7 +348,7 @@ def make(cfg: Config, j: Journey, work: Path, seed: int, state: dict, progress, 
                     p.unlink(missing_ok=True)
             state.update(pic_fixes=fixes, pic_found=found, **{f"pic_round_{phase}": rnd + 1})
             save("pictures")
-            draw(_only(job(j, work, seed, fixes, boxes), ids), work, progress, engine, stop)
+            draw(_only(job(j, work, seed, fixes, boxes, horizons), ids), work, progress, engine, stop)
             only = [b["id"] for b in broken]
         state[f"pics_{phase}"] = True
         state.update(pic_fixes=fixes, pic_found=found)

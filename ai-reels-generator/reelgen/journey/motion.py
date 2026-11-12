@@ -39,6 +39,13 @@ def _ok(p: Path) -> bool:
     return p.exists() and Path(str(p) + ".ok").exists()
 
 
+# The rain itself is made by the video model, falling in the picture (the editor draws none): it is told so.
+WEATHER_MOTION = {
+    "storm": "Heavy rain pours down in sheets and splashes on the ground, dark clouds roll, the wind gusts. ",
+    "rain": "Steady rain falls and splashes on the ground. ",
+}
+
+
 def plan(j: Journey, work: Path, seed: int) -> list[dict]:
     clips = []
     for k, s in enumerate(j.stages):
@@ -49,8 +56,8 @@ def plan(j: Journey, work: Path, seed: int) -> list[dict]:
             "image": str(frames.path(work, k) if fresh else last_frame(work, k - 1)),
             "end": None if fresh else str(frames.path(work, k)),
             "seconds": round(s.seconds, 2), "timelapse": s.timelapse,
-            "prompt": (f"{how} {s.what.strip()} The camera stays still, the same place: {j.place.strip()} "
-                       "Photorealistic, natural colours, smooth natural motion, no text."),
+            "prompt": (f"{how} {s.what.strip()} {WEATHER_MOTION.get(s.light, '')}The camera stays still, the same "
+                       f"place: {j.place.strip()} Photorealistic, natural colours, smooth natural motion, no text."),
         })
     return clips
 

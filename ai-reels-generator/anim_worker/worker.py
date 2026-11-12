@@ -393,16 +393,24 @@ def keyframes(job: dict) -> None:
                 strength = float(it.get("strength", 0.6))
                 image = i2i(image=Image.open(init).convert("RGB").resize((W, H)), strength=strength,
                             num_inference_steps=max(steps, math.ceil(steps / strength)), **common).images[0]
-                mask = it.get("mask")
-                if mask and Path(mask).exists():
-                    # 🌱 Journey: the light changed over the whole frame (above, gently), then the subject drawn
-                    # anew inside its mask (a sprout, a young palm) while the place around it stays as it is
+                # 🌱 Journey: the light changed over the whole frame (above, gently), then each part drawn anew inside
+                # its mask while the rest stays as it is: the weather (a storm sky, wet sand) and the subject (a
+                # sprout, a young palm), each with its own words
+                passes = list(it.get("passes") or [])
+                if it.get("mask"):
+                    passes.append({"mask": it["mask"], "strength": it.get("mask_strength", 0.95)})
+                for ps in passes:
+                    if not Path(ps["mask"]).exists():
+                        continue
                     if inpaint is None:
                         from diffusers import StableDiffusionXLInpaintPipeline
                         inpaint = StableDiffusionXLInpaintPipeline.from_pipe(pipe, torch_dtype=dtype)
-                    ms = float(it.get("mask_strength", 0.95))
-                    image = inpaint(image=image, mask_image=Image.open(mask).convert("L").resize((W, H)), width=W, height=H,
-                                    strength=ms, num_inference_steps=max(steps, math.ceil(steps / ms)), **common).images[0]
+                    ms = float(ps.get("strength", 0.95))
+                    words = common if not ps.get("prompt") else {
+                        **common, **long_embeds(pipe, ps["prompt"], job.get("negative", ""), guidance)}
+                    image = inpaint(image=image, mask_image=Image.open(ps["mask"]).convert("L").resize((W, H)), width=W,
+                                    height=H, strength=ms, num_inference_steps=max(steps, math.ceil(steps / ms)),
+                                    **words).images[0]
             else:
                 image = pipe(width=W, height=H, num_inference_steps=steps, **common).images[0]
         except NaNLatents as exc:
