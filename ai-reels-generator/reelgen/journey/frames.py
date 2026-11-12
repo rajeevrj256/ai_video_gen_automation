@@ -71,7 +71,7 @@ SKY = {
 GROUND = {  # (words, how far from the base); a light that changes only the sky leaves the ground alone
     "storm": ("the same ground soaked dark by heavy rain, raindrops splashing on it, rain falling", 0.4),
     "rain": ("the same ground wet and darker from steady rain, raindrops splashing", 0.36),
-    "night": ("the same ground at night in cool blue moonlight, deep soft shadows", 0.55),
+    "night": ("the same ground at night in cool blue moonlight, deep soft shadows", 0.34),
     "dusk": ("the same ground in dim blue dusk light, soft long shadows", 0.42),
     "golden": ("the same ground in warm low golden sunlight, long shadows", 0.34),
     "dawn": ("the same ground in soft pink dawn light, long faint shadows", 0.34),
@@ -95,6 +95,41 @@ def write_weather_masks(work: Path, k: int, horizon: float, box: list[float], si
     ground = ImageChops.subtract(ground, Image.open(tmp).convert("L"))
     tmp.unlink(missing_ok=True)
     ground.filter(ImageFilter.GaussianBlur(14)).save(ground_path(work, k))
+
+
+# The model redraws a sky but won't relight a sunny beach (a night sky over daylight sand looked pasted on), so the
+# ground of this computer's pictures is then graded like a photograph to match its new sky: wet sand under a storm is
+# darker, a night is shot 'day for night' (darker, colder, less colour). Only below the sky the worker found.
+RELIGHT = {  # brightness, colour, (r, g, b) multiplied in
+    "storm": (0.7, 0.78, (0.92, 0.96, 1.0)),
+    "rain": (0.8, 0.85, (0.95, 0.97, 1.0)),
+    "overcast": (0.9, 0.86, (0.98, 0.99, 1.0)),
+    "night": (0.42, 0.45, (0.72, 0.82, 1.0)),
+    "dusk": (0.66, 0.85, (0.95, 0.88, 1.0)),
+    "golden": (0.98, 1.08, (1.0, 0.9, 0.76)),
+    "dawn": (0.9, 0.95, (1.0, 0.92, 0.9)),
+    "morning": (1.0, 1.0, (1.0, 0.98, 0.95)),
+    "midday": (1.04, 1.02, (1.0, 1.0, 1.0)),
+}
+
+
+def relight(picture: Path, light: str) -> None:
+    """Grade the ground of a picture to its light, once (`.lit` next to it, newer than the picture)."""
+    import numpy as np
+    from PIL import Image, ImageEnhance
+
+    lit, sky = picture.with_suffix(".lit"), picture.with_suffix(".sky.png")
+    if light not in RELIGHT or (lit.exists() and lit.stat().st_mtime >= picture.stat().st_mtime):
+        return
+    b, sat, (r, g, bl) = RELIGHT[light]
+    img = Image.open(picture).convert("RGB")
+    graded = ImageEnhance.Color(ImageEnhance.Brightness(img).enhance(b)).enhance(sat)
+    a = np.asarray(graded).astype(np.float32) * np.array([r, g, bl], np.float32)
+    keep = (np.asarray(Image.open(sky).convert("L").resize(img.size)).astype(np.float32) / 255)[..., None] if sky.exists() \
+        else np.zeros((img.height, img.width, 1), np.float32)
+    out = np.asarray(img).astype(np.float32) * keep + a * (1 - keep)
+    Image.fromarray(out.clip(0, 255).astype(np.uint8)).save(picture, quality=95)
+    lit.write_text(light)
 
 
 def weather_passes(j: Journey, work: Path, k: int, base: int, horizons: dict) -> list[dict]:
@@ -171,7 +206,7 @@ def job(j: Journey, work: Path, seed: int, fixes: dict | None = None, boxes: dic
                       edit=s.what.strip(), edit_from=str(path(work, k - 1)), mask=str(mask_path(work, k)),
                       mask_strength=1.0 if s.size >= 1.8 * j.stages[base].size else MASK_STRENGTH,
                       box=boxes.get(f"k{base:02d}") or DEFAULT_BOX, size=s.size, base_size=j.stages[base].size,
-                      keep=bool(s.keeps), passes=weather_passes(j, work, k, base, horizons or {}),
+                      keep=bool(s.keeps), passes=weather_passes(j, work, k, base, horizons or {}), light=s.light,
                       horizon=float((horizons or {}).get(f"k{base:02d}", DEFAULT_HORIZON)))
         fix = fixes.get(it["id"])
         if fix:
@@ -208,6 +243,9 @@ def draw(jb: dict, work: Path, progress, engine: str, stop) -> str:
         raise RuntimeError("Nothing can draw the pictures: install the AI engine (Anim tab) or save a Hugging Face "
                            "token (Anim tab, Hugging Face box)")
     anim_engine.run_stage("keyframes", jb, work, progress, "Drawing the stages")
+    for it in jb["shots"]:
+        if it.get("passes") and Path(it["out"]).exists():
+            relight(Path(it["out"]), it.get("light", ""))
     return "local"
 
 

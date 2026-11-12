@@ -1181,8 +1181,13 @@ def far_mask(depth, image, horizon: float, out: str) -> str:
     d = _raw_depth(proc, model, image).numpy()
     lo, hi = float(np.percentile(d, 1)), float(np.percentile(d, 99))
     far = (d - lo) / (hi - lo + 1e-6) < 0.05
-    rows = np.arange(image.height)[:, None] < (min(0.85, horizon + 0.08) * image.height)
-    m = Image.fromarray(((far & rows) * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(6))
+    rows = np.arange(image.height)[:, None] < (min(0.85, horizon + 0.04) * image.height)
+    # the sky and the sea are the bright far part; a far tree line is dark, and the night test drew a white rock
+    # where it was redrawn as 'sky'
+    lum = np.asarray(image.convert("L")).astype(np.float32)
+    bright = lum >= 0.6 * float(np.percentile(lum[far & rows], 90)) if (far & rows).any() else lum > 0
+    m = Image.fromarray(((far & rows & bright) * 255).astype(np.uint8))
+    m = m.filter(ImageFilter.MinFilter(5)).filter(ImageFilter.MaxFilter(11)).filter(ImageFilter.GaussianBlur(6))
     path = str(Path(out).with_suffix(".sky.png"))
     m.save(path)
     return path
