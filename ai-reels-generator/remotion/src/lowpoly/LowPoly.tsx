@@ -19,6 +19,9 @@ import {BokehPass} from 'three/examples/jsm/postprocessing/BokehPass.js';
 import {OutputPass} from 'three/examples/jsm/postprocessing/OutputPass.js';
 import {ShaderPass} from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import {UnrealBloomPass} from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import {RectAreaLightUniformsLib} from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+
+RectAreaLightUniformsLib.init(); // the face's soft key is an area light (a big soft source, not a point)
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
 import {LOOKS, Overgrowth, SETS, spotOf, ThingView, type SetDef} from './Sets';
@@ -1386,8 +1389,23 @@ const DARK_LOOKS = new Set(['night', 'lamp', 'dark']);
 // from the camera (short lighting), so the near cheek falls into shadow with a small lit triangle under the eye
 // (Rembrandt). A face turned square to the camera gets it from the room's lamp side (else camera left), 50° round.
 const FACE_KEY: Record<string, [string, number]> = {
-  night: ['#ffad6e', 4.6], lamp: ['#ffa765', 4.8], dark: ['#ffb987', 3.6], evening: ['#ffae74', 3.6],
+  night: ['#ffad6e', 3.6], lamp: ['#ffa765', 3.8], dark: ['#ffb987', 3.0], evening: ['#ffae74', 3.2],
   dawn: ['#ffc39c', 3.2], morning: ['#ffdcb2', 2.6], day: ['#ffefd8', 2.0],
+};
+// A soft coloured ambient under everything (the user: "use ambient diffused light, not fully white light"): the
+// shadows filled with the room's own tone, never a white light; the key is a big soft source (`SoftKey`), so the
+// face turns from light to shadow gradually.
+const AMBIENT: Record<string, [string, number]> = {
+  night: ['#4d5674', 0.55], lamp: ['#5e4c48', 0.55], dark: ['#343a4e', 0.4], evening: ['#6c5450', 0.42],
+  dawn: ['#6f5e64', 0.36], morning: ['#7c6c5a', 0.3], day: ['#8c8a84', 0.26],
+};
+const SoftKey: React.FC<{pos: THREE.Vector3; at: THREE.Vector3; color: string; intensity: number}> = ({pos, at, color, intensity}) => {
+  const light = useMemo(() => new THREE.RectAreaLight('#ffffff', 1, 1.9, 1.9), []);
+  light.position.copy(pos);
+  light.color.set(color);
+  light.intensity = intensity;
+  light.lookAt(at);
+  return <primitive object={light} />;
 };
 const yAngle = (a: THREE.Vector3, b: THREE.Vector3) => Math.atan2(a.z * b.x - a.x * b.z, a.x * b.x + a.z * b.z);
 const turnY = (v: THREE.Vector3, th: number) => new THREE.Vector3(v.x * Math.cos(th) + v.z * Math.sin(th), 0, -v.x * Math.sin(th) + v.z * Math.cos(th));
@@ -1430,7 +1448,8 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
   return (
     <>
       <primitive object={tgt} position={target.toArray()} />
-      <hemisphereLight args={[look.hemi[0], look.hemi[1], look.hemi[2] * (dark && !set.outdoor ? 0.45 : dark ? 0.75 : 0.92)]} />
+      <hemisphereLight args={[look.hemi[0], look.hemi[1], look.hemi[2] * (dark && !set.outdoor ? 0.5 : dark ? 0.75 : 0.85)]} />
+      <ambientLight color={(AMBIENT[light] ?? AMBIENT.day)[0]} intensity={(AMBIENT[light] ?? AMBIENT.day)[1]} />
       <directionalLight
         position={keyPos.toArray()}
         target={tgt}
@@ -1455,11 +1474,14 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
       {head && facePos ? (
         <>
           <primitive object={faceTgt} position={head.toArray()} />
+          {/* most of the key is a big soft panel (diffused, like a softbox); a weaker spot from the same place keeps
+              its soft shadows (the nose, the glasses, the hair over the brow) */}
+          <SoftKey pos={facePos} at={head} color={faceColor} intensity={faceK * 1.1} />
           <spotLight
             position={facePos.toArray()}
             target={faceTgt}
             color={faceColor}
-            intensity={faceK}
+            intensity={faceK * 0.4}
             angle={0.42}
             penumbra={0.75}
             decay={0}
@@ -1475,7 +1497,7 @@ const Lights: React.FC<{set: SetDef; light: string; target: THREE.Vector3; eye: 
       <directionalLight position={rimPos.toArray()} target={tgt} color={rimColor} intensity={rimK} />
       {lamp > 0 && set.lamp ? (
         // a warm pool round the lamp that falls off into the dark (a lamp lighting the whole room flattened it)
-        <pointLight position={set.lamp} color="#ffa04f" intensity={lamp * 2.6} distance={6.5} decay={2} castShadow={false} />
+        <pointLight position={set.lamp} color="#ffa04f" intensity={lamp * 2.2} distance={6.5} decay={2} castShadow={false} />
       ) : null}
       {dark
         ? glow.map((g, i) => <pointLight key={`glow${i}`} position={g.toArray()} color="#9cc4ff" intensity={0.45} distance={1.1} decay={2} />)
