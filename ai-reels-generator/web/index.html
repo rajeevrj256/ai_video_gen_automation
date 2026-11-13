@@ -3151,7 +3151,43 @@ api("/api/settings").then((s) => {
   initPickers();
 }).catch(() => initPickers());
 
+// One-step jobs that make no video (the YouTube audit, an upload): their own small card, without the video
+// stages, the style tag or Pause (the audit showed Script, Fact-check, Voice... and "📚 Facts" around one Claude call).
+const TASKS = {
+  yt_audit: { title: () => "📊 YouTube audit · your channel", wait: "Waiting for its turn",
+    done: "The audit is ready", open: ["📖 Read it in the YouTube tab", "show('youtube')"] },
+  yt_upload: { title: (j) => `▶ Upload to YouTube · ${esc(j.topic || "")}`, wait: "Waiting for its turn",
+    done: "Uploaded to YouTube", note: "Stopping is safe: pressing Upload again carries on from where it stopped." },
+};
+function taskCard(j, t) {
+  if (j.now) clockOffset = j.now - Date.now() / 1000;
+  const start = j.log.length ? j.log[0].t : j.created;
+  const end = j.finished || (j.log.length ? j.log[j.log.length - 1].t : start);
+  const msgs = j.log.map((l) => l.msg);
+  const running = j.status === "running", waiting = j.status === "queued";
+  const last = (j.live && j.live.t >= end && j.live.msg) || msgs[msgs.length - 1] || "Starting";
+  const errs = msgs.filter((m) => /^Error: /.test(m)).map((m) => m.replace(/^Error: /, ""));
+  const opened = t.open && j.status === "done" ? `<button class="primary" onclick="${t.open[1]}" style="width:100%;margin-top:8px">${t.open[0]}</button>` : "";
+  const video = j.status === "done" && (j.results || []).length
+    ? `<button class="primary" onclick="openVideo('${esc(j.results[0])}')" style="width:100%;margin-top:8px">Open the video</button>` : "";
+  const body = running ? `<div class="now-line">${esc(last)}</div><div class="timer">⏱ ${liveSince(start)}</div>${t.note ? `<p class="hint">${t.note}</p>` : ""}`
+    : waiting ? `<div class="now-line">${t.wait}</div>`
+    : `${j.status === "done" ? `<div class="okbox">✓ ${t.done}</div>` : ""}<div class="timer">⏱ Took ${mmss(end - start)}</div>${opened}${video}`;
+  return `<div class="panel job ${j.status}">
+    <div class="head"><div><div class="title">${t.title(j)}</div></div>
+      <span class="pill ${j.status}">${running ? '<span class="spinner"></span>' : ""}${LABEL[j.status] || j.status}</span></div>
+    ${aiLine(j.ai ? { ...j, ai: { model: j.ai.model, effort: j.ai.effort } } : j)}${body}${usageHtml(sumUsage(j.usage))}
+    ${errs.length ? `<div class="errbox">⚠️ ${errs.map(esc).join("<br>")}</div>` : ""}
+    ${running || waiting
+      ? `<button class="mini danger removejob" data-job="${esc(j.id)}" data-stop="1" data-unfinished="0" style="margin-top:8px">⏹ Stop</button>`
+      : `<button class="mini removejob" data-job="${esc(j.id)}" data-unfinished="0" style="margin-top:8px">✕ Remove from list</button>`}
+    <details class="log" data-job="${esc(j.id)}"><summary>Show full log (${msgs.length} steps)</summary><ol>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
+  </div>`;
+}
+
 function jobCard(j) {
+  const task = Object.keys(TASKS).find((k) => j[k]);
+  if (task) return taskCard(j, TASKS[task]);
   if (j.now) clockOffset = j.now - Date.now() / 1000;
   const jobStart = j.log.length ? j.log[0].t : j.created;
   const msgs = j.log.map((l) => l.msg);
