@@ -1555,6 +1555,7 @@ Plain paragraphs are read by the narrator."></textarea>
 </div>
 
 <div class="restartbar" id="powerBar" hidden style="position:fixed;top:0;left:0;right:0;z-index:60;background:#e5484d;color:#fff"></div>
+<div class="restartbar" id="pageBar" hidden>🔄 The app was updated: reload this page to use the new version. <button class="mini" onclick="location.reload()">⟳ Reload</button></div>
 <div class="restartbar" id="restartBar" hidden>🔄 The app's code changed on disk: restart it to use it (until then new buttons answer "Not Found"). <button class="mini" onclick="updateNow()">⬆ Update &amp; restart</button></div>
 <div class="restartbar" id="updating" hidden style="position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;text-align:center;font-size:18px;background:rgba(10,10,14,.92);color:#fff"></div>
 <div class="sheet" id="sheet" onclick="if (event.target === this) closeSheet()">
@@ -4116,6 +4117,11 @@ async function poll() {
   try {
     const st = await api("/api/status");
     $("#restartBar").hidden = !st.restart_needed;
+    if (st.page) {  // the page this tab loaded vs the one on disk now (document.lastModified = the page's Last-Modified)
+      const loaded = Date.parse(document.lastModified) / 1000;
+      poll.page = poll.page || st.page;
+      $("#pageBar").hidden = !(st.page - loaded > 2 || st.page !== poll.page);
+    }
     showPower(st.poweroff);
     $("#busyPill").textContent = st.busy ? "Generating…" : "Idle";
     $("#busyPill").classList.toggle("busy", st.busy);

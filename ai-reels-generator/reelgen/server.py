@@ -973,6 +973,9 @@ def create_app(cfg: Config) -> FastAPI:
             # The page is read from disk on every load, the Python code only when the app starts: after a
             # pull the page can show buttons the running app doesn't know yet ('Not Found').
             "restart_needed": _code_stamp() > started_code,
+            # The page itself: a tab left open across an update keeps running the old page's code against the
+            # new app (the audit showed '[object Object]'), so the page compares this with the one it loaded.
+            "page": int((WEB_DIR / "index.html").stat().st_mtime),
             "renderer": _renderer(),
             "last_update": last_update,
             "poweroff": poweroff.view(),
