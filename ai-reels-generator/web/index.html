@@ -1166,11 +1166,13 @@ Plain paragraphs are read by the narrator."></textarea>
             <li>In <b>APIs &amp; Services → Library</b>, enable <b>YouTube Data API v3</b>, <b>YouTube Analytics API</b> and
               <b>YouTube Reporting API</b>.</li>
             <li>In <b>APIs &amp; Services → OAuth consent screen</b> (Google Auth Platform): user type <b>External</b>, your
-              app name and email; under <b>Audience</b> add your own Gmail as a test user, then press <b>Publish app</b>
-              (an app left in Testing loses its sign-in every 7 days). Google shows "unverified app" to you: that's expected for
-              your own app.</li>
-            <li>In <b>Credentials → Create credentials → OAuth client ID</b>, choose <b>Desktop app</b>, then
-              <b>Download JSON</b>.</li>
+              app name and email; under <b>Audience</b> add your own Gmail as a test user. That's enough to connect, but an app
+              left in Testing loses its sign-in every 7 days (press Connect again then). To stop that, fill the <b>Branding</b>
+              page (home page, privacy policy link, authorized domain; no logo) and press <b>Publish app</b> under Audience.
+              Google shows "unverified app" to you: that's expected for your own app.</li>
+            <li>In <b>Google Auth Platform → Clients → Create client</b>, choose <b>Desktop app</b>, then press
+              <b>Download JSON</b> in the dialog that opens. Google shows the secret only there, once: a file downloaded later
+              has no secret (then press <b>+ Add secret</b> on the client and paste it below).</li>
             <li>Choose that file below, then press <b>Connect YouTube</b> on this computer and sign in. If your Google account has
               several channels, pick the one you post to.</li>
           </ol>
@@ -1179,6 +1181,13 @@ Plain paragraphs are read by the narrator."></textarea>
         </details>
         <label for="ytFile">1. Your OAuth client (the JSON file)</label>
         <input type="file" id="ytFile" accept=".json,application/json">
+        <details class="section-fold" id="ytPaste"><summary>…or paste the client ID and secret</summary>
+          <label for="ytCid">Client ID (ends in .apps.googleusercontent.com)</label>
+          <input type="text" id="ytCid" autocomplete="off" spellcheck="false">
+          <label for="ytSecret">Client secret (GOCSPX-…)</label>
+          <input type="password" id="ytSecret" autocomplete="off" spellcheck="false">
+          <button id="ytPasteSave" style="margin-top:8px">💾 Save the client</button>
+        </details>
         <p class="hint" id="ytClientLine"></p>
         <button class="primary" id="ytConnectBtn">2. ▶ Connect YouTube</button>
         <p class="hint" id="ytMsg"></p>
@@ -2323,12 +2332,41 @@ document.addEventListener("click", (e) => {
 });
 $("#ytSort").onchange = $("#ytKind").onchange = ytRender;
 $("#ytCsv").onclick = () => { location.href = "/api/youtube/videos.csv"; };
+// Saving the client: its error stays on the client line (Connect's own message goes below the button and used to
+// replace it, so a refused file read as "add your client first").
+async function ytSaveClient(body) {
+  $("#ytMsg").textContent = "";
+  try {
+    await api("/api/youtube/client", { method: "PUT", body: JSON.stringify(body) });
+    $("#ytSecret").value = ""; $("#ytMsg").textContent = "";
+    await loadYouTube();
+    $("#ytClientLine").textContent = "✅ Client saved. Now press Connect.";
+    return true;
+  } catch (err) {
+    $("#ytClientLine").textContent = "⚠️ " + err.message;
+    if (body.json_text) {  // a file without its secret: keep its ID and ask for the secret
+      try { const j = JSON.parse(body.json_text); const id = (j.installed || j.web || {}).client_id; if (id) $("#ytCid").value = id; } catch {}
+      $("#ytPaste").open = true;
+    }
+    return false;
+  }
+}
 $("#ytFile").onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
-  try { await api("/api/youtube/client", { method: "PUT", body: JSON.stringify({ json_text: await f.text() }) }); $("#ytMsg").textContent = "✅ Client saved. Now press Connect."; loadYouTube(); }
-  catch (err) { $("#ytMsg").textContent = "⚠️ " + err.message; }
+  await ytSaveClient({ json_text: await f.text() });
+  e.target.value = "";  // choosing the same file again still saves it
 };
+$("#ytPasteSave").onclick = () => ytSaveClient({ client_id: $("#ytCid").value.trim(), client_secret: $("#ytSecret").value.trim() });
 $("#ytConnectBtn").onclick = async () => {
+  const st = await api("/api/youtube/status").catch(() => ({}));
+  if (!st.client) {
+    const id = $("#ytCid").value.trim(), secret = $("#ytSecret").value.trim();
+    if (!(id && secret && await ytSaveClient({ client_id: id, client_secret: secret }))) {
+      $("#ytMsg").textContent = "⚠️ Save your OAuth client first (step 1): " + ($("#ytClientLine").textContent.startsWith("⚠️")
+        ? "see the message above." : "choose its JSON file, or paste its ID and secret.");
+      return;
+    }
+  }
   try {
     const { url } = await api("/api/youtube/connect", { method: "POST" });
     window.open(url, "_blank", "noopener");

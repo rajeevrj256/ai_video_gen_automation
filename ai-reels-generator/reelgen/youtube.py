@@ -117,6 +117,12 @@ def set_env(values: dict[str, str]) -> None:
     env.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+NO_SECRET = ("This file has no client secret in it: Google shows a client's secret only once, right after you make it. "
+             "In Google Cloud > Google Auth Platform > Clients, open your Desktop client and press '+ Add secret', then "
+             "paste it into 'Client secret' (the client ID is filled in from your file) and save. Or make a new Desktop client "
+             "and press Download JSON in the dialog that opens.")
+
+
 def save_client(text: str = "", client_id: str = "", client_secret: str = "") -> str:
     """The OAuth client from Google Cloud: its downloaded JSON file, or the id and secret typed in."""
     if text.strip():
@@ -128,15 +134,22 @@ def save_client(text: str = "", client_id: str = "", client_secret: str = "") ->
         if not kind:
             raise YouTubeError("That JSON file isn't an OAuth client (it should have 'installed' in it: "
                                "choose 'Desktop app' when you create the client)")
-        client_id, client_secret = data[kind].get("client_id", ""), data[kind].get("client_secret", "")
         if kind == "web":
             raise YouTubeError("This is a 'Web application' client. Create one of type 'Desktop app' instead "
-                               "(Google Cloud > Credentials > Create credentials > OAuth client ID > Desktop app)")
+                               "(Google Cloud > Clients > Create client > Desktop app)")
+        client_id = data[kind].get("client_id", "") or client_id
+        client_secret = str(data[kind].get("client_secret") or "").strip() or client_secret
+        if not re.fullmatch(r"[\w\-]{10,100}", client_secret.strip()):
+            # Google shows a client's secret only once, in the dialog right after it is made; a JSON downloaded
+            # later from the client's page has no usable secret in it.
+            raise YouTubeError(NO_SECRET)
     client_id, client_secret = client_id.strip(), client_secret.strip()
     if not re.fullmatch(r"[\w.\-]+\.apps\.googleusercontent\.com", client_id):
         raise YouTubeError("That client ID doesn't look right (it ends in .apps.googleusercontent.com)")
+    if not client_secret:
+        raise YouTubeError(NO_SECRET)
     if not re.fullmatch(r"[\w\-]{10,100}", client_secret):
-        raise YouTubeError("That client secret doesn't look right")
+        raise YouTubeError("That client secret doesn't look right (it looks like GOCSPX-... with no spaces)")
     set_env({"YOUTUBE_CLIENT_ID": client_id, "YOUTUBE_CLIENT_SECRET": client_secret})
     return client_id
 
@@ -160,7 +173,7 @@ def start_connect(cfg: Config, back: str) -> str:
     """The Google sign-in address to open; a one-time listener on 127.0.0.1 waits for Google to send the browser back."""
     cid, secret = client()
     if not cid:
-        raise YouTubeError("Add your OAuth client first (Settings > YouTube, step 1)")
+        raise YouTubeError("Save your OAuth client first: choose its JSON file in step 1 above, or paste its ID and secret")
     state = secrets.token_urlsafe(24)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
