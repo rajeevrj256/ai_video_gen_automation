@@ -69,7 +69,11 @@ def gather(cfg: Config) -> dict:
             row["sources"] = d.get("sources") or []
             summary = Y._retention(cfg, v)
             if summary:
-                row["retention_summary"] = {k: summary[k] for k in ("at_3s", "half_gone_at", "at_end")}
+                row["retention_summary"] = {k: summary.get(k) for k in ("at_3s", "half_gone_at", "at_end", "at_10s", "kept_5_to_10")}
+        if v.get("short"):  # of all the times it started to play, how many stayed past the first seconds
+            st = v.get("stats") or {}
+            row["stayed"], row["stayed_estimated"] = Y.stayed(st.get("views"), st.get("engagedViews"),
+                                                             st.get("estimatedMinutesWatched"), st.get("averageViewDuration"))
         videos.append(row)
     audits = []
     for item in Y.audits(cfg):
@@ -115,11 +119,17 @@ def markdown(b: dict) -> str:
            f"Exported {b['exported_at'][:16].replace('T', ' ')} from Reel Studio. Numbers from YouTube's Data and Analytics "
            f"APIs as of {b['fetched_at'][:16].replace('T', ' ')} (YouTube's analytics lag 2-3 days).", "",
            "## What the numbers mean",
-           "- **Views**: times the video was watched. **Average viewed %**: how much of the video a typical view lasted "
-           "(Shorts can pass 100% when people rewatch).",
-           "- **Still watching**: the share of viewers still watching at that moment of the video (100% = everyone who "
-           "started; over 100% = some watched that part again). **vs similar videos**: YouTube's own comparison with "
-           "videos of the same length (0.5 = typical, higher = better).",
+           "- **Views**: times the video was watched; for a Short, every time it started to play in the feed, swiped "
+           "away or not. **Average viewed %**: how much of the video a typical view lasted (Shorts can pass 100% when "
+           "people rewatch).",
+           "- **Stayed past the first seconds** (Shorts): of all those starts, how many kept watching instead of "
+           "swiping away. Marked (estimate) when worked out from the watch time (minutes watched x 60 / average view "
+           "seconds / views), exact when YouTube's own engaged views are in.",
+           "- **Still watching**: the share of viewers still watching at that moment of the video. For a Short it is "
+           "among the viewers who stayed past the first seconds, so it starts near or above 100% (over 100% = some "
+           "watched that part again). **Kept from second 5 to second 10**: of the viewers still there at second 5, how "
+           "many are still there at second 10. **vs similar videos**: YouTube's own comparison with videos of the "
+           "same length (0.5 = typical, higher = better).",
            "- **Impressions**: how often YouTube showed the thumbnail. **Click rate (CTR)**: how many of those clicked.",
            f"- {b['reach_note'] or ''}", "",
            "## Channel",
@@ -158,6 +168,11 @@ def markdown(b: dict) -> str:
             half = (f"half the viewers gone by {_fmt(rs['half_gone_at'], 0)} s" if rs.get("half_gone_at") is not None
                     else "more than half still watching at the end")
             out.append(f"- Still watching at 3 s: {_fmt(rs.get('at_3s'))}% · {half} · still watching at the end: {_fmt(rs.get('at_end'))}%")
+            if rs.get("at_10s") is not None:
+                out.append(f"- Still watching at 10 s: {_fmt(rs['at_10s'])}% · kept from second 5 to second 10: {_fmt(rs.get('kept_5_to_10'))}%")
+        if v.get("stayed") is not None:
+            out.append(f"- Stayed past the first seconds (did not swipe away): {_fmt(v['stayed'])}%"
+                       + (" (estimate)" if v.get("stayed_estimated") else ""))
         ret = v.get("retention") or []
         if ret:
             picks = [r for r in ret if round(r["at"] * 100) % 5 == 0] or ret
@@ -220,7 +235,10 @@ def tables(b: dict) -> dict[str, str]:
                      v.get("comments", 0), st.get("shares", ""), st.get("subscribersGained", ""), st.get("estimatedMinutesWatched", ""),
                      st.get("averageViewDuration", ""), st.get("averageViewPercentage", ""), rc.get("impressions", ""),
                      "" if rc.get("ctr") is None else round(rc["ctr"] * 100, 2), rs.get("at_3s", ""), rs.get("half_gone_at", ""),
-                     rs.get("at_end", ""), "; ".join(f"{k}={val}" for k, val in (v.get("made_by_app") or {}).items()),
+                     rs.get("at_end", ""), "" if v.get("stayed") is None else v["stayed"],
+                     "" if v.get("stayed") is None else ("yes" if v.get("stayed_estimated") else "no"),
+                     "" if rs.get("at_10s") is None else rs["at_10s"], "" if rs.get("kept_5_to_10") is None else rs["kept_5_to_10"],
+                     "; ".join(f"{k}={val}" for k, val in (v.get("made_by_app") or {}).items()),
                      ", ".join(v.get("tags") or []), "https://youtu.be/" + v["id"]])
     ret = [[v["id"], v["title"], r["second"], round(r["at"], 3), "" if r["watching"] is None else round(r["watching"] * 100, 2),
             "" if r["vs_similar"] is None else r["vs_similar"]] for v in b["videos"] for r in v.get("retention") or []]
@@ -230,7 +248,8 @@ def tables(b: dict) -> dict[str, str]:
         "videos.csv": _csv(["video_id", "title", "published", "format", "duration_s", "privacy", "views", "likes", "comments",
                             "shares", "subscribers_gained", "watch_minutes", "avg_view_duration_s", "avg_percent_viewed",
                             "impressions", "ctr_percent", "still_watching_at_3s_percent", "half_gone_at_s",
-                            "still_watching_at_end_percent", "made_by_app", "tags", "url"], vids),
+                            "still_watching_at_end_percent", "stayed_past_first_seconds_percent", "stayed_is_estimate",
+                            "still_watching_at_10s_percent", "kept_from_5s_to_10s_percent", "made_by_app", "tags", "url"], vids),
         "retention.csv": _csv(["video_id", "title", "second", "fraction_of_video", "percent_still_watching", "vs_similar_videos"], ret),
         "traffic_sources.csv": _csv(["video_id", "title", "source", "views", "minutes_watched"], src),
         "daily.csv": _csv(["date", "views", "new_subscribers", "minutes_watched"],

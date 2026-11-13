@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import briefing, cinehook, tunnel
+from . import briefing, cinehook, growth, tunnel
 from .categories import CATEGORIES, categorize
 from .config import EDITABLE, PROJECT_ROOT, Config, ai_pick, apply_ai, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
@@ -627,6 +627,8 @@ class LowPolyBody(BaseModel):
     hero_name: str = "Ethan"  # 🎭 his name on his card
     film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster
     drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
+    growth: bool = True  # 📈 the channel rules (reelgen/growth.py)
+    end_tag: str = "Subscribe for the next one"  # 📈 the small tag over a Short's last seconds ('' = none)
     ai: AIPick | None = None
 
 
@@ -1771,7 +1773,9 @@ def create_app(cfg: Config) -> FastAPI:
                 "format": "film" if film else "short", "seconds": max(20, min(120 if intro else 60, int(body.seconds))),
                 "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
-                "words": body.words if body.words in ("on", "stamps", "off") else "on"}
+                "words": body.words if body.words in ("on", "stamps", "off") else "on",
+                "growth": bool(body.growth) and not intro, "end_tag": growth.end_tag(body.end_tag),
+                "hero_name": body.hero_name.strip()[:40] or "Ethan"}
         if intro:
             given.update({"topic": "", "people": [p.strip()[:60] for p in body.people if p.strip()][:30],
                           "hero_name": body.hero_name.strip()[:40] or "Ethan", "film_title": body.film_title.strip()[:40]})

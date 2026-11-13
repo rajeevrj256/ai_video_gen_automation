@@ -162,7 +162,7 @@ def run_journey(cfg: Config, req: JourneyRequest, progress, resume: str | None =
         "clips_by": made_by, "sound_cues": state.get("sound", {}).get("sounds"), "credits": credits,
         "journey_request": asdict(req), "thumbnail_text": j.thumbnail_text, "music": "none (only the place's sounds)",
         "youtube_title": j.youtube_title[:100], "youtube_description": desc, "youtube_tags": j.tags,
-        "youtube_hashtags": j.hashtags[:3], "caption": desc, "hashtags": j.hashtags, "staging_fixes": state.get("notes"),
+        "youtube_hashtags": [h.lstrip("#") for h in j.hashtags[:3]], "caption": desc, "hashtags": [h.lstrip("#") for h in j.hashtags], "staging_fixes": state.get("notes"),
     }
     (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
     report["usage"] = summarize_usage(meter_records())

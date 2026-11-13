@@ -2202,6 +2202,38 @@ const Grain: React.FC<{frame: number}> = ({frame}) => (
   </svg>
 );
 
+// 📈 The channel rules' end tag (reelgen/growth.py): a small line over a Short's last seconds, at the top where
+// YouTube's own buttons and the captions aren't. It pops in and gives one small nudge; nothing is added to the length.
+const EndTag: React.FC<{tag: {text: string; start: number}; t: number; vertical: boolean}> = ({tag, t, vertical}) => {
+  const k = t - tag.start;
+  const pop = interpolate(k, [0, 0.16, 0.26], [0.6, 1.08, 1], clamp);
+  const nudge = k > 0.9 && k < 1.25 ? 1 + 0.05 * Math.sin(((k - 0.9) / 0.35) * Math.PI) : 1;
+  return (
+    <div style={{position: 'absolute', top: vertical ? 168 : 92, width: '100%', display: 'flex', justifyContent: 'center',
+      opacity: interpolate(k, [0, 0.12], [0, 1], clamp)}}>
+      <div
+        style={{
+          transform: `scale(${pop * nudge})`,
+          background: '#e0352b',
+          color: '#fff',
+          fontFamily: 'Anton, Impact, sans-serif',
+          fontSize: vertical ? 40 : 30,
+          letterSpacing: 1.2,
+          lineHeight: 1.15,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+          padding: vertical ? '14px 34px 12px' : '10px 26px 8px',
+          borderRadius: 999,
+          maxWidth: '86%',
+          boxShadow: '0 6px 22px rgba(0,0,0,0.45)',
+        }}
+      >
+        {tag.text}
+      </div>
+    </div>
+  );
+};
+
 export const LowPoly: React.FC<LowPolyProps> = (props) => {
   useFonts();
   setMade(props.made); // the things the writer designed for this film (planes, bikes, boats...)
@@ -2267,6 +2299,7 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
           {props.watermark}
         </div>
       ) : null}
+      {props.endTag && t >= props.endTag.start ? <EndTag tag={props.endTag} t={t} vertical={props.vertical} /> : null}
       <Words c={cap} vertical={props.vertical} t={t} />
       {shot.poster ? <PosterWords p={shot.poster} t={local} tall={props.vertical} width={width} /> : null}
       {card?.style === 'caper' ? <CaperCard c={card} t={t} vertical={props.vertical} width={width} /> : <NameCardView c={card} t={t} vertical={props.vertical} />}

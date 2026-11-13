@@ -147,7 +147,7 @@ def run_sticky(cfg: Config, req: StickyRequest, progress, resume: str | None = N
         "music": mixed.get("music", ""), "sound_cues": mixed.get("sound_cues"), "whispers": mixed.get("whispers"),
         "sticky_request": asdict(req), "thumbnail_text": film.thumbnail_text, "meter": film.meter.model_dump(),
         "youtube_title": film.youtube_title[:100], "youtube_description": film.description.strip(),
-        "youtube_tags": film.tags, "youtube_hashtags": film.hashtags[:3], "caption": film.description.strip(), "hashtags": film.hashtags,
+        "youtube_tags": film.tags, "youtube_hashtags": [h.lstrip("#") for h in film.hashtags[:3]], "caption": film.description.strip(), "hashtags": [h.lstrip("#") for h in film.hashtags],
     }
     if movie is not None:  # a movie part: remember its cast, places, music style and the story so far for the next part
         report.update({"movie": film.title.strip(), "part": state.get("part", 1), "story_so_far": film.summary})

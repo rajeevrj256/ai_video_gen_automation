@@ -18,6 +18,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic.json_schema import SkipJsonSchema
 
+from .. import growth
 from ..config import Config
 from ..llm import ask
 from ..sfx import drop_removed
@@ -293,6 +294,8 @@ class Story(BaseModel):
     tags: list[str]
     hashtags: list[str]
     thumbnail_text: str = Field(description="2-4 words")
+    comment_question: str = Field("", description="the one question to pin as the first comment: short, about the viewer, "
+                                                   "answerable in a few words")
     mood: Mood = Field(description="the music's mood for most of it")
     end_mood: Mood = Field(description="the music's mood for the ending")
     music_prompt: str = Field(description="the feeling of the score in a few words (soft felt piano...); no genre")
@@ -307,6 +310,7 @@ class Story(BaseModel):
     hero: bool = Field(True, description="the channel's man is in this film; false when the brief has no people in it (a "
                                          "film about animals, creatures or a place) or none who could be him")
     poster: SkipJsonSchema[dict] = {}  # 🎭 the cast intro's closing poster: title, tagline, the face over the city
+    growth: SkipJsonSchema[dict] = {}  # 📈 what the channel rules fixed, sent back and left (growth.enforce), for the report
     intro: SkipJsonSchema[list[IntroCard]] = []  # 🎭 a cast intro's segments (intro.py), never asked of the writer
 
 
@@ -909,6 +913,7 @@ class Outline(BaseModel):
     tags: list[str]
     hashtags: list[str]
     thumbnail_text: str = Field(description="2-4 words")
+    comment_question: str = Field("", description="the one question to pin as the first comment")
     mood: Mood
     end_mood: Mood
     music_prompt: str = Field(description="the feeling of the score in a few words; no genre")
@@ -928,12 +933,29 @@ def _act_len(fiction: bool, minutes: float) -> tuple[int, int]:
     return (round(minutes * 60 / (3.0 if fiction else 3.3)), int(minutes * 60 * (1.3 if fiction else 1.8)))
 
 
-def _outline_system(fiction: bool, minutes: float) -> str:
+def _grows(cfg: Config | None) -> bool:
+    """The channel rules (growth.py) are on for this job."""
+    return bool(getattr(cfg, "growth_rules", True)) if cfg is not None else False
+
+
+def _hero(cfg: Config | None) -> str:
+    return (str(getattr(cfg, "hero_name", "") or "").strip() or growth.HERO) if cfg is not None else growth.HERO
+
+
+def _base(cfg: Config | None, fiction: bool, length: str, *, short: bool, script: bool = False, grow: bool = True) -> str:
+    """A writer's rules for this kind and length, with the channel rules (growth.py) when they are on."""
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
+    text = (FICTION if fiction else RULES).format(spots=spots, length=length, creatures=CREATURES)
+    if grow and _grows(cfg):
+        text += growth.block(short=short, fiction=fiction, script=script, hero=_hero(cfg))
+    return text
+
+
+def _outline_system(fiction: bool, minutes: float, cfg: Config | None = None) -> str:
     n_acts = max(4, min(9, round(minutes / 1.7)))
     shots, words = _act_len(fiction, minutes)
     whole = (FICTION_FILM if fiction else FILM).format(minutes=f"{minutes:g}", shots=f"{shots - 10}-{shots + 10}", words=words)
-    return (FICTION if fiction else RULES).format(spots=spots, length=whole) + f"""
+    return _base(cfg, fiction, whole, short=False) + f"""
 
 THIS FILM IS LONG ({minutes:g} minutes), so plan it first: {n_acts} acts (give or take one) whose minutes add up to
 {minutes:g}. A long film needs more than a long version of a short one: a fuller world (more places, two to six people
@@ -954,13 +976,16 @@ editor's vocabulary, the length, the staging). Return the whole storyboard, chan
 def revise(cfg: Config, story: Story, instruction: str, *, short: bool, seconds: int, minutes: float) -> Story:
     """The same storyboard with the user's changes (one call, no web); everything they didn't ask about kept."""
     fiction = story.kind == "fiction"
-    system = _system(fiction, short, seconds, minutes) + ("" if fiction else CREATURES) + REVISE
+    system = _system(fiction, short, seconds, minutes, cfg=cfg) + ("" if fiction else CREATURES) + REVISE
     prompt = (f"THE STORYBOARD AS IT IS:\n{story.model_dump_json(indent=1)}\n\nTHE USER'S CHANGES:\n{instruction.strip()}"
               f"{_known(cfg)}")
     out = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
     out.kind = story.kind
-    if short and "#shorts" not in [h.lower() for h in out.hashtags]:
+    if short and not _grows(cfg) and "#shorts" not in [h.lower() for h in out.hashtags]:
         out.hashtags = out.hashtags[:2] + ["#shorts"]
+    if _grows(cfg):  # the post kept tidy; what the user asked for is never sent back
+        out.growth = dict(story.growth)
+        growth.tidy(out, short=short, script=True)
     return out
 
 
@@ -968,23 +993,14 @@ def revise_outline(cfg: Config, outline: Outline, instruction: str, *, minutes: 
     """A long film's outline with the user's changes; the acts are written from it once approved."""
     prompt = (f"THE OUTLINE AS IT IS:\n{outline.model_dump_json(indent=1)}\n\nTHE USER'S CHANGES:\n{instruction.strip()}"
               f"{_known(cfg)}")
-    return ask(cfg.ai_backend, cfg.claude_model, _outline_system(fiction, minutes) + REVISE.replace("STORYBOARD", "OUTLINE"),
+    return ask(cfg.ai_backend, cfg.claude_model, _outline_system(fiction, minutes, cfg) + REVISE.replace("STORYBOARD", "OUTLINE"),
                prompt, Outline, allow_web=False, effort=cfg.claude_effort, timeout=2400)
 
 
 def plan_outline(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction: bool, progress=log.info) -> Outline:
     """A long film's plan: title, cast and acts with their minutes, places and moods (the first step of `write_long`, and
     on its own the storyboard draft of a long film the user reads before it is written act by act)."""
-    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
-    n_acts = max(4, min(9, round(minutes / 1.7)))
-    shots, words = _act_len(fiction, minutes)
-    whole = (FICTION_FILM if fiction else FILM).format(minutes=f"{minutes:g}", shots=f"{shots - 10}-{shots + 10}", words=words)
-    plan_system = (FICTION if fiction else RULES).format(spots=spots, length=whole) + f"""
-
-THIS FILM IS LONG ({minutes:g} minutes), so plan it first: {n_acts} acts (give or take one) whose minutes add up to
-{minutes:g}. A long film needs more than a long version of a short one: a fuller world (more places, two to six people
-with their own wants), a middle that turns more than once, set-ups paid off later, quiet scenes between the big ones,
-and the ending's line in red. Write the outline only; the shots come next, act by act."""
+    plan_system = _outline_system(fiction, minutes, cfg)
     progress(f"Planning the {minutes:g}-minute film in acts")
     return ask(cfg.ai_backend, cfg.claude_model, plan_system, f"{ask_for}\n\nAlready made (never the same story or title "
                f"again):\n{made}{_known(cfg)}", Outline, allow_web=False, effort=cfg.claude_effort, timeout=2400)
@@ -996,7 +1012,6 @@ def write_long(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction:
     writes that act's shots knowing the whole plan and how the act before it ended. Each finished part is kept in
     `save_to`, so a stopped or failed run carries on from the next act; an approved storyboard draft (boards.py) puts
     its outline and take there first, so only the acts are written."""
-    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     saved = json.loads(save_to.read_text(encoding="utf-8")) if save_to and save_to.exists() else {}
     if "outline" in saved:
         outline = Outline.model_validate(saved["outline"])
@@ -1018,7 +1033,7 @@ def write_long(cfg: Config, ask_for: str, made: str, *, minutes: float, fiction:
             continue
         a_shots, a_words = _act_len(fiction, act.minutes)
         length = (f"this act only, about {act.minutes:g} minutes: {max(6, a_shots - 4)}-{a_shots + 4} shots, about {a_words} words")
-        system = (FICTION if fiction else RULES).format(spots=spots, length=length)
+        system = _base(cfg, fiction, length, short=False, grow=i == 0)  # the channel's rules for a film are about its opening
         before = acts[-1][-6:] if acts else []
         before_text = "\n".join(f"- [{x.set}, {x.camera}] {x.speaker + ': ' if x.line else ''}{x.line or '(silent)'} "
                                  f"({'; '.join(f'{y.who} {y.action}' for y in x.actors)})" for x in before)
@@ -1052,24 +1067,25 @@ TAKE = ("\n\n" + TAKE_MARK + " (one of several storyboards written from the same
         "it this way, and the prompt still holds):\n{take}")
 
 
-def _system(fiction: bool, short: bool, seconds: int, minutes: float, script: bool = False) -> str:
+def _system(fiction: bool, short: bool, seconds: int, minutes: float, script: bool = False, cfg: Config | None = None) -> str:
+    """The writer's rules. `cfg` brings the channel rules (growth.py) with them when they are on for this job."""
     if script:  # the user's own script: their words and visuals, whatever the kind of film
-        return _system(fiction, short, seconds, minutes) + ("" if fiction else CREATURES) + SCRIPT_RULES
-    spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
+        return (_system(fiction, short, seconds, minutes) + ("" if fiction else CREATURES) + SCRIPT_RULES
+                + (growth.block(short=short, fiction=fiction, script=True) if _grows(cfg) else ""))
     if fiction:
         if short:
             length = FICTION_SHORT.format(seconds=seconds, shots=max(9, round(seconds / 2.6)), words=int(seconds * 1.3))
         else:
             shots = round(minutes * 60 / 3.0)
             length = FICTION_FILM.format(minutes=f"{minutes:g}", shots=f"{shots - 8}-{shots + 8}", words=int(minutes * 60 * 1.3))
-        return FICTION.format(spots=spots, length=length, creatures=CREATURES)
+        return _base(cfg, True, length, short=short)
     if short:
         shots = max(7, round(seconds / 3.0))
         length = SHORT.format(seconds=seconds, shots=shots, words=int(seconds * 1.85))
     else:
         shots = round(minutes * 60 / 3.3)
         length = FILM.format(minutes=f"{minutes:g}", shots=f"{shots - 8}-{shots + 6}", words=int(minutes * 60 * 1.8))
-    return RULES.format(spots=spots, length=length)
+    return _base(cfg, False, length, short=short)
 
 
 def _asking(cfg: Config, topic: str, fiction: bool, take: str = "") -> tuple[str, str, list[dict]]:
@@ -1096,13 +1112,15 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
     way of telling it, one of several drafts the user chooses from (boards.py)."""
     fiction = kind == "fiction"
     sections = parse_script(topic)
-    system = _system(fiction, short, seconds, minutes, script=bool(sections))
+    system = _system(fiction, short, seconds, minutes, script=bool(sections), cfg=cfg)
     ask_for, made, past = _asking(cfg, topic, fiction, take)
     if sections:
         progress(f"Your script: {len(sections)} sections, {len(script_lines(sections))} spoken lines, staged as written")
     if not short and minutes > LONG_FROM and not sections:
         story = write_long(cfg, ask_for, made, minutes=minutes, fiction=fiction, progress=progress, save_to=save_to)
         story.kind = "fiction" if fiction else "life"
+        if _grows(cfg):  # too long to send back whole: the post tidied, a label of a title written again
+            story = growth.enforce(cfg, story, short=False, seconds=seconds, minutes=minutes, hero=_hero(cfg), progress=progress)
         return story
     prompt = f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
     story = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
@@ -1113,9 +1131,15 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
         progress(f"That story is too close to '{near}'; writing a different one")
         story = ask(cfg.ai_backend, cfg.claude_model, system, prompt + f"\n\nYour first idea was too close to '{near}'. Pick a "
                     "different struggle and story.", Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
-    if short and "#shorts" not in [h.lower() for h in story.hashtags]:
-        story.hashtags = story.hashtags[:2] + ["#shorts"]
+    if short and not _grows(cfg) and "#shorts" not in [h.lower() for h in story.hashtags]:
+        story.hashtags = story.hashtags[:2] + ["#shorts"]  # (with the channel rules: growth.tidy, three and '#shorts')
     story.kind = "fiction" if fiction else "life"
+    if _grows(cfg):  # 📈 the channel's rules: tidied in code, sent back once if it breaks one only the writer can fix
+        story = growth.enforce(cfg, story, short=short, seconds=seconds, minutes=minutes, script=bool(sections),
+                               hero=_hero(cfg), progress=progress)
+        if sections:
+            keep_script_lines(story, script_lines(sections))
+        story.kind = "fiction" if fiction else "life"
     return story
 
 
@@ -1147,7 +1171,7 @@ def pitches(cfg: Config, topic: str, *, kind: str, short: bool, seconds: int, mi
     """`n` clearly different takes on one prompt, each the seed of one storyboard draft (written in parallel, they would
     otherwise not know about each other and could tell the same story three times)."""
     fiction = kind == "fiction"
-    system = _system(fiction, short, seconds, minutes, script=bool(parse_script(topic))) + PITCH.format(n=n)
+    system = _system(fiction, short, seconds, minutes, script=bool(parse_script(topic)), cfg=cfg) + PITCH.format(n=n)
     ask_for, made, _ = _asking(cfg, topic, fiction)
     prompt = (f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
               + (f"\n\nStoryboards already written for this prompt (every new take must differ from each of them):\n{others}"

@@ -126,6 +126,10 @@ class Config:
     my_music: str = field(default_factory=lambda: _env("REEL_MY_MUSIC", "safe"))
     # The cinematic hook's shots as AI-drawn film stills (reelgen/cinehook.py) when the AI engine is installed.
     hook_pictures: bool = field(default_factory=lambda: _env("REEL_HOOK_PICTURES", "1").lower() not in ("0", "false", "no", "off"))
+    # Channel rules (reelgen/growth.py): what every low-poly video does so viewers stay and subscribe. Per job in the
+    # Low-poly tab; `hero_name` is the man's name in every video.
+    growth_rules: bool = field(default_factory=lambda: _env("REEL_GROWTH_RULES", "1").lower() not in ("0", "false", "no", "off"))
+    hero_name: str = field(default_factory=lambda: _env("REEL_HERO_NAME", "Ethan"))
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
     target_seconds: int = field(default_factory=lambda: int(_env("REEL_SECONDS", str(MAX_SECONDS))))
 

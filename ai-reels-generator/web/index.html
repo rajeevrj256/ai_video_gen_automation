@@ -885,6 +885,14 @@ Plain paragraphs are read by the narrator."></textarea>
       </div>
       <label for="lpMark">Channel name at the top</label>
       <input class="edit" id="lpMark" value="" maxlength="40" placeholder="empty = none">
+      <div class="lp-enh" id="lpGrowRow">
+        <label><input type="checkbox" id="lpGrow" checked> 📈 Channel rules (from your YouTube numbers)</label>
+        <div id="lpGrowBox">
+          <p class="hint">Every Short opens on its strongest moment with no fade from black, never jumps back in time, brings something new every few seconds, ends on a question and loops; films hook in the first 30 seconds. Titles say the idea, and you get a question to pin as the first comment.</p>
+          <label for="lpEndTag">Tag over a Short's last seconds</label>
+          <input class="edit" id="lpEndTag" maxlength="44" value="Subscribe for the next one" placeholder="empty = none">
+        </div>
+      </div>
       <details id="lpCastBox">
         <summary>👥 Recurring cast: the people every film can use (<span id="lpCastN">0</span>)</summary>
         <p class="hint">Claude uses these people by name when a story needs someone like them, so they look and sound the same in
@@ -2349,6 +2357,22 @@ const ytTextW = (t, weight = 400) => { ytFont(weight); return ytCtx.measureText(
 function ytChip(v) {
   return v ? `<button class="yt-ref" data-goto="${esc(v.id)}" title="${esc(v.title)}"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(v.thumb || "")}" alt="" onerror="this.style.visibility='hidden'"><span>${esc(ytShortTitle(v.title))}</span></button>` : "";
 }
+// 📈 What a video did about the channel rules (report.growth, reelgen/growth.py): its opening, the loop, the tag,
+// what code fixed, what went back to the writer and what was left.
+function growthHtml(v) {
+  const g = v.growth;
+  if (!g || !g.on) return "";
+  const li = (t) => `<li>${t}</li>`;
+  const rows = [];
+  if (g.first_line) rows.push(li(`Opens on: “${esc(g.first_line)}”` + (g.opening_seconds ? ` (the first ${g.opening.length} shots take about ${esc(String(g.opening_seconds))} s)` : "")));
+  if (g.last_line) rows.push(li(`Ends on: “${esc(g.last_line)}”`));
+  if (g.loop) rows.push(li("Starts on its picture and ends without a fade, so it plays again without a seam" + (g.loops_to_start ? " (the last shot is back where the first one is)" : "")));
+  if (g.end_tag) rows.push(li(`Tag over the last seconds: “${esc(g.end_tag)}”`));
+  (g.fixed || []).forEach((t) => rows.push(li("Fixed: " + esc(t))));
+  (g.sent_back || []).forEach((t) => rows.push(li("Sent back to the writer: " + esc(t))));
+  (g.left || []).forEach((t) => rows.push(li("⚠ Still not followed: " + esc(t))));
+  return `<details class="yt-more"><summary>📈 Channel rules: what this video does${(g.left || []).length ? " (⚠ " + g.left.length + " not followed)" : ""}</summary><ul class="hint" style="margin:6px 0 0 18px">${rows.join("")}</ul></details>`;
+}
 // A video's name as people say it: no hashtags, emoji or '| An Animated Short' tail, cut at a word.
 function ytName(t, max = 30) {
   t = String(t || "").replace(/\s*#\w+/g, "").split(/\s+[|•–—]\s+/)[0].replace(/[\p{Extended_Pictographic}️‍]+/gu, "").trim();
@@ -2570,7 +2594,7 @@ function ytChart(kind, snap, videos, W) {
 }
 
 const YT_STAGE = { good: ["✅", "Good"], ok: ["🟡", "Okay"], weak: ["⚠️", "Weak"], unknown: ["❔", "Not known yet"] };
-const YT_STEPS = [["shown", "Shown", "YouTube shows it"], ["clicked", "Clicked", "people tap it"], ["watched", "Watched", "they keep watching"], ["followed", "Followed", "they subscribe"]];
+const YT_STEPS = [["shown", "Shown", "YouTube shows it"], ["clicked", "Clicked / stayed", "people tap it, or don't swipe a Short away"], ["watched", "Watched", "they keep watching"], ["followed", "Followed", "they subscribe"]];
 const YT_LEVEL = { good: "✅", problem: "⚠️", info: "ℹ️" };
 
 // the audit on the page: the verdict, the next steps, then the evidence folded
@@ -2963,7 +2987,7 @@ async function openVideo(id) {
   $("#video").poster = "/media/" + encodeURIComponent(id) + "/thumbnail.jpg";
   $("#video").src = src;
   $("#video").style.aspectRatio = v.format === "long" ? "16/9" : "9/16";
-  const tags = (v.hashtags || []).map((h) => "#" + h).join(" ");
+  const tags = (v.hashtags || []).map((h) => "#" + String(h).replace(/^#+/, "")).join(" ");  // (some videos kept the '#': '##shorts')
   const verdict = v.verified
     ? `<div class="verdict ok">✅ Verified automatically — score ${esc(v.score)}/10</div>`
     : `<div class="verdict warn">⚠️ Didn't pass every check. Watch it before posting.${issueRows(v.issues)}</div>`;
@@ -3118,24 +3142,29 @@ async function openVideo(id) {
     ${v.youtube_credits ? `<label>Credits your CC BY media needs (add them to the description)</label>
     <textarea class="edit" rows="4" readonly>${esc(v.youtube_credits)}</textarea>` : ""}
     <label for="f-ythash">Description hashtags (first 3 show above the title)</label>
-    <input class="edit" id="f-ythash" value="${esc((v.youtube_hashtags || (v.format === "long" ? [] : ["shorts"])).map((h) => "#" + h).join(" "))}">
+    <input class="edit" id="f-ythash" value="${esc((v.youtube_hashtags || (v.format === "long" ? [] : ["shorts"])).map((h) => "#" + String(h).replace(/^#+/, "")).join(" "))}">
     <div class="copyhead"><label for="f-yttags">Tags (YouTube Tags field, comma separated)</label><button class="mini" data-copy="ytTags">Copy</button></div>
     <textarea class="edit" id="f-yttags" rows="3">${esc((v.youtube_tags || []).join(", "))}</textarea>
     <button class="primary" id="savePost" disabled>💾 Save changes</button>
     ${v.hashtag_notes ? `<div class="hint">Hashtags: ${esc(v.hashtag_notes)}</div>` : ""}
+    ${v.pinned_comment ? `<div class="copyhead"><label>Pin this as the first comment</label><button class="mini" data-copy="pin">Copy</button></div>
+    <div class="copybox">${esc(v.pinned_comment)}</div>
+    <div class="hint">After uploading: post it as a comment from your channel, then ⋮ → Pin. A question people can answer in a few words brings comments.</div>` : ""}
+    ${growthHtml(v)}
     ${v.post_edited ? `<div class="hint">You edited this text.</div>` : ""}
     <label>Why this topic</label>
     <div class="copybox">${esc(v.why_chosen)}</div>
     <label>Facts used</label>
     <div class="copybox">${esc(v.facts_checked)}</div>`;
   const val = (sel) => $(sel).value.trim();
-  const tagList = (text) => text.split(/[\s,]+/).map((t) => t.replace(/^#/, "")).filter(Boolean);
+  const tagList = (text) => text.split(/[\s,]+/).map((t) => t.replace(/^#+/, "")).filter(Boolean);
   // Copy buttons always copy what's in the boxes now, including unsaved edits.
   const texts = {
     get ig() { return `${val("#f-caption")}\n\n${val("#f-hashtags")}`; },
     get ytTitle() { return val("#f-yttitle"); },
     get ytDesc() { return `${val("#f-ytdesc")}\n\n${val("#f-ythash")}`; },
     get ytTags() { return val("#f-yttags"); },
+    get pin() { return v.pinned_comment || ""; },
   };
   document.querySelectorAll("#details .edit").forEach((el) => el.oninput = () => {
     $("#savePost").disabled = false; $("#savePost").textContent = "💾 Save changes";
@@ -4597,6 +4626,12 @@ const lpFill = () => {
   try { const saved = localStorage.getItem("lpVoice"); if (saved && [...$("#lpVoice").options].some((o) => o.value === saved)) $("#lpVoice").value = saved; } catch (e) {}
   try { const m = localStorage.getItem("lpMark"); if (m !== null && m.trim().toLowerCase() !== "life of a man") $("#lpMark").value = m; } catch (e) {}
   try { const w = localStorage.getItem("lpWords"); if (w && [...$("#lpWords").options].some((o) => o.value === w)) $("#lpWords").value = w; } catch (e) {}
+  try {  // 📈 the channel rules: on unless turned off on this device; the tag as last typed (even when emptied)
+    $("#lpGrow").checked = localStorage.getItem("lpGrow") !== "0";
+    const tag = localStorage.getItem("lpEndTag"); if (tag !== null) $("#lpEndTag").value = tag;
+  } catch (e) {}
+  $("#lpGrowBox").hidden = !$("#lpGrow").checked;
+  $("#lpGrow").onchange = () => { $("#lpGrowBox").hidden = !$("#lpGrow").checked; };
   $("#lpPVoice").innerHTML = LP_PVOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
   $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +
     opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
@@ -4627,7 +4662,9 @@ $("#lpBtn").onclick = async () => {
   const body = { kind: lpKindIs(), format: film ? "film" : "short", topic: $("#lpTopic").value, seconds: Number($("#lpSeconds").value),
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
     pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value),
-    drafts: Number($("#lpDrafts").value), ai: aiValue("lowpoly") };
+    drafts: Number($("#lpDrafts").value), growth: $("#lpGrow").checked, end_tag: $("#lpEndTag").value,
+    hero_name: $("#lpIHero").value || "Ethan", ai: aiValue("lowpoly") };
+  try { localStorage.setItem("lpGrow", body.growth ? "1" : "0"); localStorage.setItem("lpEndTag", body.end_tag); } catch (e) {}
   if (body.kind === "intro") {
     const people = lpIChosen();
     if (!people.length) { $("#lpMsg").textContent = "Tick at least one person for the cast intro."; return; }

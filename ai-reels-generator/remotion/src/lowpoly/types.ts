@@ -284,4 +284,6 @@ export type LowPolyProps = {
   made?: Record<string, Made>; // things the writer designed for this film, by name
   cards?: NameCard[];
   cinematic?: boolean; // letterbox bars, a film grade, heavier grain (the cast intro)
+  loop?: boolean; // 📈 a Short that starts again without a seam: no fade in or out (reelgen/growth.py)
+  endTag?: {text: string; start: number}; // 📈 a small subscribe line over the last seconds
 };

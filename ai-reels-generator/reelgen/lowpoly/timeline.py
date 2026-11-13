@@ -14,6 +14,11 @@ TAIL = 0.35  # and the shot holds this long after it
 SILENT = 1.6  # a shot with no line
 STAMP = 0.9  # a stamp shows alone this long before its shot's line starts
 FADE_END = 1.1  # the last shot holds and fades to black
+# 📈 Channel rules (growth.py): a Short that loops. On the user's channel the last second lost most of the viewers still
+# there (44% -> 12%): the hold and fade told them it was over. A looping Short starts on its picture, ends on a
+# short hold with no fade, and shows a small subscribe tag over its last seconds.
+LOOP_END = 0.45  # the last shot holds this long, then the Short starts again
+END_TAG = 2.4  # the tag shows for this long at the end (less when the last shot is shorter)
 CHUNK_WORDS = 3
 CHUNK_CHARS = 19
 LYING = {"lie", "lie-side", "lie-phone", "sit-up"}
@@ -280,9 +285,12 @@ def _card_colour(hex_: str) -> str:
 
 
 def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: str, seed: int,
-          tail: float = TAIL, pauses: float = 1.0, words: str = "on") -> tuple[dict, list[dict], list[dict], list[dict]]:
+          tail: float = TAIL, pauses: float = 1.0, words: str = "on", loop: bool = False,
+          end_tag: str = "") -> tuple[dict, list[dict], list[dict], list[dict]]:
     """props, voice clips [{at, path}], sound cues [{sound, at, volume, length?}], music sections. `tail` and `pauses`
-    let a Short that runs long tighten its breaths; `words` turns the subtitles (and the stamps) off."""
+    let a Short that runs long tighten its breaths; `words` turns the subtitles (and the stamps) off; `loop` = no fade
+    in or out (a Short that starts again without a seam); `end_tag` = the small tag over its last seconds."""
+    loop = loop and not story.intro
     mode = words if words in WORDS else "on"  # (the loop below has its own `words`: each line's timed words)
     shots, captions, clips, cues = [], [], [], []
     t = 0.0
@@ -301,7 +309,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         lead = STAMP if s.stamp.strip() and mode != "off" else LEAD  # a stamp shows alone before its line
         dur = (lead + length + tail if line else SILENT + (0.8 if has_alarm else 0)) + s.pause * pauses
         if i == n - 1:
-            dur += FADE_END
+            dur += LOOP_END if loop else FADE_END
         dur = max(1.3, dur)
         if i in forced:
             dur = forced[i]
@@ -386,9 +394,9 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
             shot["slowmo"] = True
         if s.overgrown:
             shot["overgrown"] = s.overgrown
-        if i == 0:
+        if i == 0 and not loop:
             shot["fadeIn"] = 0.35
-        if i == n - 1:
+        if i == n - 1 and not loop:
             shot["fadeOut"] = 0.9
         shots.append(shot)
         # the words
@@ -556,6 +564,10 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     shown = captions if mode == "on" else [c for c in captions if c.get("stamp")] if mode == "stamps" else []
     props = {"fps": FPS, "duration": total, "vertical": vertical, "watermark": watermark, "seed": seed, "cast": cast, "shots": shots,
              "captions": shown, "dof": True}
+    if loop:
+        props["loop"] = True
+    if end_tag.strip() and not story.intro and total >= 6:
+        props["endTag"] = {"text": end_tag.strip(), "start": round(max(total * 0.6, total - END_TAG), 3)}
     if story.intro:  # 🎭 the cast intro, crime-caper style (intro.py): whip in, a beat of sped-up action, FREEZE + name
         props["cards"] = []
         intro_cues = []

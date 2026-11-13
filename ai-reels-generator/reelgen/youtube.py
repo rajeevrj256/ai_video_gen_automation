@@ -74,6 +74,33 @@ YT_CATEGORIES = {"1": "Film & Animation", "2": "Autos & Vehicles", "10": "Music"
                  "25": "News & Politics", "26": "Howto & Style", "27": "Education", "28": "Science & Technology"}
 # Videos whose pictures look like real photographs or footage: the altered/synthetic disclosure starts ticked.
 REALISTIC_SOURCES = ("journey", "divine")
+# Animated story films go up as Film & Animation whatever their library shelf (the user's low-poly Shorts were filed
+# under People & Blogs).
+ANIMATED_SOURCES = ("lowpoly", "sticky")
+
+
+def stayed(views, engaged, minutes, avg_seconds) -> tuple[float | None, bool]:
+    """Of all the times a Short started to play, the percent that stayed past the first seconds (the rest swiped
+    away), and whether that is an estimate. Exact from the Analytics API's `engagedViews` (the count YouTube used for
+    a view before 31 March 2025; `views` now counts every start). Without it, estimated from the watch time: the
+    average view duration is over the viewers who stayed, so minutes x 60 / average seconds is about how many
+    stayed (the user's channel: 17 s of watch time per view against a 30 s average view). None when it can't be
+    told (too little watch time, or both figures are over the same views)."""
+    views, engaged, minutes, avg_seconds = _num(views), _num(engaged), _num(minutes), _num(avg_seconds)
+    if not views:
+        return None, False
+    if engaged and 0 < engaged <= views * 1.02:
+        return round(min(100.0, engaged / views * 100), 1), False
+    if minutes and avg_seconds and minutes >= 5:
+        est = minutes * 60 / avg_seconds / views
+        if est < 0.97:
+            return round(est * 100, 1), True
+    return None, False
+
+
+def hashtag(text) -> str:
+    """'##Time Travel' -> 'timetravel': some pipelines keep their hashtags with the '#', some without."""
+    return re.sub(r"[^\w]", "", str(text or ""), flags=re.UNICODE)
 VIDEO_FILES = ("reel.mp4", "reel-myvoice.mp4")
 
 
@@ -669,6 +696,19 @@ def refresh(cfg: Config, progress=None) -> dict:
         if len(got) < 200:
             break
         start += 200
+    try:  # Shorts: the plays that stayed past the first seconds. Asked for apart: where the metric isn't offered,
+        start = 1  # Google refuses the whole query, and the numbers above must not go with it.
+        while True:
+            got = _report(cfg, "Engaged views", dimensions="video", metrics="views,engagedViews", sort="-views", maxResults=200,
+                          startIndex=start, **_lifetime(ch))
+            for r in got:
+                if r["video"] in by_id and by_id[r["video"]].get("stats") is not None:
+                    by_id[r["video"]]["stats"]["engagedViews"] = r.get("engagedViews")
+            if len(got) < 200:
+                break
+            start += 200
+    except YouTubeError:
+        pass
     reach_note = ""
     try:
         reach = _reach_targeted(cfg, ch)
@@ -772,8 +812,8 @@ def plan_for(report: dict, folder_path: Path) -> dict:
     its thumbnail, made-for-kids No, and the synthetic-content box ticked for photoreal pipelines."""
     title = report.get("youtube_title") or report.get("title") or report.get("topic") or folder_path.name
     desc = report.get("youtube_description") or report.get("caption") or ""
-    tags = [h for h in report.get("youtube_hashtags") or report.get("hashtags") or [] if h]
-    if tags and not any(f"#{t}".lower() in desc.lower() for t in tags):
+    tags = [t for t in dict.fromkeys(hashtag(h) for h in report.get("youtube_hashtags") or report.get("hashtags") or []) if t]
+    if tags and not any(f"#{t}".lower() in desc.lower() for t in tags):  # ('##shorts' went up: low-poly kept the '#')
         desc = (desc + "\n\n" + " ".join(f"#{t}" for t in tags)).strip()
     short = report.get("format") == "short" or report.get("length") in ("short", "storyshorts", "stick-short", "journey")
     lang = "hi" if re.search(r"[ऀ-ॿ]", title + desc) or "hi-IN" in str(report.get("voice", "")) else "en"
@@ -782,8 +822,9 @@ def plan_for(report: dict, folder_path: Path) -> dict:
     source = report.get("source", "")
     realistic = source in REALISTIC_SOURCES or report.get("style") == "divine-epic" or report.get("kind") == "divine"
     return {"title": clean_text(title, 400)[:TITLE_MAX], "description": clean_text(desc, DESCRIPTION_MAX),
-            "tags": fit_tags(report.get("youtube_tags") or []), "category": CATEGORY_IDS.get(report.get("category", ""), "22"),
-            "privacy": "private", "publish_at": "", "made_for_kids": False, "synthetic": bool(realistic),
+            "tags": fit_tags(report.get("youtube_tags") or []),
+            "category": "1" if source in ANIMATED_SOURCES else CATEGORY_IDS.get(report.get("category", ""), "22"),
+            "pinned_comment": str(report.get("pinned_comment") or ""), "privacy": "private", "publish_at": "", "made_for_kids": False, "synthetic": bool(realistic),
             "language": lang, "file": files[0] if files else "", "files": files, "thumbnail": thumb, "short": short}
 
 
@@ -1065,8 +1106,11 @@ def _retention(cfg: Config, v: dict) -> dict | None:
 
     half = next((a for a, w in pts if w < 0.5), None)
     step = max(1, len(pts) // RETENTION_POINTS)
+    # seconds 5 to 10: on the user's Shorts the curve is flat for 4-5 s, then falls fastest (the second beat)
+    five, ten = (at(5 / dur), at(10 / dur)) if dur >= 20 else (None, None)
     return {"at_3s": round(at(min(1.0, 3 / dur)) * 100, 1), "half_gone_at": None if half is None else round(half * dur),
-            "at_end": round(at(0.95) * 100, 1),
+            "at_end": round(at(0.95) * 100, 1), "at_10s": None if ten is None else round(ten * 100, 1),
+            "kept_5_to_10": None if not five or ten is None else round(ten / five * 100, 1),
             "curve": [[round(a * dur, 1), round(w * 100, 1)] for a, w in pts[::step]]}
 
 
@@ -1087,7 +1131,10 @@ def snapshot(cfg: Config, data: dict, retention: dict[str, dict]) -> dict:
     vids = []
     for n, v in enumerate(data.get("videos", []), 1):
         st, rc = v.get("stats") or {}, v.get("reach") or {}
+        stay, guess = stayed(st.get("views"), st.get("engagedViews"), st.get("estimatedMinutesWatched"),
+                             st.get("averageViewDuration")) if v.get("short") else (None, False)
         vids.append({"n": n, "id": v["id"], "title": v["title"], "thumb": v.get("thumb", ""), "short": bool(v.get("short")),
+                     "stayed": stay, "stayed_estimated": guess,
                      "duration": round(v.get("duration") or 0), "privacy": v.get("privacy", ""), "published": v.get("published", "")[:10],
                      "views": v.get("views", 0), "likes": v.get("likes", 0), "comments": v.get("comments", 0),
                      "viewed": _num(st.get("averageViewPercentage")), "avg_seconds": _num(st.get("averageViewDuration")),
@@ -1124,6 +1171,10 @@ def facts(snap: dict) -> dict:
         "median_views_public_shorts": _median([v["views"] for v in shorts]),
         "median_viewed_percent_public_shorts": _median([v["viewed"] for v in shorts]),
         "median_viewed_percent_public_long_videos": _median([v["viewed"] for v in longs]),
+        "median_stayed_past_the_first_seconds_percent_public_shorts": _median([v.get("stayed") for v in shorts]),
+        "stayed_past_the_first_seconds_is_an_estimate": any(v.get("stayed_estimated") for v in shorts),
+        "median_still_watching_at_10s_percent_public_shorts": _median([(v.get("retention") or {}).get("at_10s") for v in shorts]),
+        "median_kept_from_second_5_to_second_10_percent_public_shorts": _median([(v.get("retention") or {}).get("kept_5_to_10") for v in shorts]),
         "public_shorts_with_comments": sum(1 for v in shorts if v["comments"]),
         "subscribers_gained_all_videos": subs, "subscribers_per_1000_views": round(subs / views * 1000, 2) if views else None,
         "subscribers_as_percent_of_views": round(subs / views * 100, 2) if views else None,
@@ -1145,6 +1196,11 @@ def audit_table(snap: dict, made: dict[str, dict]) -> str:
                                                                                "voice", "captions", "category") if rep.get(k))
         hold = (f" | still watching at 3 s: {r['at_3s']}% | half gone by {r['half_gone_at']} s | still watching at the end: "
                 f"{r['at_end']}%") if r else ""
+        if r and r.get("at_10s") is not None:
+            hold += f" | still watching at 10 s: {r['at_10s']}% | kept from second 5 to second 10: {r.get('kept_5_to_10')}%"
+        if v.get("stayed") is not None:
+            hold = (f" | stayed past the first seconds (did not swipe away): {v['stayed']}%"
+                    f"{' (estimate)' if v.get('stayed_estimated') else ''}") + hold
         lines.append(
             f"[[{v['n']}]] {v['title']!r} | {'Short' if v['short'] else 'long'} {v['duration']} s | {v['privacy']} | "
             f"published {v['published']} | views {v['views']} | impressions {v['impressions'] if v['impressions'] is not None else '?'} | "
@@ -1275,7 +1331,9 @@ def audit(cfg: Config, progress) -> dict:
 
     class Stages(BaseModel):
         shown: Stage = Field(description="Is YouTube showing the videos (impressions)? 'unknown' while impressions aren't in.")
-        clicked: Stage = Field(description="Do people click when shown (click rate)? 'unknown' while impressions aren't in.")
+        clicked: Stage = Field(description="Do people click when shown (click rate), or on a channel of Shorts stay "
+                                           "instead of swiping away ('stayed past the first seconds')? 'unknown' while "
+                                           "neither figure is in.")
         watched: Stage = Field(description="Do viewers keep watching (% watched, still watching at 3 s and at the end)?")
         followed: Stage = Field(description="Do viewers subscribe, like and comment?")
 
@@ -1342,8 +1400,13 @@ def audit(cfg: Config, progress) -> dict:
         "You audit a small YouTube channel from its own analytics, like an honest growth consultant writing for the "
         "channel's owner, who is not an analyst. How YouTube works: impressions = how often YouTube showed the thumbnail; "
         "CTR = how many of those clicked (title and thumbnail); average percentage viewed = how well a video holds (the "
-        "hook and pacing); for Shorts, 'still watching at 3 s' shows how many swiped away at the start; a video that "
-        "gets few impressions isn't being recommended yet, usually because early viewers didn't watch long or click.\n"
+        "hook and pacing); a Short isn't clicked, it starts playing in the feed: 'stayed past the first seconds' is "
+        "how many of those starts kept watching instead of swiping away (the first frame and the first words decide "
+        "it; marked '(estimate)' when worked out from watch time), and every 'still watching at ...' figure is only "
+        "among the viewers who stayed, so it starts near or above 100%; 'kept from second 5 to second 10' is how many "
+        "of the viewers still there at second 5 are still there at second 10 (the second beat of the video); a video "
+        "that gets few impressions isn't being recommended yet, usually because early viewers didn't watch long or "
+        "click.\n"
         "Rules:\n- Cite every video as [[n]], its row number in the table, never by its id or full title (the page shows "
         "the title and thumbnail for you).\n- Use only figures that are in the table, the facts or the changes given, "
         "written as given (rounding to whole numbers is fine). Never count, add up, average or compare rows yourself: "
@@ -1386,7 +1449,10 @@ def audit(cfg: Config, progress) -> dict:
     rows = len(snap["videos"])
     out = result.model_dump()
     if not fx["impressions_available"]:  # nobody can judge being shown or clicked before the impressions report
+        stay = fx.get("median_stayed_past_the_first_seconds_percent_public_shorts")
         for k in ("shown", "clicked"):
+            if k == "clicked" and stay is not None:
+                continue  # Shorts aren't clicked: staying instead of swiping away is this step, and that figure is in
             out["stages"][k] = {"status": "unknown", "note": "YouTube's impressions report isn't in yet."}
     for f in out["findings"]:
         f["videos"] = [n for n in f["videos"] if 1 <= n <= rows]

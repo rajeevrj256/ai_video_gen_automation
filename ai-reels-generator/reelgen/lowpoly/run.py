@@ -2,6 +2,7 @@
 library. Each step is saved (lowpoly-checkpoint.json), so Pause or a crash continues from the last finished step."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import subprocess
@@ -11,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import growth as G
 from ..config import Config
 from ..fsutil import move
 from ..video import FFMPEG
@@ -45,6 +47,8 @@ class LowPolyRequest:
     people: list[str] = field(default_factory=list)  # 🎭 cast intro (kind 'intro'): who, 'hero' for him; empty = everyone
     hero_name: str = "Ethan"  # 🎭 his name on his card
     film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster ('' = the intro's own title)
+    growth: bool = True  # 📈 the channel rules (reelgen/growth.py): the opening, no rewind, the loop, the post
+    end_tag: str = G.END_TAG  # 📈 the small tag over a Short's last seconds ('' = none)
 
 
 def _thumb_time(props: dict) -> float:
@@ -127,6 +131,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
 
     intro = req.kind == "intro"  # 🎭 the cast introduced one by one (intro.py): a film, music only
     short = req.format != "film" and not intro
+    grow = bool(req.growth) and not intro  # 📈 the channel rules, for the writer and the timeline
+    cfg = dataclasses.replace(cfg, growth_rules=grow, hero_name=(req.hero_name or "").strip() or G.HERO)
     fiction = req.kind == "fiction"
     vertical = short or bool(req.vertical)
     seconds = max(20, min(60, int(req.seconds)))
@@ -175,7 +181,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     audio = {int(k): v for k, v in state.get("audio", {}).items()}
     # a re-make keeps the first version's seed: the same composed music and walk rhythm
     seed = int(state.get("seed") or uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
-    look = dict(vertical=vertical, watermark="" if req.watermark.strip().lower() == OLD_MARK else req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on")
+    look = dict(vertical=vertical, watermark="" if req.watermark.strip().lower() == OLD_MARK else req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on",
+                loop=grow and short, end_tag=G.end_tag(req.end_tag) if grow and short else "")
     if (not audio and any(x.line.strip() for x in story.shots)) or not all(Path(v["path"]).exists() for v in audio.values()):
         pace = int(req.pace)
         audio = _record(cfg, story, req, work, progress, pace)
@@ -208,8 +215,6 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
                  else f"soft score for a narrated low-poly animated short about {story.problem}; {story.music_prompt}")
         mix_cfg = cfg
         if restaging and not str(restaging.get("music", "")).startswith("AI music"):
-            import dataclasses  # a re-make keeps its first version's music: composed music stays composed
-
             mix_cfg = dataclasses.replace(cfg, ai_music=False)
         mixed = mix(mix_cfg, props, clips, cues, sections, work, soundtrack, seed, progress, brief, fiction=story.kind == "fiction")
         state["mix"] = mixed
@@ -256,8 +261,10 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "designed": [m.name for m in story.made],
         "cast_intro": [{"name": c.name, "role": c.role, "seconds": round(c.seconds * c.shots, 2)} for c in story.intro] or None,
         "voices": sorted({a.get("voice", "") for a in audio.values()} - {""}), "youtube_title": story.youtube_title[:100], "youtube_description": story.description.strip(),
-        "youtube_tags": story.tags, "youtube_hashtags": story.hashtags[:3], "caption": story.description.strip(),
-        "hashtags": story.hashtags,
+        "youtube_tags": story.tags, "youtube_hashtags": [h.lstrip("#") for h in (story.hashtags[:4] if grow else story.hashtags[:3])],
+        "caption": story.description.strip(), "hashtags": [h.lstrip("#") for h in story.hashtags],  # (kept with '#', '##shorts' went up)
+        "pinned_comment": story.comment_question.strip(),
+        "growth": G.card(story, short=short, end_tag=look["end_tag"], loop=look["loop"]) if grow else None,
     }
     if restaging:
         report.update({"restaged_from": restaging.get("from"), "restaged_from_title": restaging.get("title"),
@@ -300,6 +307,8 @@ def prepare_restage(cfg: Config, folder: Path, mode: str) -> str:
         pass
     if str(req.get("watermark") or "").strip().lower() == OLD_MARK:
         req["watermark"] = ""  # the old default nobody typed (the user: "remove it")
+    if "growth" not in req:  # made before the channel rules: shot again as it was (its fades, no tag)
+        req.update(growth=False, end_tag="")
     req = asdict(LowPolyRequest(**{k: v for k, v in req.items() if k in LowPolyRequest.__dataclass_fields__}))
     state = {"stage": "written", "stamp": stamp, "request": req, "seed": int(props.get("seed") or 0) or None,
              "pace": req.get("pace", 0),

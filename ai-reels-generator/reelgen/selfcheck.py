@@ -737,6 +737,77 @@ def youtube_helpers() -> None:
             fail(f"youtube audit: chart {kind} isn't drawn by the YouTube tab (ytChart)")
 
 
+def channel_rules() -> None:
+    """The channel rules (growth.py): what code fixes, what goes back to the writer, the loop on the timeline, the
+    rules in every low-poly prompt (the long fiction planner's prompt could not be built at all for a while), and
+    the YouTube side's 'stayed past the first seconds'."""
+    from reelgen import growth as G, youtube as Y
+    from reelgen.config import Config
+    from reelgen.lowpoly import story as S
+    from reelgen.lowpoly.timeline import build
+
+    def shot(line="", **kw):
+        base = dict(line=line, set="street", light="day", camera="medium",
+                    actors=[dict(who="hero", action="stand", expression="neutral", spot="center")])
+        base.update(kw)
+        return base
+
+    def story(title, tags, shots, **kw):
+        return S.Story(title="T", problem="p", youtube_title=title, description="He lifts a car. #shorts ##whatif", tags=[], hashtags=tags,
+                       thumbnail_text="x", mood="calm", end_mood="calm", music_prompt="x", kind="fiction", shots=shots, **kw)
+
+    bad = story("POWER | An Animated Short Film #shorts #whatif", ["##WhatIf", "#Super Strength", "#shorts", "animation", "#extra"], [
+        shot("Did you know a man can catch a falling steel beam with his bare hands today?", stamp="DAY 1", pause=2.0),
+        shot("", stamp="THREE DAYS EARLIER", pause=3.0), shot("He wakes up.", pause=1.5), shot("", pause=4, slowmo=True),
+        shot("He never asked for this.", pause=2.5, red=True)])
+    G.tidy(bad, short=True)
+    if (bad.youtube_title, bad.hashtags, bad.description) != ("POWER", ["#whatif", "#superstrength", "#animation", "#shorts"], "He lifts a car."):
+        fail(f"growth.tidy: the post came out as {bad.youtube_title!r}, {bad.hashtags}, {bad.description!r}")
+    if [x.pause for x in bad.shots] != [0.5, 0.5, 0.5, 2.0, 0.5] or bad.shots[0].stamp:  # (all five are opening shots)
+        fail(f"growth.tidy: pauses {[x.pause for x in bad.shots]}, shot 1's stamp {bad.shots[0].stamp!r}")
+    found = G.check(bad, short=True)
+    for word in ("generic phrase", "jumps back in time", "nothing moving", "opening is slow", "isn't a question"):
+        if not any(word in x for x in found):
+            fail(f"growth.check missed: {word}")
+    if not G.title_issues("PACKED") or not G.title_issues("WHAT IF YOU COULD STOP ALL TIME") or G.title_issues("What If You Could Stop Time?"):
+        fail("growth.title_issues: a one-word or all-capitals title must fail, a question title pass")
+    if G.clean_title("The Boy Who Couldn't Say No | Animated Flim")[0] != "The Boy Who Couldn't Say No":
+        fail("growth.clean_title keeps the '| Animated Film' tail")
+    good = story("What If You Could Stop Time?", ["#whatif"], [
+        shot("Time just stopped.", actors=[dict(who="hero", action="run", expression="scared", spot="center")]),
+        shot("Everyone froze but Ethan."), shot("He walks through a frozen city.", camera="side"),
+        shot("Would you start it again?", red=True)], comment_question="What would you do?")
+    if G.check(good, short=True):
+        fail(f"growth.check flags a storyboard that follows the rules: {G.check(good, short=True)}")
+    sent = []
+    out = G.enforce(None, bad, short=True, seconds=45, minutes=3, progress=lambda _m: None,
+                    revise=lambda st, text: (sent.append(text), good.model_copy(deep=True))[1])
+    if len(sent) != 1 or out.youtube_title != good.youtube_title or out.growth.get("left") or len(out.growth.get("sent_back", [])) != 5:
+        fail(f"growth.enforce: sent back {len(sent)} time(s), kept {out.youtube_title!r}, growth {out.growth}")
+    audio = {i: {"path": "a.wav", "seconds": 1.4, "words": [[w, k * .3, k * .3 + .25] for k, w in enumerate(x.line.split())]} for i, x in enumerate(good.shots)}
+    old = build(good, audio, vertical=True, watermark="", seed=1)[0]
+    new = build(good, audio, vertical=True, watermark="", seed=1, loop=True, end_tag="Subscribe for the next one")[0]
+    if "fadeIn" not in old["shots"][0] or "fadeOut" not in old["shots"][-1] or old.get("endTag"):
+        fail("timeline: a video without the channel rules lost its fades or got a tag")
+    if "fadeIn" in new["shots"][0] or "fadeOut" in new["shots"][-1] or not new["duration"] < old["duration"] or not new.get("endTag"):
+        fail(f"timeline: a looping Short still fades, isn't shorter or has no tag ({new.get('endTag')})")
+    cfg = Config()
+    for short in (True, False):
+        for fiction in (True, False):
+            if "CHANNEL RULES" not in S._system(fiction, short, 45, 3.5, cfg=cfg) or "CHANNEL RULES" in S._system(fiction, short, 45, 3.5):
+                fail(f"low-poly prompt (fiction={fiction}, short={short}): the channel rules must be in with cfg and out without")
+    for fiction in (True, False):  # KeyError 'creatures' made every long fiction film fail at its plan
+        if "THIS FILM IS LONG" not in S._outline_system(fiction, 7, cfg) or "CHANNEL RULES" not in S._outline_system(fiction, 7, cfg):
+            fail(f"the long film planner's prompt (fiction={fiction}) is wrong")
+    if "THE POST" not in S._system(True, True, 45, 3.5, script=True, cfg=cfg) or "NO REWIND" in S._system(True, True, 45, 3.5, script=True, cfg=cfg):
+        fail("your own script must get the rules for the post only")
+    if (Y.stayed(1335, None, 375, 30), Y.stayed(1335, 801, 375, 30), Y.stayed(100, None, 50, 30)) != ((56.2, True), (60.0, False), (None, False)):
+        fail("youtube.stayed: exact from engaged views, estimated from watch time, none when both are over the same views")
+    plan = Y.plan_for({"youtube_title": "T", "youtube_description": "D", "youtube_hashtags": ["#whatif", "##shorts"], "source": "lowpoly"}, ROOT)
+    if not plan["description"].endswith("#whatif #shorts") or plan["category"] != "1":
+        fail(f"youtube.plan_for: hashtags or category wrong ({plan['description']!r}, {plan['category']})")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -752,6 +823,7 @@ def main() -> int:
     lowpoly_boards()
     lowpoly_intro()
     youtube_helpers()
+    channel_rules()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

@@ -106,6 +106,16 @@ def _others(s: dict) -> str:
     return "\n".join(out)
 
 
+def _rules_cfg(cfg: Config, req: dict) -> Config:
+    """📈 The channel rules (growth.py) as this set's request asked for them, so a draft is written like its video."""
+    import dataclasses
+
+    from .. import growth
+
+    return dataclasses.replace(cfg, growth_rules=bool(req.get("growth", True)) and req.get("kind") != "intro",
+                               hero_name=str(req.get("hero_name") or "").strip() or growth.HERO)
+
+
 def write_round(cfg: Config, sid: str, count: int, progress) -> int:
     """The job: `count` new takes on the set's prompt, each written as a storyboard in its own thread. Returns how many
     were written; raises when none could be."""
@@ -114,6 +124,7 @@ def write_round(cfg: Config, sid: str, count: int, progress) -> int:
 
     s = load(cfg, sid)
     req = s["request"]
+    cfg = _rules_cfg(cfg, req)
     fiction = req.get("kind") == "fiction"
     short = req.get("format") != "film"
     seconds = max(20, min(60, int(req.get("seconds", 35))))
@@ -197,6 +208,7 @@ def change_round(cfg: Config, sid: str, n: int, instruction: str, progress) -> i
 
     s = load(cfg, sid)
     req = s["request"]
+    cfg = _rules_cfg(cfg, req)
     old = _draft(s, n)
     path = _folder(cfg, sid) / f"draft-{n}.json"
     if not path.exists():
