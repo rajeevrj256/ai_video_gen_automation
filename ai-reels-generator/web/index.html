@@ -259,6 +259,22 @@
     .cast-row button { padding: 8px 0; min-width: 0; width: 30px; font-size: 12px; }
   }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  /* ▶ YouTube tab and the video page's YouTube section */
+  .yt-head { display: flex; gap: 12px; align-items: center; }
+  .yt-head img { width: 48px; height: 48px; border-radius: 50%; }
+  .yt-stats { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 14px; }
+  .yt-list { display: flex; flex-direction: column; gap: 10px; }
+  .yt-row { border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+  .yt-top { display: grid; grid-template-columns: 128px 1fr; gap: 10px; cursor: pointer; }
+  .yt-top img { width: 128px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: #000; }
+  .yt-title { font-weight: 600; line-height: 1.3; }
+  .yt-nums { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .yt-nums b { color: var(--text); font-weight: 600; }
+  .yt-verdict { font-size: 13px; margin-top: 6px; }
+  .yt-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .yt-ret { width: 100%; height: 120px; background: rgba(127,127,127,.08); border-radius: 8px; }
+  .yt-audit li { margin: 4px 0; }
+  @media (max-width: 520px) { .yt-top { grid-template-columns: 96px 1fr; } .yt-top img { width: 96px; } }
   @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
   #savePost { margin-top: 14px; }
   /* next to the duration, so it never covers the title burned into the thumbnail */
@@ -1138,6 +1154,64 @@ Plain paragraphs are read by the narrator."></textarea>
     <div id="histRuns"></div>
   </section>
 
+  <section class="view" id="view-youtube">
+    <div class="panel" id="ytConnect">
+      <h2>▶ YouTube</h2>
+      <p class="hint" id="ytState">Checking…</p>
+      <div id="ytSetup">
+        <details class="section-fold" id="ytHow"><summary><b>How to connect (once, about 10 minutes)</b></summary>
+          <ol class="hint">
+            <li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud</a>
+              signed in with the Google account that owns your channel, and create a project (any name, e.g. "Reel Studio").</li>
+            <li>In <b>APIs &amp; Services → Library</b>, enable <b>YouTube Data API v3</b>, <b>YouTube Analytics API</b> and
+              <b>YouTube Reporting API</b>.</li>
+            <li>In <b>APIs &amp; Services → OAuth consent screen</b> (Google Auth Platform): user type <b>External</b>, your
+              app name and email; under <b>Audience</b> add your own Gmail as a test user, then press <b>Publish app</b>
+              (an app left in Testing loses its sign-in every 7 days). Google shows "unverified app" to you: that's expected for
+              your own app.</li>
+            <li>In <b>Credentials → Create credentials → OAuth client ID</b>, choose <b>Desktop app</b>, then
+              <b>Download JSON</b>.</li>
+            <li>Choose that file below, then press <b>Connect YouTube</b> on this computer and sign in. If your Google account has
+              several channels, pick the one you post to.</li>
+          </ol>
+          <p class="hint">The app keeps the sign-in on this computer only (output/youtube/token.json; the client in .env) and talks
+            only to Google. Disconnect any time here or in your Google account's security settings.</p>
+        </details>
+        <label for="ytFile">1. Your OAuth client (the JSON file)</label>
+        <input type="file" id="ytFile" accept=".json,application/json">
+        <p class="hint" id="ytClientLine"></p>
+        <button class="primary" id="ytConnectBtn">2. ▶ Connect YouTube</button>
+        <p class="hint" id="ytMsg"></p>
+      </div>
+      <div id="ytDone" hidden>
+        <div class="yt-head" id="ytChannel"></div>
+        <div class="row" style="margin-top:10px">
+          <button id="ytRefresh">🔄 Refresh the numbers</button>
+          <button id="ytCsv">⬇ Table (CSV)</button>
+          <button id="ytDisconnect">Disconnect</button>
+        </div>
+        <p class="hint" id="ytFetched"></p>
+      </div>
+    </div>
+    <div class="panel" id="ytAuditBox" hidden>
+      <h3>🔍 Why aren't the videos getting views?</h3>
+      <p class="hint">Claude reads every video's numbers (impressions, click-through rate, how much people watch, Shorts vs long,
+        titles, posting days) and how the app made each one, and says where the views are lost and what to change. About 1–3 min.</p>
+      <div id="ytAuditAi"></div>
+      <button class="primary" id="ytAuditBtn">🔍 Audit my channel</button>
+      <p class="hint" id="ytAuditMsg"></p>
+      <div id="ytAudit" class="yt-audit"></div>
+    </div>
+    <div class="panel" id="ytVideosBox" hidden>
+      <h3>Your videos</h3>
+      <div class="row"><select id="ytSort" class="mini">
+        <option value="published">Newest first</option><option value="views">Most views</option><option value="ctr">Click-through rate</option>
+        <option value="kept">% watched</option><option value="impressions">Impressions</option></select>
+        <select id="ytKind" class="mini"><option value="">Shorts and long</option><option value="short">Shorts</option><option value="long">Long</option></select></div>
+      <p class="hint" id="ytReach"></p>
+      <div class="yt-list" id="ytList"></div>
+    </div>
+  </section>
   <section class="view" id="view-settings">
     <div class="panel">
       <h2>Content</h2>
@@ -1401,6 +1475,7 @@ Plain paragraphs are read by the narrator."></textarea>
   <button data-view="story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 9.5v5l4-2.5z"/><path d="M10 18h4"/></svg>Shorts+</button>
   <button data-view="shoot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="14" height="11" rx="2"/><path d="M16 11l6-3v9l-6-3z"/><circle cx="9" cy="12.5" r="2.5"/></svg>Shoot</button>
   <button data-view="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</button>
+  <button data-view="youtube"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9v6l5-3z"/></svg>YouTube</button>
   <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
 </nav>
 
@@ -1507,7 +1582,7 @@ function show(view) {
   const tab = document.querySelector(`nav button[data-view="${view}"]`);
   $("#navNow").textContent = tab ? "· " + tab.textContent.trim() : "";  // phones: which tab this is, beside the title
   navMenu(false);
-  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => { lpFill(); lpLoadBoards(); }, journey: jyStatus }[view];
+  const load = { videos: loadVideos, create: loadJobs, history: loadHistory, settings: loadSettings, script: loadScriptView, stick: loadStickView, anim: () => Promise.all([loadAnimSetup(), loadMusicTests(), loadCloud(), loadAnimOptions()]), story: loadStoryView, divine: loadDivine, shoot: loadShootView, lowpoly: async () => { lpFill(); lpLoadBoards(); }, journey: jyStatus, youtube: loadYouTube }[view];
   if (load) load().catch(() => {}); // a 401 already switched to the PIN screen
 }
 
@@ -2087,6 +2162,291 @@ function wireHooks(id, v) {
   load();
 }
 
+// ---------- ▶ YouTube: your channel (reelgen/youtube.py) ----------
+const YT_CATS = { "1": "Film & Animation", "2": "Autos & Vehicles", "10": "Music", "15": "Pets & Animals", "17": "Sports",
+  "19": "Travel & Events", "20": "Gaming", "22": "People & Blogs", "23": "Comedy", "24": "Entertainment", "25": "News & Politics",
+  "26": "Howto & Style", "27": "Education", "28": "Science & Technology" };
+const ytNum = (n) => n == null || n === "" ? "–" : Number(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Number(n) >= 1e4 ? Math.round(n / 1e3) + "K" : Number(n).toLocaleString();
+const ytPct = (r) => r == null ? "–" : (r * 100).toFixed(1) + "%";
+const ytWhen = (iso) => iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+// a UTC time from YouTube as the value of a datetime-local box (this device's clock), and back as ISO with the offset
+const ytLocal = (iso) => { if (!iso) return ""; const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+const ytIso = (local) => local ? new Date(local).toISOString() : "";
+let ytData = null;
+
+async function loadYouTube() {
+  const st = await api("/api/youtube/status");
+  $("#ytState").textContent = st.connected ? "" : st.client
+    ? "Your OAuth client is saved. Press Connect and sign in with the account that owns your channel."
+    : "Upload, edit, schedule and read the analytics of your channel from here. Connect it once (steps below).";
+  $("#ytClientLine").textContent = st.client ? `✅ Client saved (${st.client_hint}). Choose another file to replace it.` : "";
+  $("#ytHow").open = !st.client;
+  $("#ytSetup").hidden = st.connected;
+  $("#ytDone").hidden = !st.connected;
+  $("#ytAuditBox").hidden = $("#ytVideosBox").hidden = !st.connected;
+  if (!st.connected) return;
+  const c = st.channel || {};
+  $("#ytChannel").innerHTML = `${c.thumb ? `<img src="${esc(c.thumb)}" alt="">` : ""}<div><b>${esc(c.title)}</b>
+    <div class="hint">${esc(c.handle || "")} · ${ytNum(c.subscribers)} subscribers · ${ytNum(c.views)} views · ${ytNum(c.videos)} videos
+    · <a href="https://studio.youtube.com/channel/${esc(c.id)}" target="_blank" rel="noopener">Studio</a></div>
+    <div class="hint">Channel ID ${esc(c.id)} · connected ${esc(ytWhen(st.connected_at))}</div></div>`;
+  if (!$("#ytAuditAi").innerHTML) $("#ytAuditAi").innerHTML = aiPicker("ytaudit", { writes: "the audit", check: false });
+  ytData = await api("/api/youtube/videos");
+  if (!ytData.videos) { $("#ytFetched").textContent = "Press Refresh to read your videos and their numbers."; $("#ytList").innerHTML = ""; }
+  ytRender();
+}
+
+function ytRender() {
+  const d = ytData || {};
+  if (!d.videos) return;
+  $("#ytFetched").textContent = `Numbers from ${ytWhen(d.fetched_at)} (YouTube's analytics lag 2–3 days).`;
+  $("#ytReach").textContent = d.reach_note || "";
+  const notes = Object.fromEntries(((d.audit || {}).videos || []).map((x) => [x.id, x]));
+  const a = d.audit;
+  $("#ytAudit").innerHTML = a ? `<p class="hint">Audit of ${a.videos_seen} videos, ${esc(ytWhen(a.made))}</p>
+    <p>${esc(a.diagnosis)}</p><h4 class="section">What the numbers show</h4><ul>${a.findings.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+    <h4 class="section">What to change</h4><ol>${a.actions.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : "";
+  const kind = $("#ytKind").value, sort = $("#ytSort").value;
+  const key = { views: (v) => v.views, ctr: (v) => (v.reach || {}).ctr ?? -1, kept: (v) => (v.stats || {}).averageViewPercentage ?? -1,
+    impressions: (v) => (v.reach || {}).impressions ?? -1, published: (v) => v.published }[sort];
+  const rows = d.videos.filter((v) => !kind || (kind === "short") === !!v.short)
+    .sort((x, y) => (key(y) > key(x) ? 1 : key(y) < key(x) ? -1 : 0));
+  $("#ytList").innerHTML = rows.map((v) => {
+    const st = v.stats || {}, rc = v.reach || {}, lib = (d.library || {})[v.id], n = notes[v.id];
+    const status = v.publish_at ? `🕒 goes public ${esc(ytWhen(v.publish_at))}` : v.privacy === "public" ? "" : v.privacy === "unlisted" ? "🔗 unlisted" : "🔒 private";
+    return `<div class="yt-row" data-yt="${esc(v.id)}">
+      <div class="yt-top"><img loading="lazy" src="${esc(v.thumb)}" alt=""><div>
+        <div class="yt-title">${esc(v.title)}</div>
+        <div class="yt-nums">${esc((v.published || "").slice(0, 10))} · ${v.short ? "Short" : "long"} ${mmss(v.duration)} ${status ? "· " + status : ""}${lib ? " · 🎬 made here" : ""}</div>
+        <div class="yt-nums"><span>👁 <b>${ytNum(v.views)}</b></span><span>impressions <b>${ytNum(rc.impressions)}</b></span>
+          <span>click rate <b>${ytPct(rc.ctr)}</b></span><span>watched <b>${st.averageViewPercentage == null ? "–" : Math.round(st.averageViewPercentage) + "%"}</b>
+          (${st.averageViewDuration == null ? "–" : mmss(st.averageViewDuration)})</span><span>👍 ${ytNum(v.likes)}</span><span>💬 ${ytNum(v.comments)}</span>
+          <span>subs +${ytNum(st.subscribersGained)}</span></div>
+        ${n ? `<div class="yt-verdict">🔍 ${esc(n.verdict)}<br>➡ ${esc(n.fix)}</div>` : ""}
+      </div></div><div class="yt-body" hidden></div></div>`;
+  }).join("") || `<p class="hint">No videos on the channel yet.</p>`;
+}
+
+// the editor for one video on the channel: details, schedule, thumbnail, and where viewers leave
+function ytFields(p, v) {
+  const cats = Object.entries(YT_CATS).map(([k, n]) => `<option value="${k}" ${String(v.category) === k ? "selected" : ""}>${esc(n)}</option>`).join("");
+  return `<label for="${p}-title">Title <span class="hint" id="${p}-count"></span></label><input class="edit" id="${p}-title" maxlength="100" value="${esc(v.title)}">
+    <label for="${p}-desc">Description</label><textarea class="edit" id="${p}-desc" rows="7">${esc(v.description)}</textarea>
+    <label for="${p}-tags">Tags (commas between them)</label><input class="edit" id="${p}-tags" value="${esc((v.tags || []).join(", "))}">
+    <div class="grid2"><div><label for="${p}-cat">Category</label><select id="${p}-cat">${cats}</select></div>
+      <div><label for="${p}-priv">Who can see it</label><select id="${p}-priv">${["private", "unlisted", "public"].map((x) =>
+        `<option value="${x}" ${v.privacy === x ? "selected" : ""}>${{ private: "🔒 Private", unlisted: "🔗 Unlisted", public: "🌍 Public" }[x]}</option>`).join("")}</select></div></div>
+    <label for="${p}-when">Schedule: goes public at (optional; it stays private until then)</label>
+    <input type="datetime-local" class="edit" id="${p}-when" value="${esc(ytLocal(v.publish_at))}">
+    <div class="grid2"><div><label for="${p}-kids">Made for kids</label><select id="${p}-kids"><option value="false">No</option>
+      <option value="true" ${v.made_for_kids ? "selected" : ""}>Yes</option></select></div>
+      <div><label style="display:flex;gap:8px;align-items:center;margin-top:26px"><input type="checkbox" id="${p}-syn" style="width:auto" ${v.synthetic ? "checked" : ""}>
+        Altered or synthetic content that looks real</label></div></div>
+    <p class="hint">Tick "altered or synthetic" when AI made people, places or events look real (photoreal pictures, a voice that
+      sounds like a real person). Clearly animated or cartoon videos don't need it. YouTube asks for this.</p>`;
+}
+function ytWire(p) {
+  const t = $(`#${p}-title`), c = $(`#${p}-count`);
+  const count = () => { c.textContent = `${t.value.length}/100`; };
+  t.addEventListener("input", count); count();
+}
+const ytValues = (p) => ({ title: $(`#${p}-title`).value, description: $(`#${p}-desc`).value,
+  tags: $(`#${p}-tags`).value.split(",").map((x) => x.trim()).filter(Boolean), category: $(`#${p}-cat`).value,
+  privacy: $(`#${p}-priv`).value, publish_at: ytIso($(`#${p}-when`).value), made_for_kids: $(`#${p}-kids`).value === "true",
+  synthetic: $(`#${p}-syn`).checked });
+
+function ytRetention(d) {
+  const pts = d.retention || [];
+  if (!pts.length) return `<p class="hint">No audience retention yet (YouTube shows it once enough people watched).</p>`;
+  const top = Math.max(1, ...pts.map((x) => x.watching || 0));
+  const line = pts.map((x) => `${(x.at * 100).toFixed(1)},${(100 - (x.watching || 0) / top * 100).toFixed(1)}`).join(" ");
+  const at = (f) => { const x = pts.reduce((b, y) => Math.abs(y.at - f) < Math.abs(b.at - f) ? y : b, pts[0]); return Math.round((x.watching || 0) * 100); };
+  const vs = pts.filter((x) => x.vs_similar != null);
+  const rel = vs.length ? vs.reduce((s, x) => s + x.vs_similar, 0) / vs.length : null;
+  return `<svg class="yt-ret" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="${line}" fill="none" stroke="var(--accent,#e33)" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>
+    <p class="hint">Still watching: ${at(0.05)}% at 5% of the video · ${at(0.25)}% at a quarter · ${at(0.5)}% halfway · ${at(0.9)}% near the end
+    ${rel == null ? "" : ` · against videos of the same length on YouTube: ${rel >= 0.6 ? "better" : rel <= 0.4 ? "worse" : "about the same"} (${rel.toFixed(2)}, 0.5 = typical)`}</p>
+    ${(d.sources || []).length ? `<p class="hint">Where viewers came from: ${d.sources.slice(0, 6).map((x) => `${esc(String(x.source).replace(/_/g, " ").toLowerCase())} ${ytNum(x.views)}`).join(" · ")}</p>` : ""}`;
+}
+
+async function ytOpen(row) {
+  const body = row.querySelector(".yt-body");
+  if (!body.hidden) { body.hidden = true; return; }
+  const id = row.dataset.yt, p = "yt" + id.replace(/[^\w]/g, "");
+  body.hidden = false; body.innerHTML = `<p class="hint">Reading it from YouTube…</p>`;
+  try {
+    const v = await api("/api/youtube/video/" + encodeURIComponent(id));
+    const lib = ((ytData || {}).library || {})[id];
+    body.innerHTML = `<p class="hint"><a href="https://youtu.be/${esc(id)}" target="_blank" rel="noopener">Watch</a> ·
+      <a href="https://studio.youtube.com/video/${esc(id)}/edit" target="_blank" rel="noopener">Open in Studio</a>
+      ${lib ? ` · <a href="#" data-open="${esc(lib)}">the video in your library</a>` : ""} · ${esc(v.processing || v.upload_status || "")}</p>
+      ${ytFields(p, v)}
+      <button class="primary" data-save style="width:100%;margin-top:8px">💾 Save to YouTube</button>
+      <label for="${p}-thumb" style="margin-top:10px">New thumbnail (JPG or PNG, 1280×720 for long videos, 1080×1920 for Shorts)</label>
+      <input type="file" id="${p}-thumb" accept="image/jpeg,image/png">
+      <h4 class="section">Where viewers leave</h4><div data-ret>${v.details ? ytRetention(v.details) : ""}</div>
+      <button data-ret-btn class="mini">${v.details ? "🔄 Read it again" : "📉 Read the retention and traffic sources"}</button>
+      <p class="hint" data-msg></p>`;
+    ytWire(p);
+    const msg = body.querySelector("[data-msg]");
+    body.querySelector("[data-open]")?.addEventListener("click", (e) => { e.preventDefault(); show("videos"); openVideo(lib); });
+    body.querySelector("[data-save]").onclick = async (e) => {
+      e.target.disabled = true; msg.textContent = "Saving…";
+      try {
+        const vals = ytValues(p);
+        if (!vals.publish_at) vals.publish_at = "";
+        const row2 = await api("/api/youtube/video/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(vals) });
+        msg.textContent = "✅ Saved on YouTube" + (row2.publish_at ? ` · goes public ${ytWhen(row2.publish_at)}` : "");
+        const i = ytData && ytData.videos ? ytData.videos.findIndex((x) => x.id === id) : -1;
+        if (i >= 0) Object.assign(ytData.videos[i], row2);
+      } catch (err) { msg.textContent = "⚠️ " + err.message; }
+      e.target.disabled = false;
+    };
+    $(`#${p}-thumb`).onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      msg.textContent = "Uploading the thumbnail…";
+      const res = await fetch(`/api/youtube/video/${encodeURIComponent(id)}/thumbnail`, { method: "POST", body: f, credentials: "same-origin" });
+      msg.textContent = res.ok ? "✅ Thumbnail set (YouTube can take a few minutes to show it)" : "⚠️ " + ((await res.json().catch(() => ({}))).detail || res.statusText);
+    };
+    body.querySelector("[data-ret-btn]").onclick = async (e) => {
+      e.target.disabled = true; msg.textContent = "Reading…";
+      try { body.querySelector("[data-ret]").innerHTML = ytRetention(await api(`/api/youtube/video/${encodeURIComponent(id)}/details`)); msg.textContent = ""; }
+      catch (err) { msg.textContent = "⚠️ " + err.message; }
+      e.target.disabled = false;
+    };
+  } catch (err) { body.innerHTML = `<p class="hint">⚠️ ${esc(err.message)}</p>`; }
+}
+
+document.addEventListener("click", (e) => {
+  const top = e.target.closest(".yt-top");
+  if (top) ytOpen(top.parentElement);
+});
+$("#ytSort").onchange = $("#ytKind").onchange = ytRender;
+$("#ytCsv").onclick = () => { location.href = "/api/youtube/videos.csv"; };
+$("#ytFile").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try { await api("/api/youtube/client", { method: "PUT", body: JSON.stringify({ json_text: await f.text() }) }); $("#ytMsg").textContent = "✅ Client saved. Now press Connect."; loadYouTube(); }
+  catch (err) { $("#ytMsg").textContent = "⚠️ " + err.message; }
+};
+$("#ytConnectBtn").onclick = async () => {
+  try {
+    const { url } = await api("/api/youtube/connect", { method: "POST" });
+    window.open(url, "_blank", "noopener");
+    $("#ytMsg").textContent = "Sign in in the tab that opened, then come back here (this page checks every few seconds).";
+    const until = Date.now() + 10 * 60 * 1000;
+    const poll = async () => {
+      const st = await api("/api/youtube/status").catch(() => null);
+      if (st && st.connected) { $("#ytMsg").textContent = ""; loadYouTube(); return; }
+      if (Date.now() < until && current === "youtube") setTimeout(poll, 3000);
+    };
+    setTimeout(poll, 3000);
+  } catch (err) { $("#ytMsg").textContent = "⚠️ " + err.message; }
+};
+$("#ytDisconnect").onclick = async () => {
+  if (!confirm("Disconnect YouTube? The app forgets its sign-in (your videos stay as they are).")) return;
+  await api("/api/youtube/disconnect", { method: "POST" }); loadYouTube();
+};
+$("#ytRefresh").onclick = async (e) => {
+  e.target.disabled = true; $("#ytFetched").textContent = "Reading your videos and their numbers (up to a minute)…";
+  try { ytData = await api("/api/youtube/refresh", { method: "POST" }); ytRender(); }
+  catch (err) { $("#ytFetched").textContent = "⚠️ " + err.message; }
+  e.target.disabled = false;
+};
+$("#ytAuditBtn").onclick = async (e) => {
+  e.target.disabled = true;
+  try {
+    const job = await api("/api/youtube/audit", { method: "POST", body: JSON.stringify({ ai: aiValue("ytaudit") }) });
+    $("#ytAuditMsg").textContent = "Reading the numbers…";
+    const poll = async () => {
+      const j = (await api("/api/jobs")).find((x) => x.id === job.id);
+      if (!j || j.status === "queued" || j.status === "running") {
+        $("#ytAuditMsg").textContent = (j && j.log.length ? j.log[j.log.length - 1].msg : "Waiting to start") + "…";
+        setTimeout(poll, 3000); return;
+      }
+      $("#ytAuditMsg").textContent = j.status === "done" ? "" : "⚠️ " + (j.log.length ? j.log[j.log.length - 1].msg : "The audit failed");
+      e.target.disabled = false;
+      ytData = await api("/api/youtube/videos"); ytRender();
+    };
+    poll();
+  } catch (err) { $("#ytAuditMsg").textContent = "⚠️ " + err.message; e.target.disabled = false; }
+};
+
+// the video page's ▶ YouTube section: upload this video, or edit / read the one it became
+async function wireYouTube(id) {
+  const box = $("#ytBox"); if (!box) return;
+  const inner = box.querySelector(".yt-in");
+  let d;
+  try { d = await api(`/api/videos/${encodeURIComponent(id)}/youtube`); } catch (err) { inner.innerHTML = `<p class="hint">⚠️ ${esc(err.message)}</p>`; return; }
+  if (!d.connected && !d.youtube) { inner.innerHTML = `<p class="hint">Connect your channel in the <a href="#" data-goyt>YouTube tab</a> to upload this video from here.</p>`;
+    inner.querySelector("[data-goyt]").onclick = (e) => { e.preventDefault(); show("youtube"); }; return; }
+  if (d.youtube) {
+    const y = d.youtube;
+    inner.innerHTML = `<p>✅ On YouTube: <a href="${esc(y.url)}" target="_blank" rel="noopener">${esc(y.url)}</a> ·
+      <a href="${esc(y.studio)}" target="_blank" rel="noopener">Studio</a></p>
+      <p class="hint">${y.linked ? "Linked by you" : "Uploaded " + esc(ytWhen(y.uploaded_at))} · ${y.publish_at ? "🕒 goes public " + esc(ytWhen(y.publish_at))
+        : { private: "🔒 private", unlisted: "🔗 unlisted", public: "🌍 public" }[y.privacy] || ""}${y.thumbnail && y.thumbnail !== "set" ? " · thumbnail: " + esc(y.thumbnail) : ""}</p>
+      <div class="yt-row" data-yt="${esc(y.id)}"><div class="yt-top" style="grid-template-columns:1fr"><div class="yt-title">✏ Edit it on YouTube, set a thumbnail, see where viewers leave</div></div><div class="yt-body" hidden></div></div>
+      <button class="mini" data-unlink style="margin-top:8px">Unlink</button>`;
+    inner.querySelector("[data-unlink]").onclick = async () => {
+      if (!confirm("Unlink this video from YouTube here? Nothing changes on YouTube.")) return;
+      await api(`/api/videos/${encodeURIComponent(id)}/youtube/link`, { method: "POST", body: JSON.stringify({ unlink: true }) }); wireYouTube(id);
+    };
+    return;
+  }
+  const p = "ytup", pl = d.plan;
+  const thumbs = [pl.thumbnail ? `<option value="${esc(pl.thumbnail)}">${pl.thumbnail.startsWith("youtube-thumb") ? "Your picture" : "The thumbnail made here"}</option>` : "",
+    `<option value="">None (YouTube picks a frame)</option>`].join("");
+  inner.innerHTML = `${d.partial ? `<p class="hint">⏸ An upload of this video stopped part way: uploading again carries on from there.</p>` : ""}
+    ${ytFields(p, { ...pl, publish_at: "" })}
+    <div class="grid2">
+      ${pl.files.length > 1 ? `<div><label for="${p}-file">Which version</label><select id="${p}-file">${pl.files.map((f) =>
+        `<option value="${esc(f)}">${f === "reel-myvoice.mp4" ? "With your own voice" : "The video"}</option>`).join("")}</select></div>` : ""}
+      <div><label for="${p}-th">Thumbnail</label><select id="${p}-th">${thumbs}</select></div>
+    </div>
+    <label for="${p}-pic">Or choose your own picture for the thumbnail</label><input type="file" id="${p}-pic" accept="image/jpeg,image/png">
+    <button class="primary" id="ytUpGo" style="width:100%;margin-top:8px">▶ Upload to YouTube</button>
+    <p class="hint" id="ytUpLine"></p>
+    <details class="section-fold" style="margin-top:8px"><summary>Already uploaded it yourself? Link it</summary>
+      <input class="edit" id="ytLinkUrl" placeholder="https://youtu.be/... or https://youtube.com/shorts/...">
+      <button class="mini" id="ytLinkGo" style="margin-top:6px">🔗 Link</button></details>`;
+  ytWire(p);
+  const line = $("#ytUpLine");
+  const watch = async (jobId) => {
+    const j = (await api("/api/jobs")).find((x) => x.id === jobId);
+    if (!j) return;
+    if (j.status === "queued" || j.status === "running") {
+      line.textContent = (j.live && Date.now() / 1000 - j.live.t < 30 ? j.live.msg : j.log.length ? j.log[j.log.length - 1].msg : "Waiting to start") + "…";
+      $("#ytUpGo").disabled = true;
+      setTimeout(() => { if ($("#ytUpLine")) watch(jobId); }, 3000); return;
+    }
+    if (j.status === "done") { toast("Uploaded to YouTube"); wireYouTube(id); return; }
+    line.textContent = "⚠️ " + (j.log.length ? j.log[j.log.length - 1].msg.replace(/^Error: /, "") : "The upload failed");
+    $("#ytUpGo").disabled = false;
+  };
+  if (d.uploading) watch(d.uploading);
+  $(`#${p}-pic`).onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const res = await fetch(`/api/videos/${encodeURIComponent(id)}/youtube/thumbnail`, { method: "POST", body: f, credentials: "same-origin" });
+    if (!res.ok) { line.textContent = "⚠️ " + ((await res.json().catch(() => ({}))).detail || res.statusText); return; }
+    const r = await res.json();
+    const sel = $(`#${p}-th`);
+    if (![...sel.options].some((o) => o.value === r.thumbnail)) sel.insertAdjacentHTML("afterbegin", `<option value="${esc(r.thumbnail)}">Your picture</option>`);
+    sel.value = r.thumbnail; line.textContent = "✅ Your picture will be the thumbnail";
+  };
+  $("#ytUpGo").onclick = async (e) => {
+    const vals = ytValues(p);
+    const body = { ...vals, language: pl.language, file: $(`#${p}-file`) ? $(`#${p}-file`).value : pl.file, thumbnail: $(`#${p}-th`).value };
+    if (vals.privacy === "public" && !vals.publish_at && !confirm("Upload it as public now? Everyone can see it as soon as YouTube has processed it.")) return;
+    e.target.disabled = true; line.textContent = "Starting…";
+    try { const job = await api(`/api/videos/${encodeURIComponent(id)}/youtube/upload`, { method: "POST", body: JSON.stringify(body) }); watch(job.id); }
+    catch (err) { line.textContent = "⚠️ " + err.message; e.target.disabled = false; }
+  };
+  $("#ytLinkGo").onclick = async () => {
+    try { await api(`/api/videos/${encodeURIComponent(id)}/youtube/link`, { method: "POST", body: JSON.stringify({ url: $("#ytLinkUrl").value }) }); wireYouTube(id); }
+    catch (err) { line.textContent = "⚠️ " + err.message; }
+  };
+}
+
 async function openVideo(id) {
   const v = await api("/api/videos/" + encodeURIComponent(id));
   const src = "/media/" + encodeURIComponent(id) + "/reel.mp4";
@@ -2105,6 +2465,10 @@ async function openVideo(id) {
     ${v.usage ? usageHtml({ models: Object.fromEntries(Object.entries(v.usage.steps || {}).filter(([, x]) => x.models).map(([k, x]) => [k, x.models])),
       steps: Object.fromEntries(Object.entries(v.usage.steps || {}).map(([k, x]) => [k, x.tokens])),
       total: v.usage.total.tokens, cost: v.usage.total.cost_usd, cached: v.usage.total.cache_read }, "Claude tokens used for this video") : ""}
+    <details id="ytBox" class="section-fold">
+      <summary><h4 class="section" style="display:inline">▶ YouTube${v.youtube ? " ✅" : ""}</h4></summary>
+      <div class="yt-in"><p class="hint">Reading…</p></div>
+    </details>
     ${v.source === "script" ? `<details id="siBox" class="section-fold">
       <summary><h4 class="section" style="display:inline">📜 Script &amp; hook</h4></summary>
       <p class="hint">The text this video was made from. Edit anything, then press <b>Re-make</b> below: with edited text a <b>new video</b> is made from it (with the voice, speed and subtitles chosen there); this video stays as it is.</p>
@@ -2333,6 +2697,7 @@ async function openVideo(id) {
     wireHooks(id, v);
   }
   if ($("#csBox")) wireShort(id, v);
+  $("#ytBox").addEventListener("toggle", () => { if ($("#ytBox").open && !$("#ytBox").dataset.loaded) { $("#ytBox").dataset.loaded = 1; wireYouTube(id); } });
   if ($("#siBox")) wireScriptInput(id, v);
   if ($("#lpRemix")) {  // a low-poly video: its sound mixed again (reelgen/lowpoly/run.py remix_sound)
     $("#lpRemix").onclick = async () => {
@@ -2696,7 +3061,7 @@ const AI_EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xh
 const modelName = (m) => ((AI_MODELS.find((x) => x[0] === m) || [m, m])[1]).replace(/ \(.*/, "");
 let aiDefaults = { model: "claude-opus-5-5", effort: "high", check_model: "claude-sonnet-5-5", check_effort: "medium" };
 const aiLabel = (a) => `${modelName(a.model)} ${a.effort}` + (a.check_model ? ` · checks: ${modelName(a.check_model)} ${a.check_effort}` : "");
-const NO_CLAUDE = ["rerender", "stick_remake", "myvoice", "anim_hd", "music_replace", "sound_remove", "anim_music", "rehook", "lowpoly_remix"];
+const NO_CLAUDE = ["rerender", "stick_remake", "myvoice", "anim_hd", "music_replace", "sound_remove", "anim_music", "rehook", "lowpoly_remix", "yt_upload"];
 const aiLine = (j) => j.ai && !NO_CLAUDE.some((k) => j[k]) ? `<div class="hint ai-used">🤖 Claude: ${esc(aiLabel(j.ai))}</div>` : "";
 // opts.check: the job also checks (facts, pictures); opts.checkEffort: this tab's own default for the checker.
 function aiPicker(key, opts = {}) {

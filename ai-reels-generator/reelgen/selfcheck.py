@@ -16,6 +16,7 @@ import ast
 import collections
 import importlib
 import pkgutil
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -698,6 +699,32 @@ def lowpoly_boards() -> None:
             fail(f"lowpoly boards: ✏ Change it didn't write a changed storyboard beside the original: {drafts}")
 
 
+def youtube_helpers() -> None:
+    """reelgen/youtube.py's own text rules: video ids from every kind of link, YouTube's limits, the CTR unit, the
+    category map, and that every editor-side constant the page shows matches."""
+    from reelgen import youtube as Y
+    from reelgen.categories import CATEGORIES
+
+    for link in ("https://youtu.be/AAAAAAAAAAA", "https://www.youtube.com/watch?v=AAAAAAAAAAA&t=3",
+                 "https://youtube.com/shorts/AAAAAAAAAAA", "https://studio.youtube.com/video/AAAAAAAAAAA/edit", "AAAAAAAAAAA"):
+        if Y.youtube_id(link) != "AAAAAAAAAAA":
+            fail(f"youtube: no video id read from {link}")
+    if Y.clean_text("a <b> c", 100) != "a ‹b› c" or len(Y.clean_text("é" * 4000, 5000).encode()) > 5000:
+        fail("youtube: clean_text lets '<' or too many bytes through")
+    tags = Y.fit_tags(["#money", "Money", "saving money"] + [f"tag number {i}" for i in range(60)])
+    if tags[:2] != ["money", "saving money"] or sum(len(t) + (2 if " " in t else 0) for t in tags) + len(tags) - 1 > Y.TAGS_MAX:
+        fail(f"youtube: fit_tags {tags[:3]} (duplicates, '#', or over 500 characters)")
+    if Y._ctr_scale([0.8, 0.5]) != 1 or Y._ctr_scale([0.8, 4.2]) != 100:
+        fail("youtube: the click-through rate unit is decided per set")
+    missing = [c for c in CATEGORIES if c not in Y.CATEGORY_IDS]
+    if missing or any(v not in Y.YT_CATEGORIES for v in Y.CATEGORY_IDS.values()):
+        fail(f"youtube: categories without a YouTube category: {missing}")
+    page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    cats = re.search(r"const YT_CATS = \{(.*?)\};", page, re.S)
+    if not cats or set(re.findall(r'"(\d+)":', cats[1])) != set(Y.YT_CATEGORIES):
+        fail("youtube: YT_CATS in web/index.html isn't youtube.YT_CATEGORIES")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -712,6 +739,7 @@ def main() -> int:
     lowpoly_vehicles()
     lowpoly_boards()
     lowpoly_intro()
+    youtube_helpers()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

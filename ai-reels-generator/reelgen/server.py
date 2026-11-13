@@ -64,6 +64,10 @@ def job_label(job: dict) -> str:
     what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
     if job.get("lowpoly_boards"):
         return f"{job.get('topic') or 'Claude picks'} · Low-poly storyboards"
+    if job.get("yt_upload"):
+        return f"{job.get('topic')} · Upload to YouTube"
+    if job.get("yt_audit"):
+        return "Your channel · YouTube audit"
     kind = ("Journey" if job.get("journey_input") else "Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
@@ -206,7 +210,17 @@ class JobManager:
             if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
                 cfg.long_voice_rate = job["voice_rate"]
             boards = None
-            if job.get("lowpoly_boards"):  # ✍ low-poly storyboards to read first (reelgen/lowpoly/boards.py)
+            no_video = False
+            if job.get("yt_upload"):  # ▶ a finished video up to your YouTube channel (reelgen/youtube.py)
+                from .youtube import upload
+                r = job["yt_upload"]
+                report = upload(cfg, video_dir(cfg, r["id"]), r["opts"], progress)
+                reports = [{**report, "id": r["id"]}]
+            elif job.get("yt_audit"):  # 📊 Claude audits your channel from its analytics (reelgen/youtube.py)
+                from .youtube import audit
+                audit(cfg, progress)
+                reports, no_video = [], True
+            elif job.get("lowpoly_boards"):  # ✍ low-poly storyboards to read first (reelgen/lowpoly/boards.py)
                 from .lowpoly.boards import write_round
                 b = job["lowpoly_boards"]
                 if b.get("change"):  # ✏ Change it: one storyboard written again with the user's instructions
@@ -316,6 +330,8 @@ class JobManager:
             if boards is not None:  # a storyboard round makes no video: done when any storyboard was written
                 job["boards_made"] = boards
                 job["status"] = "done" if boards else "failed"
+            if no_video:  # the audit makes no video: done when it finished
+                job["status"] = "done"
         except Exception as exc:  # never kill the worker thread
             progress(f"Error: {exc}")
             job["status"] = "failed"
@@ -776,6 +792,40 @@ class PostEdit(BaseModel):
 
 class ReviewBody(BaseModel):
     decision: str  # accept | reject
+
+
+class YouTubeClientBody(BaseModel):
+    """Settings > YouTube: the OAuth client's JSON file from Google Cloud, or its id and secret typed in."""
+    json_text: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+
+
+class YouTubeUploadBody(BaseModel):
+    """▶ Upload to YouTube from a video's page (youtube.plan_for gives the starting values)."""
+    title: str
+    description: str = ""
+    tags: list[str] = []
+    category: str = "22"
+    privacy: str = "private"  # private / unlisted / public
+    publish_at: str = ""  # a scheduled time (ISO, with the page's time zone); makes it private until then
+    made_for_kids: bool = False
+    synthetic: bool = False  # altered or synthetic content that looks real
+    language: str = ""
+    file: str = "reel.mp4"
+    thumbnail: str = ""  # a picture in the video's folder: thumbnail-youtube.jpg or youtube-thumb.jpg/png
+
+
+class YouTubeEditBody(BaseModel):
+    """Changes to one video on the channel; only the fields sent are changed."""
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    category: str | None = None
+    privacy: str | None = None
+    publish_at: str | None = None  # '' takes a schedule off
+    made_for_kids: bool | None = None
+    synthetic: bool | None = None
 
 
 class PostedBody(BaseModel):
@@ -2004,6 +2054,209 @@ def create_app(cfg: Config) -> FastAPI:
                 os.environ.pop(k, None)
         env.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return anim_cloud()
+
+    # ---------- ▶ YouTube: your channel (reelgen/youtube.py) ----------
+
+    def _yt(fn, *a, **k):
+        from .youtube import YouTubeError
+        try:
+            return fn(*a, **k)
+        except YouTubeError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.get("/api/youtube/status")
+    def yt_status():
+        from . import youtube
+        cid, _secret = youtube.client()
+        tok = youtube.connected(cfg) or {}
+        audit = youtube._read(youtube.folder(cfg) / "audit.json")
+        return {"client": bool(cid), "client_hint": ("…" + cid.split(".")[0][-6:]) if cid else "", "connected": bool(tok),
+                "channel": tok.get("channel"), "connected_at": tok.get("connected_at", ""), "has_data": bool(youtube.cached(cfg)),
+                "audit_made": (audit or {}).get("made", "")}
+
+    @app.put("/api/youtube/client")
+    def yt_client(body: YouTubeClientBody):
+        from . import youtube
+        _yt(youtube.save_client, body.json_text, body.client_id, body.client_secret)
+        return yt_status()
+
+    @app.delete("/api/youtube/client")
+    def yt_client_forget():
+        from . import youtube
+        youtube.disconnect(cfg)
+        youtube.set_env({"YOUTUBE_CLIENT_ID": "", "YOUTUBE_CLIENT_SECRET": ""})
+        return yt_status()
+
+    @app.post("/api/youtube/connect")
+    def yt_connect(request: Request):
+        """Google's sign-in opens in this computer's browser and comes back to a one-time listener on 127.0.0.1, so it
+        has to be started from the computer the app runs on (not a phone through the tunnel)."""
+        from . import youtube
+        try:
+            local = ipaddress.ip_address(client_ip(request) or "0.0.0.0").is_loopback
+        except ValueError:
+            local = False
+        if not local:
+            raise HTTPException(400, "Connect from the computer the app runs on: Google sends its browser back to the app there.")
+        back = f"http://localhost:{cfg.port}/"
+        return {"url": _yt(youtube.start_connect, cfg, back)}
+
+    @app.post("/api/youtube/disconnect")
+    def yt_disconnect():
+        from . import youtube
+        youtube.disconnect(cfg)
+        return yt_status()
+
+    @app.get("/api/youtube/videos")
+    def yt_videos():
+        from . import youtube
+        data = youtube.cached(cfg) or {}
+        made = {}
+        for rep in cfg.output_dir.glob("*/report.json"):  # which library video each YouTube video came from
+            try:
+                yid = (json.loads(rep.read_text(encoding="utf-8")).get("youtube") or {}).get("id")
+            except (OSError, ValueError):
+                continue
+            if yid:
+                made[yid] = rep.parent.name
+        return {**data, "library": made, "audit": youtube._read(youtube.folder(cfg) / "audit.json")}
+
+    @app.post("/api/youtube/refresh")
+    def yt_refresh():
+        from . import youtube
+        _yt(youtube.refresh, cfg)
+        return yt_videos()
+
+    @app.get("/api/youtube/videos.csv")
+    def yt_csv():
+        from fastapi.responses import Response
+
+        from . import youtube
+        data = youtube.cached(cfg)
+        if not data:
+            raise HTTPException(404, "Refresh the YouTube tab first")
+        return Response(youtube.table_csv(data), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="youtube-videos-{data["fetched_at"][:10]}.csv"'})
+
+    @app.get("/api/youtube/video/{vid}")
+    def yt_video(vid: str):
+        from . import youtube
+        vid = _yt(youtube.youtube_id, vid)
+        out = _yt(youtube.video, cfg, vid)
+        out["details"] = youtube._read(youtube.folder(cfg) / "details" / f"{vid}.json")
+        return out
+
+    @app.get("/api/youtube/video/{vid}/details")
+    def yt_details(vid: str):
+        from . import youtube
+        return _yt(youtube.details, cfg, _yt(youtube.youtube_id, vid))
+
+    @app.put("/api/youtube/video/{vid}")
+    def yt_edit(vid: str, body: YouTubeEditBody):
+        from . import youtube
+        changes = {k: v for k, v in body.model_dump().items() if v is not None}
+        if changes.get("privacy") and changes["privacy"] not in ("private", "unlisted", "public"):
+            raise HTTPException(400, "privacy is private, unlisted or public")
+        row = _yt(youtube.update, cfg, _yt(youtube.youtube_id, vid), changes)
+        for rep in cfg.output_dir.glob("*/report.json"):  # keep a library video's record in step
+            try:
+                report = json.loads(rep.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (report.get("youtube") or {}).get("id") == row["id"]:
+                report["youtube"].update(title=row["title"], privacy=row["privacy"], publish_at=row["publish_at"])
+                rep.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return row
+
+    @app.post("/api/youtube/video/{vid}/thumbnail")
+    async def yt_thumb(vid: str, request: Request):
+        from . import youtube
+        data = await request.body()
+        if not data or len(data) > youtube.THUMB_MAX:
+            raise HTTPException(400, "Send a JPG or PNG picture under 50 MB")
+        from starlette.concurrency import run_in_threadpool
+
+        tmp = youtube.folder(cfg) / ("thumb-" + secrets.token_hex(4))
+        tmp.write_bytes(data)
+        try:
+            await run_in_threadpool(_yt, youtube.set_thumbnail, cfg, _yt(youtube.youtube_id, vid), tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"ok": True}
+
+    @app.post("/api/youtube/audit")
+    def yt_audit_start(body: dict | None = None):
+        from . import youtube
+        if not youtube.connected(cfg):
+            raise HTTPException(400, "Connect YouTube first (Settings > YouTube)")
+        if any(j.get("yt_audit") and j["status"] in ("queued", "running") for j in jobs.jobs):
+            raise HTTPException(409, "An audit is already running")
+        return jobs.submit("YouTube audit", 1, "manual", length="short", yt_audit=True, ai=(body or {}).get("ai"))
+
+    @app.get("/api/videos/{video_id}/youtube")
+    def yt_for_video(video_id: str):
+        from . import youtube
+        folder_path = video_dir(cfg, video_id)
+        report = json.loads((folder_path / "report.json").read_text(encoding="utf-8"))
+        running = next((j for j in jobs.jobs if (j.get("yt_upload") or {}).get("id") == video_id
+                        and j["status"] in ("queued", "running")), None)
+        custom = next((n for n in ("youtube-thumb.jpg", "youtube-thumb.png") if (folder_path / n).exists()), "")
+        plan = youtube.plan_for(report, folder_path)
+        if custom:
+            plan["thumbnail"] = custom
+        return {"plan": plan, "youtube": report.get("youtube"), "connected": bool(youtube.connected(cfg)),
+                "uploading": running["id"] if running else "", "custom_thumb": custom,
+                "partial": (folder_path / "youtube-upload.json").exists(), "categories": youtube.YT_CATEGORIES}
+
+    @app.post("/api/videos/{video_id}/youtube/upload")
+    def yt_upload_start(video_id: str, body: YouTubeUploadBody):
+        from . import youtube
+        folder_path = video_dir(cfg, video_id)
+        if not youtube.connected(cfg):
+            raise HTTPException(400, "Connect YouTube first (Settings > YouTube)")
+        if body.privacy not in ("private", "unlisted", "public"):
+            raise HTTPException(400, "privacy is private, unlisted or public")
+        if body.publish_at:
+            _yt(youtube.publish_time, body.publish_at)  # a bad time is said now, not after the upload
+        if body.thumbnail and body.thumbnail not in ("thumbnail-youtube.jpg", "youtube-thumb.jpg", "youtube-thumb.png"):
+            raise HTTPException(400, "unknown thumbnail")
+        if any((j.get("yt_upload") or {}).get("id") == video_id and j["status"] in ("queued", "running") for j in jobs.jobs):
+            raise HTTPException(409, "This video is already uploading")
+        report = json.loads((folder_path / "report.json").read_text(encoding="utf-8"))
+        if (report.get("youtube") or {}).get("id"):
+            raise HTTPException(409, "This video is already on YouTube")
+        return jobs.submit((body.title or video_id)[:80], 1, "manual", length=report.get("length") or report.get("format") or "short",
+                           yt_upload={"id": video_id, "opts": body.model_dump()})
+
+    @app.post("/api/videos/{video_id}/youtube/thumbnail")
+    async def yt_video_thumb(video_id: str, request: Request):
+        """A picture for this video's YouTube upload (kept in its folder as youtube-thumb.jpg/png)."""
+        folder_path = video_dir(cfg, video_id)
+        data = await request.body()
+        kind = "png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "jpg" if data[:2] == b"\xff\xd8" else ""
+        if not kind or len(data) > 50 * 1024 * 1024:
+            raise HTTPException(400, "Send a JPG or PNG picture under 50 MB")
+        for n in ("youtube-thumb.jpg", "youtube-thumb.png"):
+            (folder_path / n).unlink(missing_ok=True)
+        (folder_path / f"youtube-thumb.{kind}").write_bytes(data)
+        return {"ok": True, "thumbnail": f"youtube-thumb.{kind}"}
+
+    @app.post("/api/videos/{video_id}/youtube/link")
+    def yt_link(video_id: str, body: dict):
+        """A video you uploaded yourself, linked to this library video (its analytics show on this page)."""
+        from . import youtube
+        folder_path = video_dir(cfg, video_id)
+        path = folder_path / "report.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        if body.get("unlink"):
+            report.pop("youtube", None)
+        else:
+            row = _yt(youtube.video, cfg, _yt(youtube.youtube_id, str(body.get("url") or "")))
+            report["youtube"] = {"id": row["id"], "url": f"https://youtu.be/{row['id']}",
+                                 "studio": f"https://studio.youtube.com/video/{row['id']}/edit", "linked": True,
+                                 "title": row["title"], "privacy": row["privacy"], "publish_at": row["publish_at"]}
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "youtube": report.get("youtube")}
 
     @app.get("/api/anim/options")
     def anim_options():
