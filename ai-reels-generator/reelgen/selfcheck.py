@@ -724,6 +724,18 @@ def youtube_helpers() -> None:
     if not cats or set(re.findall(r'"(\d+)":', cats[1])) != set(Y.YT_CATEGORIES):
         fail("youtube: YT_CATS in web/index.html isn't youtube.YT_CATEGORIES")
 
+    # the audit: figures Claude writes are looked up in the numbers; small counts, years and [[n]] are left alone
+    vals = [48.66, 67.06, 1334.0, 16.0, 3.0]
+    if Y.check_figures("[[3]] holds 67% and got 1,334 views", vals):
+        fail("youtube audit: a rounded figure or one with commas was flagged")
+    if Y.check_figures("[[12]] held 48.66% but 5 of 10 Shorts in 2026 got 16 views", vals):
+        fail("youtube audit: a row number, small count or year was flagged")
+    if Y.check_figures("a 2.7x gap and 431 views", vals) != ["2.7", "431"]:
+        fail("youtube audit: figures not in the numbers weren't caught")
+    for kind in Y.CHARTS:  # every chart the audit can pick is drawn by the page
+        if kind != "none" and f"{kind}: () =>" not in page:
+            fail(f"youtube audit: chart {kind} isn't drawn by the YouTube tab (ytChart)")
+
 
 def main() -> int:
     sys.path.insert(0, str(ROOT))

@@ -21,7 +21,9 @@ creates; the first reports arrive within 48 hours, then cover the 30 days before
 from __future__ import annotations
 
 import base64
+import contextvars
 import csv
+import shutil
 import hashlib
 import html
 import io
@@ -31,7 +33,8 @@ import re
 import secrets
 import threading
 import time
-from datetime import date, datetime, timezone
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -160,13 +163,124 @@ _pending: dict[str, dict] = {}
 _lock = threading.Lock()
 
 
-def _token_path(cfg: Config) -> Path:
-    return folder(cfg) / "token.json"
+# ---------- several channels: each its own folder (sign-in, numbers, audits, picture) ----------
+# youtube/channels/<channel id>/token.json, videos.json, audits/, details/, reach/, avatar.jpg; youtube/active.json
+# says which one the YouTube tab shows. A job or a request picks another with `use(channel id)`.
+
+_CHANNEL: contextvars.ContextVar[str] = contextvars.ContextVar("youtube_channel", default="")
+
+
+@contextmanager
+def use(cid: str | None):
+    """Everything inside works on that channel ('' = the active one)."""
+    token = _CHANNEL.set(cid or "")
+    try:
+        yield
+    finally:
+        _CHANNEL.reset(token)
+
+
+def _channels_dir(cfg: Config) -> Path:
+    d = folder(cfg) / "channels"
+    if not d.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        _migrate(cfg, d)
+    return d
+
+
+def _migrate(cfg: Config, d: Path) -> None:
+    """The first version kept one channel straight in youtube/: moved into its own folder."""
+    root = folder(cfg)
+    tok = _read(root / "token.json")
+    if not tok:
+        return
+    cid = re.sub(r"[^\w-]", "_", ((tok.get("channel") or {}).get("id") or "channel"))
+    home = d / cid
+    home.mkdir(exist_ok=True)
+    for name in ("token.json", "videos.json", "audit.json", "details", "reach"):
+        if (root / name).exists():
+            shutil.move(str(root / name), str(home / name))
+    _write(root / "active.json", {"id": cid})
+
+
+def _ok_id(cid: str) -> str:
+    if not re.fullmatch(r"[\w-]{1,64}", cid or ""):
+        raise YouTubeError("That isn't one of your connected channels")
+    return cid
+
+
+def channels(cfg: Config) -> list[dict]:
+    """Every connected channel, the active one marked."""
+    act = active(cfg)
+    out = []
+    for home in sorted(_channels_dir(cfg).iterdir()):
+        tok = _read(home / "token.json") or {}
+        if not tok.get("refresh_token"):
+            continue
+        ch = tok.get("channel") or {"id": home.name, "title": home.name}
+        out.append({**{k: ch.get(k) for k in ("id", "title", "handle", "subscribers", "views", "videos")},
+                    "avatar": (home / "avatar.jpg").exists(), "connected_at": tok.get("connected_at", ""),
+                    "active": home.name == act})
+    return out
+
+
+def active(cfg: Config) -> str:
+    """The channel this request or job works on: `use(...)`, else the one picked in the tab, else the first."""
+    d = _channels_dir(cfg)
+    for cid in (_CHANNEL.get(), (_read(folder(cfg) / "active.json") or {}).get("id", "")):
+        if cid and re.fullmatch(r"[\w-]{1,64}", cid) and (_read(d / cid / "token.json") or {}).get("refresh_token"):
+            return cid
+    for home in sorted(d.iterdir()):
+        if (_read(home / "token.json") or {}).get("refresh_token"):
+            return home.name
+    return ""
+
+
+def set_active(cfg: Config, cid: str) -> None:
+    if not (_read(_channels_dir(cfg) / _ok_id(cid) / "token.json") or {}).get("refresh_token"):
+        raise YouTubeError("That channel isn't connected")
+    _write(folder(cfg) / "active.json", {"id": cid})
+
+
+def home(cfg: Config, cid: str = "") -> Path:
+    """The folder of a channel (the active one by default)."""
+    cid = cid or active(cfg)
+    if not cid:
+        raise YouTubeError("YouTube isn't connected yet (YouTube tab)")
+    d = _channels_dir(cfg) / _ok_id(cid)
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _token_path(cfg: Config, tok: dict | None = None) -> Path:
+    cid = ((tok or {}).get("channel") or {}).get("id", "")
+    return home(cfg, re.sub(r"[^\w-]", "_", cid) if cid else "") / "token.json"
 
 
 def connected(cfg: Config) -> dict | None:
-    tok = _read(_token_path(cfg))
+    cid = active(cfg)
+    if not cid:
+        return None
+    tok = _read(_channels_dir(cfg) / cid / "token.json")
     return tok if tok and tok.get("refresh_token") else None
+
+
+def avatar_path(cfg: Config, cid: str) -> Path | None:
+    path = _channels_dir(cfg) / _ok_id(cid) / "avatar.jpg"
+    return path if path.exists() else None
+
+
+def _save_avatar(cfg: Config, ch: dict, url: str) -> None:
+    """The channel picture kept on this computer: Google's picture host (yt3.ggpht.com) refuses requests that come
+    from another site's page, so the tab showed a broken picture."""
+    if not url:
+        return
+    try:
+        r = requests.get(url, timeout=20)
+        if r.status_code == 200 and r.content[:3] in (b"\xff\xd8\xff", b"\x89PN", b"RIF", b"GIF"):
+            (home(cfg, ch["id"]) / "avatar.jpg").write_bytes(r.content)
+    except requests.RequestException:
+        pass
 
 
 def start_connect(cfg: Config, back: str) -> str:
@@ -195,6 +309,7 @@ def start_connect(cfg: Config, back: str) -> str:
                 try:
                     tok = _exchange(cfg, q.get("code", [""])[0], box["redirect"], verifier)
                     ch = channel(cfg, tok=tok)
+                    set_active(cfg, ch["id"])
                     box["done"] = {"channel": ch}
                     self._page(f"Connected to {ch['title']}. You can close this tab and go back to Reel Studio.")
                 except Exception as exc:  # shown to the user, never raised in the server thread
@@ -234,7 +349,9 @@ def start_connect(cfg: Config, back: str) -> str:
     threading.Thread(target=serve, daemon=True).start()
     return URLS["auth"] + "?" + urlencode({
         "client_id": cid, "redirect_uri": box["redirect"], "response_type": "code", "scope": " ".join(SCOPES),
-        "access_type": "offline", "prompt": "consent", "include_granted_scopes": "true", "state": state,
+        # select_account: Google asks which account (and which of its channels) every time, so 'Add another channel'
+        # can pick a different one
+        "access_type": "offline", "prompt": "consent select_account", "include_granted_scopes": "true", "state": state,
         "code_challenge": challenge, "code_challenge_method": "S256"})
 
 
@@ -249,18 +366,21 @@ def _exchange(cfg: Config, code: str, redirect: str, verifier: str) -> dict:
     tok = {"refresh_token": data["refresh_token"], "access_token": data.get("access_token", ""),
            "expires_at": time.time() + int(data.get("expires_in", 3600)), "scope": data.get("scope", ""),
            "connected_at": datetime.now().isoformat(timespec="seconds")}
-    _write(_token_path(cfg), tok)
-    return tok
+    return tok  # saved by channel() into that channel's own folder
 
 
 def disconnect(cfg: Config) -> None:
+    """The active channel's sign-in is revoked and forgotten; its numbers and audits stay (they come back if you
+    connect it again)."""
     tok = connected(cfg)
     if tok:
         try:
             requests.post(URLS["revoke"], data={"token": tok["refresh_token"]}, timeout=15)
         except requests.RequestException:
             pass
-        _token_path(cfg).unlink(missing_ok=True)
+        _token_path(cfg, tok).unlink(missing_ok=True)
+        if (_read(folder(cfg) / "active.json") or {}).get("id") == ((tok.get("channel") or {}).get("id")):
+            (folder(cfg) / "active.json").unlink(missing_ok=True)
 
 
 def _access(cfg: Config, tok: dict | None = None) -> str:
@@ -278,13 +398,15 @@ def _access(cfg: Config, tok: dict | None = None) -> str:
     data = _json(r)
     if r.status_code != 200:
         if data.get("error") == "invalid_grant":
-            _token_path(cfg).unlink(missing_ok=True)
-            raise YouTubeError("Google ended the app's sign-in, so connect again in Settings > YouTube. An OAuth app left in "
+            if tok.get("channel"):
+                _token_path(cfg, tok).unlink(missing_ok=True)
+            raise YouTubeError("Google ended the app's sign-in, so connect again in the YouTube tab. An OAuth app left in "
                                "'Testing' gets sign-ins that last 7 days: in Google Cloud > OAuth consent screen, press "
                                "'Publish app' to keep it connected.")
         raise YouTubeError("Google refused the sign-in: " + (data.get("error_description") or data.get("error") or str(r.status_code)))
     tok.update(access_token=data["access_token"], expires_at=time.time() + int(data.get("expires_in", 3600)))
-    _write(_token_path(cfg), tok)
+    if tok.get("channel"):
+        _write(_token_path(cfg, tok), tok)
     return tok["access_token"]
 
 
@@ -346,9 +468,9 @@ def _call(cfg: Config, method: str, url: str, what: str, ok=(200,), **kw) -> req
             return r
         if r.status_code == 401 and attempt == 0:  # the access token ran out early: refresh once
             tok = connected(cfg) or {}
-            tok["expires_at"] = 0
             if tok:
-                _write(_token_path(cfg), tok)
+                tok["expires_at"] = 0
+                _write(_token_path(cfg, tok), tok)
             continue
         if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
             stopper.sleep(2 ** attempt * 3)
@@ -375,15 +497,17 @@ def channel(cfg: Config, tok: dict | None = None) -> dict:
         raise YouTubeError(REASONS["youtubeSignupRequired"])
     c = items[0]
     sn, st = c.get("snippet", {}), c.get("statistics", {})
+    thumbs = sn.get("thumbnails") or {}
     ch = {"id": c["id"], "title": sn.get("title", ""), "handle": sn.get("customUrl", ""),
-          "thumb": ((sn.get("thumbnails") or {}).get("default") or {}).get("url", ""),
+          "thumb": (thumbs.get("default") or {}).get("url", ""),
           "published": sn.get("publishedAt", ""), "subscribers": int(st.get("subscriberCount", 0) or 0),
           "views": int(st.get("viewCount", 0) or 0), "videos": int(st.get("videoCount", 0) or 0),
           "uploads": ((c.get("contentDetails") or {}).get("relatedPlaylists") or {}).get("uploads", "")}
     tok = tok or connected(cfg) or {}
     if tok:
         tok["channel"] = ch
-        _write(_token_path(cfg), tok)
+        _write(_token_path(cfg, tok), tok)
+        _save_avatar(cfg, ch, (thumbs.get("medium") or thumbs.get("default") or {}).get("url", ""))
     return ch
 
 
@@ -504,7 +628,7 @@ def _reach_reports(cfg: Config) -> tuple[dict[str, dict], str]:
         key = rep.get("startTime", "")
         if key not in latest or rep.get("createTime", "") > latest[key].get("createTime", ""):
             latest[key] = rep
-    cache = folder(cfg) / "reach"
+    cache = home(cfg) / "reach"
     cache.mkdir(exist_ok=True)
     raw: list[tuple[str, int, float]] = []
     for rep in latest.values():
@@ -559,14 +683,30 @@ def refresh(cfg: Config, progress=None) -> dict:
             by_id[vid]["reach"] = r
     for r in rows:
         r["short"] = r["duration"] <= 180  # YouTube treats vertical videos up to 3 minutes as Shorts
+    try:
+        daily = _daily(cfg, ch)
+    except YouTubeError:
+        daily = []
     data = {"fetched_at": datetime.now().isoformat(timespec="seconds"), "channel": ch, "reach_note": reach_note,
-            "videos": sorted(rows, key=lambda r: r.get("published", ""), reverse=True)}
-    _write(folder(cfg) / "videos.json", data)
+            "daily": daily, "videos": sorted(rows, key=lambda r: r.get("published", ""), reverse=True)}
+    _write(home(cfg) / "videos.json", data)
     return data
 
 
+DAILY_DAYS = 90
+
+
+def _daily(cfg: Config, ch: dict) -> list[dict]:
+    """The channel's views and new subscribers per day over the last 90 days (for the audit's line chart)."""
+    start = max(date.fromisoformat((ch.get("published") or "2005-04-23")[:10]), date.today() - timedelta(days=DAILY_DAYS))
+    rows = _report(cfg, "Daily views", dimensions="day", metrics="views,subscribersGained,estimatedMinutesWatched",
+                   sort="day", startDate=start.isoformat(), endDate=date.today().isoformat())
+    return [{"day": r["day"], "views": int(_num(r.get("views")) or 0), "subs": int(_num(r.get("subscribersGained")) or 0),
+             "minutes": round(_num(r.get("estimatedMinutesWatched")) or 0, 1)} for r in rows]
+
+
 def cached(cfg: Config) -> dict | None:
-    return _read(folder(cfg) / "videos.json")
+    return _read(home(cfg) / "videos.json") if active(cfg) else None
 
 
 def details(cfg: Config, vid: str) -> dict:
@@ -582,7 +722,7 @@ def details(cfg: Config, vid: str) -> dict:
                           "vs_similar": r.get("relativeRetentionPerformance")} for r in retention],
            "sources": [{"source": r["insightTrafficSourceType"], "views": r.get("views"),
                         "minutes": r.get("estimatedMinutesWatched")} for r in sources]}
-    path = folder(cfg) / "details"
+    path = home(cfg) / "details"
     path.mkdir(exist_ok=True)
     safe = re.sub(r"[^\w-]", "_", vid)
     _write(path / f"{safe}.json", out)
@@ -691,7 +831,7 @@ def upload(cfg: Config, folder_path: Path, opts: dict, progress) -> dict:
     path = folder_path / name
     size = path.stat().st_size
     meta = _meta(opts)
-    sig = hashlib.sha1(json.dumps([name, size, int(path.stat().st_mtime), meta], sort_keys=True).encode()).hexdigest()
+    sig = hashlib.sha1(json.dumps([name, size, int(path.stat().st_mtime), meta, active(cfg)], sort_keys=True).encode()).hexdigest()
     state_path = folder_path / "youtube-upload.json"
     state = _read(state_path, {}) or {}
     session = state.get("session") if state.get("sig") == sig else None
@@ -754,7 +894,7 @@ def upload(cfg: Config, folder_path: Path, opts: dict, progress) -> dict:
     info = {"id": vid, "url": f"https://youtu.be/{vid}", "studio": f"https://studio.youtube.com/video/{vid}/edit",
             "uploaded_at": datetime.now().isoformat(timespec="seconds"), "file": name,
             "privacy": meta["status"]["privacyStatus"], "publish_at": meta["status"].get("publishAt", ""),
-            "title": meta["snippet"]["title"], "channel": ((connected(cfg) or {}).get("channel") or {}).get("id", "")}
+            "title": meta["snippet"]["title"], "channel": active(cfg)}
     thumb = opts.get("thumbnail") or ""
     if thumb:
         info["thumbnail"] = _thumb_after_upload(cfg, vid, folder_path / Path(thumb).name, progress)
@@ -879,66 +1019,364 @@ def youtube_id(text: str) -> str:
 
 
 # ---------- the audit (Claude reads the numbers) ----------
+# What makes it accurate: every count, sum, median and bucket is worked out here in code and handed over as facts;
+# each video is cited as [[n]] (its row number), so the page shows its thumbnail and title instead of an id; every
+# figure Claude writes in its evidence is looked up in the data afterwards, a figure not found is sent back once to
+# be corrected, and one still not found is marked on the page. Each audit is kept (audits/) with a snapshot of the
+# numbers it saw, so the tab shows the history, its charts, and what changed since.
 
-def audit_table(cfg: Config, data: dict) -> str:
-    """Every video in one line Claude can read: the numbers plus how the app made it (when it did)."""
+CHARTS = ("none", "length_vs_viewed", "views", "retention", "daily", "ctr_vs_views", "subs", "comments")
+REF = re.compile(r"\[\[(\d+)\]\]")
+RETENTION_FOR = 30  # videos whose audience retention is read for the audit (public ones, most viewed first)
+RETENTION_POINTS = 24
+
+
+def _audits_dir(cfg: Config) -> Path:
+    d = home(cfg) / "audits"
+    if not d.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        old = _read(home(cfg) / "audit.json")  # the first version kept only the latest audit
+        if old and old.get("made"):
+            _write(d / (re.sub(r"[^\w-]", "-", old["made"]) + ".json"), old)
+    return d
+
+
+def _retention(cfg: Config, v: dict) -> dict | None:
+    """Where viewers leave, read from YouTube (cached a day per video) and summed up in seconds."""
+    path = home(cfg) / "details" / (re.sub(r"[^\w-]", "_", v["id"]) + ".json")
+    got = _read(path)
+    fresh = got and got.get("fetched_at", "") >= (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    if not fresh:
+        try:
+            got = details(cfg, v["id"])
+        except YouTubeError:
+            return None
+    pts = [(float(r["at"]), _num(r.get("watching"))) for r in got.get("retention") or [] if _num(r.get("watching")) is not None]
+    dur = v.get("duration") or 0
+    if len(pts) < 3 or not dur:
+        return None
+    pts.sort()
+
+    def at(frac: float) -> float:
+        for (a, wa), (b, wb) in zip(pts, pts[1:]):
+            if a <= frac <= b:
+                return wa + (wb - wa) * ((frac - a) / (b - a) if b > a else 0)
+        return pts[0][1] if frac < pts[0][0] else pts[-1][1]
+
+    half = next((a for a, w in pts if w < 0.5), None)
+    step = max(1, len(pts) // RETENTION_POINTS)
+    return {"at_3s": round(at(min(1.0, 3 / dur)) * 100, 1), "half_gone_at": None if half is None else round(half * dur),
+            "at_end": round(at(0.95) * 100, 1),
+            "curve": [[round(a * dur, 1), round(w * 100, 1)] for a, w in pts[::step]]}
+
+
+def _median(xs: list[float]) -> float | None:
+    xs = sorted(x for x in xs if x is not None)
+    if not xs:
+        return None
+    m = len(xs) // 2
+    return round(xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2, 2)
+
+
+def _norm_title(t: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"#\w+|[^\w\s]", " ", t.lower())).strip()
+
+
+def snapshot(cfg: Config, data: dict, retention: dict[str, dict]) -> dict:
+    """The numbers an audit saw, kept with it (charts and 'since this audit' are drawn from these)."""
+    vids = []
+    for n, v in enumerate(data.get("videos", []), 1):
+        st, rc = v.get("stats") or {}, v.get("reach") or {}
+        vids.append({"n": n, "id": v["id"], "title": v["title"], "thumb": v.get("thumb", ""), "short": bool(v.get("short")),
+                     "duration": round(v.get("duration") or 0), "privacy": v.get("privacy", ""), "published": v.get("published", "")[:10],
+                     "views": v.get("views", 0), "likes": v.get("likes", 0), "comments": v.get("comments", 0),
+                     "viewed": _num(st.get("averageViewPercentage")), "avg_seconds": _num(st.get("averageViewDuration")),
+                     "subs": _num(st.get("subscribersGained")), "shares": _num(st.get("shares")),
+                     "impressions": rc.get("impressions"), "ctr": None if rc.get("ctr") is None else round(rc["ctr"] * 100, 2),
+                     "retention": retention.get(v["id"])})
+    ch = data.get("channel") or {}
+    return {"fetched_at": data.get("fetched_at", ""), "channel": {k: ch.get(k) for k in ("id", "title", "subscribers", "views", "videos")},
+            "reach_note": data.get("reach_note", ""), "daily": data.get("daily") or [], "videos": vids}
+
+
+def facts(snap: dict) -> dict:
+    """Counts, sums, medians and buckets worked out here, so Claude never has to count."""
+    vids = snap["videos"]
+    pub = [v for v in vids if v["privacy"] == "public"]
+    shorts, longs = [v for v in pub if v["short"]], [v for v in pub if not v["short"]]
+    views = sum(v["views"] for v in pub)
+    subs = sum(v["subs"] or 0 for v in vids)
+    buckets = []
+    for name, lo, hi in (("up to 45 s", 0, 45), ("46 to 60 s", 46, 60), ("61 to 90 s", 61, 90), ("over 90 s", 91, 10 ** 6)):
+        b = [v for v in shorts if lo <= v["duration"] <= hi]
+        if b:
+            buckets.append({"length": name, "shorts": len(b), "median_viewed_percent": _median([v["viewed"] for v in b]),
+                            "median_views": _median([v["views"] for v in b])})
+    groups: dict[str, list[dict]] = {}
+    for v in vids:
+        groups.setdefault(_norm_title(v["title"]), []).append(v)
+    dupes = [[f"[[{v['n']}]] ({v['privacy']})" for v in g] for g in groups.values() if len(g) > 1]
+    daily = snap.get("daily") or []
+    last28 = daily[-28:]
+    return {
+        "public_shorts": len(shorts), "public_long_videos": len(longs), "private_or_unlisted": len(vids) - len(pub),
+        "views_public_shorts": sum(v["views"] for v in shorts), "views_public_long_videos": sum(v["views"] for v in longs),
+        "median_views_public_shorts": _median([v["views"] for v in shorts]),
+        "median_viewed_percent_public_shorts": _median([v["viewed"] for v in shorts]),
+        "median_viewed_percent_public_long_videos": _median([v["viewed"] for v in longs]),
+        "public_shorts_with_comments": sum(1 for v in shorts if v["comments"]),
+        "subscribers_gained_all_videos": subs, "subscribers_per_1000_views": round(subs / views * 1000, 2) if views else None,
+        "subscribers_as_percent_of_views": round(subs / views * 100, 2) if views else None,
+        "shorts_by_length": buckets, "same_title_uploaded_more_than_once": dupes,
+        "views_last_28_days": sum(d["views"] for d in last28) if last28 else None,
+        "subscribers_last_28_days": sum(d["subs"] for d in last28) if last28 else None,
+        "impressions_available": any(v["impressions"] for v in vids),
+    }
+
+
+def audit_table(snap: dict, made: dict[str, dict]) -> str:
+    """Every video in one line Claude can read: its row number, its numbers, and how the app made it."""
+    lines = []
+    for v in snap["videos"]:
+        rep, r = made.get(v["id"], {}), v.get("retention") or {}
+        how = ""
+        if rep:
+            how = " | made by the app: " + ", ".join(f"{k}={rep[k]}" for k in ("source", "length", "style", "hook_template",
+                                                                               "voice", "captions", "category") if rep.get(k))
+        hold = (f" | still watching at 3 s: {r['at_3s']}% | half gone by {r['half_gone_at']} s | still watching at the end: "
+                f"{r['at_end']}%") if r else ""
+        lines.append(
+            f"[[{v['n']}]] {v['title']!r} | {'Short' if v['short'] else 'long'} {v['duration']} s | {v['privacy']} | "
+            f"published {v['published']} | views {v['views']} | impressions {v['impressions'] if v['impressions'] is not None else '?'} | "
+            f"CTR {str(v['ctr']) + '%' if v['ctr'] is not None else '?'} | average viewed {v['viewed'] if v['viewed'] is not None else '?'}% "
+            f"({v['avg_seconds'] if v['avg_seconds'] is not None else '?'} s) | likes {v['likes']} | comments {v['comments']} | "
+            f"subscribers +{v['subs'] if v['subs'] is not None else '?'}{hold}{how}")
+    return "\n".join(lines)
+
+
+NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(\s*%|\s*s\b|\s*sec)?")
+
+
+def _values(snap: dict, fx: dict, previous: dict | None) -> list[float]:
+    """Every figure an audit may state: the table's, the facts', sums of a row's parts, the titles' own numbers."""
+    out: list[float] = []
+
+    def add(x):
+        x = _num(x)
+        if x is not None:
+            out.append(x)
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, val in o.items():
+                if k not in ("curve", "published", "fetched_at", "day"):
+                    walk(val)
+        elif isinstance(o, (list, tuple)):
+            for val in o:
+                walk(val)
+        elif isinstance(o, str):
+            for m in NUMBER.finditer(o):
+                add(m[1].replace(",", "") + ("." + m[2] if m[2] else ""))
+        else:
+            add(o)
+
+    out += [3.0, 100.0]  # 'still watching at 3 s' and 100% are the audit's own words
+    walk(snap["channel"])
+    walk(fx)
+    for v in snap["videos"]:
+        walk({k: v[k] for k in v if k not in ("id", "thumb", "published")})
+        if v["duration"] and v["duration"] >= 60:
+            add(v["duration"] / 60)
+        if v["avg_seconds"]:
+            add(v["avg_seconds"] / 60)
+    for d in snap.get("daily") or []:
+        add(d["views"])
+    if previous:
+        walk(previous)
+    return out
+
+
+def check_figures(text: str, values: list[float]) -> list[str]:
+    """The figures in a sentence that aren't in the data (small counts and years are left alone)."""
+    bad = []
+    for m in NUMBER.finditer(REF.sub("", text)):
+        whole, dec, unit = m[1].replace(",", ""), m[2] or "", (m[3] or "").strip()
+        x = float(whole + ("." + dec if dec else ""))
+        if not dec and not unit and (x <= 10 or 1990 <= x <= 2100):
+            continue
+        places = len(dec)
+        if any(round(a, places) == x or (not places and int(a) == x) for a in values):
+            continue
+        bad.append(m[0].strip())
+    return bad
+
+
+def _since(prev: dict | None, snap: dict) -> dict | None:
+    """What changed between the last audit's snapshot and now (computed, handed to Claude)."""
+    if not prev or not prev.get("snapshot"):
+        return None
+    old = {v["id"]: v for v in prev["snapshot"].get("videos", [])}
+    moved = []
+    for v in snap["videos"]:
+        o = old.get(v["id"])
+        if o:
+            moved.append({"n": v["n"], "views_gained": v["views"] - (o.get("views") or 0),
+                          "subscribers_gained": (v["subs"] or 0) - (o.get("subs") or 0)})
+    new = [f"[[{v['n']}]]" for v in snap["videos"] if v["id"] not in old]
+    ch, och = snap["channel"], prev["snapshot"].get("channel") or {}
+    return {"last_audit": prev.get("made", ""), "channel_views_gained": (ch.get("views") or 0) - (och.get("views") or 0),
+            "channel_subscribers_gained": (ch.get("subscribers") or 0) - (och.get("subscribers") or 0),
+            "new_videos_since": new, "videos": sorted(moved, key=lambda m: -m["views_gained"])[:12],
+            "last_actions": [a.get("do", a) if isinstance(a, dict) else a for a in prev.get("actions", [])][:8]}
+
+
+def audits(cfg: Config) -> list[dict]:
+    """The active channel's audits, newest first (a line each for the history)."""
+    if not active(cfg):
+        return []
+    out = []
+    for path in sorted(_audits_dir(cfg).glob("*.json"), reverse=True):
+        a = _read(path) or {}
+        out.append({"key": path.stem, "made": a.get("made", ""), "videos_seen": a.get("videos_seen"),
+                    "headline": a.get("headline") or (a.get("diagnosis") or "")[:160], "model": a.get("model", ""),
+                    "unverified": len(a.get("unverified") or [])})
+    return out
+
+
+def audit_at(cfg: Config, key: str = "") -> dict | None:
+    """One audit (the newest when no key), older ones brought to today's shape."""
+    d = _audits_dir(cfg)
+    if key:
+        if not re.fullmatch(r"[\w-]{1,64}", key):
+            raise YouTubeError("No such audit")
+        a = _read(d / f"{key}.json")
+    else:
+        paths = sorted(d.glob("*.json"))
+        a = _read(paths[-1]) if paths else None
+        key = paths[-1].stem if paths else ""
+    if not a:
+        return None
+    a["key"] = key
+    a["findings"] = [f if isinstance(f, dict) else {"text": f, "chart": "none", "videos": []} for f in a.get("findings", [])]
+    a["actions"] = [x if isinstance(x, dict) else {"do": x, "why": "", "videos": []} for x in a.get("actions", [])]
+    return a
+
+
+def audit(cfg: Config, progress) -> dict:
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    from .llm import ask
+
+    class Finding(BaseModel):
+        text: str = Field(description="One pattern the numbers show, with the figures that show it. Cite videos as [[n]].")
+        chart: Literal[CHARTS] = Field(description="The chart that shows it best: length_vs_viewed (video length against % viewed), "
+                                                   "views (views per video), retention (where viewers leave, for the videos you cite), "
+                                                   "daily (channel views per day), ctr_vs_views (only when impressions are in), "
+                                                   "subs (subscribers per video), comments (comments per video), or none.")
+        videos: list[int] = Field(description="The row numbers of the videos this finding is about (highlighted in its chart).")
+
+    class Action(BaseModel):
+        do: str = Field(description="The change to make, concrete and short. Cite videos as [[n]]. Targets are fine here "
+                                    "(e.g. 'keep Shorts near 50 s'); no figures read from the data.")
+        why: str = Field(description="The evidence from the data, with its figures, in one sentence. Cite videos as [[n]].")
+        videos: list[int] = Field(description="Row numbers of the videos it is about.")
+
+    class VideoNote(BaseModel):
+        n: int = Field(description="The video's row number.")
+        verdict: str = Field(description="One short line: what its numbers say.")
+        fix: str = Field(description="The one change most likely to help it or the next video like it.")
+
+    class Audit(BaseModel):
+        headline: str = Field(description="One sentence: the channel's bottleneck right now.")
+        diagnosis: str = Field(description="3-5 sentences: why the channel isn't getting more views, from these numbers only.")
+        since_last: str = Field(description="When a last audit is given: 1-3 sentences on what changed since and whether its "
+                                            "actions show in the numbers. Else empty.")
+        findings: list[Finding] = Field(description="4-7 patterns, most important first.")
+        actions: list[Action] = Field(description="5-8 actions, most important first.")
+        videos: list[VideoNote] = Field(description="Every video in the table, by row number.")
+
+    stopper.set_checks(getattr(progress, "should_pause", None))
+    data = refresh(cfg, progress)
+    if not data["videos"]:
+        raise YouTubeError("Your channel has no videos to audit yet")
+    progress("Reading where viewers leave in each video")
+    retention: dict[str, dict] = {}
+    for v in sorted([v for v in data["videos"] if v.get("privacy") == "public" and v.get("views")],
+                    key=lambda v: -v["views"])[:RETENTION_FOR]:
+        r = _retention(cfg, v)
+        if r:
+            retention[v["id"]] = r
+    snap = snapshot(cfg, data, retention)
+    fx = facts(snap)
+    prev = audit_at(cfg)
+    since = _since(prev, snap)
     made = {}
     for rep_path in cfg.output_dir.glob("*/report.json"):
         rep = _read(rep_path, {}) or {}
         yt = rep.get("youtube") or {}
         if yt.get("id"):
             made[yt["id"]] = rep
-    lines = []
-    for v in data.get("videos", []):
-        st, rc = v.get("stats") or {}, v.get("reach") or {}
-        rep = made.get(v["id"], {})
-        how = ""
-        if rep:
-            how = " | made by the app: " + ", ".join(f"{k}={rep[k]}" for k in ("source", "length", "style", "hook_template",
-                                                                               "voice", "captions", "category") if rep.get(k))
-        ctr = "" if rc.get("ctr") is None else f"{rc['ctr'] * 100:.1f}%"
-        lines.append(
-            f"- {v['id']} | {v['published'][:10]} | {'Short' if v.get('short') else 'long'} {round(v['duration'])}s | "
-            f"{v['privacy']} | views {v['views']} | impressions {rc.get('impressions', '?')} | CTR {ctr or '?'} | "
-            f"avg viewed {st.get('averageViewPercentage', '?')}% ({st.get('averageViewDuration', '?')}s) | "
-            f"likes {v['likes']} | comments {v['comments']} | subs +{st.get('subscribersGained', '?')} | "
-            f"title: {v['title']!r} | tags: {', '.join(v.get('tags', [])[:8])}{how}")
-    return "\n".join(lines)
-
-
-def audit(cfg: Config, progress) -> dict:
-    from pydantic import BaseModel, Field
-
-    from .llm import ask
-
-    class VideoNote(BaseModel):
-        id: str = Field(description="The video's id from the table.")
-        verdict: str = Field(description="One short line: what the numbers say about this video.")
-        fix: str = Field(description="The one change most likely to help it or the next video like it.")
-
-    class Audit(BaseModel):
-        diagnosis: str = Field(description="3-5 sentences: why the channel isn't getting views, from these numbers only.")
-        findings: list[str] = Field(description="4-8 patterns the numbers show (impressions vs CTR vs retention, Shorts vs long, topics, titles, posting rhythm), each with the figures that show it.")
-        actions: list[str] = Field(description="5-8 concrete actions, most important first.")
-        videos: list[VideoNote] = Field(description="Every video in the table, in the table's order.")
-
-    data = refresh(cfg, progress)
-    if not data["videos"]:
-        raise YouTubeError("Your channel has no videos to audit yet")
-    ch = data["channel"]
-    progress(f"Claude is reading the numbers of {len(data['videos'])} videos")
+    ch = snap["channel"]
+    progress(f"Claude is reading the numbers of {len(snap['videos'])} videos")
     system = (
-        "You audit a small YouTube channel from its own analytics, like an honest growth consultant. Use only the numbers "
-        "given; never invent a figure, a benchmark you can't state plainly, or a fact about a video you can't see. How "
-        "YouTube works: impressions = how often YouTube showed the thumbnail; CTR = how many of those clicked (title and "
-        "thumbnail); average percentage viewed = how well the video holds (the hook and pacing); Shorts are judged by "
-        "how many viewers stay and swipe away less; a video that gets few impressions isn't being recommended yet, "
-        "usually because early viewers didn't watch long or click. Say plainly which of these is the bottleneck for this "
-        "channel, with the numbers that show it, then what to change. Write in simple English.")
-    prompt = (f"Channel: {ch['title']} · {ch['subscribers']} subscribers · {ch['views']} views · {ch['videos']} videos · "
-              f"started {ch['published'][:10]}\n{data.get('reach_note', '')}\n\nVideos (newest first):\n{audit_table(cfg, data)}")
+        "You audit a small YouTube channel from its own analytics, like an honest growth consultant writing for the "
+        "channel's owner, who is not an analyst. How YouTube works: impressions = how often YouTube showed the thumbnail; "
+        "CTR = how many of those clicked (title and thumbnail); average percentage viewed = how well a video holds (the "
+        "hook and pacing); for Shorts, 'still watching at 3 s' shows how many swiped away at the start; a video that "
+        "gets few impressions isn't being recommended yet, usually because early viewers didn't watch long or click.\n"
+        "Rules:\n- Cite every video as [[n]], its row number in the table, never by its id or full title (the page shows "
+        "the title and thumbnail for you).\n- Use only figures that are in the table, the facts or the changes given, "
+        "written as given (rounding to whole numbers is fine). Never count, add up, average or compare rows yourself: "
+        "the facts already did the counting. Never state a benchmark or a figure about YouTube in general.\n- When "
+        "impressions and CTR aren't in yet, say so once and judge from what is there.\n- Say plainly which part is the "
+        "bottleneck (being shown, being clicked, being watched, being followed), then what to change.\n- Write in short, "
+        "simple sentences. Each finding names one pattern and picks the chart that shows it.")
+    prompt = (f"Channel: {ch.get('title')} · {ch.get('subscribers')} subscribers · {ch.get('views')} views · {ch.get('videos')} videos\n"
+              f"{snap.get('reach_note', '')}\n\nFacts worked out from the table (use these, don't recount):\n"
+              f"{json.dumps(fx, ensure_ascii=False, indent=1)}\n\n"
+              + (f"Since the last audit (worked out from its numbers):\n{json.dumps(since, ensure_ascii=False, indent=1)}\n\n" if since else "")
+              + f"Videos (row number, newest first):\n{audit_table(snap, made)}")
     result = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Audit, effort=cfg.claude_effort)
-    out = {"made": datetime.now().isoformat(timespec="seconds"), "videos_seen": len(data["videos"]), **result.model_dump()}
-    _write(folder(cfg) / "audit.json", out)
-    progress("The audit is ready (YouTube tab)")
+    values = _values(snap, fx, since)
+
+    def problems(a) -> list[dict]:
+        found = []
+        texts = [("headline", a.headline), ("diagnosis", a.diagnosis), ("since the last audit", a.since_last)]
+        texts += [(f"finding {i}", f.text) for i, f in enumerate(a.findings, 1)]
+        texts += [(f"action {i} (why)", x.why) for i, x in enumerate(a.actions, 1)]
+        texts += [(f"video [[{x.n}]]", x.verdict) for x in a.videos]
+        for where, text in texts:
+            for fig in check_figures(text, values):
+                found.append({"where": where, "figure": fig, "text": text})
+        return found
+
+    found = problems(result)
+    if found:
+        progress(f"Checking {len(found)} figure{'s' if len(found) > 1 else ''} Claude wrote that aren't in the data")
+        fix = ("Your audit states figures that are not in the table, the facts or the changes:\n"
+               + "\n".join(f"- {p['where']}: {p['figure']} in \"{p['text']}\"" for p in found)
+               + "\nCorrect each from the data, or say it without the figure. Keep everything else as it was.\n\n"
+               + f"Your audit:\n{result.model_dump_json(indent=1)}")
+        result = ask(cfg.ai_backend, cfg.claude_model, system, prompt + "\n\n" + fix, Audit, effort=cfg.claude_effort)
+        found = problems(result)
+    rows = len(snap["videos"])
+    out = result.model_dump()
+    for f in out["findings"]:
+        f["videos"] = [n for n in f["videos"] if 1 <= n <= rows]
+    for x in out["actions"]:
+        x["videos"] = [n for n in x["videos"] if 1 <= n <= rows]
+    out["videos"] = [x for x in out["videos"] if 1 <= x["n"] <= rows]
+    out = {"made": datetime.now().isoformat(timespec="seconds"), "videos_seen": rows,
+           "model": f"{cfg.claude_model} {cfg.claude_effort}".strip(), **out, "facts": fx, "since": since,
+           "unverified": found, "refs": {str(v["n"]): v["id"] for v in snap["videos"]}, "snapshot": snap}
+    stem, k = re.sub(r"[^\w-]", "-", out["made"]), 2
+    path = _audits_dir(cfg) / f"{stem}.json"
+    while path.exists():  # two audits in the same second keep both; '_02' sorts after the first ('-2' sorted before it)
+        path, k = _audits_dir(cfg) / f"{stem}_{k:02d}.json", k + 1
+    _write(path, out)
+    _write(home(cfg) / "audit.json", out)
+    progress("The audit is ready (YouTube tab)" + (f": {len(found)} figure{'s' if len(found) > 1 else ''} couldn't be "
+                                                   "found in the data and are marked" if found else ""))
     return out

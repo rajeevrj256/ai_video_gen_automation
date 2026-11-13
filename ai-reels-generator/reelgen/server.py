@@ -67,7 +67,7 @@ def job_label(job: dict) -> str:
     if job.get("yt_upload"):
         return f"{job.get('topic')} · Upload to YouTube"
     if job.get("yt_audit"):
-        return "Your channel · YouTube audit"
+        return f"{job.get('channel_title') or 'Your channel'} · YouTube audit"
     kind = ("Journey" if job.get("journey_input") else "Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
             else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
             else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
@@ -212,13 +212,15 @@ class JobManager:
             boards = None
             no_video = False
             if job.get("yt_upload"):  # ▶ a finished video up to your YouTube channel (reelgen/youtube.py)
-                from .youtube import upload
+                from .youtube import upload, use
                 r = job["yt_upload"]
-                report = upload(cfg, video_dir(cfg, r["id"]), r["opts"], progress)
+                with use(job.get("channel")):
+                    report = upload(cfg, video_dir(cfg, r["id"]), r["opts"], progress)
                 reports = [{**report, "id": r["id"]}]
-            elif job.get("yt_audit"):  # 📊 Claude audits your channel from its analytics (reelgen/youtube.py)
-                from .youtube import audit
-                audit(cfg, progress)
+            elif job.get("yt_audit"):  # 📊 Claude audits one channel from its analytics (reelgen/youtube.py)
+                from .youtube import audit, use
+                with use(job.get("channel")):
+                    audit(cfg, progress)
                 reports, no_video = [], True
             elif job.get("lowpoly_boards"):  # ✍ low-poly storyboards to read first (reelgen/lowpoly/boards.py)
                 from .lowpoly.boards import write_round
@@ -814,6 +816,7 @@ class YouTubeUploadBody(BaseModel):
     language: str = ""
     file: str = "reel.mp4"
     thumbnail: str = ""  # a picture in the video's folder: thumbnail-youtube.jpg or youtube-thumb.jpg/png
+    channel: str = ""  # which connected channel it goes to ('' = the one the YouTube tab shows)
 
 
 class YouTubeEditBody(BaseModel):
@@ -2069,10 +2072,38 @@ def create_app(cfg: Config) -> FastAPI:
         from . import youtube
         cid, _secret = youtube.client()
         tok = youtube.connected(cfg) or {}
-        audit = youtube._read(youtube.folder(cfg) / "audit.json")
+        last = (youtube.audits(cfg) or [{}])[0] if tok else {}
         return {"client": bool(cid), "client_hint": ("…" + cid.split(".")[0][-6:]) if cid else "", "connected": bool(tok),
                 "channel": tok.get("channel"), "connected_at": tok.get("connected_at", ""), "has_data": bool(youtube.cached(cfg)),
-                "audit_made": (audit or {}).get("made", "")}
+                "audit_made": last.get("made", ""), "channels": youtube.channels(cfg), "active": youtube.active(cfg)}
+
+    @app.post("/api/youtube/active")
+    def yt_active(body: dict):
+        """Which connected channel the YouTube tab shows (each has its own numbers and audits)."""
+        from . import youtube
+        _yt(youtube.set_active, cfg, str(body.get("id") or ""))
+        return yt_status()
+
+    @app.get("/api/youtube/avatar/{cid}")
+    def yt_avatar(cid: str):
+        from . import youtube
+        path = _yt(youtube.avatar_path, cfg, cid)
+        if not path:
+            raise HTTPException(404, "no picture saved for this channel")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+    @app.get("/api/youtube/audits")
+    def yt_audits():
+        from . import youtube
+        return {"audits": youtube.audits(cfg)}
+
+    @app.get("/api/youtube/audits/{key}")
+    def yt_audit_one(key: str):
+        from . import youtube
+        a = _yt(youtube.audit_at, cfg, key)
+        if not a:
+            raise HTTPException(404, "No such audit")
+        return a
 
     @app.put("/api/youtube/client")
     def yt_client(body: YouTubeClientBody):
@@ -2119,7 +2150,7 @@ def create_app(cfg: Config) -> FastAPI:
                 continue
             if yid:
                 made[yid] = rep.parent.name
-        return {**data, "library": made, "audit": youtube._read(youtube.folder(cfg) / "audit.json")}
+        return {**data, "library": made, "audit": youtube.audit_at(cfg) if youtube.active(cfg) else None}
 
     @app.post("/api/youtube/refresh")
     def yt_refresh():
@@ -2139,25 +2170,28 @@ def create_app(cfg: Config) -> FastAPI:
                         headers={"Content-Disposition": f'attachment; filename="youtube-videos-{data["fetched_at"][:10]}.csv"'})
 
     @app.get("/api/youtube/video/{vid}")
-    def yt_video(vid: str):
+    def yt_video(vid: str, channel: str = ""):
         from . import youtube
         vid = _yt(youtube.youtube_id, vid)
-        out = _yt(youtube.video, cfg, vid)
-        out["details"] = youtube._read(youtube.folder(cfg) / "details" / f"{vid}.json")
+        with youtube.use(channel):
+            out = _yt(youtube.video, cfg, vid)
+            out["details"] = youtube._read(_yt(youtube.home, cfg) / "details" / f"{vid}.json")
         return out
 
     @app.get("/api/youtube/video/{vid}/details")
-    def yt_details(vid: str):
+    def yt_details(vid: str, channel: str = ""):
         from . import youtube
-        return _yt(youtube.details, cfg, _yt(youtube.youtube_id, vid))
+        with youtube.use(channel):
+            return _yt(youtube.details, cfg, _yt(youtube.youtube_id, vid))
 
     @app.put("/api/youtube/video/{vid}")
-    def yt_edit(vid: str, body: YouTubeEditBody):
+    def yt_edit(vid: str, body: YouTubeEditBody, channel: str = ""):
         from . import youtube
         changes = {k: v for k, v in body.model_dump().items() if v is not None}
         if changes.get("privacy") and changes["privacy"] not in ("private", "unlisted", "public"):
             raise HTTPException(400, "privacy is private, unlisted or public")
-        row = _yt(youtube.update, cfg, _yt(youtube.youtube_id, vid), changes)
+        with youtube.use(channel):
+            row = _yt(youtube.update, cfg, _yt(youtube.youtube_id, vid), changes)
         for rep in cfg.output_dir.glob("*/report.json"):  # keep a library video's record in step
             try:
                 report = json.loads(rep.read_text(encoding="utf-8"))
@@ -2169,7 +2203,7 @@ def create_app(cfg: Config) -> FastAPI:
         return row
 
     @app.post("/api/youtube/video/{vid}/thumbnail")
-    async def yt_thumb(vid: str, request: Request):
+    async def yt_thumb(vid: str, request: Request, channel: str = ""):
         from . import youtube
         data = await request.body()
         if not data or len(data) > youtube.THUMB_MAX:
@@ -2178,8 +2212,11 @@ def create_app(cfg: Config) -> FastAPI:
 
         tmp = youtube.folder(cfg) / ("thumb-" + secrets.token_hex(4))
         tmp.write_bytes(data)
+        def put():
+            with youtube.use(channel):
+                _yt(youtube.set_thumbnail, cfg, _yt(youtube.youtube_id, vid), tmp)
         try:
-            await run_in_threadpool(_yt, youtube.set_thumbnail, cfg, _yt(youtube.youtube_id, vid), tmp)
+            await run_in_threadpool(put)
         finally:
             tmp.unlink(missing_ok=True)
         return {"ok": True}
@@ -2189,9 +2226,12 @@ def create_app(cfg: Config) -> FastAPI:
         from . import youtube
         if not youtube.connected(cfg):
             raise HTTPException(400, "Connect YouTube first (Settings > YouTube)")
-        if any(j.get("yt_audit") and j["status"] in ("queued", "running") for j in jobs.jobs):
-            raise HTTPException(409, "An audit is already running")
-        return jobs.submit("YouTube audit", 1, "manual", length="short", yt_audit=True, ai=(body or {}).get("ai"))
+        cid = youtube.active(cfg)
+        if any(j.get("yt_audit") and j.get("channel", cid) == cid and j["status"] in ("queued", "running") for j in jobs.jobs):
+            raise HTTPException(409, "This channel's audit is already running")
+        title = ((youtube.connected(cfg) or {}).get("channel") or {}).get("title", "")
+        return jobs.submit("YouTube audit", 1, "manual", length="short", yt_audit=True, channel=cid, channel_title=title,
+                           ai=(body or {}).get("ai"))
 
     @app.get("/api/videos/{video_id}/youtube")
     def yt_for_video(video_id: str):
@@ -2205,6 +2245,7 @@ def create_app(cfg: Config) -> FastAPI:
         if custom:
             plan["thumbnail"] = custom
         return {"plan": plan, "youtube": report.get("youtube"), "connected": bool(youtube.connected(cfg)),
+                "channels": youtube.channels(cfg),
                 "uploading": running["id"] if running else "", "custom_thumb": custom,
                 "partial": (folder_path / "youtube-upload.json").exists(), "categories": youtube.YT_CATEGORIES}
 
@@ -2225,8 +2266,12 @@ def create_app(cfg: Config) -> FastAPI:
         report = json.loads((folder_path / "report.json").read_text(encoding="utf-8"))
         if (report.get("youtube") or {}).get("id"):
             raise HTTPException(409, "This video is already on YouTube")
+        cid = body.channel or youtube.active(cfg)
+        if not any(c["id"] == cid for c in youtube.channels(cfg)):
+            raise HTTPException(400, "That channel isn't connected")
+        title = next(c["title"] for c in youtube.channels(cfg) if c["id"] == cid)
         return jobs.submit((body.title or video_id)[:80], 1, "manual", length=report.get("length") or report.get("format") or "short",
-                           yt_upload={"id": video_id, "opts": body.model_dump()})
+                           yt_upload={"id": video_id, "opts": body.model_dump()}, channel=cid, channel_title=title)
 
     @app.post("/api/videos/{video_id}/youtube/thumbnail")
     async def yt_video_thumb(video_id: str, request: Request):
@@ -2251,8 +2296,10 @@ def create_app(cfg: Config) -> FastAPI:
         if body.get("unlink"):
             report.pop("youtube", None)
         else:
-            row = _yt(youtube.video, cfg, _yt(youtube.youtube_id, str(body.get("url") or "")))
-            report["youtube"] = {"id": row["id"], "url": f"https://youtu.be/{row['id']}",
+            with youtube.use(str(body.get("channel") or "")):
+                row = _yt(youtube.video, cfg, _yt(youtube.youtube_id, str(body.get("url") or "")))
+                cid = youtube.active(cfg)
+            report["youtube"] = {"id": row["id"], "url": f"https://youtu.be/{row['id']}", "channel": cid,
                                  "studio": f"https://studio.youtube.com/video/{row['id']}/edit", "linked": True,
                                  "title": row["title"], "privacy": row["privacy"], "publish_at": row["publish_at"]}
         path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
