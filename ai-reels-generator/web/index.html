@@ -307,6 +307,42 @@
   .yt-legend i.ring { background: none; box-shadow: inset 0 0 0 2px var(--text); }
   .yt-act { margin: 10px 0; line-height: 1.55; }
   .yt-act .why { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .yt-verdict-card { background: var(--panel-2); border-radius: 14px; padding: 14px; margin: 10px 0 12px; }
+  .yt-verdict-card .yt-headline { margin-top: 0; }
+  .yt-funnel { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 6px; }
+  @media (max-width: 640px) { .yt-funnel { grid-template-columns: 1fr 1fr; } }
+  .yt-stage { background: var(--panel); border-radius: 10px; padding: 10px; border-left: 4px solid var(--line); }
+  .yt-stage.good { border-left-color: #0ca30c; } .yt-stage.ok { border-left-color: #fab219; }
+  .yt-stage.weak { border-left-color: #d03b3b; } .yt-stage.unknown { border-left-color: #55555f; }
+  .yt-stage .h { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; font-size: 14px; flex-wrap: wrap; }
+  .yt-stage .w { font-size: 12px; color: var(--muted); }
+  .yt-stage .note { font-size: 13px; margin-top: 6px; line-height: 1.45; }
+  .yt-name { font-weight: 600; color: var(--text); cursor: pointer; border-bottom: 1px dotted var(--muted); }
+  .yt-act { margin: 8px 0; background: var(--panel-2); border-radius: 12px; padding: 10px 12px; }
+  .yt-act .do { display: flex; gap: 10px; font-size: 15px; line-height: 1.5; font-weight: 500; }
+  .yt-act .k { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #111; font-weight: 700;
+               display: grid; place-items: center; font-size: 13px; margin-top: 1px; }
+  .yt-act details.why summary { font-size: 13px; color: var(--muted); cursor: pointer; margin: 4px 0 0 34px; }
+  .yt-act details.why p { margin: 4px 0 0 34px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+  details.yt-find { border: 1px solid var(--line); border-radius: 12px; padding: 0; margin: 8px 0; }
+  details.yt-find > summary { padding: 12px 14px; font-size: 15px; font-weight: 600; line-height: 1.45; cursor: pointer; list-style: none; }
+  details.yt-find > summary::-webkit-details-marker { display: none; }
+  details.yt-find > summary::after { content: " ▸"; color: var(--muted); }
+  details.yt-find[open] > summary::after { content: " ▾"; }
+  details.yt-find > p, details.yt-find > .yt-ctitle, details.yt-find > .yt-legend, details.yt-find > svg, details.yt-find > .yt-vrows,
+  details.yt-find > .hint { margin-left: 14px; margin-right: 14px; }
+  details.yt-find > p { font-size: 14px; line-height: 1.6; margin-top: 0; }
+  details.yt-find > svg { margin-bottom: 8px; }
+  .yt-vrows { display: grid; gap: 6px; margin-bottom: 12px; }
+  .yt-vrow { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 4px 0; }
+  .yt-vrow img { width: 64px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: #000; flex: none; }
+  .yt-vrow .t { font-size: 14px; font-weight: 600; }
+  .yt-vrow .n { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .yt-badge { flex: none; width: 20px; height: 20px; border-radius: 50%; background: #f3f3f5; color: #111; font-size: 12px; font-weight: 700;
+              display: grid; place-items: center; }
+  details.yt-more { margin: 8px 0; }
+  details.yt-more > summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 6px 0; }
+  details.yt-more > p { font-size: 14px; line-height: 1.6; }
   mark.yt-flag { background: rgba(255,159,10,.18); color: var(--warn); border-radius: 4px; padding: 0 3px; }
   .yt-since { background: var(--panel-2); border-radius: 12px; padding: 10px 12px; margin: 10px 0; font-size: 14px; line-height: 1.6; }
   .yt-hist { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
@@ -1242,6 +1278,12 @@ Plain paragraphs are read by the narrator."></textarea>
           <button id="ytCsv">⬇ Table (CSV)</button>
           <button id="ytDisconnect">Disconnect this channel</button>
         </div>
+        <div class="row" style="margin-top:8px">
+          <button data-ytexport="md" title="Every video's name, link, numbers, where viewers leave (every 5% of the video), where they came from, tags, description and the audits, in one readable file">⬇ For another AI (one file)</button>
+          <button data-ytexport="zip" title="That file plus tables (CSV), the raw data (JSON), every audit and chart pictures (PNG)">⬇ Everything (ZIP with charts)</button>
+        </div>
+        <p class="hint" id="ytExportMsg">Give the one file to ChatGPT, Gemini or Claude and ask it to analyse your channel. It reads where viewers leave in
+          every public video first (up to a minute the first time).</p>
         <p class="hint" id="ytAddMsg"></p>
         <p class="hint" id="ytFetched"></p>
       </div>
@@ -2307,7 +2349,14 @@ const ytTextW = (t, weight = 400) => { ytFont(weight); return ytCtx.measureText(
 function ytChip(v) {
   return v ? `<button class="yt-ref" data-goto="${esc(v.id)}" title="${esc(v.title)}"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(v.thumb || "")}" alt="" onerror="this.style.visibility='hidden'"><span>${esc(ytShortTitle(v.title))}</span></button>` : "";
 }
-// An audit's sentence: [[n]] and bare video ids become chips; figures the check couldn't find in the numbers are marked.
+// A video's name as people say it: no hashtags, emoji or '| An Animated Short' tail, cut at a word.
+function ytName(t, max = 30) {
+  t = String(t || "").replace(/\s*#\w+/g, "").split(/\s+[|•–—]\s+/)[0].replace(/[\p{Extended_Pictographic}️‍]+/gu, "").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max); return cut.slice(0, Math.max(cut.lastIndexOf(" "), max - 8)).trim() + "…";
+}
+// An audit's sentence: [[n]] and bare video ids become the video's short name in bold (tap: its row);
+// figures the check couldn't find in the numbers are marked.
 function ytText(text, a) {
   if (!text) return "";
   const snap = ytSnap(a), byN = {}, byId = {};
@@ -2319,10 +2368,19 @@ function ytText(text, a) {
   t = esc(t);
   const flags = ((a && a.unverified) || []).filter((p) => p.text === text).map((p) => esc(p.figure));
   flags.forEach((f) => { t = t.replace(f, `<mark class="yt-flag" title="Not found in the channel's numbers">${f} ⚠</mark>`); });
-  return t.replace(/\u0000(\d+)\u0000/g, (m, i) => refs[+i] ? ytChip(refs[+i]) : "a video");
+  return t.replace(/\u0000(\d+)\u0000/g, (m, i) => { const v = refs[+i];
+    return v ? `<b class="yt-name" data-goto="${esc(v.id)}" title="${esc(v.title)}">${esc(ytName(v.title))}</b>` : "a video"; });
+}
+// The videos a finding is about: one calm row each, numbered like the dots in its chart.
+function ytVidRows(ns, snap, numbered) {
+  const vids = (ns || []).map((n) => snap.videos.find((v) => v.n === n)).filter(Boolean);
+  if (!vids.length) return "";
+  return `<div class="yt-vrows">${vids.map((v, i) => `<div class="yt-vrow" data-goto="${esc(v.id)}">
+    ${numbered ? `<span class="yt-badge">${i + 1}</span>` : ""}<img loading="lazy" referrerpolicy="no-referrer" src="${esc(v.thumb || "")}" alt="" onerror="this.style.visibility='hidden'">
+    <div><div class="t">${esc(ytName(v.title, 48))}</div><div class="n">${v.short ? "Short" : "Long"} · ${ytDur(v.duration)} · ${ytFmt(v.views)} views${v.viewed != null ? ` · ${Math.round(v.viewed)}% watched` : ""}</div></div></div>`).join("")}</div>`;
 }
 document.addEventListener("click", (e) => {
-  const b = e.target.closest(".yt-ref"); if (!b) return;
+  const b = e.target.closest(".yt-ref, .yt-name, .yt-vrow[data-goto]"); if (!b) return;
   const row = document.getElementById("ytrow-" + b.dataset.goto);
   if (row) { row.scrollIntoView({ behavior: "smooth", block: "center" }); row.style.outline = "2px solid var(--accent)"; setTimeout(() => row.style.outline = "", 1600); }
   else window.open("https://youtu.be/" + b.dataset.goto, "_blank", "noopener");
@@ -2385,20 +2443,11 @@ function ytChartLength(snap, hi, W) {
   });
   const order = [...pts].sort((a, b) => (hi.has(a.n) - hi.has(b.n)) || (b.views - a.views));
   // label boxes already drawn, and the highlighted dots: each new label tries right, left, above, below its dot
-  const placed = pts.filter((v) => hi.has(v.n)).map((v) => { const cx = sx(v.duration), cy = sy(v.viewed), r = rad(v) + 2; return [cx - r, cy - r, cx + r, cy + r]; });
-  const place = (v) => {
-    const cx = sx(v.duration), cy = sy(v.viewed), r = rad(v), text = ytFit(v.title, Math.min(170, W * 0.32), 600), w = ytTextW(text, 600);
-    const tries = [[cx + r + 5, cy + 4, "start"], [cx - r - 5, cy + 4, "end"], [cx, cy - r - 6, "middle"], [cx, cy + r + 14, "middle"]];
-    for (const [x, y, anchor] of tries) {
-      const left = anchor === "start" ? x : anchor === "end" ? x - w : x - w / 2;
-      const box = [left, y - 11, left + w, y + 3];
-      if (box[0] < 2 || box[2] > W - 2 || box[1] < 0 || box[3] > H - 22) continue;
-      const own = [cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2];
-      if (placed.some((b) => !(b[0] === own[0] && b[1] === own[1]) && !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
-      placed.push(box);
-      return `<text class="hi" x="${x}" y="${y}" text-anchor="${anchor}">${esc(text)}</text>`;
-    }
-    return "";  // no free place: the ring and the tooltip still name it
+  const order_ = [...hi.keys()];
+  const place = (v) => {  // a numbered badge at the dot's top right, matching the list of videos under the chart
+    const cx = sx(v.duration), cy = sy(v.viewed), r = rad(v), k = order_.indexOf(v.n) + 1;
+    const bx = Math.min(W - 10, cx + r * 0.75 + 4), by = Math.max(10, cy - r * 0.75 - 4);
+    return `<circle cx="${bx}" cy="${by}" r="9" fill="#f3f3f5" stroke="${YT_SURF}" stroke-width="2"/><text x="${bx}" y="${by + 4}" text-anchor="middle" style="fill:#111;font-weight:700">${k}</text>`;
   };
   const dots = order.map((v) => {
     const on = hi.has(v.n), cx = sx(v.duration), cy = sy(v.viewed), r = rad(v);
@@ -2520,46 +2569,71 @@ function ytChart(kind, snap, videos, W) {
     comments: () => ytChartBars(snap, hi, W, "comments", "comments") }[kind]?.() || "";
 }
 
-// the audit on the page
+const YT_STAGE = { good: ["✅", "Good"], ok: ["🟡", "Okay"], weak: ["⚠️", "Weak"], unknown: ["❔", "Not known yet"] };
+const YT_STEPS = [["shown", "Shown", "YouTube shows it"], ["clicked", "Clicked", "people tap it"], ["watched", "Watched", "they keep watching"], ["followed", "Followed", "they subscribe"]];
+const YT_LEVEL = { good: "✅", problem: "⚠️", info: "ℹ️" };
+
+// the audit on the page: the verdict, the next steps, then the evidence folded
 function ytAuditView(a) {
   const box = $("#ytAudit");
   for (const k in ytLines) delete ytLines[k];
   if (!a) { box.innerHTML = ""; return; }
   const snap = ytSnap(a), fx = a.facts || {}, ch = snap.channel || {}, W = ytW();
-  const tile = (label, value, delta) => `<div class="yt-kpi"><div class="l">${esc(label)}</div><div class="v">${value}</div>${delta ? `<div class="d">${delta}</div>` : ""}</div>`;
-  const sinceAudit = a.since ? `since the last audit` : "";
   const sign = (n) => n > 0 ? "+" + ytFmt(n) : ytFmt(n);
+  const tile = (label, value, sub) => `<div class="yt-kpi"><div class="l">${esc(label)}</div><div class="v">${value}</div>${sub ? `<div class="d">${sub}</div>` : ""}</div>`;
+  const steps = a.stages ? `<div class="yt-funnel">${YT_STEPS.map(([k, name, what], i) => { const s = a.stages[k] || { status: "unknown", note: "" };
+      const [icon, word] = YT_STAGE[s.status] || YT_STAGE.unknown;
+      return `<div class="yt-stage ${esc(s.status)}"><div class="h"><span>${i + 1}. ${name}</span><span>${icon} ${word}</span></div>
+        <div class="w">${what}</div><div class="note">${ytText(s.note, a)}</div></div>`; }).join("")}</div>` : "";
   const kpis = `<div class="yt-kpis">
-    ${tile("Subscribers", ytFmt(ch.subscribers), a.since ? `${sign(a.since.channel_subscribers_gained)} ${sinceAudit}` : "")}
-    ${tile("Views, all time", ytFmt(ch.views), a.since ? `${sign(a.since.channel_views_gained)} ${sinceAudit}` : "")}
-    ${fx.views_last_28_days != null ? tile("Views, last 28 days", ytFmt(fx.views_last_28_days), fx.subscribers_last_28_days != null ? `${sign(fx.subscribers_last_28_days)} subscribers` : "") : ""}
-    ${fx.median_viewed_percent_public_shorts != null ? tile("Shorts: typical % watched", Math.round(fx.median_viewed_percent_public_shorts) + "%", `median of ${fx.public_shorts} public Shorts`) : ""}
-    ${fx.subscribers_per_1000_views != null ? tile("New subscribers per 1,000 views", ytFmt(fx.subscribers_per_1000_views), "") : ""}
+    ${tile("Subscribers", ytFmt(ch.subscribers), a.since ? `${sign(a.since.channel_subscribers_gained)} since last audit` : "")}
+    ${tile("Views, all time", ytFmt(ch.views), a.since ? `${sign(a.since.channel_views_gained)} since last audit` : "")}
+    ${fx.views_last_28_days != null ? tile("Views, last 28 days", ytFmt(fx.views_last_28_days), "") : ""}
+    ${fx.median_viewed_percent_public_shorts != null ? tile("A typical Short is watched", Math.round(fx.median_viewed_percent_public_shorts) + "%", "") : ""}
   </div>`;
-  // what changed after this audit (today's numbers against the ones it saw)
   let after = "";
   const now = ytData && ytData.videos && ytData.fetched_at > (snap.fetched_at || "") ? ytData : null;
   if (now && a.snapshot) {
     const old = Object.fromEntries(snap.videos.map((v) => [v.id, v]));
-    const moved = now.videos.filter((v) => old[v.id]).map((v) => ({ v: old[v.id], d: v.views - old[v.id].views })).filter((m) => m.d > 0)
-      .sort((x, y) => y.d - x.d).slice(0, 5);
+    const moved = now.videos.filter((v) => old[v.id]).map((v) => ({ v: old[v.id], d: v.views - old[v.id].views })).filter((m) => m.d > 0).sort((x, y) => y.d - x.d).slice(0, 3);
     const dv = (now.channel || {}).views - (ch.views || 0), ds = (now.channel || {}).subscribers - (ch.subscribers || 0);
-    after = `<div class="yt-since"><b>Since this audit</b> (${esc(ytWhen(a.made))}): ${sign(dv)} views, ${sign(ds)} subscribers${moved.length
-      ? `<br>Most new views: ${moved.map((m) => `${ytChip(m.v)} ${sign(m.d)}`).join(" · ")}` : ""}</div>`;
+    after = `<div class="yt-since">Since this audit: <b>${sign(dv)} views</b>, <b>${sign(ds)} subscribers</b>${moved.length
+      ? `. Most new views: ${moved.map((m) => `<b class="yt-name" data-goto="${esc(m.v.id)}">${esc(ytName(m.v.title))}</b> ${sign(m.d)}`).join(", ")}` : ""}.</div>`;
   }
+  const act = (x, i) => `<div class="yt-act"><div class="do"><span class="k">${i + 1}</span><span>${ytText(x.do, a)}</span></div>
+    ${x.why ? `<details class="why"><summary>Why?</summary><p>${ytText(x.why, a)}</p></details>` : ""}</div>`;
+  const first = a.actions.slice(0, 3), more = a.actions.slice(3);
+  const used = new Set();
+  const finds = a.findings.map((f, i) => {
+    let title = f.title, text = f.text || "";
+    if (!title) { const m = text.match(/^(.{20,120}?[.!?])\s+(.*)$/s); title = m ? m[1] : text; text = m ? m[2] : ""; }  // older audits
+    const kind = f.chart && f.chart !== "none" && !used.has(f.chart) ? f.chart : "";
+    if (kind) used.add(kind);
+    return `<details class="yt-find" ${i === 0 ? "open" : ""}><summary>${YT_LEVEL[f.level] || "•"} ${ytText(title, a)}</summary>
+      ${text ? `<p>${ytText(text, a)}</p>` : ""}${kind ? ytChart(kind, snap, f.videos, W) : ""}${ytVidRows(f.videos, snap, kind === "length_vs_viewed")}</details>`;
+  }).join("");
+  const grades = { good: "🟢", ok: "🟡", weak: "🔴" };
+  const vids = (a.videos || []).map((x) => ({ x, v: x.n ? snap.videos.find((s) => s.n === x.n) : snap.videos.find((s) => s.id === x.id) }))
+    .filter((r) => r.v).sort((p, q) => q.v.views - p.v.views);
   const flagged = (a.unverified || []).length;
-  box.innerHTML = `${kpis}${after}
-    ${a.headline ? `<div class="yt-headline">${ytText(a.headline, a)}</div>` : ""}
-    <p style="line-height:1.6">${ytText(a.diagnosis, a)}</p>
-    ${a.since_last ? `<p class="yt-since">↻ ${ytText(a.since_last, a)}</p>` : ""}
-    ${flagged ? `<p class="hint">⚠ ${flagged} figure${flagged > 1 ? "s" : ""} Claude wrote couldn't be found in your numbers, even after a second try: they are marked.</p>` : ""}
+  box.innerHTML = `
+    <div class="yt-verdict-card">
+      ${a.headline ? `<div class="yt-headline">${ytText(a.headline, a)}</div>` : ""}${steps}
+      <details class="yt-more"><summary>Read the full explanation</summary><p>${ytText(a.diagnosis, a)}</p>
+        ${a.since_last ? `<p>↻ ${ytText(a.since_last, a)}</p>` : ""}</details>
+    </div>
+    ${kpis}${after}
+    <h4 class="section">Do these next</h4>
+    ${first.map(act).join("")}
+    ${more.length ? `<details class="yt-more"><summary>${more.length} more idea${more.length > 1 ? "s" : ""}</summary>${more.map((x, i) => act(x, i + 3)).join("")}</details>` : ""}
     <h4 class="section">What the numbers show</h4>
-    ${a.findings.map((f) => `<div class="yt-find"><p>${ytText(f.text, a)}</p>${f.chart && f.chart !== "none" ? ytChart(f.chart, snap, f.videos, W) : ""}</div>`).join("")}
-    <h4 class="section">What to change</h4>
-    <ol>${a.actions.map((x) => `<li class="yt-act"><b>${ytText(x.do, a)}</b>${x.why ? `<div class="why">Why: ${ytText(x.why, a)}</div>` : ""}</li>`).join("")}</ol>
-    ${(a.videos || []).length ? `<details class="section-fold"><summary>Every video, one line each (${a.videos.length})</summary>
-      ${a.videos.map((x) => { const v = x.n ? snap.videos.find((s) => s.n === x.n) : snap.videos.find((s) => s.id === x.id);
-        return `<div class="yt-act">${ytChip(v)}<div>🔍 ${ytText(x.verdict, a)}</div><div class="why">➡ ${ytText(x.fix, a)}</div></div>`; }).join("")}</details>` : ""}
+    <p class="hint">Tap a line to see the numbers and the chart behind it.</p>
+    ${finds}
+    ${vids.length ? `<details class="yt-more"><summary>Every video, one line each (${vids.length})</summary>${vids.map(({ x, v }) => `<div class="yt-vrow" data-goto="${esc(v.id)}">
+      <img loading="lazy" referrerpolicy="no-referrer" src="${esc(v.thumb || "")}" alt="" onerror="this.style.visibility='hidden'">
+      <div><div class="t">${x.grade ? grades[x.grade] + " " : ""}${esc(ytName(v.title, 48))} <span class="n">· ${ytFmt(v.views)} views</span></div>
+        <div class="n">${ytText(x.verdict, a)}</div><div class="n">➡ ${ytText(x.fix, a)}</div></div></div>`).join("")}</details>` : ""}
+    ${flagged ? `<p class="hint">⚠ ${flagged} figure${flagged > 1 ? "s" : ""} Claude wrote couldn't be found in your numbers: they are marked.</p>` : ""}
     <p class="hint">Made ${esc(ytWhen(a.made))}${a.model ? " with " + esc(modelName(a.model.split(" ")[0]) + " " + (a.model.split(" ")[1] || "")) : ""} from the numbers of ${esc(ytWhen(snap.fetched_at))}.</p>`;
 }
 
@@ -2703,6 +2777,22 @@ document.addEventListener("click", (e) => {
 });
 $("#ytSort").onchange = $("#ytKind").onchange = ytRender;
 $("#ytCsv").onclick = () => { location.href = "/api/youtube/videos.csv"; };
+// the export downloads through fetch, so the page can say it's working and show an error in words
+document.querySelectorAll("[data-ytexport]").forEach((b) => b.onclick = async () => {
+  const msg = $("#ytExportMsg"), kind = b.dataset.ytexport;
+  document.querySelectorAll("[data-ytexport]").forEach((x) => x.disabled = true);
+  msg.textContent = "Preparing the file: reading every video's numbers and where viewers leave…";
+  try {
+    const res = await fetch("/api/youtube/export." + kind, { credentials: "same-origin" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    const name = (/filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "") || [])[1] || "youtube." + kind;
+    const url = URL.createObjectURL(await res.blob());
+    Object.assign(document.createElement("a"), { href: url, download: name }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    msg.textContent = `✅ Saved ${name}. Give it to an AI and ask it to analyse your channel.`;
+  } catch (err) { msg.textContent = "⚠️ " + err.message; }
+  document.querySelectorAll("[data-ytexport]").forEach((x) => x.disabled = false);
+});
 // Saving the client: its error stays on the client line (Connect's own message goes below the button and used to
 // replace it, so a refused file read as "add your client first").
 async function ytSaveClient(body) {

@@ -2172,6 +2172,26 @@ def create_app(cfg: Config) -> FastAPI:
         return Response(youtube.table_csv(data), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="youtube-videos-{data["fetched_at"][:10]}.csv"'})
 
+    @app.get("/api/youtube/export.{kind}")
+    def yt_export(kind: str, channel: str = ""):
+        """Everything about the channel for another AI: one Markdown file, or a ZIP with it, the tables, the raw data,
+        the audits and chart pictures (reelgen/ytexport.py)."""
+        from fastapi.responses import Response
+
+        from . import youtube, ytexport
+        if kind not in ("md", "zip"):
+            raise HTTPException(404, "md or zip")
+        with youtube.use(channel):
+            if not youtube.connected(cfg):
+                raise HTTPException(400, "Connect YouTube first")
+            b = _yt(ytexport.gather, cfg)
+        name = ytexport.file_stem(b)
+        if kind == "md":
+            return Response(ytexport.markdown(b), media_type="text/markdown; charset=utf-8",
+                            headers={"Content-Disposition": f'attachment; filename="{name}.md"'})
+        return Response(ytexport.zip_bytes(b), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
     @app.get("/api/youtube/video/{vid}")
     def yt_video(vid: str, channel: str = ""):
         from . import youtube

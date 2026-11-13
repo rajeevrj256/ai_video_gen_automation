@@ -1269,32 +1269,50 @@ def audit(cfg: Config, progress) -> dict:
 
     from .llm import ask
 
+    class Stage(BaseModel):
+        status: Literal["good", "ok", "weak", "unknown"] = Field(description="How this step is going, from the numbers.")
+        note: str = Field(description="One short plain sentence (at most 14 words, at most one figure) saying why.")
+
+    class Stages(BaseModel):
+        shown: Stage = Field(description="Is YouTube showing the videos (impressions)? 'unknown' while impressions aren't in.")
+        clicked: Stage = Field(description="Do people click when shown (click rate)? 'unknown' while impressions aren't in.")
+        watched: Stage = Field(description="Do viewers keep watching (% watched, still watching at 3 s and at the end)?")
+        followed: Stage = Field(description="Do viewers subscribe, like and comment?")
+
     class Finding(BaseModel):
-        text: str = Field(description="One pattern the numbers show, with the figures that show it. Cite videos as [[n]].")
+        title: str = Field(description="The finding in plain words, at most 10 words, no figures, e.g. 'Shorts under a "
+                                       "minute keep viewers longer'.")
+        level: Literal["good", "problem", "info"] = Field(description="good = keep doing it, problem = costing views, info = context.")
+        text: str = Field(description="At most 2 short sentences with the figures that show it, at most 3 figures in all. "
+                                      "Cite videos as [[n]]; name at most 3 videos (list the rest in `videos`).")
         chart: Literal[CHARTS] = Field(description="The chart that shows it best: length_vs_viewed (video length against % viewed), "
                                                    "views (views per video), retention (where viewers leave, for the videos you cite), "
                                                    "daily (channel views per day), ctr_vs_views (only when impressions are in), "
-                                                   "subs (subscribers per video), comments (comments per video), or none.")
-        videos: list[int] = Field(description="The row numbers of the videos this finding is about (highlighted in its chart).")
+                                                   "subs (subscribers per video), comments (comments per video), or none. "
+                                                   "Use each chart for one finding only.")
+        videos: list[int] = Field(description="The row numbers of the videos this finding is about, at most 6 (listed under it "
+                                              "with their numbers and highlighted in its chart).")
 
     class Action(BaseModel):
-        do: str = Field(description="The change to make, concrete and short. Cite videos as [[n]]. Targets are fine here "
-                                    "(e.g. 'keep Shorts near 50 s'); no figures read from the data.")
-        why: str = Field(description="The evidence from the data, with its figures, in one sentence. Cite videos as [[n]].")
+        do: str = Field(description="The change to make, concrete, at most 16 words. Cite videos as [[n]]. Targets are fine "
+                                    "here (e.g. 'keep Shorts near 50 s'); no figures read from the data.")
+        why: str = Field(description="One short sentence with the evidence, at most 2 figures. Cite videos as [[n]].")
         videos: list[int] = Field(description="Row numbers of the videos it is about.")
 
     class VideoNote(BaseModel):
         n: int = Field(description="The video's row number.")
-        verdict: str = Field(description="One short line: what its numbers say.")
-        fix: str = Field(description="The one change most likely to help it or the next video like it.")
+        grade: Literal["good", "ok", "weak"] = Field(description="How this video did against the channel's others.")
+        verdict: str = Field(description="At most 12 words: what its numbers say.")
+        fix: str = Field(description="At most 14 words: the one change most likely to help it or the next one like it.")
 
     class Audit(BaseModel):
-        headline: str = Field(description="One sentence: the channel's bottleneck right now.")
-        diagnosis: str = Field(description="3-5 sentences: why the channel isn't getting more views, from these numbers only.")
-        since_last: str = Field(description="When a last audit is given: 1-3 sentences on what changed since and whether its "
-                                            "actions show in the numbers. Else empty.")
-        findings: list[Finding] = Field(description="4-7 patterns, most important first.")
-        actions: list[Action] = Field(description="5-8 actions, most important first.")
+        headline: str = Field(description="One sentence, at most 22 words, no figures: the channel's bottleneck right now.")
+        stages: Stages
+        diagnosis: str = Field(description="3-5 short sentences: why the channel isn't getting more views, from these numbers only.")
+        since_last: str = Field(description="When a last audit is given: 1-2 short sentences on what changed since and whether "
+                                            "its actions show in the numbers. Else empty.")
+        findings: list[Finding] = Field(description="4-6 patterns, most important first.")
+        actions: list[Action] = Field(description="4-7 actions, most important first.")
         videos: list[VideoNote] = Field(description="Every video in the table, by row number.")
 
     stopper.set_checks(getattr(progress, "should_pause", None))
@@ -1331,8 +1349,10 @@ def audit(cfg: Config, progress) -> dict:
         "written as given (rounding to whole numbers is fine). Never count, add up, average or compare rows yourself: "
         "the facts already did the counting. Never state a benchmark or a figure about YouTube in general.\n- When "
         "impressions and CTR aren't in yet, say so once and judge from what is there.\n- Say plainly which part is the "
-        "bottleneck (being shown, being clicked, being watched, being followed), then what to change.\n- Write in short, "
-        "simple sentences. Each finding names one pattern and picks the chart that shows it.")
+        "bottleneck (being shown, being clicked, being watched, being followed), then what to change.\n- Write for "
+        "someone who reads it on a phone: short, simple sentences, everyday words ('click rate', not 'CTR'; 'how much "
+        "of the video people watch', not 'retention'), at most 2-3 figures in a sentence, no lists of figures. Each "
+        "finding names one pattern in its title and picks the chart that shows it.")
     prompt = (f"Channel: {ch.get('title')} · {ch.get('subscribers')} subscribers · {ch.get('views')} views · {ch.get('videos')} videos\n"
               f"{snap.get('reach_note', '')}\n\nFacts worked out from the table (use these, don't recount):\n"
               f"{json.dumps(fx, ensure_ascii=False, indent=1)}\n\n"
@@ -1344,7 +1364,9 @@ def audit(cfg: Config, progress) -> dict:
     def problems(a) -> list[dict]:
         found = []
         texts = [("headline", a.headline), ("diagnosis", a.diagnosis), ("since the last audit", a.since_last)]
+        texts += [(f"step '{k}'", getattr(a.stages, k).note) for k in ("shown", "clicked", "watched", "followed")]
         texts += [(f"finding {i}", f.text) for i, f in enumerate(a.findings, 1)]
+        texts += [(f"finding {i} (title)", f.title) for i, f in enumerate(a.findings, 1)]
         texts += [(f"action {i} (why)", x.why) for i, x in enumerate(a.actions, 1)]
         texts += [(f"video [[{x.n}]]", x.verdict) for x in a.videos]
         for where, text in texts:
@@ -1363,6 +1385,9 @@ def audit(cfg: Config, progress) -> dict:
         found = problems(result)
     rows = len(snap["videos"])
     out = result.model_dump()
+    if not fx["impressions_available"]:  # nobody can judge being shown or clicked before the impressions report
+        for k in ("shown", "clicked"):
+            out["stages"][k] = {"status": "unknown", "note": "YouTube's impressions report isn't in yet."}
     for f in out["findings"]:
         f["videos"] = [n for n in f["videos"] if 1 <= n <= rows]
     for x in out["actions"]:
