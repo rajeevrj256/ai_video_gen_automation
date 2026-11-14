@@ -893,6 +893,17 @@ Plain paragraphs are read by the narrator."></textarea>
           <input class="edit" id="lpEndTag" maxlength="44" value="Subscribe for the next one" placeholder="empty = none">
         </div>
       </div>
+      <div class="lp-enh" id="lpRendRow">
+        <label for="lpRenderer">Renderer</label>
+        <select id="lpRenderer"><option value="browser" selected>🌐 Fast: the app's own 3D (minutes)</option><option value="blender">🧊 Blender: real light, soft shadows, grass, rounded edges (much slower)</option></select>
+        <div id="lpBlendBox" hidden>
+          <div class="grid2">
+            <div><label for="lpBQuality">Quality</label><select id="lpBQuality"><option value="draft">Draft: half size, a quick look</option><option value="good" selected>Good</option><option value="best">Best: the cleanest, the slowest</option></select></div>
+            <div><label for="lpBEngine">Engine</label><select id="lpBEngine"><option value="cycles" selected>Cycles: graphics card or processor</option><option value="eevee">Eevee: fast, needs a graphics card</option></select></div>
+          </div>
+          <div id="lpBlendState" class="hint"></div>
+        </div>
+      </div>
       <details id="lpCastBox">
         <summary>👥 Recurring cast: the people every film can use (<span id="lpCastN">0</span>)</summary>
         <p class="hint">Claude uses these people by name when a story needs someone like them, so they look and sound the same in
@@ -4643,6 +4654,14 @@ const lpFill = () => {
   } catch (e) {}
   $("#lpGrowBox").hidden = !$("#lpGrow").checked;
   $("#lpGrow").onchange = () => { $("#lpGrowBox").hidden = !$("#lpGrow").checked; };
+  try {  // 🧊 the renderer, as last picked on this device
+    const r = localStorage.getItem("lpRenderer"), q = localStorage.getItem("lpBQuality"), g = localStorage.getItem("lpBEngine");
+    if (r === "blender") $("#lpRenderer").value = r;
+    if (q && [...$("#lpBQuality").options].some((o) => o.value === q)) $("#lpBQuality").value = q;
+    if (g && [...$("#lpBEngine").options].some((o) => o.value === g)) $("#lpBEngine").value = g;
+  } catch (e) {}
+  $("#lpRenderer").onchange = lpBlendSet;
+  lpBlendSet();
   $("#lpPVoice").innerHTML = LP_PVOICES.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("");
   $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +
     opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
@@ -4657,6 +4676,34 @@ $("#lpMode").onclick = (e) => {
   const film = lpModeIs() === "film";
   $("#lpLenShort").hidden = film; $("#lpLenFilm").hidden = !film; $("#lpShape").hidden = !film;
 };
+// 🧊 Blender (reelgen/lowpoly/blend.py): the editor's own scenes rendered with real light, free; installed once from here
+let lpBlendTimer = null;
+async function lpBlendSet() {
+  const on = $("#lpRenderer").value === "blender";
+  $("#lpBlendBox").hidden = !on;
+  if (!on) return;
+  let st = null;
+  try { st = await api("/api/blender"); } catch (e) { st = null; }
+  const box = $("#lpBlendState");
+  clearTimeout(lpBlendTimer);
+  if (st && st.installed) {
+    box.innerHTML = `✅ Blender ${esc(st.version || "")} is ready. The app's own 3D sets the scene, Blender renders every frame of it
+      (a graphics card makes it many times faster), then the words, fades and sound go on top. A 35 s Short is about 1,000 frames:
+      try Draft first.`;
+    return;
+  }
+  if (st && st.installing) {
+    box.innerHTML = `⏳ Installing Blender… ${esc((st.log || []).slice(-1)[0] || "")}`;
+    lpBlendTimer = setTimeout(() => { if (current === "lowpoly") lpBlendSet(); }, 3000);
+    return;
+  }
+  box.innerHTML = `Blender is free (from blender.org), ${esc(st ? st.size : "about 400 MB to download")}, kept in the app's own folder.
+    ${st && !st.supported ? "<br>⚠️ On a Mac, install Blender yourself and set REEL_BLENDER in .env." : `<br><button class="mini" id="lpBlendInstall">⬇ Install Blender</button>`}
+    ${st && st.error ? `<br>⚠️ ${esc(st.error)}` : ""}`;
+  if ($("#lpBlendInstall")) $("#lpBlendInstall").onclick = async () => {
+    try { await api("/api/blender", { method: "POST" }); lpBlendSet(); } catch (e) { toast(e.message); }
+  };
+}
 // ✍ Read the storyboard first: only for this build, never a setting (the user: "only work if i open enhancer at the
 // time of building video not at settings"), so it starts off every time the page opens.
 const lpEnhanceSet = () => {
@@ -4674,8 +4721,12 @@ $("#lpBtn").onclick = async () => {
     minutes: Number($("#lpMinutes").value), vertical: film && $("#lpVertical").value === "true", voice: $("#lpVoice").value,
     pace: Number($("#lpPace").value), watermark: $("#lpMark").value, words: $("#lpWords").value, count: Number($("#lpCount").value),
     drafts: Number($("#lpDrafts").value), growth: $("#lpGrow").checked, end_tag: $("#lpEndTag").value,
-    hero_name: $("#lpIHero").value || "Ethan", ai: aiValue("lowpoly") };
-  try { localStorage.setItem("lpGrow", body.growth ? "1" : "0"); localStorage.setItem("lpEndTag", body.end_tag); } catch (e) {}
+    hero_name: $("#lpIHero").value || "Ethan", renderer: $("#lpRenderer").value, blender_quality: $("#lpBQuality").value,
+    blender_engine: $("#lpBEngine").value, ai: aiValue("lowpoly") };
+  try {
+    localStorage.setItem("lpGrow", body.growth ? "1" : "0"); localStorage.setItem("lpEndTag", body.end_tag);
+    localStorage.setItem("lpRenderer", body.renderer); localStorage.setItem("lpBQuality", body.blender_quality); localStorage.setItem("lpBEngine", body.blender_engine);
+  } catch (e) {}
   if (body.kind === "intro") {
     const people = lpIChosen();
     if (!people.length) { $("#lpMsg").textContent = "Tick at least one person for the cast intro."; return; }

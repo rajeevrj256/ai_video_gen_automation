@@ -847,6 +847,50 @@ def lowpoly_silent() -> None:
         fail("lowpoly silent: the channel rules send a silent scene back")
 
 
+def lowpoly_blender() -> None:
+    """🧊 The Blender bridge: the worker's grade table is the editor's, the closing poster's frames are left to the
+    editor, a frame's scene is stored once with its geometry/material/picture kept apart, and frames come back in order."""
+    import ast
+    import gzip
+    import json
+    import re
+    import tempfile
+
+    from reelgen.lowpoly import blend
+
+    root = Path(__file__).resolve().parent.parent
+    worker = (root / "blender_worker" / "lowpoly.py").read_text(encoding="utf-8")
+    tree = ast.parse(worker)
+    grades = next((ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                   and any(getattr(t, "id", "") == "GRADES" for t in n.targets)), None)
+    tsx = (root / "remotion" / "src" / "lowpoly" / "LowPoly.tsx").read_text(encoding="utf-8")
+    block = tsx[tsx.index("export const GRADES"):]
+    block = block[:block.index("};")]
+    editor = {m.group(1): (float(m.group(2)), float(m.group(3)), float(m.group(4)))
+              for m in re.finditer(r"(\w+): \{teal: ([\d.]+), warm: ([\d.]+), contrast: ([\d.]+)", block)}
+    if not grades or {k: tuple(v) for k, v in grades.items()} != editor:
+        fail(f"blender: the worker's GRADES differ from LowPoly.tsx's ({grades} vs {editor})")
+    props = {"fps": 10, "duration": 1.0, "shots": [{"start": 0.0, "duration": 0.6}, {"start": 0.6, "duration": 0.4, "poster": {"title": "T"}}]}
+    if blend.frames_needed(props) != [0, 1, 2, 3, 4, 5]:
+        fail(f"blender: the poster's frames should be left to the editor ({blend.frames_needed(props)})")
+    if blend._ranges([0, 1, 2, 5, 6, 9]) != [(0, 2), (5, 6), (9, 9)]:
+        fail(f"blender: frame ranges wrong ({blend._ranges([0, 1, 2, 5, 6, 9])})")
+    with tempfile.TemporaryDirectory() as tmp:
+        r = Path(tmp)
+        png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        blend.store(r, 3, {"frame": 3, "camera": {"m": [1] * 16}, "items": [["g1", "m1", [1] * 16, 1]], "geos": {"g1": {"pos": "AAAA"}},
+                           "mats": {"m1": {"type": "MeshStandardMaterial"}}, "texs": {"t1": {"url": png}}})
+        blend.store(r, 4, {"frame": 4, "camera": {"m": [1] * 16}, "items": [], "geos": {"g1": {"pos": "BBBB"}}})
+        kept = json.loads((r / "assets" / "geo" / "g1.json").read_text())
+        frame = json.loads(gzip.decompress((r / "scene" / "f00003.json.gz").read_bytes()))
+        if kept.get("pos") != "AAAA" or "geos" in frame or not (r / "assets" / "tex" / "t1.png").exists() or frame["items"][0][0] != "g1":
+            fail("blender: a frame's scene wasn't stored with its pieces kept once each")
+        if blend._missing(r / "scene", [2, 3, 4, 5], "json.gz") != [2, 5]:
+            fail("blender: missing frames not found")
+    if blend.film_props({"a": 1})["blend"] != {"dir": "blender/frames", "ext": "jpg"} or "blender" not in blend.label("draft", "eevee").lower():
+        fail("blender: the editor's props for Blender's frames are wrong")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -864,6 +908,7 @@ def main() -> int:
     youtube_helpers()
     channel_rules()
     lowpoly_silent()
+    lowpoly_blender()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

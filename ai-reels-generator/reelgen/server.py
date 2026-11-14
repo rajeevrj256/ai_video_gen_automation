@@ -629,6 +629,9 @@ class LowPolyBody(BaseModel):
     drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
     growth: bool = True  # 📈 the channel rules (reelgen/growth.py)
     end_tag: str = "Subscribe for the next one"  # 📈 the small tag over a Short's last seconds ('' = none)
+    renderer: str = "browser"  # browser | blender (🧊 reelgen/lowpoly/blend.py)
+    blender_quality: str = "good"  # draft | good | best
+    blender_engine: str = "cycles"  # cycles | eevee
     ai: AIPick | None = None
 
 
@@ -1776,7 +1779,14 @@ def create_app(cfg: Config) -> FastAPI:
                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
                 "words": "off" if silent else body.words if body.words in ("on", "stamps", "off") else "on",
                 "growth": bool(body.growth) and not intro, "end_tag": growth.end_tag(body.end_tag),
-                "hero_name": body.hero_name.strip()[:40] or "Ethan"}
+                "hero_name": body.hero_name.strip()[:40] or "Ethan",
+                "renderer": "blender" if body.renderer == "blender" else "browser",
+                "blender_quality": body.blender_quality if body.blender_quality in ("draft", "good", "best") else "good",
+                "blender_engine": "eevee" if body.blender_engine == "eevee" else "cycles"}
+        if given["renderer"] == "blender":
+            from . import blender
+            if not blender.binary():
+                raise HTTPException(400, "Blender isn't installed yet: press 'Install Blender' under Renderer (free, about 400 MB)")
         if intro:
             given.update({"topic": "", "people": [p.strip()[:60] for p in body.people if p.strip()][:30],
                           "hero_name": body.hero_name.strip()[:40] or "Ethan", "film_title": body.film_title.strip()[:40]})
@@ -2575,6 +2585,21 @@ def create_app(cfg: Config) -> FastAPI:
         voice.update({k: v for k, v in given.items() if k != "choices"})
         voice["choices"] = {**voice["choices"], **given.get("choices", {})}
         return shoot.update(cfg, pid, lambda p: p.update(voice=voice))
+
+    # 🧊 Blender (reelgen/blender.py): free, portable, for the low-poly films' best look
+    @app.get("/api/blender")
+    def blender_status():
+        from . import blender
+        return blender.status()
+
+    @app.post("/api/blender")
+    def blender_install():
+        from . import blender
+        if not blender.status()["supported"]:
+            raise HTTPException(400, "Blender can be set up here on Windows and Linux; on a Mac, install it and set REEL_BLENDER in .env")
+        if not blender.install():
+            raise HTTPException(409, "Already installing or installed")
+        return {"ok": True}
 
     @app.get("/api/voice-engine")
     def voice_engine_status():

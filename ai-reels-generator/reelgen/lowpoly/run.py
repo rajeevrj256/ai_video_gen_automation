@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import shutil
 import subprocess
 import time
 import uuid
@@ -16,6 +17,7 @@ from .. import growth as G
 from ..config import Config
 from ..fsutil import move
 from ..video import FFMPEG
+from . import blend
 from . import story as S
 from .mix import mix
 from .timeline import WORDS, build, spoken
@@ -49,6 +51,9 @@ class LowPolyRequest:
     film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster ('' = the intro's own title)
     growth: bool = True  # 📈 the channel rules (reelgen/growth.py): the opening, no rewind, the loop, the post
     end_tag: str = G.END_TAG  # 📈 the small tag over a Short's last seconds ('' = none)
+    renderer: str = "browser"  # browser (the editor's own 3D, fast) | blender (Blender renders every frame: the best look, slow)
+    blender_quality: str = "good"  # 🧊 draft (half size, 16 samples) | good | best
+    blender_engine: str = "cycles"  # 🧊 cycles | eevee (fast, needs a graphics card)
 
 
 def _thumb_time(props: dict) -> float:
@@ -227,10 +232,14 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     if state.get("stage") != "rendered" or not out.exists():
         progress("Editing the Short" if short else "Editing the film")
         with _render_slot(cfg):
-            render(props, soundtrack, work, out, progress, composition="LowPoly")
+            if req.renderer == "blender":  # 🧊 Blender draws every frame from the editor's own scene (lowpoly/blend.py)
+                blend.run(props, soundtrack, work, out, progress, req.blender_quality, req.blender_engine)
+            else:
+                render(props, soundtrack, work, out, progress, composition="LowPoly")
         subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", f"{_thumb_time(props):.2f}", "-i", str(out), "-frames:v", "1",
                         "-q:v", "3", str(work / "thumbnail.jpg")], check=False)
         save("rendered")
+    shutil.rmtree(work / "blender", ignore_errors=True)  # the scenes and frames (gigabytes): reel.mp4 has them now
     progress("Checking the video")
     info = probe(out)
     issues = []  # (the storyboard fixes `repair` made are staging the editor did itself, not faults: report "staging_fixes")
@@ -256,7 +265,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         "style": "story", "category": "Life & People", "title": story.title.strip(), "why_chosen": story.problem,
         "narration": narration, "created_at": stamp, "verified": not issues, "score": None, "issues": issues,
         "checks": {"probe": info}, "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
-        "duration_seconds": round(props["duration"], 1), "editor": "remotion (LowPoly)", "captions": look["words"] == "on", "words_on_screen": look["words"],
+        "duration_seconds": round(props["duration"], 1),
+        "editor": "remotion (LowPoly)" if req.renderer != "blender" else f"remotion (LowPoly) + {blend.label(req.blender_quality, req.blender_engine)}", "captions": look["words"] == "on", "words_on_screen": look["words"],
         "sound_levels": mixed.get("levels"), "mix_version": mixed.get("mix_version"),
         "voice": req.voice.strip() or DEFAULT_VOICE, "voice_rate": f"{int(state.get('pace', req.pace)):+d}%", "music": mixed.get("music", ""),
         "sound_cues": mixed.get("sound_cues"), "lowpoly_request": asdict(req), "thumbnail_text": story.thumbnail_text,

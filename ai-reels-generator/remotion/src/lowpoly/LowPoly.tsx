@@ -9,7 +9,7 @@ import '@fontsource/inter/500.css';
 import '@fontsource/inter/700.css';
 import '@fontsource/special-elite/400.css';
 import React, {useEffect, useLayoutEffect, useMemo, useState} from 'react';
-import {AbsoluteFill, continueRender, delayRender, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, continueRender, delayRender, Img, interpolate, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {ThreeCanvas} from '@remotion/three';
 import {useFrame, useThree} from '@react-three/fiber';
 import * as THREE from 'three';
@@ -24,6 +24,7 @@ import {RectAreaLightUniformsLib} from 'three/examples/jsm/lights/RectAreaLightU
 RectAreaLightUniformsLib.init(); // the face's soft key is an area light (a big soft source, not a point)
 import {D, HEAD_Y, HERO, Man, mat, PHONE_AT, PHONE_TILT} from './Man';
 import {face, pose, SPEED, type Pose} from './poses';
+import {Dump} from './Dump';
 import {LOOKS, Overgrowth, SETS, spotOf, ThingView, type SetDef} from './Sets';
 import {
   bigState,
@@ -1334,7 +1335,7 @@ export const planFor = (shot: LPShot, set: SetDef, placed: Placed[], rides: (Rid
   return {plan, who, ride, cam, insert: CUT_CAMS.has(cam)};
 };
 
-const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) => {
+const CamRig: React.FC<{plan: CamPlan; exposure: number; light?: string; dof?: boolean}> = ({plan, exposure, light, dof}) => {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const gl = useThree((s) => s.gl);
   useLayoutEffect(() => {
@@ -1346,6 +1347,10 @@ const CamRig: React.FC<{plan: CamPlan; exposure: number}> = ({plan, exposure}) =
     camera.lookAt(plan.look);
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
+    camera.userData.focus = plan.focus;
+    camera.userData.aperture = dof === false ? 0 : plan.aperture; // (Blender's focus blur follows the tab's setting)
+    camera.userData.exposure = exposure;
+    camera.userData.light = light ?? '';
     gl.toneMappingExposure = exposure;
   });
   return null;
@@ -1961,6 +1966,7 @@ const pullOf = (shot: LPShot, set: SetDef, cast: Record<string, Design>, aspect:
 };
 
 const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect: number}> = ({shot, t, props, aspect}) => {
+  const frameNow = useCurrentFrame();
   const set = SETS[shot.set] ?? SETS.void;
   const look = LOOKS[shot.light] ?? LOOKS.day;
   const ta = actionTime(shot, t);
@@ -2012,7 +2018,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
         // a little haze in the room: the far walls sink into the dark, the room gets depth
         <fogExp2 attach="fog" args={[HAZE[shot.light] ?? '#3a3430', look.shade < 0.8 ? 0.055 : 0.03]} />
       )}
-      <CamRig plan={plan} exposure={look.exposure} />
+      <CamRig plan={plan} exposure={look.exposure} light={shot.light} dof={props.dof !== false} />
       <Lights set={set} light={shot.light} target={who ? who.head.clone().lerp(who.body, 0.5) : ride ? ride.st.pos.clone() : subjectBig(shot, set, t)?.st.pos.clone() ?? V(set.wide.look)} eye={plan.pos}
         glow={placed.filter((p) => p.hold === 'phone').map((p) => p.hand.clone().addScaledVector(p.screen, 0.32).add(new THREE.Vector3(0, 0.12, 0)))}
         head={who && !insert ? who.head : undefined} face={who?.faceDir} />
@@ -2059,7 +2065,11 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       })}
       {/* down in the footwell or close on the wheel: a soft light from beside the lens, or it is all shadow */}
       {insert && cam !== 'speedo' ? <pointLight position={plan.pos.toArray()} color="#fff0dc" intensity={1.6} distance={1.6} decay={1.2} /> : null}
-      <Post focus={plan.focus} aperture={plan.aperture} dof={props.dof !== false} grade={GRADES[shot.light] ?? GRADES.day} />
+      {props.dump ? (
+        <Dump url={props.dump.url} frame={frameNow} />
+      ) : (
+        <Post focus={plan.focus} aperture={plan.aperture} dof={props.dof !== false} grade={GRADES[shot.light] ?? GRADES.day} />
+      )}
     </>
   );
 };
@@ -2318,13 +2328,23 @@ export const LowPoly: React.FC<LowPolyProps> = (props) => {
   return (
     <AbsoluteFill style={{background: '#000'}}>
       <AbsoluteFill style={caperLook(shot, local, frozen, width)}>
-        <ThreeCanvas width={width} height={height} shadows gl={{antialias: true}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
-          {shot.poster ? (
-            <PosterScene shot={shot} t={local} cast={props.cast} tall={props.vertical} CamRig={CamRig} />
-          ) : (
-            <ShotScene shot={shot} t={sceneT} props={props} aspect={width / height} />
-          )}
-        </ThreeCanvas>
+        {props.blend && !shot.poster ? (
+          // the frame Blender rendered from this frame's scene (reelgen/lowpoly/blend.py); the words and fades go on top
+          <Img src={staticFile(`${props.blend.dir}/f${String(frame).padStart(5, '0')}.${props.blend.ext}`)} style={{width, height}} />
+        ) : props.dump ? (
+          // sending the scene to Blender: a small canvas of the same shape, no shadows or antialiasing (nothing is kept)
+          <ThreeCanvas width={Math.round(width / 8)} height={Math.round(height / 8)} gl={{antialias: false}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
+            {shot.poster ? null : <ShotScene shot={shot} t={sceneT} props={props} aspect={width / height} />}
+          </ThreeCanvas>
+        ) : (
+          <ThreeCanvas width={width} height={height} shadows gl={{antialias: true}} camera={{fov: 34, near: 0.05, far: 400, position: [0, 1.5, 5]}}>
+            {shot.poster ? (
+              <PosterScene shot={shot} t={local} cast={props.cast} tall={props.vertical} CamRig={CamRig} />
+            ) : (
+              <ShotScene shot={shot} t={sceneT} props={props} aspect={width / height} />
+            )}
+          </ThreeCanvas>
+        )}
       </AbsoluteFill>
       {shot.poster ? (
         <PosterBusts p={shot.poster} t={local} dur={shot.duration} cast={props.cast} tall={props.vertical} width={width} height={height} CamRig={CamRig} />

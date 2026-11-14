@@ -288,5 +288,7 @@ export type LowPolyProps = {
   cards?: NameCard[];
   cinematic?: boolean; // letterbox bars, a film grade, heavier grain (the cast intro)
   loop?: boolean; // 📈 a Short that starts again without a seam: no fade in or out (reelgen/growth.py)
+  dump?: {url: string}; // the Blender bridge: send every frame's 3D scene to this receiver (Dump.tsx), draw nothing
+  blend?: {dir: string; ext: string}; // ...then the frames Blender rendered (dir/f00001.jpg), under the words and fades
   endTag?: {text: string; start: number}; // 📈 a small subscribe line over the last seconds
 };
