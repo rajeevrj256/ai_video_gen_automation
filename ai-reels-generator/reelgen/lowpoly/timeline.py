@@ -19,6 +19,11 @@ FADE_END = 1.1  # the last shot holds and fades to black
 # short hold with no fade, and shows a small subscribe tag over its last seconds.
 LOOP_END = 0.45  # the last shot holds this long, then the Short starts again
 END_TAG = 2.4  # the tag shows for this long at the end (less when the last shot is shorter)
+# 🤫 a silent scene (story.kind 'silent'): each shot holds its own `seconds`; the last one then fades slowly to black
+# with the music, over a quiet room tone and distant city traffic that run the whole scene
+SILENT_FADE = 2.0  # seconds of the last shot's fade to black
+SILENT_TAIL = 1.2  # ...added after the last shot's own seconds
+SILENT_MUSIC_FADE = 2.8  # the score fades over this long at the end
 CHUNK_WORDS = 3
 CHUNK_CHARS = 19
 LYING = {"lie", "lie-side", "lie-phone", "sit-up"}
@@ -291,6 +296,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
     let a Short that runs long tighten its breaths; `words` turns the subtitles (and the stamps) off; `loop` = no fade
     in or out (a Short that starts again without a seam); `end_tag` = the small tag over its last seconds."""
     loop = loop and not story.intro
+    hushed = story.kind == "silent"
     mode = words if words in WORDS else "on"  # (the loop below has its own `words`: each line's timed words)
     shots, captions, clips, cues = [], [], [], []
     t = 0.0
@@ -308,8 +314,10 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         has_alarm = any(th.kind == "alarm" for th in s.things) or any(x.sound == "alarm" for x in s.sounds)
         lead = STAMP if s.stamp.strip() and mode != "off" else LEAD  # a stamp shows alone before its line
         dur = (lead + length + tail if line else SILENT + (0.8 if has_alarm else 0)) + s.pause * pauses
+        if hushed and not line and s.seconds > 0:
+            dur = s.seconds  # a silent scene: the shot holds as long as the director gave it
         if i == n - 1:
-            dur += LOOP_END if loop else FADE_END
+            dur += SILENT_TAIL if hushed else LOOP_END if loop else FADE_END
         dur = max(1.3, dur)
         if i in forced:
             dur = forced[i]
@@ -330,7 +338,16 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
                     scr["arrive"] = round(min(SCREEN_ARRIVE * dur, 1.4), 3)
                     cues.append({"sound": "buzz" if scr["kind"] == "call" else "notify", "at": round(t + scr["arrive"], 3), "volume": 0.8})
             if actor.look_at:
-                d["look"] = "hero" if actor.look_at == "hero" else _key(actor.look_at)
+                lk = actor.look_at.strip().lower()
+                if lk in {th.kind for th in s.things}:
+                    d["gaze"] = f"thing:{lk}"  # the photo on his desk: his head turns and tips to it
+                elif lk in ("window", "door"):
+                    d["gaze"] = lk
+                else:
+                    d["look"] = "hero" if actor.look_at == "hero" else _key(actor.look_at)
+            if actor.then and actor.then != actor.expression:  # a face that changes inside the shot
+                d["then"] = actor.then
+                d["thenAt"] = round(dur * (actor.then_at if actor.then_at is not None else 0.6), 3)
             if at is not None:
                 d["at"] = round(at, 3)
             if actor.on and actor.on <= len(s.big):
@@ -397,7 +414,7 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         if i == 0 and not loop:
             shot["fadeIn"] = 0.35
         if i == n - 1 and not loop:
-            shot["fadeOut"] = 0.9
+            shot["fadeOut"] = SILENT_FADE if hushed else 0.9
         shots.append(shot)
         # the words
         stamp_end = t
@@ -561,6 +578,11 @@ def build(story: Story, audio: dict[int, dict], *, vertical: bool, watermark: st
         sections = [{"start": 0.0, "end": ending, "mood": story.mood, "act": "loop", "quiet": []}]
         if ending < total:
             sections.append({"start": ending, "end": total, "mood": story.end_mood, "act": "resolve", "quiet": []})
+    if hushed:
+        sections[-1]["fade_out"] = SILENT_MUSIC_FADE  # the piano fades out with the picture
+        # the room around him: a quiet room tone and the city far off through the window, the whole scene long
+        cues[:0] = [{"sound": "room", "at": 0.0, "volume": 0.9, "length": round(total, 3)},
+                    {"sound": "city", "at": 0.0, "volume": 0.9, "length": round(total, 3)}]
     shown = captions if mode == "on" else [c for c in captions if c.get("stamp")] if mode == "stamps" else []
     props = {"fps": FPS, "duration": total, "vertical": vertical, "watermark": watermark, "seed": seed, "cast": cast, "shots": shots,
              "captions": shown, "dof": True}

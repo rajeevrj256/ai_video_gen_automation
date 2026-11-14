@@ -591,7 +591,7 @@ export function pose({action, t, dur, seat, k, at, moving, steer = 0, air, press
 }
 
 // The face for each feeling: eyelids (0 open .. 1 shut), brows (lift, tilt: + = inner ends up), eye size, the mouth.
-export type Face = {lid: number; brow: number; tilt: number; eye: number; mouth: 'line' | 'o' | 'smile' | 'frown' | 'flat' | 'open'; look: [number, number]};
+export type Face = {lid: number; brow: number; tilt: number; eye: number; mouth: 'line' | 'o' | 'smile' | 'frown' | 'flat' | 'open' | 'soft'; look: [number, number]; wet?: number};
 
 export function face(e: Expr, t: number, k: number, talking = false): Face {
   const blinkAt = (t + k * 1.7) % 3.7;
@@ -637,6 +637,14 @@ export function face(e: Expr, t: number, k: number, talking = false): Face {
       break;
     case 'pained':
       Object.assign(f, {lid: 0.45, brow: 0.01, tilt: 0.4, mouth: 'flat'});
+      break;
+    case 'soft-smile':
+      // a quiet, fond smile (remembering): lids a little lowered, the inner brows a touch up, a small smile
+      Object.assign(f, {lid: 0.22, brow: 0.006, tilt: 0.18, mouth: 'soft', look: [lookX, -0.008]});
+      break;
+    case 'teary':
+      // eyes that have gone wet but never cry: lowered lids, inner brows up, lips pressed, a glisten on the eyes
+      Object.assign(f, {lid: 0.3, brow: 0.012, tilt: 0.38, mouth: 'line', look: [lookX * 0.5, -0.012], wet: 1});
       break;
     default:
       break;

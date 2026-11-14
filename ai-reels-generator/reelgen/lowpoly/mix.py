@@ -44,8 +44,9 @@ UNDER_VOICE = {
     "rev": 8,  # the foot on the accelerator in a cut-in: over the engine bed
     "shutter": 8, "whip": 9, "scratch": 8,  # the cast intro's freezes and whip cuts
     "roar": 5, "stomp": 9, "flap": 13, "wings": 15,  # animals: a roar is the moment itself
+    "room": 27, "city": 21,  # a silent scene's room tone and the city far off through the window
 }
-BEDS = {"wind", "rain", "fire", "siren", "sparks", "crowd", "tick", "engine", "jet", "propeller", "wings"}  # lower still under speech
+BEDS = {"wind", "rain", "fire", "siren", "sparks", "crowd", "tick", "engine", "jet", "propeller", "wings", "room", "city"}  # lower still under speech
 BED_UNDER_SPEECH = 0.5  # -6 dB more while someone speaks
 EFFECT_UNDER_SPEECH = 0.75
 
@@ -174,7 +175,7 @@ def mix(cfg, props: dict, clips: list[dict], cues: list[dict], sections: list[di
         length = s["end"] - s["start"] + (1.5 if i < len(sections) - 1 else 0.4)
         x = np.tile(x, (int(length * RATE) // max(1, len(x)) + 1, 1))[: int(length * RATE)]
         env = np.ones(len(x), np.float32)
-        fin, fout = int((1.2 if i else 0.6) * RATE), int(1.6 * RATE)
+        fin, fout = int((1.2 if i else 0.6) * RATE), int(float(s.get("fade_out", 1.6)) * RATE)
         env[: min(fin, len(x))] *= np.linspace(0, 1, min(fin, len(x)))
         env[-min(fout, len(x)):] *= np.linspace(1, 0, min(fout, len(x)))
         _place(music, x * env[:, None], s["start"], 1.0)

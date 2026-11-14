@@ -58,6 +58,10 @@ before, on these, in this order:
 Wait for at least five new Shorts with a few hundred views each before judging. If a number didn't move, change the
 rule in `growth.py` and note why in its docstring. YouTube's numbers lag two to three days.
 
+## The series' mix
+
+The user's rule for Ethan's series: put silent emotional scenes (Low-poly tab, 🤫 Silent scene: no words, a smile that fades, eyes that go wet, a soft piano) between the funny everyday ones. The contrast makes him feel like a real person, not only a comedy character. Never make him cry dramatically; subtle is the point.
+
 ## What the rules never do
 
 - Promise a video that doesn't exist ('Part 2 tomorrow') or a schedule the user hasn't set.

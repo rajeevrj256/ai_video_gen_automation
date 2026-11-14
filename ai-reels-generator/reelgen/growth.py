@@ -135,10 +135,20 @@ words ('What would you do with one frozen minute?').
 """
 
 
-def block(*, short: bool, fiction: bool, script: bool = False, hero: str = HERO) -> str:
+SILENT = """
+CHANNEL RULES FOR A SILENT SCENE (from this channel's own YouTube numbers):
+- The first frame is the scene itself, already in the moment, with something moving (his hands, a fork, a screen).
+- One feeling, carried all the way: every shot moves it on (something new to see, a look, a change in his face).
+- He is the same man in every video: Ethan.
+"""
+
+
+def block(*, short: bool, fiction: bool, script: bool = False, hero: str = HERO, silent: bool = False) -> str:
     """The channel's rules for a writer's prompt. A script the user wrote keeps its words and order: it only gets the
-    rules for the post."""
+    rules for the post. A silent scene keeps its quiet: no question ending, no loop, no tag; its opening and its post."""
     kind = "fiction" if fiction else "life"
+    if silent:
+        return SILENT + POST
     if script:
         return "\n" + POST
     hero = (hero or HERO).strip() or HERO

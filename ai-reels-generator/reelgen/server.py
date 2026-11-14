@@ -1769,11 +1769,12 @@ def create_app(cfg: Config) -> FastAPI:
     def lowpoly_given(body: LowPolyBody) -> dict:
         intro = body.kind == "intro"  # 🎭 the cast introduced one by one (lowpoly/intro.py): a film of 30-120 s
         film = body.format == "film" or intro
-        given = {"topic": body.topic.strip(), "kind": body.kind if body.kind in ("fiction", "intro") else "life",
-                "format": "film" if film else "short", "seconds": max(20, min(120 if intro else 60, int(body.seconds))),
+        silent = body.kind == "silent"  # 🤫 a wordless emotional scene: no voice, no words on screen
+        given = {"topic": body.topic.strip(), "kind": body.kind if body.kind in ("fiction", "intro", "silent") else "life",
+                "format": "film" if film else "short", "seconds": max(8 if silent else 20, min(120 if intro else 60, int(body.seconds))),
                 "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
                 "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
-                "words": body.words if body.words in ("on", "stamps", "off") else "on",
+                "words": "off" if silent else body.words if body.words in ("on", "stamps", "off") else "on",
                 "growth": bool(body.growth) and not intro, "end_tag": growth.end_tag(body.end_tag),
                 "hero_name": body.hero_name.strip()[:40] or "Ethan"}
         if intro:

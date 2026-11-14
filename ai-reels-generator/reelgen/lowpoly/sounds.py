@@ -112,6 +112,34 @@ def _wind() -> np.ndarray:
     return _loopable(_lowpass(air, 700 + 1100 * gust) * (0.3 + 0.7 * gust))
 
 
+def _room() -> np.ndarray:
+    """A quiet room at night: low air, a faint electrical hum, nothing that draws the ear (looped)."""
+    t = _t(8.0)
+    n = _noise(53, len(t))
+    air = _lowpass(n, 260) * 0.9 + (_lowpass(n, 2400) - _lowpass(n, 900)) * 0.12
+    hum = 0.05 * np.sin(2 * np.pi * 100 * t) + 0.02 * np.sin(2 * np.pi * 200 * t)
+    return _loopable(air + hum)
+
+
+def _city() -> np.ndarray:
+    """The city far off through a closed window: the traffic recording (journey/sounds, CC0) low-passed and softened,
+    else a synthesised hush of tyres and the odd far horn (looped)."""
+    path = Path(__file__).resolve().parents[1] / "journey" / "sounds" / "traffic.ogg"
+    if path.exists():
+        try:
+            from ..sticky.mixdown import decode
+
+            x = decode(path, "lowpass=f=700,lowpass=f=900,highpass=f=60").mean(axis=1)
+            if len(x) > RATE * 4:
+                return _loopable(x[: RATE * 20])
+        except Exception:  # noqa: BLE001 - the synthesised one will do
+            pass
+    t = _t(10.0)
+    n = _noise(57, len(t))
+    swell = 0.6 + 0.4 * np.sin(2 * np.pi * 0.07 * t) * np.sin(2 * np.pi * 0.023 * t + 1)
+    return _loopable(_lowpass(n, 500) * swell)
+
+
 def _fire() -> np.ndarray:
     """A fire burning: a low roar with pops and crackles (looped)."""
     t = _t(4.0)
@@ -250,6 +278,7 @@ MAKERS = {
     "skid": (_skid, 0.45), "siren": (_siren, 0.3), "wind": (_wind, 0.35), "fire": (_fire, 0.35), "sparks": (_sparks, 0.35),
     "flyby": (sfx._flyby, 0.6), "crowd": (_crowd, 0.35), "roar": (_roar, 0.8), "stomp": (_stomp, 0.8), "flap": (_flap, 0.5),
     "wings": (_wings, 0.45), "rumble": (lambda: sfx._rumble(1.6), 0.55),
+    "room": (_room, 0.3), "city": (_city, 0.4),
 }
 
 

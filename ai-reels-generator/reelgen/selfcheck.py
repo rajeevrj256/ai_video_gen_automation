@@ -808,6 +808,45 @@ def channel_rules() -> None:
         fail(f"youtube.plan_for: hashtags or category wrong ({plan['description']!r}, {plan['category']})")
 
 
+def lowpoly_silent() -> None:
+    """🤫 The silent scene: no words anywhere, each shot as long as its seconds, a slow fade at the end, room tone and
+    distant traffic under it all, a look at a thing or the window, a face that changes inside a shot."""
+    from reelgen import growth as G
+    from reelgen.config import Config
+    from reelgen.lowpoly import story as S
+    from reelgen.lowpoly.timeline import SILENT_FADE, SILENT_TAIL, build
+
+    st = S.Story(title="T", problem="p", youtube_title="He Misses His Family Tonight", description="d", tags=[], hashtags=[],
+                 thumbnail_text="x", mood="emotional", end_mood="emotional", music_prompt="piano", kind="silent", shots=[
+        dict(line="He eats.", stamp="11 PM", set="bedroom", light="lamp", camera="medium", seconds=3.0, things=[dict(kind="plate"), dict(kind="photo")],
+             actors=[dict(who="hero", action="eat", expression="tired", spot="desk", look_at="photo")]),
+        dict(line="", set="bedroom", light="lamp", camera="face", seconds=2.0,
+             actors=[dict(who="hero", action="phone", expression="soft-smile", then="sad", then_at=0.5, spot="desk", hold="phone",
+                          screen=dict(kind="video"))]),
+        dict(line="", set="bedroom", light="night", camera="back", seconds=2.5,
+             actors=[dict(who="hero", action="sit", expression="teary", spot="bed", look_at="window")])])
+    notes = S.hush(st)
+    if any(x.line or x.stamp for x in st.shots) or not notes:
+        fail("lowpoly silent: hush left words in a shot")
+    S.repair(st)
+    if [a.look_at for x in st.shots for a in x.actors] != ["photo", "", "window"]:
+        fail(f"lowpoly silent: a look at the photo or the window was dropped ({[a.look_at for x in st.shots for a in x.actors]})")
+    props, _, cues, sections = build(st, {}, vertical=True, watermark="", seed=1, words="off")
+    durs = [x["duration"] for x in props["shots"]]
+    if props["captions"] or durs != [3.0, 2.0, round(2.5 + SILENT_TAIL, 3)] or props["shots"][-1].get("fadeOut") != SILENT_FADE:
+        fail(f"lowpoly silent: words {props['captions']}, durations {durs}, fade {props['shots'][-1].get('fadeOut')}")
+    if [c["sound"] for c in cues[:2]] != ["room", "city"] or not sections[-1].get("fade_out"):
+        fail("lowpoly silent: no room tone and distant traffic under the scene, or the music doesn't fade out")
+    a0, a1, a2 = (x["actors"][0] for x in props["shots"])
+    if a0.get("gaze") != "thing:photo" or a2.get("gaze") != "window" or a1.get("then") != "sad" or a1.get("thenAt") != 1.0:
+        fail(f"lowpoly silent: gaze/then not passed to the editor ({a0}, {a1}, {a2})")
+    prompt = S._system(False, True, 12, 3, cfg=Config(), silent=True)
+    if "every shot's `line` is empty" not in prompt or "CHANNEL RULES FOR A SILENT SCENE" not in prompt or "NO REWIND" in prompt:
+        fail("lowpoly silent: the writer's rules are wrong")
+    if G.check(st, short=True, script=True):
+        fail("lowpoly silent: the channel rules send a silent scene back")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -824,6 +863,7 @@ def main() -> int:
     lowpoly_intro()
     youtube_helpers()
     channel_rules()
+    lowpoly_silent()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

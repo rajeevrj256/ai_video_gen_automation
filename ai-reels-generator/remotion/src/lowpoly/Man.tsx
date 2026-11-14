@@ -6,6 +6,7 @@ import React, {useMemo} from 'react';
 import * as THREE from 'three';
 import type {Design, Hold, PhoneScreen} from './types';
 import {HIP, type Face, type Limb, type Pose} from './poses';
+import {drawFamily, PLACES} from './family';
 
 // Sizes in the man's units (he is about 2 tall to the top of his hair).
 export const D = {
@@ -248,6 +249,13 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
         />
       ) : null}
       {f.lid >= 1 ? <mesh geometry={box(er * 1.9, 0.012, 0.01)} material={dark} position={[0, -er * 0.3, 0.024]} /> : null}
+      {f.wet ? (
+        // wet eyes (never crying): a thin line of light along the lower edge of the eye and a brighter catchlight
+        <group position={[f.look[0] - sx * 0.004, f.look[1] - 0.004, 0.016]}>
+          <mesh geometry={box(er * 1.35, er * 0.16, 0.004)} material={WET} position={[0, -er * 0.56, 0]} />
+          <mesh geometry={disc(er * 0.13 * f.wet)} material={SPARK} position={[-er * 0.05, -er * 0.38, 0.002]} />
+        </group>
+      ) : null}
       <mesh
         geometry={box(detail ? 0.13 : 0.115, detail ? 0.034 : 0.026, 0.03)}
         material={brow}
@@ -275,6 +283,15 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
           </group>
         );
       }
+      case 'soft':
+        // a small, closed smile: a short line whose corners turn up a little
+        return (
+          <group position={[0, mouthY, z - 0.012]}>
+            <mesh geometry={box(0.05, 0.018, 0.02)} material={dark} />
+            <mesh geometry={box(0.03, 0.017, 0.02)} material={dark} position={[-0.036, 0.006, 0]} rotation={[0, 0, -0.38]} />
+            <mesh geometry={box(0.03, 0.017, 0.02)} material={dark} position={[0.036, 0.006, 0]} rotation={[0, 0, 0.38]} />
+          </group>
+        );
       case 'flat':
         return <mesh geometry={box(0.12, 0.02, 0.02)} material={dark} position={[0.008, mouthY, z - 0.012]} rotation={[0, 0, 0.05]} />;
       default:
@@ -303,6 +320,7 @@ const FaceView: React.FC<{f: Face; design: Design; detail?: boolean}> = ({f, des
 
 // the eyes' catchlights, and the cheeks' blush (soft, see-through, never casting shadows)
 const SPARK = new THREE.MeshBasicMaterial({color: '#ffffff'});
+const WET = new THREE.MeshBasicMaterial({color: '#dff1ff', transparent: true, opacity: 0.85});
 const BLUSH = new THREE.MeshStandardMaterial({color: '#f07a7a', transparent: true, opacity: 0.32, roughness: 1, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -2});
 
@@ -383,7 +401,10 @@ const statusBar = (g: CanvasRenderingContext2D, time: string, dark: boolean) => 
 };
 const clockText = (time: string, fallback = '11:47') => (/^\d{1,2}:\d{2}/.test(time.trim()) ? time.trim().split(/\s/)[0] : fallback);
 
-const drawScreen = (g: CanvasRenderingContext2D, sc: PhoneScreen, shown: boolean) => {
+// screens that move (the photos scrolling, a video playing): drawn again for every moment on one canvas each
+const MOVING = new Set(['gallery', 'video']);
+
+const drawScreen = (g: CanvasRenderingContext2D, sc: PhoneScreen, shown: boolean, t = 0) => {
   const time = clockText(sc.time);
   const msgs = sc.messages.filter((m) => m.text.trim());
   const visible = shown || sc.arrive === undefined ? msgs : msgs.slice(0, -1);
@@ -468,6 +489,74 @@ const drawScreen = (g: CanvasRenderingContext2D, sc: PhoneScreen, shown: boolean
       g.font = `700 54px ${FONT}`;
       g.fillText('✕', 140, SH - 312);
       g.fillText('✓', SW - 140, SH - 312);
+      return;
+    }
+    case 'gallery': {
+      // his photos of the family, three across, scrolling slowly up through the years (slowing as he stops on one)
+      g.fillStyle = '#0d0d0f';
+      g.fillRect(0, 0, SW, SH);
+      const cell = (SW - 16) / 3;
+      const scroll = 420 * (1 - Math.exp(-t / 2.2));
+      for (let i = 0; i < 27; i++) {
+        const cx = 4 + (i % 3) * (cell + 4);
+        const cy = 170 + Math.floor(i / 3) * (cell + 4) - scroll;
+        if (cy > SH || cy + cell < 120) continue;
+        drawFamily(g, cx, cy, cell, cell, PLACES[(i * 5 + 1) % PLACES.length], {seed: i});
+      }
+      g.fillStyle = '#0d0d0f';
+      g.fillRect(0, 0, SW, 160);
+      statusBar(g, time, true);
+      g.fillStyle = '#fff';
+      g.font = `700 40px ${FONT}`;
+      g.textAlign = 'left';
+      g.textBaseline = 'alphabetic';
+      g.fillText(sc.name || 'Family', 30, 140);
+      return;
+    }
+    case 'video': {
+      // a video of them laughing together, playing with the sound off: the picture, a muted speaker, the progress bar
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, SW, SH);
+      const vh = SW * 1.25;
+      const vy = (SH - vh) / 2 - 40;
+      drawFamily(g, 0, vy, SW, vh, 'birthday', {t, laughing: true, seed: 1});
+      statusBar(g, time, true);
+      // muted: a speaker with a cross
+      g.fillStyle = 'rgba(0,0,0,0.45)';
+      g.beginPath();
+      g.arc(SW - 60, vy + 60, 30, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#fff';
+      g.fillRect(SW - 74, vy + 52, 10, 16);
+      g.beginPath();
+      g.moveTo(SW - 64, vy + 52);
+      g.lineTo(SW - 54, vy + 44);
+      g.lineTo(SW - 54, vy + 76);
+      g.lineTo(SW - 64, vy + 68);
+      g.fill();
+      g.strokeStyle = '#fff';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.moveTo(SW - 49, vy + 53);
+      g.lineTo(SW - 39, vy + 67);
+      g.moveTo(SW - 39, vy + 53);
+      g.lineTo(SW - 49, vy + 67);
+      g.stroke();
+      const len = 24;
+      const at = Math.min(len, 6 + t);
+      const by = vy + vh + 40;
+      round(g, 30, by, SW - 60, 8, 4, 'rgba(255,255,255,0.3)');
+      round(g, 30, by, (SW - 60) * (at / len), 8, 4, '#fff');
+      g.fillStyle = '#fff';
+      g.beginPath();
+      g.arc(30 + (SW - 60) * (at / len), by + 4, 12, 0, Math.PI * 2);
+      g.fill();
+      g.font = `500 26px ${FONT}`;
+      g.textAlign = 'left';
+      g.textBaseline = 'alphabetic';
+      g.fillText(`0:${String(Math.floor(at)).padStart(2, '0')}`, 30, by + 50);
+      g.textAlign = 'right';
+      g.fillText(`0:${len}`, SW - 30, by + 50);
       return;
     }
     case 'feed': {
@@ -594,7 +683,29 @@ const drawScreen = (g: CanvasRenderingContext2D, sc: PhoneScreen, shown: boolean
 };
 
 let screenTex: THREE.CanvasTexture | null = null;
+const moving = new Map<string, {c: HTMLCanvasElement; tex: THREE.CanvasTexture; at: number}>();
 const phoneScreen = (sc?: PhoneScreen, t = 0) => {
+  if (sc && MOVING.has(sc.kind)) {
+    // one canvas per screen, drawn again whenever the moment changes (a texture per frame would fill the card)
+    const key = JSON.stringify(sc);
+    let m = moving.get(key);
+    if (!m) {
+      const c = document.createElement('canvas');
+      c.width = SW;
+      c.height = SH;
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      m = {c, tex, at: NaN};
+      moving.set(key, m);
+    }
+    if (m.at !== t) {
+      drawScreen(m.c.getContext('2d')!, sc, true, t);
+      m.tex.needsUpdate = true;
+      m.at = t;
+    }
+    return m.tex;
+  }
   if (sc) {
     const shown = sc.arrive === undefined || t >= sc.arrive;
     const key = `${JSON.stringify(sc)}|${shown}`;

@@ -840,7 +840,7 @@ Plain paragraphs are read by the narrator."></textarea>
         every shot (his room, the hallway, the street at night, the park at dawn, the office...); anyone else in the story keeps their look
         in later videos. Or choose Fiction and give him your own cinematic story.</p>
       <label>Kind of story</label>
-      <div class="segmented" id="lpKind"><button data-kind="life" class="on">🏠 Everyday life</button><button data-kind="fiction">🚀 Fiction (your brief)</button><button data-kind="intro">🎭 Cast intro</button></div>
+      <div class="segmented" id="lpKind"><button data-kind="life" class="on">🏠 Everyday life</button><button data-kind="fiction">🚀 Fiction (your brief)</button><button data-kind="intro">🎭 Cast intro</button><button data-kind="silent">🤫 Silent scene</button></div>
       <p class="hint" id="lpKindHint"></p>
       <div id="lpIntroBox" hidden>
         <label>Who's in it</label>
@@ -875,13 +875,13 @@ Plain paragraphs are read by the narrator."></textarea>
         <label for="lpVertical">Shape</label>
         <select id="lpVertical"><option value="false" selected>16:9 for YouTube</option><option value="true">9:16, like the Shorts</option></select>
       </div>
-      <div class="grid2">
+      <div class="grid2" id="lpVoiceRow">
         <div><label for="lpVoice">Narrator</label><select id="lpVoice"></select></div>
         <div><label for="lpPace">Speaking speed</label>
           <select id="lpPace"><option value="-10">Slower (-10%)</option><option value="-5">A bit slower</option><option value="0" selected>Normal</option><option value="5">A bit faster</option><option value="10">Faster (+10%)</option></select></div>
       </div>
-      <label for="lpWords">Subtitles</label>
-      <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select>
+      <div id="lpWordsRow"><label for="lpWords">Subtitles</label>
+      <select id="lpWords"><option value="on" selected>On: words and time stamps (like the original)</option><option value="stamps">Off, keep the time stamps (11:47 P.M., DAY 3)</option><option value="off">Off: no words on screen</option></select></div>
       </div>
       <label for="lpMark">Channel name at the top</label>
       <input class="edit" id="lpMark" value="" maxlength="40" placeholder="empty = none">
@@ -4542,6 +4542,9 @@ const LP_PVOICES = [["man", "A man"], ["young-man", "A young man"], ["woman", "A
   ["older-woman", "An older woman"], ["child", "A child"], ["deep-man", "A deep man's voice"], ["british-man", "A British man"], ["british-woman", "A British woman"]];
 const LP_KIND_HINT = {
   life: "One small everyday struggle, told by a calm narrator like the original.",
+  silent: "A wordless emotional scene: no narration, no dialogue, no words on screen. Only what he does, his face (a smile that fades, eyes that go wet), " +
+    "the things around him (the family photo on his desk, old photos and a silent video on his phone), a quiet room, the city far off and a soft piano that fades out. " +
+    "Write your beats with their times, like '0-3 s: he finishes eating at his desk and notices the family photo'.",
   intro: "Every person in the recurring cast introduced like a movie's opening: each in their own place doing what says who they are, from camera angles that never repeat, " +
     "their name and role coming up on screen, music only. The time is shared equally: tick who's in it below.",
   fiction: "Your own story: paste your brief (any length, even the whole story) and Claude writes and directs it as a cinematic film with dialogue in each person's own voice, " +
@@ -4607,11 +4610,19 @@ const lpKindSet = (kind) => {
   $("#lpKindHint").textContent = LP_KIND_HINT[kind];
   $("#lpIntroBox").hidden = !intro; $("#lpNotIntro").hidden = intro; $("#lpEnhRow").hidden = intro;
   if (intro) { $("#lpEnhance").checked = false; lpEnhanceSet(); }
-  $("#lpTopicLabel").textContent = fiction ? "Your story brief (optional, any length)" : "The struggle (optional)";
-  $("#lpTopic").rows = fiction ? 9 : 2;
+  const silent = kind === "silent";
+  $("#lpTopicLabel").textContent = fiction ? "Your story brief (optional, any length)" : silent ? "The scene: your beats and the feeling" : "The struggle (optional)";
+  $("#lpTopic").rows = fiction || silent ? 9 : 2;
   $("#lpTopic").placeholder = fiction ? "Paste your film's brief: the title, what happens, the look and feel you want. Leave empty and Claude invents an original sci-fi story for him."
+    : silent ? "e.g. The Things He Misses. 0-3 s: Ethan finishes eating at his desk, notices the family photo. 3-5 s: he scrolls old family pictures on his phone. 5-8 s: a video of them laughing plays silently, a small smile appears, then fades. 8-10 s: he looks at the photo, his eyes a little wet. 10-12 s: he puts the phone down, sits on his bed and looks out of the window."
     : "e.g. the 5 A.M. run that never happens / calling his mum back tomorrow. Leave empty and Claude picks one no earlier video used.";
-  $("#lpTopicCount").hidden = !fiction;
+  $("#lpTopicCount").hidden = !(fiction || silent);
+  // a silent scene has no voice and no words: no narrator, speed or subtitles; its lengths start at 10 s
+  $("#lpVoiceRow").hidden = silent; $("#lpWordsRow").hidden = silent;
+  const sec = $("#lpSeconds"), was = sec.value;
+  sec.innerHTML = (silent ? [["10", "10 s"], ["12", "12 s"], ["15", "15 s"], ["20", "20 s"], ["30", "30 s"], ["45", "45 s"], ["60", "60 s"]]
+    : [["25", "25 s"], ["35", "35 s (like the original)"], ["45", "45 s"], ["60", "60 s"]]).map(([v, n]) => `<option value="${v}">${n}</option>`).join("");
+  sec.value = [...sec.options].some((o) => o.value === was) ? was : silent ? "12" : "35";
   $("#lpTopicCount").textContent = lpLetters();
   try { localStorage.setItem("lpKind", kind); } catch (e) {}
 };
@@ -4636,7 +4647,7 @@ const lpFill = () => {
   $("#lpPLook").innerHTML = Object.entries(LP_LOOK).map(([k, opts]) => `<div><label for="lpP-${k}">${LP_LOOK_NAMES[k]}</label><select id="lpP-${k}">` +
     opts.map((o) => `<option>${o}</option>`).join("") + `</select></div>`).join("") +
     `<div><label><input type="checkbox" id="lpP-glasses"> Glasses</label> <label><input type="checkbox" id="lpP-beard"> Beard</label> <label><input type="checkbox" id="lpP-kid"> A child</label></div>`;
-  try { const k = localStorage.getItem("lpKind"); lpKindSet(k === "fiction" || k === "intro" ? k : "life"); } catch (e) { lpKindSet("life"); }
+  try { const k = localStorage.getItem("lpKind"); lpKindSet(["fiction", "intro", "silent"].includes(k) ? k : "life"); } catch (e) { lpKindSet("life"); }
   try { const h = localStorage.getItem("lpIHero"); if (h) $("#lpIHero").value = h; const f = localStorage.getItem("lpIFilm"); if (f) $("#lpIFilm").value = f; } catch (e) {}
   lpLoadCast();
 };

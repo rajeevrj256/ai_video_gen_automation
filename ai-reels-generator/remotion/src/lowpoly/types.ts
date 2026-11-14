@@ -116,7 +116,7 @@ export type Action =
   | 'skydive' // falling free through the air, arms and legs spread
   | 'brace'; // standing on a moving vehicle's top, knees bent, arms out for balance
 
-export type Expr = 'neutral' | 'tired' | 'sad' | 'worried' | 'surprised' | 'happy' | 'determined' | 'annoyed' | 'asleep' | 'blank' | 'scared' | 'angry' | 'amazed' | 'pained';
+export type Expr = 'neutral' | 'tired' | 'sad' | 'worried' | 'surprised' | 'happy' | 'determined' | 'annoyed' | 'asleep' | 'blank' | 'scared' | 'angry' | 'amazed' | 'pained' | 'soft-smile' | 'teary';
 
 export type Spot = 'center' | 'left' | 'right' | 'bed' | 'chair' | 'desk' | 'door' | 'window' | 'couch' | 'mirror' | 'counter' | 'far';
 
@@ -148,12 +148,15 @@ export type Actor = {
   talk?: [number, number][]; // seconds into the shot when this person is speaking (the mouth moves)
   at?: number; // seconds into the shot of his key moment (the catch, the jump, the landing, the punch)
   look?: string; // a key of cast: the person in this shot he looks at, talks to, points at or walks up to
+  gaze?: string; // ...or what he looks at that isn't a person: 'thing:photo' (a thing in the shot), 'window', 'door'
+  then?: Expr; // his face changes to this during the shot (a smile that comes, then fades: 'soft-smile' then 'sad')
+  thenAt?: number; // seconds into the shot when it does
   on?: number; // index into the shot's big things: the vehicle he is in (drive, ride) or standing on (any other action)
   screen?: PhoneScreen; // what the phone in his hand shows (Man.tsx phoneScreen; story.LPScreen)
 };
 
 // A held phone's screen, written by Claude for the story: a chat, a call, a notification... (story.SCREEN_KINDS)
-export type ScreenKind = 'chat' | 'call' | 'notification' | 'alarm' | 'lock' | 'feed' | 'map';
+export type ScreenKind = 'chat' | 'call' | 'notification' | 'alarm' | 'lock' | 'feed' | 'map' | 'gallery' | 'video';
 export type PhoneScreen = {
   kind: ScreenKind;
   name: string; // the contact, the caller, the alarm's label, the place on the map
@@ -163,7 +166,7 @@ export type PhoneScreen = {
 };
 
 export type Thing = {
-  kind: 'phone' | 'alarm' | 'mug' | 'laptop' | 'book' | 'shoes' | 'plate' | 'bag' | 'plant' | 'bottle' | 'calendar' | 'note' | 'pizza';
+  kind: 'phone' | 'alarm' | 'mug' | 'laptop' | 'book' | 'shoes' | 'plate' | 'bag' | 'plant' | 'bottle' | 'calendar' | 'note' | 'pizza' | 'photo';
   spot: Spot;
   glow?: boolean; // a lit screen
   label?: string; // a word on a note, the clock's time, a calendar's day

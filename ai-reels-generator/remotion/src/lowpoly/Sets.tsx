@@ -5,11 +5,14 @@
 import React from 'react';
 import * as THREE from 'three';
 import {facetedBall, mat, rng} from './Man';
+import {drawFamily} from './family';
 import type {Light, SetName, Spot} from './types';
 
 // `stand`: where someone who isn't sitting stands at a seat spot (in front of a bench or bed, beside a chair at a
 // table or desk); without it a man standing 'at the bench' stood inside it. Kept in step with timeline.set_spots.
 export type SpotDef = {x: number; z: number; ry: number; seat?: number; bed?: number; stand?: [number, number]};
+// where things are put down for someone at a spot (his desk), facing ry: the row of things runs across that way
+export type Top = {p: V3; ry: number};
 export type SetDef = {
   spots: Partial<Record<Spot, SpotDef>>;
   wide: {pos: [number, number, number]; look: [number, number, number]};
@@ -18,6 +21,9 @@ export type SetDef = {
   walk: 'x' | 'z'; // the way a walk goes when the shot gives no destination
   road?: number; // z of the traffic lane (walk 'x' sets with a road): cars and buses drive and stand there, never on the pavement
   surface: [number, number, number]; // where things are put
+  tops?: Partial<Record<Spot, Top>>; // ...or, for someone at one of these spots, on this (his desk)
+  bedEdges?: [number, number, number][]; // x, z, ry: where he sits on the bed's edge (the foot first) to face something
+  marks?: {window?: V3; door?: V3}; // what someone can look at besides people and things
   lamp?: [number, number, number]; // where a lamp's light comes from when one is on
   reach?: number; // how far a vehicle under way can travel through it in one shot (metres)
   drive?: number; // the line across the walk a vehicle under way follows where there is no road (else the road, else its spot)
@@ -415,12 +421,17 @@ const bedroom: SetDef = {
     window: {x: -0.45, z: -2.2, ry: Math.PI},
     door: {x: -2.6, z: 1.0, ry: Math.PI / 2},
     chair: {x: 1.55, z: -0.35, ry: 0, seat: 0.55, stand: [1.55, 0.35]},
+    desk: {x: -3.0, z: 0.0, ry: Math.PI / 2, seat: 0.48, stand: [-2.95, 0.8]},
   },
   wide: {pos: [2.6, 2.7, 3.6], look: [-0.2, 0.9, -1.6]},
   sun: [-1.5, 4.5, -6],
   outdoor: false,
   walk: 'x',
   surface: [-1.8, 0.58, -2.5],
+  // his desk by the left wall (the user's silent scene: he eats there, the family photo stands on it)
+  tops: {desk: {p: [-2.3, 0.76, 0.0], ry: -Math.PI / 2}},
+  bedEdges: [[1.55, -0.45, 0], [0.8, -1.25, -Math.PI / 2], [2.3, -1.25, Math.PI / 2]],
+  marks: {window: [-0.45, 1.75, -2.95]},
   Draw: ({look}) => (
     <group>
       <Room floor="#7a5e4a" wall="#a9b0ad" side="#9ea6a4" look={look} />
@@ -455,6 +466,18 @@ const bedroom: SetDef = {
       <FairyLights from={[2.45, 1.32, -2.9]} to={[3.4, 1.0, -2.45]} n={9} sag={0.12} look={look} />
       <FairyLights from={[0.35, 2.65, -2.9]} to={[3.3, 2.65, -2.9]} n={16} sag={0.14} look={look} />
       <Papers at={[[-1.15, 1.45, 0.4], [0.75, 1.55, -0.5], [-2.2, 1.6, 1.1], [1.2, 0.95, 0.2]]} look={look} />
+      {/* his desk by the left wall, facing into the room (his back to the wall), its chair, a small lamp on the far
+          corner and a shelf of books on the wall behind him */}
+      <Table p={[-2.3, 0, 0.0]} s={[0.72, 0.76, 1.15]} c={shadeOf('#8a6448', look.shade)} />
+      <Chair p={[-3.0, 0, 0.0]} ry={Math.PI / 2} c={shadeOf('#6e4a33', look.shade)} />
+      <Cyl p={[-2.08, 0.79, -0.44]} r1={0.07} r2={0.08} h={0.04} c="#3c3a38" seg={6} />
+      <Cyl p={[-2.08, 0.97, -0.44]} r1={0.012} r2={0.012} h={0.34} c="#3c3a38" seg={5} />
+      <Cyl p={[-2.12, 1.16, -0.42]} r1={0.05} r2={0.1} h={0.12} c="#e8c896" seg={7} glow={look.lamp > 0 ? 0.45 : 0} />
+      {look.lamp > 0 ? <pointLight position={[-2.15, 1.05, -0.4]} color="#ffc98a" intensity={0.35 * look.lamp} distance={2.2} decay={2} /> : null}
+      <B p={[-3.36, 1.85, 0.05]} s={[0.26, 0.03, 1.0]} c={shadeOf('#6e4a33', look.shade)} />
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <B key={`bk${i}`} p={[-3.36, 1.96, -0.32 + i * 0.12]} s={[0.2, 0.2 + (i % 3) * 0.03, 0.08]} c={shadeOf(['#a5523f', '#3f5f7a', '#c9a35f', '#4c6b46', '#7a2e3a', '#e7e3dc'][i], look.shade)} />
+      ))}
     </group>
   ),
 };
@@ -1805,9 +1828,43 @@ export const SETS: Record<SetName, SetDef> = {
 
 export const spotOf = (set: SetDef, spot: string): SpotDef => set.spots[spot as Spot] ?? set.spots.center ?? {x: 0, z: 0, ry: 0};
 
-// Things put down in the scene: on the set's surface, side by side.
-export const ThingView: React.FC<{kind: string; p: V3; glow?: boolean; label?: string}> = ({kind, p, glow, label}) => {
+// The framed photo of his family (family.ts), drawn once.
+let familyTex: THREE.CanvasTexture | null = null;
+const familyPhoto = () => {
+  if (!familyTex) {
+    const c = document.createElement('canvas');
+    c.width = 320;
+    c.height = 400;
+    drawFamily(c.getContext('2d')!, 0, 0, 320, 400, 'park', {seed: 2});
+    familyTex = new THREE.CanvasTexture(c);
+    familyTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  return familyTex;
+};
+
+// Things put down in the scene: on the set's surface (or the desk of the one sitting there), side by side, turned
+// to face him (`ry`).
+export const ThingView: React.FC<{kind: string; p: V3; glow?: boolean; label?: string; ry?: number}> = ({kind, p, glow, label, ry = 0}) => {
+  if (ry) {
+    return (
+      <group position={p} rotation={[0, ry, 0]}>
+        <ThingView kind={kind} p={[0, 0, 0]} glow={glow} label={label} />
+      </group>
+    );
+  }
   switch (kind) {
+    case 'photo':
+      // a family photo in a wooden frame, propped up on its stand, leaning back a little
+      return (
+        <group position={p} rotation={[-0.16, 0, 0]}>
+          <B p={[0, 0.15, 0]} s={[0.25, 0.3, 0.025]} c="#6b4632" />
+          <mesh position={[0, 0.15, 0.0135]}>
+            <planeGeometry args={[0.2, 0.25]} />
+            <meshStandardMaterial map={familyPhoto()} roughness={0.55} emissive="#ffffff" emissiveMap={familyPhoto()} emissiveIntensity={0.12} />
+          </mesh>
+          <B p={[0, 0.08, -0.07]} s={[0.04, 0.16, 0.012]} c="#5a3a28" r={[0.6, 0, 0]} />
+        </group>
+      );
     case 'alarm': {
       const tex = labelTexture(label || '5:30', '#ff4a3a', '#141414', 256, 128, 'bold 92px "Courier New", monospace');
       return (

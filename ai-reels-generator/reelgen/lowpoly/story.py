@@ -38,10 +38,11 @@ ActionName = Literal[
     "carried", "fall", "flee", "cower", "help-up", "talk", "gasp",
     "drive", "ride", "jump-off", "skydive", "brace"]
 ExprName = Literal["neutral", "tired", "sad", "worried", "surprised", "happy", "determined", "annoyed", "asleep", "blank", "scared",
-                   "angry", "amazed", "pained"]
+                   "angry", "amazed", "pained", "soft-smile", "teary"]
 SpotName = Literal["center", "left", "right", "bed", "chair", "desk", "door", "window", "couch", "mirror", "counter", "far"]
 HoldName = Literal["none", "phone", "mug", "book", "laptop", "shoes", "bag", "keys", "fork"]
-ThingName = Literal["phone", "alarm", "mug", "laptop", "book", "shoes", "plate", "bag", "plant", "bottle", "calendar", "note", "pizza"]
+ThingName = Literal["phone", "alarm", "mug", "laptop", "book", "shoes", "plate", "bag", "plant", "bottle", "calendar", "note", "pizza",
+                    "photo"]
 SoundName = Literal["alarm", "footsteps", "door", "knock", "notify", "buzz", "typing", "tap", "ding", "chime", "bell", "page", "rain",
                     "thud", "heartbeat", "tick", "coins", "cheer", "pop", "scribble", "swoosh", "send",
                     "impact", "crash", "glass", "crack", "creak", "skid", "siren", "wind", "fire", "sparks", "flyby", "crowd", "roar", "stomp", "flap"]
@@ -60,11 +61,11 @@ VEHICLES = {"car", "bus", "truck"}  # built in; a design ('made') that travels i
 FxName = Literal["shockwave", "crack", "dust", "speed", "sparks", "debris", "glass", "smoke", "fire", "shake", "flash", "alarm", "rain", "wind", "meteor"]
 VoiceKind = Literal["man", "young-man", "woman", "young-woman", "older-man", "older-woman", "child", "deep-man", "british-man",
                     "british-woman"]
-KINDS = ("life", "fiction")
+KINDS = ("life", "fiction", "silent")
 
 # what each set has (the spots the editor knows there); the writer is told, and `repair` falls back to 'center'
 SPOTS: dict[str, set[str]] = {
-    "bedroom": {"bed", "center", "left", "right", "window", "door", "chair"},
+    "bedroom": {"bed", "center", "left", "right", "window", "door", "chair", "desk"},
     "hallway": {"door", "center", "chair", "left", "right"},
     "street": {"center", "left", "right", "door"},
     "park": {"center", "left", "right", "chair", "far"},
@@ -129,13 +130,15 @@ class LPMessage(BaseModel):
 
 # What a held phone shows (the user: "on this video there [is a] family message 'where are you', but [the] phone [is]
 # showing just blank, must use what need to show on phone"); drawn on the screen by Man.tsx `phoneScreen`.
-SCREEN_KINDS = ["chat", "call", "notification", "alarm", "lock", "feed", "map"]
+SCREEN_KINDS = ["chat", "call", "notification", "alarm", "lock", "feed", "map", "gallery", "video"]
 
 
 class LPScreen(BaseModel):
-    kind: Literal["chat", "call", "notification", "alarm", "lock", "feed", "map"] = Field(
+    kind: Literal["chat", "call", "notification", "alarm", "lock", "feed", "map", "gallery", "video"] = Field(
         description="chat = a conversation; call = an incoming call; notification = the lock screen with a message on it; "
-                    "alarm = an alarm ringing; lock = the lock screen only; feed = scrolling posts; map = directions")
+                    "alarm = an alarm ringing; lock = the lock screen only; feed = scrolling posts; map = directions; "
+                    "gallery = his photos of his family scrolling by (name = the album: 'Family'); video = a video of his "
+                    "family laughing together, playing with the sound off")
     name: str = Field("", description="who: the contact's name as it would be saved ('Mom', 'Dad', 'Mia', 'Boss'); for "
                                       "feed and map what it is ('Home', 'City Hospital'); never a brand or real app name")
     messages: list[LPMessage] = Field(default_factory=list, description="chat: 1-6 messages in order, the last arriving "
@@ -156,8 +159,13 @@ class LPActor(BaseModel):
     at: float | None = Field(None, description="for an action with a moment (catch, lift, throw, push-stop, super-jump, land, punch, "
                                                "fall): when it happens, as a fraction 0-1 of the shot; else none")
     look_at: str = Field("", description="the person in this shot they look at, talk to, point at or walk up to: 'hero' or "
-                                         "that person's name exactly; empty when nobody in particular. They turn to face "
-                                         "them (seated or walking: their head turns)")
+                                         "that person's name exactly; or a thing in this shot ('photo', 'phone', 'plate') or "
+                                         "'window' / 'door'; empty when nobody in particular. They turn to face them (seated "
+                                         "or walking: their head turns and tips toward it; sitting on the bed, they sit on "
+                                         "the side that faces it)")
+    then: ExprName | None = Field(None, description="his face changes to this during the shot (a smile that comes, then "
+                                                     "fades: expression 'soft-smile', then 'sad'); none = it stays")
+    then_at: float | None = Field(None, description="when the face changes, a fraction 0-1 of the shot (default 0.6)")
     screen: LPScreen | None = Field(None, description="with a phone in hand ('phone', 'lie-phone', or hold 'phone'): what "
                                     "its screen shows, from the story (the message the line is about, who is calling); none "
                                     "when it doesn't matter")
@@ -224,6 +232,8 @@ class LPShot(BaseModel):
     pause: float = Field(0.0, description="extra seconds of silence after the line, for a beat to land or an action to play out "
                                           "(0-2; fiction up to 4)")
     red: bool = Field(False, description="the last line's punch, shown in red; only on the final line")
+    seconds: float = Field(0.0, description="a silent scene's shot: how long it holds (2-5 s); 0 = as long as its line")
+    seconds: float = Field(0.0, description="a silent scene's shot: how long it holds (2-5 s); 0 = as long as its line")
     big: list[LPBig] = Field(default_factory=list, description="big objects in the shot and what they do (fiction)")
     fx: list[LPFx] = Field(default_factory=list, description="effects (fiction): most come with the actions by themselves")
     slowmo: bool = Field(False, description="the action in slow motion (the key rescue moment, a catch); give it a longer pause")
@@ -306,7 +316,7 @@ class Story(BaseModel):
     made: list[LPMade] = Field(default_factory=list, description="vehicles and big things the film needs that the editor "
                                                                 "hasn't got (a plane, a jet, a helicopter, a motorbike, a "
                                                                 "boat), designed from parts; empty for most films")
-    kind: Literal["life", "fiction"] = "life"
+    kind: Literal["life", "fiction", "silent"] = "life"
     hero: bool = Field(True, description="the channel's man is in this film; false when the brief has no people in it (a "
                                          "film about animals, creatures or a place) or none who could be him")
     poster: SkipJsonSchema[dict] = {}  # 🎭 the cast intro's closing poster: title, tagline, the face over the city
@@ -379,6 +389,46 @@ brand, a real app or a real person's name on a screen.
 'door', 'notify'/'buzz' for a phone, 'typing', 'tick' for time passing. A few, not on every shot.
 """ + STAGING + """
 LENGTH: {length}. Each shot holds about 2-4 seconds (its line plus a breath); a silent stamp beat about 2 s."""
+
+# 🤫 A wordless emotional scene (the user: "i want to create one video like this without narration or dialogue but
+# must be emotional", with their own beats for 'The Things He Misses': he finishes eating at his desk, sees the family
+# photo, scrolls through old family pictures, a video of them laughing plays silently, a smile appears and fades, his
+# eyes go a little wet, he puts the phone down and sits on his bed looking out of the window; "Don't make Ethan cry
+# dramatically"; "we can use these silent emotional sequences between funny everyday moments").
+SILENT_HEAD = """You direct wordless emotional 3D animated scenes starring the channel's own low-poly man (a big faceted \
+head, curly brown hair, square glasses, a red sweater: 'hero'; his name is Ethan). No narration, no dialogue and no \
+words on screen: every shot's `line` is empty and has no `stamp`. What he feels is carried by what he does, his face, \
+his pauses, the things around him, the light and the sound.
+
+THE SCENE:
+- Follow the user's brief closely: their beats, in their order, at their times (each shot's `seconds`, 2-5 s; the \
+shots' seconds add up to the length).
+- Quiet, real emotion: never crying, falling to his knees or big gestures. A glance held a beat too long, a small smile \
+that fades, eyes that go a little wet ('teary'), a slow breath, putting something down slowly. Subtle is the point.
+- One beat per shot, held longer than in a talking film so a look can land. Cut on a look: he looks at something, the \
+next shot is that thing (the 'detail' camera, the phone's screen), then back to his face ('face').
+- A face that changes inside a shot: `then` (and `then_at`): a smile that appears and fades = expression \
+'soft-smile', then 'sad'; eyes going wet = 'teary' (only once or twice in a scene).
+- `look_at` a thing in the shot ('photo', 'phone', 'plate') or 'window': his head turns and tips toward it. Sitting on \
+the 'bed' with `look_at` 'window', he sits on the side of the bed that faces it.
+- His bedroom has a 'desk' spot (a desk by the wall with a chair): the shot's `things` stand on his desk in front of \
+him there. A framed family 'photo' (his mum, his dad, his sister Mia and him, smiling in a park) can stand on it.
+- His phone ('phone' action, or hold 'phone'): give him a `screen`: 'gallery' = his family photos scrolling by (name \
+'Family'), 'video' = a video of them laughing together with the sound off. Show it with the 'detail' camera (his view \
+of the screen), then his face.
+- Light: his room at night with the lamps on ('lamp' or 'night'); one place mostly.
+- Sounds: only the room's own, a few: a fork on the plate 'tap', setting the phone down 'thud', a 'page'. The editor \
+lays a quiet room tone, distant city traffic and a soft piano under the whole scene; no voices.
+- The last shot holds 3-4 s; the scene fades to black with the music.
+- Title, description and post: the feeling in plain words.
+
+"""
+SILENT_RULES = SILENT_HEAD + RULES[RULES.index("THE PICTURES"):]
+SILENT_SHORT = ("a 9:16 wordless scene of {seconds} seconds: {shots} shots, every `line` empty, the shots' `seconds` "
+                "adding up to {seconds}")
+SILENT_FILM = ("a 16:9 wordless short film of {minutes} minutes: {shots} shots, every `line` empty, the shots' `seconds` "
+               "adding up to its length, in a few quiet movements (the moment, the memory, the feeling, what he does with it)")
+
 
 SHORT = ("a 9:16 Short of {seconds} seconds: {shots} shots, about {words} words of narration in all, a stamp every 2-4 "
          "shots, one person (him) in nearly every shot")
@@ -942,12 +992,13 @@ def _hero(cfg: Config | None) -> str:
     return (str(getattr(cfg, "hero_name", "") or "").strip() or growth.HERO) if cfg is not None else growth.HERO
 
 
-def _base(cfg: Config | None, fiction: bool, length: str, *, short: bool, script: bool = False, grow: bool = True) -> str:
+def _base(cfg: Config | None, fiction: bool, length: str, *, short: bool, script: bool = False, grow: bool = True,
+          silent: bool = False) -> str:
     """A writer's rules for this kind and length, with the channel rules (growth.py) when they are on."""
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
-    text = (FICTION if fiction else RULES).format(spots=spots, length=length, creatures=CREATURES)
+    text = (SILENT_RULES if silent else FICTION if fiction else RULES).format(spots=spots, length=length, creatures=CREATURES)
     if grow and _grows(cfg):
-        text += growth.block(short=short, fiction=fiction, script=script, hero=_hero(cfg))
+        text += growth.block(short=short, fiction=fiction, script=script, hero=_hero(cfg), silent=silent)
     return text
 
 
@@ -976,11 +1027,13 @@ editor's vocabulary, the length, the staging). Return the whole storyboard, chan
 def revise(cfg: Config, story: Story, instruction: str, *, short: bool, seconds: int, minutes: float) -> Story:
     """The same storyboard with the user's changes (one call, no web); everything they didn't ask about kept."""
     fiction = story.kind == "fiction"
-    system = _system(fiction, short, seconds, minutes, cfg=cfg) + ("" if fiction else CREATURES) + REVISE
+    system = _system(fiction, short, seconds, minutes, cfg=cfg, silent=story.kind == "silent") + ("" if fiction else CREATURES) + REVISE
     prompt = (f"THE STORYBOARD AS IT IS:\n{story.model_dump_json(indent=1)}\n\nTHE USER'S CHANGES:\n{instruction.strip()}"
               f"{_known(cfg)}")
     out = ask(cfg.ai_backend, cfg.claude_model, system, prompt, Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
     out.kind = story.kind
+    if out.kind == "silent":
+        hush(out)
     if short and not _grows(cfg) and "#shorts" not in [h.lower() for h in out.hashtags]:
         out.hashtags = out.hashtags[:2] + ["#shorts"]
     if _grows(cfg):  # the post kept tidy; what the user asked for is never sent back
@@ -1067,8 +1120,15 @@ TAKE = ("\n\n" + TAKE_MARK + " (one of several storyboards written from the same
         "it this way, and the prompt still holds):\n{take}")
 
 
-def _system(fiction: bool, short: bool, seconds: int, minutes: float, script: bool = False, cfg: Config | None = None) -> str:
+def _system(fiction: bool, short: bool, seconds: int, minutes: float, script: bool = False, cfg: Config | None = None,
+            silent: bool = False) -> str:
     """The writer's rules. `cfg` brings the channel rules (growth.py) with them when they are on for this job."""
+    if silent:
+        if short:
+            length = SILENT_SHORT.format(seconds=seconds, shots=max(4, round(seconds / 2.8)))
+        else:
+            length = SILENT_FILM.format(minutes=f"{minutes:g}", shots=round(minutes * 60 / 3.6))
+        return _base(cfg, False, length, short=short, silent=True)
     if script:  # the user's own script: their words and visuals, whatever the kind of film
         return (_system(fiction, short, seconds, minutes) + ("" if fiction else CREATURES) + SCRIPT_RULES
                 + (growth.block(short=short, fiction=fiction, script=True) if _grows(cfg) else ""))
@@ -1111,12 +1171,13 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
     """The story, shot by shot (a film over LONG_FROM minutes: outline, then act by act). `take`: this storyboard's own
     way of telling it, one of several drafts the user chooses from (boards.py)."""
     fiction = kind == "fiction"
-    sections = parse_script(topic)
-    system = _system(fiction, short, seconds, minutes, script=bool(sections), cfg=cfg)
+    silent = kind == "silent"
+    sections = [] if silent else parse_script(topic)
+    system = _system(fiction, short, seconds, minutes, script=bool(sections), cfg=cfg, silent=silent)
     ask_for, made, past = _asking(cfg, topic, fiction, take)
     if sections:
         progress(f"Your script: {len(sections)} sections, {len(script_lines(sections))} spoken lines, staged as written")
-    if not short and minutes > LONG_FROM and not sections:
+    if not short and minutes > LONG_FROM and not sections and not silent:
         story = write_long(cfg, ask_for, made, minutes=minutes, fiction=fiction, progress=progress, save_to=save_to)
         story.kind = "fiction" if fiction else "life"
         if _grows(cfg):  # too long to send back whole: the post tidied, a label of a title written again
@@ -1133,14 +1194,28 @@ def write(cfg: Config, topic: str, *, short: bool, seconds: int = 35, minutes: f
                     "different struggle and story.", Story, allow_web=False, effort=cfg.claude_effort, timeout=2400)
     if short and not _grows(cfg) and "#shorts" not in [h.lower() for h in story.hashtags]:
         story.hashtags = story.hashtags[:2] + ["#shorts"]  # (with the channel rules: growth.tidy, three and '#shorts')
-    story.kind = "fiction" if fiction else "life"
+    story.kind = "silent" if silent else "fiction" if fiction else "life"
+    if silent:
+        hush(story)
     if _grows(cfg):  # 📈 the channel's rules: tidied in code, sent back once if it breaks one only the writer can fix
-        story = growth.enforce(cfg, story, short=short, seconds=seconds, minutes=minutes, script=bool(sections),
+        story = growth.enforce(cfg, story, short=short, seconds=seconds, minutes=minutes, script=bool(sections) or silent,
                                hero=_hero(cfg), progress=progress)
         if sections:
             keep_script_lines(story, script_lines(sections))
-        story.kind = "fiction" if fiction else "life"
+        story.kind = "silent" if silent else "fiction" if fiction else "life"
     return story
+
+
+def hush(story: Story) -> list[str]:
+    """A silent scene says nothing: no line, no stamp, no red words (the writer is told so; this makes sure)."""
+    notes = []
+    for i, s in enumerate(story.shots, 1):
+        if s.line.strip() or s.stamp.strip():
+            notes.append(f"Shot {i}'s words taken out (a silent scene): '{(s.stamp + ' ' + s.line).strip()}'")
+        s.line, s.stamp, s.red, s.speaker = "", "", False, "narrator"
+        if s.seconds <= 0:
+            s.seconds = round(max(2.0, 1.6 + s.pause), 2)
+    return notes
 
 
 
@@ -1171,7 +1246,7 @@ def pitches(cfg: Config, topic: str, *, kind: str, short: bool, seconds: int, mi
     """`n` clearly different takes on one prompt, each the seed of one storyboard draft (written in parallel, they would
     otherwise not know about each other and could tell the same story three times)."""
     fiction = kind == "fiction"
-    system = _system(fiction, short, seconds, minutes, script=bool(parse_script(topic)), cfg=cfg) + PITCH.format(n=n)
+    system = _system(fiction, short, seconds, minutes, script=bool(parse_script(topic)), cfg=cfg, silent=kind == "silent") + PITCH.format(n=n)
     ask_for, made, _ = _asking(cfg, topic, fiction)
     prompt = (f"{ask_for}\n\nAlready made (never the same struggle, story or title again):\n{made}{_known(cfg)}"
               + (f"\n\nStoryboards already written for this prompt (every new take must differ from each of them):\n{others}"
@@ -1573,7 +1648,7 @@ def restage(cfg: Config, story: Story, progress=log.info) -> Story:
     staging."""
     spots = "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in SPOTS.items())
     fiction = story.kind == "fiction"
-    system = ((FICTION if fiction else RULES).format(spots=spots, length="the same shots as given, one staging each", creatures=CREATURES)
+    system = ((FICTION if fiction else SILENT_RULES if story.kind == "silent" else RULES).format(spots=spots, length="the same shots as given, one staging each", creatures=CREATURES)
               + ("" if fiction else CREATURES) + RESTAGE)
     if story.made:
         system += "\nThis film's own designs (big things of kind 'made', names exactly): " + "; ".join(
@@ -1673,7 +1748,12 @@ def _stage(story: Story, s: LPShot) -> list[str]:
     here: dict[str, LPActor] = {}
     for a in s.actors:
         here.setdefault(who_key(a.who), a)
+    seen = {th.kind for th in s.things} | {"window", "door"}  # a look at the photo on the desk, at the window
     for a in s.actors:
+        raw = (a.look_at or "").strip().lower()
+        if raw in seen:
+            a.look_at = raw
+            continue
         k = who_key(a.look_at)
         a.look_at = names.get(k, "") if k in here and k != who_key(a.who) else ""
     subject = who_key(s.subject)

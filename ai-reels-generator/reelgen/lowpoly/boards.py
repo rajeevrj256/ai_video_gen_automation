@@ -127,7 +127,7 @@ def write_round(cfg: Config, sid: str, count: int, progress) -> int:
     cfg = _rules_cfg(cfg, req)
     fiction = req.get("kind") == "fiction"
     short = req.get("format") != "film"
-    seconds = max(20, min(60, int(req.get("seconds", 35))))
+    seconds = max(8 if req.get("kind") == "silent" else 20, min(60, int(req.get("seconds", 35))))
     minutes = max(2.5, min(15.0, float(req.get("minutes", 3.5))))
     long = is_long(req)
     topic = (req.get("topic") or "").strip()
@@ -138,7 +138,7 @@ def write_round(cfg: Config, sid: str, count: int, progress) -> int:
     count = max(1, min(COUNTS[-1], int(count)))
     progress(f"Claude is thinking up {count} different takes on your prompt"
              + (" (to read as act-by-act outlines: a film this long is written act by act once you approve one)" if long else ""))
-    takes = S.pitches(cfg, topic, kind="fiction" if fiction else "life", short=short, seconds=seconds, minutes=minutes,
+    takes = S.pitches(cfg, topic, kind=req.get("kind") if req.get("kind") in S.KINDS else "life", short=short, seconds=seconds, minutes=minutes,
                       n=count, others=_others(s))
     if not takes:
         raise RuntimeError("Claude proposed no takes on the prompt")
@@ -172,7 +172,7 @@ def write_round(cfg: Config, sid: str, count: int, progress) -> int:
                         "seconds": round(sum(a.minutes for a in outline.acts) * 60), "cast": [c.name for c in outline.cast]}
             else:
                 story = S.write(cfg, topic, short=short, seconds=seconds, minutes=minutes, progress=vp,
-                                kind="fiction" if fiction else "life", take=text)
+                                kind=req.get("kind") if req.get("kind") in S.KINDS else "life", take=text)
                 data = story.model_dump()
                 info = {"title": story.title.strip(), "problem": story.problem.strip(), "shots": len(story.shots),
                         "seconds": estimate(story), "cast": [c.name for c in story.cast]}
@@ -230,7 +230,7 @@ def change_round(cfg: Config, sid: str, n: int, instruction: str, progress) -> i
     data = json.loads(path.read_text(encoding="utf-8"))
     fiction = req.get("kind") == "fiction"
     short = req.get("format") != "film"
-    seconds = max(20, min(60, int(req.get("seconds", 35))))
+    seconds = max(8 if req.get("kind") == "silent" else 20, min(60, int(req.get("seconds", 35))))
     minutes = max(2.5, min(15.0, float(req.get("minutes", 3.5))))
     try:
         if "outline" in data:

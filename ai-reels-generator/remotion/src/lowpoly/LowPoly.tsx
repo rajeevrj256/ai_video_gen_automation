@@ -54,7 +54,7 @@ import {
   isCreature,
 } from './Big';
 import {flashAt, FxView, shakeAt, type FxCtx} from './Fx';
-import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot, NameCard} from './types';
+import type {Action, Actor, Big, Cam, Caption, Design, Fx, Hold, Insert, LowPolyProps, LPShot, NameCard, Spot} from './types';
 import {PosterBusts, PosterScene, PosterWords} from './Poster';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
@@ -101,6 +101,7 @@ export type Placed = {
   hold: Hold;
   seed: number;
   aim?: THREE.Vector3; // the head of the person he looks at (`look`), for the two-shot cameras
+  gazePt?: THREE.Vector3; // what he looks at that isn't a person (`gaze`: the photo, the window), for 'back'
   // in or on a vehicle: where he is in its own frame (root, ry) and the vehicle's frame in the world (pos, quat); he
   // is drawn inside that frame, so he turns, pitches and rolls with it
   local?: {root: V3; ry: number; pos: THREE.Vector3; quat: THREE.Quaternion};
@@ -113,7 +114,7 @@ export type Placed = {
 // walkers go side by side or pass each other), and for a walk to someone's spot, where he stops in front of them.
 export type Lane = {off: [number, number]; to?: [number, number]};
 // Which way he turns: toward the person he looks at (`explicit`), else toward the nearest one, a little.
-type Aim = {x: number; z: number; explicit: boolean};
+type Aim = {x: number; z: number; explicit: boolean; y?: number; gaze?: boolean};
 export const STOP_SHORT = 1.2; // = timeline.STOP_SHORT: a walk to someone's spot ends this far in front of them
 export const STOP_SEATED = 1.65; // = timeline.STOP_SEATED: ...or of someone on a seat (past their knees and the table)
 const SEAT_SPOTS = new Set(['chair', 'couch', 'desk', 'bed']); // = timeline.SEAT_SPOTS
@@ -121,6 +122,39 @@ const GAP = 0.8; // two people's middles never closer than this (heads are 0.7 w
 const WIDE_NEAR = 5; // outdoors the wide camera never closer than this to its subject
 const wrap = (d: number) => Math.atan2(Math.sin(d), Math.cos(d));
 const clampTo = (d: number, most: number) => Math.max(-most, Math.min(most, d));
+
+// Where each of a shot's things stands and which way it faces: on the desk of the person the shot is about when he
+// is at one (`tops`: the family photo in front of him), else on the set's surface (the bedside table), side by side.
+// Things that stand (a photo, a laptop) go to the back of a desk, a plate or a phone to its front.
+const BACK_OF_DESK = new Set(['photo', 'laptop', 'book', 'plant', 'calendar']);
+export const thingPlaces = (shot: LPShot, set: SetDef): {p: V3; ry: number}[] => {
+  const things = shot.things ?? [];
+  const n = things.length;
+  const lead = shot.actors[shot.focus ?? 0] ?? shot.actors[0];
+  const top = (lead && set.tops?.[lead.spot as Spot]) ?? shot.actors.map((a) => set.tops?.[a.spot as Spot]).find(Boolean);
+  if (!top) return things.map((_, i) => ({p: [set.surface[0] + (i - (n - 1) / 2) * 0.32, set.surface[1], set.surface[2]], ry: 0}));
+  const fw = [Math.sin(top.ry), Math.cos(top.ry)];
+  const right = [Math.cos(top.ry), -Math.sin(top.ry)];
+  return things.map((th, i) => {
+    const o = (i - (n - 1) / 2) * 0.34;
+    const d = BACK_OF_DESK.has(th.kind) ? -0.12 : 0.1;
+    return {p: [top.p[0] + right[0] * o + fw[0] * d, top.p[1], top.p[2] + right[1] * o + fw[1] * d] as V3, ry: top.ry};
+  });
+};
+
+// What someone looks at that isn't a person: a thing in the shot ('thing:photo') or a mark of the set (the window).
+const gazeAt = (gaze: string, shot: LPShot, set: SetDef): V3 | undefined => {
+  if (gaze.startsWith('thing:')) {
+    const i = (shot.things ?? []).findIndex((th) => th.kind === gaze.slice(6));
+    if (i < 0) return undefined;
+    const pl = thingPlaces(shot, set)[i];
+    return [pl.p[0], pl.p[1] + (gaze === 'thing:photo' ? 0.15 : 0.03), pl.p[2]];
+  }
+  const mark = set.marks?.[gaze as 'window' | 'door'];
+  if (mark) return mark;
+  const sp = set.spots[gaze as Spot];
+  return sp ? [sp.x - Math.sin(sp.ry) * 0.8, 1.6, sp.z - Math.cos(sp.ry) * 0.8] : undefined;
+};
 
 // facing in the room's own terms: 'camera' keeps the spot's natural way (at the desk, toward the screen), 'away' turns
 // his back to the open side (toward the counter, the window, the door), left/right face across the room
@@ -143,8 +177,21 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
       root = [sp.x, sp.bed + 0.2, sp.z];
       ry = 0;
     } else if (seat !== null || action === 'sit') {
-      root = [sp.x, 0, -0.45];
-      ry = 0;
+      // on the edge of the bed: the foot, or (looking at something, the window) the side that faces it most
+      const edges = set.bedEdges ?? [[sp.x, -0.45, 0]];
+      let e = edges[0];
+      if (aim?.gaze) {
+        let best = Infinity;
+        for (const c of edges) {
+          const d = Math.abs(wrap(Math.atan2(aim.x - c[0], aim.z - c[1]) - c[2]));
+          if (d < best - 0.05) {
+            best = d;
+            e = c;
+          }
+        }
+      }
+      root = [e[0], 0, e[1]];
+      ry = e[2];
       seat = sp.seat ?? 0.55;
     }
   } else if (lying) {
@@ -222,6 +269,11 @@ export const place = (a: Actor, k: number, set: SetDef, shot: LPShot, tReal: num
   if (aim?.explicit && !lying && action !== 'carried') {
     const diff = wrap(Math.atan2(aim.x - root[0], aim.z - root[2]) - ry - ps.twist);
     if (Math.abs(diff) > 0.08) ps.head = [ps.head[0], ps.head[1] + clampTo(diff, 1.15), ps.head[2]];
+  }
+  if (aim?.gaze && aim.y !== undefined && !lying) {
+    const pre = kin(a, action, k, shot, design, ps, root, ry);
+    const pitch = Math.atan2(pre.head.y - aim.y, Math.max(0.2, Math.hypot(aim.x - pre.head.x, aim.z - pre.head.z)));
+    ps.head = [Math.max(-0.45, Math.min(0.8, pitch)), ps.head[1], ps.head[2]];
   }
   if (ps.shift) {
     // the pose moves the whole body in his own frame (a jump's drift, feet driven back)
@@ -699,7 +751,7 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
     case 'back': {
       fov = 36;
       // over his shoulder at what he faces, or at the one he looks at (seated, his body may point elsewhere)
-      const toAim = who.aim ? who.aim.clone().sub(H).setY(0) : undefined;
+      const toAim = who.aim ? who.aim.clone().sub(H).setY(0) : who.gazePt ? who.gazePt.clone().sub(H).setY(0) : undefined;
       const fwd = toAim && toAim.lengthSq() > 0.04 ? toAim.clone().normalize() : new THREE.Vector3(Math.sin(who.ry), 0, Math.cos(who.ry));
       const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
       // high over the shoulder, so a chair or a table behind him stays under the shot
@@ -719,7 +771,9 @@ export const camFor = (cam: Cam, who: Placed, all: Placed[], set: SetDef, aspect
       }
       look = who.aim
         ? who.aim.clone().add(new THREE.Vector3(0, -0.45, 0)).lerp(H, 0.3)
-        : H.clone().addScaledVector(fwd, 2.0).add(new THREE.Vector3(0, -0.75, 0));
+        : who.gazePt
+          ? who.gazePt.clone().lerp(H, 0.35) // the window he looks at, past his shoulder
+          : H.clone().addScaledVector(fwd, 2.0).add(new THREE.Vector3(0, -0.75, 0));
       aperture = 0.45;
       // his back to a wall (a chair against it): the room leaves no space behind him and the camera ended up in his
       // hair; a two-shot from the side instead
@@ -1656,6 +1710,8 @@ export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<stri
     const me = where(k, t);
     const them = j >= 0 ? where(j, t) : undefined;
     if (them) return {x: them[0], z: them[1], explicit: true};
+    const g = shot.actors[k].gaze ? gazeAt(shot.actors[k].gaze!, shot, set) : undefined;
+    if (g) return {x: g[0], y: g[1], z: g[2], explicit: true, gaze: true};
     if (!me) return undefined;
     let best: Aim | undefined;
     let dist = 4;
@@ -1694,6 +1750,8 @@ export const placeAll = (shot: LPShot, set: SetDef, t: number, cast: Record<stri
   placed.forEach((pl, k) => {
     const j = target(k);
     if (pl && j >= 0 && placed[j]) pl.aim = placed[j]!.head.clone();
+    const g = pl && j < 0 && shot.actors[k].gaze ? gazeAt(shot.actors[k].gaze!, shot, set) : undefined;
+    if (pl && g) pl.gazePt = V(g);
   });
   return placed as Placed[];
 };
@@ -1944,7 +2002,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
   // the city taken back by nature: all the way, or growing over the shot from the modern city to the jungle
   const wild = shot.overgrown === 'ruined' ? 1 : shot.overgrown === 'growing' ? Math.min(1, Math.max(0, (ta / Math.max(0.5, da)) * 1.15)) : 0;
   const things = shot.things ?? [];
-  const s = V(set.surface);
+  const spots = thingPlaces(shot, set);
   return (
     <>
       <color attach="background" args={[look.sky[1]]} />
@@ -1961,7 +2019,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
       <set.Draw look={look} seed={(shot.seed ?? 1) % 997} />
       {wild > 0 ? <Overgrowth set={shot.set} g={wild} look={look} seed={(shot.seed ?? 1) % 997} /> : null}
       {things.map((th, i) => (
-        <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={[s.x + (i - (things.length - 1) / 2) * 0.32, s.y, s.z]} />
+        <ThingView key={i} kind={th.kind} glow={th.glow} label={th.label} p={spots[i].p} ry={spots[i].ry} />
       ))}
       {bigs.map(({b, st, i}) => (
         <BigView key={`big${i}`} b={b} st={st} seed={(shot.seed ?? 1) + i * 3} open={seated.has(i)} t={ta} night={look.shade < 0.8} pedals={{...pressAt(shot, t, i), at: placed.find((p) => p.ride === i && p.pedalAt)?.pedalAt}} wild={wild} />
@@ -1974,7 +2032,7 @@ const ShotScene: React.FC<{shot: LPShot; t: number; props: LowPolyProps; aspect:
           <Man
             design={pl.design}
             pose={pl.pose}
-            face={face(pl.actor.expression, ta, i + (shot.seed ?? 0), (pl.actor.talk ?? []).some(([a, b]) => t >= a && t < b))}
+            face={face(pl.actor.then && t >= (pl.actor.thenAt ?? shot.duration * 0.6) ? pl.actor.then : pl.actor.expression, ta, i + (shot.seed ?? 0), (pl.actor.talk ?? []).some(([a, b]) => t >= a && t < b))}
             root={pl.local ? pl.local.root : pl.root}
             ry={pl.local ? pl.local.ry : pl.ry}
             hold={pl.hold}

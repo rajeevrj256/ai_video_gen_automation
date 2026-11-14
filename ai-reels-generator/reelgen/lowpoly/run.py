@@ -130,12 +130,13 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
         ck.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
     intro = req.kind == "intro"  # 🎭 the cast introduced one by one (intro.py): a film, music only
+    silent = req.kind == "silent"  # 🤫 a wordless emotional scene: no voice, no words on screen, no tag
     short = req.format != "film" and not intro
     grow = bool(req.growth) and not intro  # 📈 the channel rules, for the writer and the timeline
     cfg = dataclasses.replace(cfg, growth_rules=grow, hero_name=(req.hero_name or "").strip() or G.HERO)
     fiction = req.kind == "fiction"
     vertical = short or bool(req.vertical)
-    seconds = max(20, min(60, int(req.seconds)))
+    seconds = max(8 if silent else 20, min(60, int(req.seconds)))
     minutes = max(2.5, min(15.0, float(req.minutes)))
     story_path = work / "story.json"
     board = state.get("board")  # ✍ a storyboard the user read and approved (boards.py)
@@ -181,8 +182,9 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     audio = {int(k): v for k, v in state.get("audio", {}).items()}
     # a re-make keeps the first version's seed: the same composed music and walk rhythm
     seed = int(state.get("seed") or uuid.uuid5(uuid.NAMESPACE_DNS, story.title + stamp).int % 100000)
-    look = dict(vertical=vertical, watermark="" if req.watermark.strip().lower() == OLD_MARK else req.watermark.strip(), seed=seed, words=req.words if req.words in WORDS else "on",
-                loop=grow and short, end_tag=G.end_tag(req.end_tag) if grow and short else "")
+    look = dict(vertical=vertical, watermark="" if req.watermark.strip().lower() == OLD_MARK else req.watermark.strip(), seed=seed,
+                words="off" if silent else req.words if req.words in WORDS else "on",
+                loop=grow and short and not silent, end_tag=G.end_tag(req.end_tag) if grow and short and not silent else "")
     if (not audio and any(x.line.strip() for x in story.shots)) or not all(Path(v["path"]).exists() for v in audio.values()):
         pace = int(req.pace)
         audio = _record(cfg, story, req, work, progress, pace)
@@ -211,7 +213,8 @@ def run_lowpoly(cfg: Config, req: LowPolyRequest, progress, resume: str | None =
     if not mixed:
         progress("Making the music and the sound")
         brief = (f"cinematic main-title theme for a movie's cast introduction, each character revealed in turn, building; {story.music_prompt}"
-                 if story.intro else f"cinematic film score for an animated sci-fi short film: {story.problem}; {story.music_prompt}" if story.kind == "fiction"
+                 if story.intro else f"soft melancholic solo piano, slow and sparse, intimate, nostalgic, under a wordless scene: {story.problem}; {story.music_prompt}"
+                 if story.kind == "silent" else f"cinematic film score for an animated sci-fi short film: {story.problem}; {story.music_prompt}" if story.kind == "fiction"
                  else f"soft score for a narrated low-poly animated short about {story.problem}; {story.music_prompt}")
         mix_cfg = cfg
         if restaging and not str(restaging.get("music", "")).startswith("AI music"):
