@@ -23,6 +23,7 @@ import math
 import os
 import queue
 import re
+import shutil
 import socket
 import subprocess
 import threading
@@ -183,8 +184,39 @@ def _node(cmd: list[str], progress, label: str, timeout: float) -> None:
         raise RuntimeError(f"{label} failed: {err[:300]}")
 
 
+PARALLEL_GPU = 2  # Blender processes sharing the frames on a graphics card: one draws while another builds, saves
+BLOCK = 12  # frames a process takes at a time (consecutive, so persistent data and held-frame copies still work)
+SECOND_NEEDS_GB = 1.5  # free card memory, after the first process's frame, before a second process starts
+TRIES = 3  # passes over the frames still missing (a process that died leaves its block for the next pass)
+
+
+def _procs_wanted() -> int:
+    """REEL_BLENDER_PARALLEL: how many Blender processes; empty or 0 = automatic (2 on a graphics card, 1 on the
+    processor, where Cycles already uses every core: measured, a second process only splits them)."""
+    try:
+        return max(0, min(8, int(os.environ.get("REEL_BLENDER_PARALLEL", "") or 0)))
+    except ValueError:
+        return 0
+
+
+def _card_free_gb() -> float | None:
+    """Free memory on the NVIDIA card (nvidia-smi), None when it can't be asked (another make of card)."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"], capture_output=True,
+                             text=True, timeout=20).stdout
+        return min(float(x) for x in out.split()) / 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _pump(stream, q: queue.Queue) -> None:
+    for ln in stream:
+        q.put(ln)
+    q.put(None)
+
+
 def render_frames(props: dict, work: Path, progress, quality: str = "good", engine: str = "cycles") -> None:
-    """Pass 2: Blender renders every dumped frame not rendered yet."""
+    """Pass 2: Blender renders every dumped frame not rendered yet, in one or more processes."""
     exe = blender.binary()
     if not exe:
         raise RuntimeError("Blender isn't installed: install it from the Low-poly tab (free, about 400 MB)")
@@ -199,54 +231,126 @@ def render_frames(props: dict, work: Path, progress, quality: str = "good", engi
     w, h = w * scale // 100, h * scale // 100
     engine = engine.lower() if engine.lower() in ENGINES else "cycles"
     device = os.environ.get("REEL_BLENDER_DEVICE", "GPU").upper()
+    fixed = _procs_wanted()
+    claims = root / "claims"
     cmd = [str(exe), "-b", "--factory-startup", "-noaudio", "-P", str(blender.WORKER / "lowpoly.py"), "--",
            "--root", str(root), "--out", str(out), "--first", str(need[0]), "--last", str(need[-1]), "--width", str(w), "--height", str(h),
-           "--samples", str(samples), "--engine", "EEVEE" if engine == "eevee" else "CYCLES", "--device", device]
-    started, done_before = time.time(), total - len(_missing(out, need, "jpg"))
-    progress(f"Blender: rendering {total - done_before} frames ({engine.title()}, {quality}, {w}x{h})")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                            stdin=subprocess.DEVNULL, **_group())
-    lines: queue.Queue = queue.Queue()
-    threading.Thread(target=lambda: [lines.put(ln) for ln in proc.stdout] and None or lines.put(None), daemon=True).start()  # type: ignore[union-attr]
-    tail: list[str] = []
-    last_say = 0.0
-    try:
-        while True:
-            if stopper.stop_requested() or stopper.pause_requested():  # Stop or Pause: the frames done are kept
-                stopper._kill(proc)
-                raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
-            try:
-                line = lines.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            if line is None:
-                break
-            line = line.rstrip()
-            if not line.startswith("@@BLEND@@ "):
-                tail = (tail + [line])[-30:]
-                continue
-            msg = json.loads(line[10:])
-            if msg.get("error"):
-                raise RuntimeError(f"Blender: {msg['error']}")
-            if msg.get("device") and not msg.get("start"):
-                progress(f"Blender: rendering on the graphics card ({msg['device']}: {', '.join(msg.get('names', []))})")
-            if msg.get("cpu"):
-                progress("Blender: no graphics card it can use; rendering on the processor (slower)")
-            if msg.get("done") and time.time() - last_say > 15:
-                last_say = time.time()
-                n, todo = msg["done"], msg["todo"]
-                per = (time.time() - started) / max(1, n)
-                progress(f"Blender: {done_before + n} of {total} frames · {msg.get('sec', per):.0f} s a frame · about "
-                         f"{max(1, round(per * (todo - n) / 60))} min left")
-    finally:
-        if proc.poll() is None:
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                stopper._kill(proc)
+           "--samples", str(samples), "--engine", "EEVEE" if engine == "eevee" else "CYCLES", "--device", device,
+           "--claims", str(claims), "--block", str(BLOCK)]
+    errors: list[str] = []
+    for attempt in range(TRIES):
+        left = _missing(out, need, "jpg")
+        if not left:
+            return
+        shutil.rmtree(claims, ignore_errors=True)
+        claims.mkdir(parents=True, exist_ok=True)
+        n = 1 if attempt else (fixed or 1)
+        grow = PARALLEL_GPU if (attempt == 0 and not fixed) else n  # automatic: a second process once a graphics card answers
+        threads = max(1, (os.cpu_count() or 2) // n) if n > 1 and device == "CPU" else 0
+        progress(f"Blender: rendering {len(left)} frames ({engine.title()}, {quality}, {w}x{h})"
+                 + (f", {n} Blender processes" if n > 1 else "") + (", again for the frames a process left" if attempt else ""))
+        made, errs = _pool(cmd + (["--threads", str(threads)] if threads else []), n, grow, progress, out, need, total)
+        errors += errs
+        if not made and _missing(out, need, "jpg"):
+            break  # nothing new this pass: another pass would fail the same way
     left = _missing(out, need, "jpg")
     if left:
-        raise RuntimeError(f"Blender stopped with {len(left)} frames left: " + " | ".join(tail[-4:])[-400:])
+        raise RuntimeError(f"Blender stopped with {len(left)} frames left: " + (" | ".join(errors[-3:]) or "no reason given")[-400:])
+
+
+def _pool(cmd: list[str], start: int, grow_to: int, progress, out: Path, need: list[int], total: int) -> tuple[int, list[str]]:
+    """Runs `start` Blender processes taking blocks of frames by claim files, a second one added when the first
+    reports a graphics card (up to `grow_to`). A process that fails (a second one out of card memory, a crash)
+    is reported and the others carry on. Returns the frames made and the reasons processes failed."""
+    procs: list[dict] = []
+
+    def spawn() -> None:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                             stdin=subprocess.DEVNULL, **_group())
+        q: queue.Queue = queue.Queue()
+        threading.Thread(target=_pump, args=(p.stdout, q), daemon=True).start()
+        procs.append({"p": p, "q": q, "done": 0, "open": True, "tail": [], "error": ""})
+
+    for _ in range(start):
+        spawn()
+    before = total - len(_missing(out, need, "jpg"))
+    started, last_say, said_device, wants_more = time.time(), 0.0, False, False
+    errors: list[str] = []
+    try:
+        while any(x["open"] for x in procs):
+            if stopper.stop_requested() or stopper.pause_requested():  # Stop or Pause: the frames done are kept
+                for x in procs:
+                    if x["p"].poll() is None:
+                        stopper._kill(x["p"])
+                raise stopper.Stopped() if stopper.stop_requested() else stopper.Paused()
+            busy = False
+            for x in list(procs):
+                if not x["open"]:
+                    continue
+                try:
+                    line = x["q"].get_nowait()
+                except queue.Empty:
+                    continue
+                busy = True
+                if line is None:
+                    x["open"] = False
+                    code = x["p"].wait()
+                    if code and not x["error"]:
+                        x["error"] = f"Blender ended with code {code}: " + " | ".join(x["tail"][-3:])[-300:]
+                    if x["error"]:
+                        errors.append(x["error"])
+                        if any(y["open"] for y in procs):
+                            progress(f"Blender: one process stopped ({x['error'][:160]}); the others carry on")
+                    continue
+                line = line.rstrip()
+                if not line.startswith("@@BLEND@@ "):
+                    x["tail"] = (x["tail"] + [line])[-30:]
+                    continue
+                try:
+                    msg = json.loads(line[10:])
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("error"):
+                    x["error"] = str(msg["error"])
+                if msg.get("device") and not msg.get("start"):
+                    if not said_device:
+                        said_device = True
+                        progress(f"Blender: rendering on the graphics card ({msg['device']}: {', '.join(msg.get('names', []))})")
+                    wants_more = len(procs) < grow_to  # once its first frame shows how much card memory it takes
+                if msg.get("cpu") and not said_device:
+                    said_device = True
+                    progress("Blender: no graphics card it can use; rendering on the processor (slower)")
+                if msg.get("done"):
+                    x["done"] = int(msg["done"])
+                    x["parts"] = msg.get("parts") or x.get("parts")
+                    if wants_more and not msg.get("same"):
+                        free = _card_free_gb()
+                        if free is None or free >= SECOND_NEEDS_GB:
+                            spawn()
+                            progress("Blender: a second process shares the frames, so the card isn't idle while frames are built, "
+                                     "denoised and saved" + (f" ({free:.1f} GB of card memory free)" if free is not None else ""))
+                        else:
+                            progress(f"Blender: one process only: {free:.1f} GB of card memory free, a second needs about {SECOND_NEEDS_GB} GB")
+                        wants_more = len(procs) < grow_to and free is None
+            n = sum(x["done"] for x in procs)
+            if n and time.time() - last_say > 15:
+                last_say = time.time()
+                per = (time.time() - started) / n
+                parts = next((x.get("parts") for x in procs if x.get("parts")), None) or {}
+                split = f" (one frame: scene {parts['build']:.1f} s, render {parts['render']:.1f} s)" if "render" in parts else ""
+                live = sum(1 for x in procs if x["open"])
+                progress(f"Blender: {before + n} of {total} frames · {per:.1f} s a frame{split}"
+                         + (f" · {live} processes" if live > 1 else "") + f" · about {max(1, round(per * (total - before - n) / 60))} min left")
+            if not busy:
+                time.sleep(0.2)
+    finally:
+        for x in procs:
+            if x["p"].poll() is None:
+                try:
+                    x["p"].wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    stopper._kill(x["p"])
+    return sum(x["done"] for x in procs), errors
 
 
 def _group() -> dict:

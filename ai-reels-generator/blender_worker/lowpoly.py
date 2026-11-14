@@ -40,6 +40,9 @@ GRADES = {
     "dawn": (0.3, 0.34, 0.16), "morning": (0.22, 0.3, 0.14), "day": (0.18, 0.2, 0.12),
 }
 SATURATION = 1.08  # the view transform greys colours a little; the reference's are rich
+BEVEL_SAMPLES = 2  # rays the Bevel shader casts per point: 6 cost a quarter of the frame, 2 look the same once denoised
+LIGHT_TREE_FROM = 16  # Cycles' light tree only above this many lights: with our handful it doubled the frame time
+# (measured on a park frame: 8.0 s -> 3.8 s at the same samples; the picture differs only in its grain)
 FSTOP = 0.6  # f-stop = FSTOP / the editor's aperture (0.15 wide -> f/4, 0.6 close -> f/1.4): a miniature's shallow focus
 # grass tufts, pebbles and flowers scattered over every green ground the camera sees (the reference's ground is full)
 TUFTS_PER_M2 = 45  # near the middle of the set, where the people are
@@ -240,7 +243,7 @@ class Builder:
                 b.inputs["Alpha"].default_value = float(r["opacity"])
             if self.cycles and BEVEL > 0 and not r.get("transparent"):
                 bev = nodes.new("ShaderNodeBevel")
-                bev.samples = 6
+                bev.samples = BEVEL_SAMPLES
                 bev.inputs["Radius"].default_value = BEVEL
                 links.new(bev.outputs["Normal"], b.inputs["Normal"])
             surf = b.outputs[0]
@@ -582,7 +585,8 @@ def setup(scene, w: int, h: int, engine: str, samples: int, device: str) -> tupl
         cy.device = "CPU"
         if device != "CPU":
             prefs = bpy.context.preferences.addons["cycles"].preferences
-            for kind in ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI"):
+            kinds = ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI")
+            for kind in ((device,) if device in kinds else kinds):  # REEL_BLENDER_DEVICE=CUDA tries CUDA alone
                 try:
                     prefs.compute_device_type = kind
                     prefs.get_devices()
@@ -591,6 +595,8 @@ def setup(scene, w: int, h: int, engine: str, samples: int, device: str) -> tupl
                         for d in prefs.devices:
                             d.use = d.type == kind
                         cy.device = "GPU"
+                        if hasattr(cy, "denoising_use_gpu"):
+                            cy.denoising_use_gpu = True  # off in factory settings: a 1080x1920 frame denoised on the CPU took ~9 s
                         say(device=kind, names=[d.name for d in gpus])
                         break
                 except Exception:  # noqa: BLE001 - try the next kind
@@ -681,6 +687,16 @@ def setup(scene, w: int, h: int, engine: str, samples: int, device: str) -> tupl
     return cam, wt
 
 
+marks: dict[str, float] = {}  # when the scene was built (the app shows where a frame's time goes)
+
+
+def _parts(t0: float, m: dict) -> dict:
+    """Seconds building the scene in Python and inside Blender's render (sync, path tracing, denoising, compositing,
+    saving). Blender's render_post/composite handlers don't fire in a background render, so those aren't split."""
+    prep = m.get("prep", t0)
+    return {"build": round(prep - t0, 2), "render": round(time.time() - prep, 2)}
+
+
 def main() -> None:
     a = args()
     root = Path(a["root"])
@@ -693,11 +709,33 @@ def main() -> None:
     scene = bpy.context.scene
     cam, wt = setup(scene, w, h, engine, int(a.get("samples", 48)), a.get("device", "CPU").upper())
     b = Builder(root, engine)
-    todo = [f for f in range(first, last + 1) if not (out_dir / f"f{f:05d}.jpg").exists()]
-    say(start=True, todo=len(todo), total=last - first + 1, engine=scene.render.engine, device=scene.cycles.device if engine == "CYCLES" else "GPU")
+    threads = int(a.get("threads", 0) or 0)
+    if threads > 0:  # several Blender processes on the processor share its cores
+        scene.render.threads_mode = "FIXED"
+        scene.render.threads = threads
+    frames = list(range(first, last + 1))
+    claims = Path(a["claims"]) if a.get("claims") else None
+    block = max(1, int(a.get("block", 12) or 12))
+
+    def mine():
+        """This process's frames: blocks of consecutive ones (persistent data and held-frame copies work within a
+        block); with several processes, each block goes to the first one that claims it."""
+        for i in range(0, len(frames), block):
+            part = [f for f in frames[i:i + block] if not (out_dir / f"f{f:05d}.jpg").exists()]
+            if not part:
+                continue
+            if claims is not None:
+                try:
+                    os.close(os.open(claims / f"b{i // block:05d}", os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                except FileExistsError:
+                    continue
+            yield from part
+
+    todo = sum(1 for f in frames if not (out_dir / f"f{f:05d}.jpg").exists())
+    say(start=True, todo=todo, total=last - first + 1, engine=scene.render.engine, device=scene.cycles.device if engine == "CYCLES" else "GPU")
     done = 0
     last_sig, last_out = None, None
-    for f in todo:
+    for f in mine():
         src = root / "scene" / f"f{f:05d}.json.gz"
         if not src.exists():
             say(missing=f)
@@ -709,19 +747,25 @@ def main() -> None:
         if sig == last_sig and last_out and last_out.exists():
             shutil.copyfile(last_out, out_dir / f"f{f:05d}.jpg")
             done += 1
-            say(done=done, todo=len(todo), frame=f, sec=round(time.time() - t0, 2), same=True)
+            say(done=done, todo=todo, frame=f, sec=round(time.time() - t0, 2), same=True)
             continue
         b.objects(frame)
         b.dress()
         b.lighting(frame, wt)
         b.camera(frame, cam, scene)
+        lights = sum(1 for o in b.coll.objects if o.type == "LIGHT" and not o.hide_render)
+        scene.cycles.use_light_tree = lights > LIGHT_TREE_FROM
+        marks.clear()
+        marks["prep"] = time.time()
         tmp = out_dir / f"f{f:05d}.part.jpg"
         scene.render.filepath = str(tmp)
         bpy.ops.render.render(write_still=True)
+        if not tmp.exists():  # a render Blender gave up on (out of card memory...) writes nothing: never a blank frame
+            raise RuntimeError(f"frame {f} wasn't written (out of graphics card memory?)")
         os.replace(tmp, out_dir / f"f{f:05d}.jpg")
         last_sig, last_out = sig, out_dir / f"f{f:05d}.jpg"
         done += 1
-        say(done=done, todo=len(todo), frame=f, sec=round(time.time() - t0, 2))
+        say(done=done, todo=todo, frame=f, sec=round(time.time() - t0, 2), parts=_parts(t0, marks))
     say(finished=True, done=done)
 
 

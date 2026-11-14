@@ -889,6 +889,22 @@ def lowpoly_blender() -> None:
             fail("blender: missing frames not found")
     if blend.film_props({"a": 1})["blend"] != {"dir": "blender/frames", "ext": "jpg"} or "blender" not in blend.label("draft", "eevee").lower():
         fail("blender: the editor's props for Blender's frames are wrong")
+    import os
+
+    was = os.environ.get("REEL_BLENDER_PARALLEL")
+    try:
+        os.environ["REEL_BLENDER_PARALLEL"] = "3"
+        three = blend._procs_wanted()
+        os.environ["REEL_BLENDER_PARALLEL"] = "x"
+        auto = blend._procs_wanted()
+    finally:
+        os.environ.pop("REEL_BLENDER_PARALLEL", None) if was is None else os.environ.__setitem__("REEL_BLENDER_PARALLEL", was)
+    if (three, auto) != (3, 0):
+        fail(f"blender: REEL_BLENDER_PARALLEL read wrong ({three}, {auto})")
+    speed = {n.targets[0].id: ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+             and getattr(n.targets[0], "id", "") in ("BEVEL_SAMPLES", "LIGHT_TREE_FROM")}
+    if speed.get("BEVEL_SAMPLES", 99) > 3 or speed.get("LIGHT_TREE_FROM", 0) < 8 or "denoising_use_gpu = True" not in worker:
+        fail(f"blender: the worker lost its speed settings ({speed})")
 
 
 def main() -> int:
