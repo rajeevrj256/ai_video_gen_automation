@@ -1,4 +1,4 @@
-"""One interface, two ways to reach Claude.
+"""One interface, two ways to reach Claude, and a model on this computer.
 
 - "claude-code": runs the Claude Code CLI you're already logged in to
   (`claude -p ...`). No API key needed, and Claude can use web search to
@@ -6,6 +6,12 @@
 - "api": the Anthropic API with ANTHROPIC_API_KEY (used on GitHub Actions).
 
 "auto" (the default) picks claude-code when the `claude` command is installed.
+
+A model id 'local:<key>' (localllm.py: Qwen 3.5 through llama.cpp) answers on this computer: picked for a job in the
+🤖 picker, or as the fallback when Claude can't answer (its usage limit, a block, Claude Code missing or failing) and
+Settings 'When Claude can't answer' is 'local'. The local model gets the same system prompt, prompt and pictures and
+must answer in the same JSON schema (llama.cpp turns the schema into a grammar, so the answer has its exact shape);
+a step with web search first researches with two tools, a Wikipedia search and a page reader (`_research`).
 """
 
 from __future__ import annotations
@@ -222,22 +228,262 @@ def _wait_for_limit() -> None:
     _report("Resumed after the Claude usage limit reset")
 
 
+# Claude couldn't answer at all (not a limit, not a bad answer): logged out, refused, blocked, not installed, no
+# network. With a local model installed and Settings allowing it, that step goes to the local model.
+BLOCKED_RE = re.compile(r"claude CLI failed|was not found on this computer|log ?in|authenticat|unauthori[sz]ed|forbidden|"
+                        r"invalid api key|credit balance|billing|disabled|suspended|blocked|not allowed|"
+                        r"could not resolve|network|ECONN|ETIMEDOUT|timed? ?out|overloaded|service unavailable|5\d\d ", re.I)
+
+
 def ask(backend: str, model: str, system: str, prompt: str, schema: type[T],
         images: list[Path] | None = None, allow_web: bool = False, cwd: Path | None = None,
         effort: str = "", timeout: int = 900) -> T:
     """`timeout`: seconds one Claude Code run may take (long-video scripts need more)."""
     global _limit_until
+    if model.startswith("local:"):  # picked for this job: never Claude
+        return _ask_local(model, system, prompt, schema, images or [], allow_web, effort, timeout)
     while True:
         stopper.check()
+        spare = _fallback()
+        if spare and time.time() < _limit_until:  # Claude is out until its reset: the local model answers meanwhile
+            return _ask_local(spare, system, prompt, schema, images or [], allow_web, effort, timeout)
         _wait_for_limit()
         try:
             return _ask_once(backend, model, system, prompt, schema, images, allow_web, cwd, effort, timeout)
         except LLMError as exc:
-            if not LIMIT_RE.search(str(exc)):
-                raise
-            until = (reset_time(str(exc)) or time.time() + 30 * 60) + LIMIT_BUFFER
-            with _limit_lock:
-                _limit_until = max(_limit_until, until)
+            text = str(exc)
+            if LIMIT_RE.search(text):
+                until = (reset_time(text) or time.time() + 30 * 60) + LIMIT_BUFFER
+                with _limit_lock:
+                    _limit_until = max(_limit_until, until)
+                if spare:
+                    _report(f"Claude's usage limit is reached (until {datetime.fromtimestamp(until).strftime('%H:%M')}): "
+                            f"this step and the next ones go to {_name(spare)} until then")
+                continue
+            if spare and BLOCKED_RE.search(text) and "did not match the schema" not in text:
+                _report(f"Claude couldn't answer ({text[:140]}): this step goes to {_name(spare)}")
+                return _ask_local(spare, system, prompt, schema, images or [], allow_web, effort, timeout)
+            raise
+
+
+def _fallback() -> str | None:
+    try:
+        from . import localllm
+        return localllm.fallback_model()
+    except Exception:  # noqa: BLE001 - never let the fallback break Claude's own path
+        return None
+
+
+def _name(model: str) -> str:
+    from . import localllm
+    return localllm.name_of(model)
+
+
+# ---- The local model (localllm.py) ----
+LOCAL_RULES = (
+    "\n\nAnswer with one JSON object that follows the given schema exactly: every required field, the values the "
+    "schema allows, every text written out in full (never a placeholder, never '...'). Follow every rule above as "
+    "carefully as a professional writer and editor would."
+)
+RESEARCH_STEPS = 10  # tool calls a step with web search may make before it answers (Claude's writers: 8 searches, 6 pages)
+PAGE_CHARS = 7000  # of one page's text given back to the model
+PICTURE_SIDE = 1344  # pixels: pictures are made this small before the model reads them (contact sheets are big)
+LOCAL_MAX_TOKENS = 16000
+WIKI = "https://{lang}.wikipedia.org/w/api.php"
+from .evidence import AGENT  # Wikimedia asks for a descriptive agent with a contact URL (the photo search's own)
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "web_search", "description": "Search Wikipedia (English, or Hindi with lang 'hi') for articles about a subject. "
+        "Returns titles, short snippets and their links. Use it to check names, dates, numbers and events.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "lang": {"type": "string", "enum": ["en", "hi"]}},
+                       "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "open_page", "description": "Read a web page as plain text: a Wikipedia article (its link or its title) "
+        "or any public page whose address you know (an official site, a news article, a paper).",
+        "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "a link, or a Wikipedia title"}},
+                       "required": ["url"]}}},
+]
+
+
+def _picture(path: Path) -> str:
+    from io import BytesIO
+
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im = im.convert("RGB")
+        im.thumbnail((PICTURE_SIDE, PICTURE_SIDE))
+        buf = BytesIO()
+        im.save(buf, "JPEG", quality=88)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _get(url: str, params: dict | None = None):
+    """GET with Wikimedia's rate limit respected: a 429 waits its Retry-After (at most 20 s), up to three tries."""
+    import requests
+
+    for k in range(3):
+        r = requests.get(url, params=params, headers=AGENT, timeout=30)
+        if r.status_code != 429 or k == 2:
+            return r
+        wait = r.headers.get("Retry-After", "")
+        stopper.sleep(min(20.0, float(wait)) if wait.replace(".", "", 1).isdigit() else 3.0 * (k + 1))
+    return r
+
+
+def _web_search(query: str, lang: str = "en") -> str:
+    r = _get(WIKI.format(lang=lang if lang in ("en", "hi") else "en"), {
+        "action": "query", "list": "search", "srsearch": query, "srlimit": 6, "format": "json", "utf8": 1})
+    r.raise_for_status()
+    hits = r.json().get("query", {}).get("search", [])
+    if not hits:
+        return "No Wikipedia article matched. Try other words."
+    clean = lambda t: re.sub(r"<[^>]+>", "", t).replace("&quot;", '"').replace("&amp;", "&")  # noqa: E731
+    return "\n".join(f"- {h['title']}: {clean(h.get('snippet', ''))} (https://{lang}.wikipedia.org/wiki/{h['title'].replace(' ', '_')})"
+                     for h in hits)
+
+
+def _open_page(url: str) -> str:
+    import html as htmllib
+    from urllib.parse import unquote, urlparse
+
+    import requests
+
+    url = url.strip()
+    m = re.match(r"https?://(\w+)\.(?:m\.)?wikipedia\.org/wiki/(.+)", url)
+    if m or not url.startswith("http"):  # a Wikipedia article: its plain text from the API
+        lang, title = (m.group(1), unquote(m.group(2)).replace("_", " ")) if m else ("en", url)
+        r = _get(WIKI.format(lang=lang), {"action": "query", "prop": "extracts", "explaintext": 1, "redirects": 1,
+                                          "titles": title, "format": "json"})
+        r.raise_for_status()
+        pages = r.json().get("query", {}).get("pages", {})
+        text = next(iter(pages.values()), {}).get("extract") or ""
+        return (text[:PAGE_CHARS] + (" [...]" if len(text) > PAGE_CHARS else "")) if text else f"No Wikipedia article '{title}'."
+    if urlparse(url).hostname in (None, "localhost") or (urlparse(url).hostname or "").startswith(("127.", "10.", "192.168.")):
+        return "Only public pages can be opened."
+    r = _get(url)
+    if r.status_code >= 400:
+        return f"The page answered {r.status_code}."
+    body = r.text
+    body = re.sub(r"(?is)<(script|style|noscript|svg|nav|footer|header)[^>]*>.*?</\1>", " ", body)
+    text = htmllib.unescape(re.sub(r"(?s)<[^>]+>", " ", body))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:PAGE_CHARS] + (" [...]" if len(text) > PAGE_CHARS else "")
+
+
+def _tool(name: str, args: dict) -> str:
+    try:
+        if name == "web_search":
+            return _web_search(str(args.get("query", "")), str(args.get("lang", "en")))
+        if name == "open_page":
+            return _open_page(str(args.get("url", "")))
+        return f"There is no tool '{name}'."
+    except Exception as exc:  # noqa: BLE001 - the model reads the problem and carries on
+        return f"That didn't work: {exc}"
+
+
+def _research(key: str, messages: list[dict], usage: dict, timeout: float) -> list[dict]:
+    """A step with web search: the model looks things up with the tools until it has what it needs (at most
+    RESEARCH_STEPS calls); the conversation so far, tool results included, goes into its final answer."""
+    from . import localllm
+
+    talk = list(messages) + [{"role": "user", "content": "Before you answer, check what you need with the tools "
+                              "(web_search, open_page): names, dates, numbers, what happened. When you have checked "
+                              "enough, reply with a short summary of what your sources say, with their links."}]
+    calls = 0
+    while True:
+        out = localllm.chat(key, {"messages": talk, "tools": TOOLS if calls < RESEARCH_STEPS else [], "tool_choice": "auto" if calls < RESEARCH_STEPS else "none",
+                                  "max_tokens": 2048, "temperature": 0.6, "top_p": 0.9, "top_k": 20,
+                                  "chat_template_kwargs": {"enable_thinking": False}},
+                            timeout, _report, text=json.dumps([m.get("content") for m in talk if isinstance(m.get("content"), str)]))
+        _add_usage(usage, out)
+        msg = (out.get("choices") or [{}])[0].get("message") or {}
+        asked = msg.get("tool_calls") or []
+        talk.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")} | {"role": "assistant"})
+        if not asked:
+            return talk[len(messages):]
+        for call in asked:
+            fn = call.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            calls += 1
+            usage["web_searches"] = usage.get("web_searches", 0) + (fn.get("name") == "web_search")
+            talk.append({"role": "tool", "tool_call_id": call.get("id", ""), "name": fn.get("name", ""),
+                         "content": _tool(fn.get("name", ""), args)})
+
+
+def _add_usage(usage: dict, out: dict) -> None:
+    u = out.get("usage") or {}
+    usage["input"] = usage.get("input", 0) + int(u.get("prompt_tokens") or 0)
+    usage["output"] = usage.get("output", 0) + int(u.get("completion_tokens") or 0)
+
+
+def _ask_local(model: str, system: str, prompt: str, schema: type[T], images: list[Path], allow_web: bool,
+               effort: str, timeout: int) -> T:
+    """The same step on the local model: same instructions, pictures and schema; the answer is held to the schema by
+    llama.cpp's grammar, then checked like Claude's; a wrong one is sent back once with the reason."""
+    from . import localllm
+
+    key = localllm.key_of(model)
+    if key not in localllm.MODELS and not localllm.external():
+        raise LLMError(f"Unknown local model {model}")
+    if not localllm.installed(key):
+        raise LLMError(f"{localllm.name_of(model)} isn't installed: Settings > Local AI")
+    schema_json = schema.model_json_schema()
+    content: list | str = prompt
+    if images:
+        content = [{"type": "image_url", "image_url": {"url": _picture(p)}} for p in images] + [{"type": "text", "text": prompt}]
+    messages = [{"role": "system", "content": system + LOCAL_RULES}, {"role": "user", "content": content}]
+    usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "web_searches": 0, "cost_usd": 0.0}
+    limit = max(timeout * 4, 3600)  # a laptop writes much slower than Claude
+    log.info("Asking %s%s", localllm.name_of(model), " with research" if allow_web else "")
+    try:
+        if allow_web:
+            messages += _research(key, messages, usage, limit)
+            messages.append({"role": "user", "content": "Now give your final answer to the task above as the JSON object, "
+                             "using what your sources confirmed."})
+        fmt = {"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": schema_json, "strict": True}}
+        for attempt in range(2):
+            body = {"messages": messages, "response_format": fmt, "max_tokens": LOCAL_MAX_TOKENS, "temperature": 0.7,
+                    "top_p": 0.8, "top_k": 20, "min_p": 0.0, "chat_template_kwargs": {"enable_thinking": False}}
+            text = system + prompt + json.dumps(schema_json)
+            try:
+                out = localllm.chat(key, body, limit, _report, text=text)
+            except RuntimeError as exc:
+                if "grammar" not in str(exc).lower() and "schema" not in str(exc).lower():
+                    raise
+                # llama.cpp couldn't turn this schema into a grammar: ask with the schema written out instead
+                fmt = None
+                body.pop("response_format")
+                body["messages"] = messages + [{"role": "user", "content": "Reply with only the JSON object (no other text), "
+                                                "following this JSON schema:\n" + json.dumps(schema_json)}]
+                out = localllm.chat(key, body, limit, _report, text=text)
+            _add_usage(usage, out)
+            choice = (out.get("choices") or [{}])[0]
+            reply = (choice.get("message") or {}).get("content") or ""
+            if choice.get("finish_reason") == "length":
+                problem = "the answer ran out of room before it was finished; write it more briefly"
+            else:
+                try:
+                    data = json.loads(reply) if fmt else _extract_json(reply)
+                    result = schema.model_validate(data)
+                    return result
+                except (json.JSONDecodeError, ValidationError, LLMError) as exc:
+                    problem = str(exc)[:1500]
+            if attempt == 0:
+                messages = messages + [{"role": "assistant", "content": reply[:20000]},
+                                       {"role": "user", "content": f"That answer can't be used: {problem}. Write the whole "
+                                        "JSON object again, correctly."}]
+        raise LLMError(f"{localllm.name_of(model)}'s answer did not match the schema: {problem}")
+    except (RuntimeError, OSError) as exc:
+        if isinstance(exc, LLMError) or isinstance(exc, stopper.Paused):
+            raise
+        raise LLMError(str(exc)) from exc
+    finally:
+        if usage["input"] or usage["output"]:
+            _record(schema, usage, model, "")
 
 
 def _ask_once(backend: str, model: str, system: str, prompt: str, schema: type[T],

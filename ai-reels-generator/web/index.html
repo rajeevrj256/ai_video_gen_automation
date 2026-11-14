@@ -1502,6 +1502,8 @@ Plain paragraphs are read by the narrator."></textarea>
         <option value="claude-sonnet-5-5">Sonnet 5.5 (faster, uses less of your limit)</option>
         <option value="claude-haiku-5-5">Haiku 5.5 (fastest, uses the least)</option>
         <option value="claude-fable-5-1">Fable 5.1 (needs usage credits)</option>
+        <option value="local:qwen3.5-9b">Qwen 3.5 9B on this computer (free, slower; see Local AI below)</option>
+        <option value="local:qwen3.5-4b">Qwen 3.5 4B on this computer (free, faster, simpler)</option>
       </select>
       <p class="hint">The default for every video. Each tab has its own 🤖 Claude picker to try another model or effort for one video; the job card and the video's token counts say which model each step ran on.</p>
       <label for="s-claude_effort">How hard Claude thinks</label>
@@ -1517,6 +1519,8 @@ Plain paragraphs are read by the narrator."></textarea>
         <option value="claude-sonnet-5-5">Sonnet 5.5 (recommended: checks against sources, costs less)</option>
         <option value="claude-haiku-5-5">Haiku 5.5 (fewest tokens)</option>
         <option value="claude-opus-5-5">Opus 5.5</option>
+        <option value="local:qwen3.5-9b">Qwen 3.5 9B on this computer (checks against Wikipedia and pages it opens)</option>
+        <option value="local:qwen3.5-4b">Qwen 3.5 4B on this computer</option>
       </select>
       <label for="s-fact_effort">How hard the fact-check thinks</label>
       <select id="s-fact_effort">
@@ -1524,6 +1528,22 @@ Plain paragraphs are read by the narrator."></textarea>
         <option value="medium">Medium (recommended)</option>
         <option value="high">High</option>
       </select>
+    </div>
+    <div class="panel" id="llmPanel">
+      <h2>🖥 Local AI (when Claude can't answer)</h2>
+      <p class="hint">A language model that runs on this computer, free: it writes the same scripts and storyboards,
+        checks the same pictures and answers in the same shapes as Claude, from the same instructions. Claude stays the
+        default; the local model answers only when you pick it (the 🤖 picker on every tab, or the models above) or when
+        Claude can't (its usage limit, a block, no Claude Code). It is slower and simpler than Claude: expect several
+        minutes for a Short's script on a laptop, and fact-checks that look things up on Wikipedia and the pages it
+        opens, not the whole web.</p>
+      <label for="s-llm_fallback">When Claude can't answer</label>
+      <select id="s-llm_fallback"><option value="local">🖥 Carry on with the local model (when one is downloaded)</option>
+        <option value="wait">⏳ Wait for Claude's limit to reset (as before)</option></select>
+      <label for="s-local_model">Local model to carry on with</label>
+      <select id="s-local_model"><option value="">The best one downloaded</option>
+        <option value="local:qwen3.5-9b">Qwen 3.5 9B</option><option value="local:qwen3.5-4b">Qwen 3.5 4B</option></select>
+      <div id="llmState" class="hint"></div>
     </div>
     <button class="primary save-row" id="saveBtn">Save settings</button>
     <div class="panel">
@@ -3606,13 +3626,14 @@ const miniSteps = (step) => `<span class="mini-steps">${STEPS.map(([name], i) =>
 // ---- Claude per job (config.ai_pick): which model writes and which checks, and how hard each thinks. Every
 // tab and every re-create action has the picker; the job card says what its job runs on. ----
 const AI_MODELS = [["claude-opus-5-5", "Opus 5.5"], ["claude-sonnet-5-5", "Sonnet 5.5"], ["claude-haiku-5-5", "Haiku 5.5"],
-  ["claude-fable-5-1", "Fable 5.1 (needs usage credits)"]];
+  ["claude-fable-5-1", "Fable 5.1 (needs usage credits)"],
+  ["local:qwen3.5-9b", "Qwen 3.5 9B (this computer, free)"], ["local:qwen3.5-4b", "Qwen 3.5 4B (this computer, free)"]];
 const AI_EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra high"], ["max", "Max"]];
 const modelName = (m) => ((AI_MODELS.find((x) => x[0] === m) || [m, m])[1]).replace(/ \(.*/, "");
 let aiDefaults = { model: "claude-opus-5-5", effort: "high", check_model: "claude-sonnet-5-5", check_effort: "medium" };
 const aiLabel = (a) => `${modelName(a.model)} ${a.effort}` + (a.check_model ? ` · checks: ${modelName(a.check_model)} ${a.check_effort}` : "");
 const NO_CLAUDE = ["rerender", "stick_remake", "myvoice", "anim_hd", "music_replace", "sound_remove", "anim_music", "rehook", "lowpoly_remix", "yt_upload"];
-const aiLine = (j) => j.ai && !NO_CLAUDE.some((k) => j[k]) ? `<div class="hint ai-used">🤖 Claude: ${esc(aiLabel(j.ai))}</div>` : "";
+const aiLine = (j) => j.ai && !NO_CLAUDE.some((k) => j[k]) ? `<div class="hint ai-used">${String(j.ai.model || "").startsWith("local:") ? "🖥 On this computer" : "🤖 Claude"}: ${esc(aiLabel(j.ai))}</div>` : "";
 // opts.check: the job also checks (facts, pictures); opts.checkEffort: this tab's own default for the checker.
 function aiPicker(key, opts = {}) {
   const sel = (f, list) => `<select data-ai="${f}"><option value="">As in Settings</option>${list.map(([v, n]) => `<option value="${v}">${n}</option>`).join("")}</select>`;
@@ -4145,7 +4166,32 @@ function addMyVoice(el) {
   const auto = el.options.length && el.options[0].value === "" ? 1 : 0;  // after an "Auto" first choice
   el.insertBefore(o, el.options[auto] || null);
 }
+// 🖥 Local AI (reelgen/localllm.py): download llama.cpp and a Qwen 3.5 model; shows what is here and what runs
+let llmTimer = null;
+async function loadLocalAI() {
+  let st = null;
+  try { st = await api("/api/localllm"); } catch (e) { st = null; }
+  const box = $("#llmState");
+  if (!box) return;
+  clearTimeout(llmTimer);
+  if (!st) { box.textContent = "Couldn't ask the app about the local model (restart the app after updating)."; return; }
+  const rows = Object.entries(st.models).map(([k, m]) => `<div class="llm-row"><b>${esc(m.name)}</b> · ${m.gb} GB · ${esc(m.about)}
+    ${m.installed ? ` · ✅ downloaded${st.running === k ? (st.on_card ? " · running on the graphics card" : " · running on the processor") : ""}`
+      : st.installing ? "" : ` <button class="mini" data-llm="${k}">⬇ Download</button>`}</div>`).join("");
+  box.innerHTML = (st.external ? `<p>Using your own server at ${esc(st.external)} (REEL_LOCAL_URL).</p>` : "")
+    + rows
+    + (st.server && !st.external ? `<p>Program: llama.cpp (MIT) ✅</p>` : !st.external ? `<p>The first download also fetches llama.cpp, the free program that runs the model (~200-500 MB; the build for an NVIDIA card when there is one).</p>` : "")
+    + (st.installing ? `<p>⏳ ${esc((st.log || []).slice(-1)[0] || "Starting")}${st.progress ? " · " + esc(st.progress) : ""}</p>` : "")
+    + (st.error ? `<p>⚠️ ${esc(st.error)}</p>` : "")
+    + (st.fallback ? `<p>When Claude can't answer, steps go to <b>${esc(st.fallback.replace("local:", ""))}</b>.</p>` : `<p>No local model yet: when Claude can't answer, videos wait for its limit to reset.</p>`)
+    + (!st.supported && !st.external ? `<p>⚠️ No ready-made llama.cpp for this computer: install llama-server yourself and set REEL_LLAMA_SERVER in .env.</p>` : "");
+  box.querySelectorAll("[data-llm]").forEach((b) => b.onclick = async () => {
+    try { await api("/api/localllm", { method: "POST", body: JSON.stringify({ models: [b.dataset.llm] }) }); loadLocalAI(); } catch (e) { toast(e.message); }
+  });
+  if (st.installing) llmTimer = setTimeout(() => { if (current === "settings") loadLocalAI(); }, 3000);
+}
 async function loadSettings() {
+  loadLocalAI().catch(() => {});
   loadAutomations().catch(() => {});
   loadLibrary().catch(() => {});
   loadKeys().catch(() => {});

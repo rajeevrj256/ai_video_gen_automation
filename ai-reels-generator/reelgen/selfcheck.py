@@ -907,6 +907,46 @@ def lowpoly_blender() -> None:
         fail(f"blender: the worker lost its speed settings ({speed})")
 
 
+def local_llm() -> None:
+    """🖥 The local model (localllm.py): every local model is in the app's model lists (Settings, the 🤖 pickers), a
+    Claude limit or block falls back and a bad answer doesn't, 'wait' turns the fallback off."""
+    import os
+    import re
+
+    from reelgen import config, llm, localllm
+
+    root = Path(__file__).resolve().parent.parent
+    page = (root / "web" / "index.html").read_text(encoding="utf-8")
+    for key in localllm.MODELS:
+        mid = localllm.model_id(key)
+        if mid not in config.MODELS or f'"{mid}"' not in page:
+            fail(f"local model {mid} missing from config.MODELS or the page's model lists")
+    picker = re.search(r"const AI_MODELS = \[(.*?)\];", page, re.S)
+    if not picker or any(localllm.model_id(k) not in picker.group(1) for k in localllm.MODELS):
+        fail("local models missing from the 🤖 picker (AI_MODELS)")
+    for text, want in (("Claude Code error: You've hit your session limit · resets 10:30pm (UTC)", "limit"),
+                       ("claude CLI failed (1): Invalid API key · Please run /login", "blocked"),
+                       (llm.INSTALL_HELP, "blocked"),
+                       ("Claude Code output did not match the schema: 1 validation error", "no")):
+        got = "limit" if llm.LIMIT_RE.search(text) else "blocked" if (llm.BLOCKED_RE.search(text) and "did not match the schema" not in text) else "no"
+        if got != want:
+            fail(f"local fallback: '{text[:50]}' read as {got}, not {want}")
+    was = {k: os.environ.get(k) for k in ("REEL_LLM_FALLBACK", "REEL_LOCAL_URL")}
+    try:
+        os.environ["REEL_LOCAL_URL"] = "http://127.0.0.1:9"  # a server of one's own counts as installed
+        os.environ["REEL_LLM_FALLBACK"] = "local"
+        if localllm.fallback_model() != localllm.model_id(localllm.PREFER[0]):
+            fail(f"local fallback: expected {localllm.PREFER[0]}, got {localllm.fallback_model()}")
+        os.environ["REEL_LLM_FALLBACK"] = "wait"
+        if localllm.fallback_model() is not None:
+            fail("local fallback: 'wait' should turn it off")
+    finally:
+        for k, v in was.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    if [t["function"]["name"] for t in llm.TOOLS] != ["web_search", "open_page"] or llm._tool("nope", {}).startswith("There is no") is False:
+        fail("local research tools changed")
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
     imports()
@@ -925,6 +965,7 @@ def main() -> int:
     channel_rules()
     lowpoly_silent()
     lowpoly_blender()
+    local_llm()
     print("selfcheck:", "OK" if not FAILS else f"{len(FAILS)} problem(s)")
     return 1 if FAILS else 0
 

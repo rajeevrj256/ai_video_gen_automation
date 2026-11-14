@@ -221,6 +221,11 @@ def run_stage(stage: str, job: dict, work: Path, progress: Progress, label: str,
 def run_on_card(stage: str, job: dict, work: Path, progress: Progress, label: str, wait: float | None,
                 py: Path, worker: Path) -> None:
     """`run_stage` for any engine's worker (the voice engine's too): one AI step on the graphics card at a time."""
+    try:  # a local language model on the card (localllm.py) finishes its answer and steps off it first
+        from . import localllm
+        localllm.free_card()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Couldn't free the card from the local model: %s", exc)
     if not _gpu.acquire(blocking=False):
         progress(f"{label}: waiting for the graphics card (another AI step is using it)")
         waited = 0.0

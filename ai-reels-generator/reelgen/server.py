@@ -132,6 +132,7 @@ class JobManager:
         current = load_settings(Config())
         # Every job keeps the Claude models and efforts it runs with (shown on its card, applied in _run_job).
         ai = ai_pick(current, _ai(extra.pop("ai", None)))
+        _local_ready(ai)
         job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger, "resume": resume or [],
                "style": style or current.video_style, "length": length, "ai": ai,
                "status": "queued", "log": [], "created": time.time(), "results": [], **extra}
@@ -551,6 +552,14 @@ class AIPick(BaseModel):
     effort: str = ""
     check_model: str = ""  # checks: fact-checks, picture checks
     check_effort: str = ""
+
+
+def _local_ready(ai: dict) -> None:
+    """A job that picked a model on this computer that isn't installed yet is refused before it starts."""
+    from . import localllm
+    for m in {ai.get("model", ""), ai.get("check_model", "")}:
+        if m.startswith("local:") and not localllm.installed(localllm.key_of(m)):
+            raise HTTPException(400, f"{localllm.name_of(m)} isn't installed yet: Settings > 🖥 Local AI, or pick a Claude model")
 
 
 def _ai(pick) -> dict | None:
@@ -2585,6 +2594,31 @@ def create_app(cfg: Config) -> FastAPI:
         voice.update({k: v for k, v in given.items() if k != "choices"})
         voice["choices"] = {**voice["choices"], **given.get("choices", {})}
         return shoot.update(cfg, pid, lambda p: p.update(voice=voice))
+
+    # 🖥 Local AI (reelgen/localllm.py): a language model on this computer, for when Claude can't answer or when a
+    # video is made with it on purpose
+    @app.get("/api/localllm")
+    def localllm_status():
+        from . import localllm
+        return localllm.status()
+
+    @app.post("/api/localllm")
+    def localllm_install(body: dict):
+        from . import localllm
+        keys = [k for k in (body.get("models") or []) if k in localllm.MODELS]
+        if not keys and not body.get("server_only"):
+            raise HTTPException(400, "Pick a model to download")
+        if not localllm.status()["supported"] and not localllm.external():
+            raise HTTPException(400, "No llama.cpp build for this computer: install llama-server yourself and set REEL_LLAMA_SERVER")
+        if not localllm.install(keys):
+            raise HTTPException(409, "Already downloading")
+        return {"ok": True}
+
+    @app.post("/api/localllm/stop")
+    def localllm_stop():
+        from . import localllm
+        localllm.stop_server()
+        return {"ok": True}
 
     # 🧊 Blender (reelgen/blender.py): free, portable, for the low-poly films' best look
     @app.get("/api/blender")

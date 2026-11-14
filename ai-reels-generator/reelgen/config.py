@@ -130,6 +130,10 @@ class Config:
     # Low-poly tab; `hero_name` is the man's name in every video.
     growth_rules: bool = field(default_factory=lambda: _env("REEL_GROWTH_RULES", "1").lower() not in ("0", "false", "no", "off"))
     hero_name: str = field(default_factory=lambda: _env("REEL_HERO_NAME", "Ethan"))
+    # When Claude can't answer (its usage limit, a block, Claude Code missing): 'local' = that step goes to the model on
+    # this computer when one is installed (reelgen/localllm.py), 'wait' = wait for Claude's reset as before.
+    llm_fallback: str = field(default_factory=lambda: _env("REEL_LLM_FALLBACK", "local"))
+    local_model: str = field(default_factory=lambda: _env("REEL_LOCAL_MODEL", ""))  # '' = the best one installed
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
     target_seconds: int = field(default_factory=lambda: int(_env("REEL_SECONDS", str(MAX_SECONDS))))
 
@@ -173,7 +177,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "my_music", "memes", "meme_source", "long_voice_rate", "hook_template", "visual_template", "my_voice_id", "my_voice_name", "my_voice_pace"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "my_music", "memes", "meme_source", "long_voice_rate", "hook_template", "visual_template", "my_voice_id", "my_voice_name", "my_voice_pace", "llm_fallback", "local_model"]
 
 
 def settings_path(cfg: Config) -> Path:
@@ -210,13 +214,22 @@ def load_settings(cfg: Config) -> Config:
         for key, value in saved.items():
             if key in EDITABLE and not (key in ("claude_model", "claude_effort", "fact_model", "fact_effort") and value == ""):
                 setattr(cfg, key, _typed(cfg, key, value))  # blank model/effort = default
+    _share_llm(cfg)
     return cfg
+
+
+def _share_llm(cfg: Config) -> None:
+    """llm.ask has no config: the fallback settings reach it through the environment (this process only)."""
+    os.environ["REEL_LLM_FALLBACK"] = cfg.llm_fallback if cfg.llm_fallback in ("local", "wait") else "local"
+    os.environ["REEL_LOCAL_MODEL"] = cfg.local_model
 
 
 # The models and efforts a job can pick (the Create page and every tab's "Claude" picker, Settings for the default).
 # Fable needs usage credits on some plans: Claude Code then answers "Fable 5.1 requires usage credits".
 MODELS = {"claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5",
-          "claude-fable-5-1": "Fable 5.1"}
+          "claude-fable-5-1": "Fable 5.1",
+          # on this computer (reelgen/localllm.py, = localllm.MODELS): free, slower and simpler than Claude
+          "local:qwen3.5-9b": "Qwen 3.5 9B (this computer)", "local:qwen3.5-4b": "Qwen 3.5 4B (this computer)"}
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
@@ -256,4 +269,5 @@ def save_settings(cfg: Config, updates: dict) -> Config:
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     settings_path(cfg).write_text(json.dumps({**{k: getattr(cfg, k) for k in EDITABLE}, VOICE_MARK: True, CAPTIONS_MARK: True}, indent=2),
                                   encoding="utf-8")
+    _share_llm(cfg)
     return cfg
