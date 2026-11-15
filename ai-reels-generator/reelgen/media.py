@@ -18,6 +18,7 @@ the video; `resolve_cues` turns its picks into times on the timeline.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 from dataclasses import dataclass
@@ -28,11 +29,14 @@ import numpy as np
 from .config import PROJECT_ROOT, Config
 from .sfx import CUE_SOUNDS, RATE, _write
 
+log = logging.getLogger(__name__)
 SFX_DIR = PROJECT_ROOT / "assets" / "sfx"
 MODELS_DIR = PROJECT_ROOT / "assets" / "models3d"
+MEMES_DIR = PROJECT_ROOT / "assets" / "memes"  # the user's own meme pictures and clips (reelgen/memes.py)
 AUDIO_TYPES = {".mp3", ".wav", ".ogg", ".m4a"}
 MODEL_TYPES = {".glb"}
-KINDS = ("sfx", "music", "models3d")
+MEME_TYPES = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".webm"}  # a .gif or .mov upload is turned into an .mp4
+KINDS = ("sfx", "music", "models3d", "memes")
 
 # How loud each cue is, before the file's own level.
 VOLUMES = {"soft": 0.35, "medium": 0.6, "strong": 0.9}
@@ -48,7 +52,7 @@ class Item:
 
 
 def folder(cfg: Config, kind: str) -> Path:
-    return {"sfx": SFX_DIR, "music": cfg.music_dir, "models3d": MODELS_DIR}[kind]
+    return {"sfx": SFX_DIR, "music": cfg.music_dir, "models3d": MODELS_DIR, "memes": MEMES_DIR}[kind]
 
 
 def slug(name: str) -> str:
@@ -72,6 +76,90 @@ LICENCES = {
 USABLE = ("own", "royalty-free", "cc0", "cc-by")
 LICENCE_FILE = "licences.json"
 
+# Sounds never used, whatever their licence. The user bans a file in Settings > Media library ('banned' in
+# licences.json, kept when its licence changes); and an uploaded effect whose name says it is a boom, a braam or
+# a hit is banned without asking: those are never used outside the hook (the user's standing rule), and an
+# 'impact braam tonal dark' upload once played as the impact sound on every cut of a video.
+BOOM_WORDS = {"boom", "booms", "braam", "braams", "braaam", "brahm", "bwaa", "bwah", "bwaam", "hit", "hits", "subdrop",
+              "rise", "riser", "risers", "uplifter", "uplifters"}  # risers too: the user banned the built-in and the hook's
+
+# Files the user asked to have deleted from their library: removed when the app starts (`forget_removed`).
+REMOVED = ("biodynamic-impact-braam",)
+
+# Uploaders whose tracks YouTube's Content ID claims (the start of a Pixabay file name is its uploader): never used,
+# marked 'claimed' in the library when the app starts (`mark_claimed`). artmylife = Artem Pedan, whose 'Powerful
+# Dramatic Trailer' got the user's video claimed by HAAWK. A track the user flags on a video page is marked the same.
+CLAIMED = ("artmylife",)
+
+# Which uploaded music videos may use (config.my_music): Content ID claims come from tracks registered by their
+# artists, which royalty-free sites (Pixabay...) can't rule out, so by default only tracks marked as your own or
+# free-licence (CC0, CC BY) are used, and AI-made or composed music plays everywhere else.
+MY_MUSIC = {"safe": ("own", "cc0", "cc-by"), "all": USABLE, "none": ()}
+
+
+def forget_removed(cfg: Config) -> list[str]:
+    """Delete the sound files the user asked to have removed (REMOVED: part of the file's name) from the library."""
+    gone = []
+    root = folder(cfg, "sfx")
+    for path in sorted(root.glob("*")) if root.exists() else []:
+        if path.is_file() and path.name != LICENCE_FILE and any(r in slug(path.name) for r in REMOVED):
+            remove(cfg, "sfx", path.name)
+            gone.append(path.name)
+    if gone:
+        log.info("Removed from the sound library at your request: %s", ", ".join(gone))
+    return gone
+
+
+def claimed_name(name: str) -> bool:
+    """A file from an uploader whose tracks YouTube claims (CLAIMED)."""
+    return any(slug(name).startswith(c) for c in CLAIMED)
+
+
+def mark_claimed(cfg: Config, kind: str = "music", filename: str = "") -> list[str]:
+    """Mark library files as claimed by YouTube's Content ID and banned: `filename`, or every file of a CLAIMED
+    uploader (run when the app starts). Returns the names marked."""
+    root = folder(cfg, kind)
+    names = [Path(filename).name] if filename else [p.name for p in sorted(root.glob("*")) if root.exists()
+                                                   and p.is_file() and p.name != LICENCE_FILE and claimed_name(p.name)]
+    data, marked = licences(cfg, kind), []
+    for name in names:
+        if not (root / name).is_file() or data.get(name, {}).get("claimed"):
+            continue
+        entry = data.setdefault(name, {"licence": "unknown", "credit": ""})
+        entry.update(banned=True, claimed=True)
+        marked.append(name)
+    if marked:
+        (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+        log.info("Banned after a YouTube copyright claim: %s", ", ".join(marked))
+    return marked
+
+
+def boom_named(name: str) -> bool:
+    return bool(BOOM_WORDS & set(re.findall(r"[a-z]+", name.lower())))
+
+
+def banned(cfg: Config, kind: str, filename: str) -> str:
+    """Why this file is never used ('you' or 'boom'), or ''."""
+    entry = licences(cfg, kind).get(Path(filename).name, {})
+    if entry.get("claimed") or (kind == "music" and claimed_name(filename)):
+        return "claimed"
+    if entry.get("banned"):
+        return "you"
+    return "boom" if kind == "sfx" and boom_named(filename) else ""
+
+
+def set_banned(cfg: Config, kind: str, filename: str, on: bool) -> None:
+    root = folder(cfg, kind)
+    if kind not in KINDS or not (root / Path(filename).name).is_file():
+        raise ValueError("No such file")
+    data = licences(cfg, kind)
+    entry = data.setdefault(Path(filename).name, {"licence": "unknown", "credit": ""})
+    if on:
+        entry["banned"] = True
+    else:
+        entry.pop("banned", None)
+    (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+
 
 def licences(cfg: Config, kind: str) -> dict[str, dict]:
     path = folder(cfg, kind) / LICENCE_FILE
@@ -88,7 +176,8 @@ def set_licence(cfg: Config, kind: str, filename: str, licence: str, credit: str
     if not (root / Path(filename).name).is_file():
         raise ValueError("No such file")
     data = licences(cfg, kind)
-    data[Path(filename).name] = {"licence": licence, "credit": credit.strip()[:300]}
+    keep = {"banned": True} if data.get(Path(filename).name, {}).get("banned") else {}  # a new licence never lifts a ban
+    data[Path(filename).name] = {"licence": licence, "credit": credit.strip()[:300], **keep}
     (root / LICENCE_FILE).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
@@ -98,6 +187,8 @@ def set_all_licences(cfg: Config, licence: str, only_unknown: bool = True) -> in
         raise ValueError("Unknown licence")
     count = 0
     for kind in KINDS:
+        if kind == "memes":  # a meme picture's rights are decided one by one, never all at once
+            continue
         lic = licences(cfg, kind)
         for item in _files(cfg, kind, everything=True):
             old = lic.get(item.path.name, {}).get("licence", "unknown")
@@ -119,15 +210,20 @@ def credits(cfg: Config, used_files: list[tuple[str, str]]) -> list[str]:
 
 
 def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
-    """The user's files of this kind; only those with a known licence unless `everything`."""
+    """The user's files of this kind; only those with a known licence and not banned, unless `everything`. Uploaded
+    sound effects only when the user turned them on (Settings > Media library, `use_my_sounds`, off by default)."""
+    if kind == "sfx" and not everything and not getattr(cfg, "use_my_sounds", False):
+        return []
+    allowed = MY_MUSIC.get(getattr(cfg, "my_music", "safe"), MY_MUSIC["safe"]) if kind == "music" else USABLE
     root = folder(cfg, kind)
-    types = MODEL_TYPES if kind == "models3d" else AUDIO_TYPES
+    types = _types(kind)
     lic = licences(cfg, kind)
     items, seen = [], set()
     for path in sorted(root.glob("*")) if root.exists() else []:
         if path.suffix.lower() not in types:
             continue
-        if not everything and lic.get(path.name, {}).get("licence") not in USABLE:
+        if not everything and (lic.get(path.name, {}).get("licence") not in allowed or lic.get(path.name, {}).get("banned")
+                               or (kind == "sfx" and boom_named(path.name)) or claimed_name(path.name)):
             continue
         name = slug(path.name)
         while name in seen:
@@ -135,6 +231,10 @@ def _files(cfg: Config, kind: str, everything: bool = False) -> list[Item]:
         seen.add(name)
         items.append(Item(name, name.replace("-", " "), path))
     return items
+
+
+def _types(kind: str) -> set[str]:
+    return MODEL_TYPES if kind == "models3d" else MEME_TYPES if kind == "memes" else AUDIO_TYPES
 
 
 def sounds(cfg: Config) -> list[Item]:
@@ -155,13 +255,12 @@ def music(cfg: Config) -> list[Item]:
 ROLE_WORDS = {
     "whoosh": ("whoosh", "swoosh", "woosh", "whip", "swipe", "transition"),
     "swish": ("swish", "swoosh", "whoosh", "woosh", "whip", "swipe"),
-    "impact": ("impact", "punch", "slam", "thud", "hit"),
+    "impact": ("impact", "punch", "slam", "thud"),  # never 'hit': hits are banned outside the hook
     "glitch": ("glitch", "digital", "static", "distort"),
     "shimmer": ("shimmer", "sparkle", "magic", "chime", "twinkle", "glitter"),
     "pop": ("pop", "bubble", "blip"),
     "click": ("click", "tick", "tap", "blip"),
     "ding": ("ding", "bell", "chime", "notification"),
-    "rumble": ("rumble", "earthquake", "quake"),
     "heartbeat": ("heartbeat", "heart", "pulse"),
     "typing": ("typing", "keyboard"),
     "flyby": ("flyby", "fly", "plane", "jet"),
@@ -201,7 +300,7 @@ def listing(cfg: Config) -> list[dict]:
     out = []
     for kind in KINDS:
         builtin = {"sfx": [Item(n, a, None) for n, (_, _, _, a) in CUE_SOUNDS.items()],
-                   "music": [Item(n, a, None) for n, (a, _) in BEDS.items()], "models3d": []}[kind]
+                   "music": [Item(n, a, None) for n, (a, _) in BEDS.items()], "models3d": [], "memes": []}[kind]
         lic = licences(cfg, kind)
         for item in [*_files(cfg, kind, everything=True), *builtin]:
             own = lic.get(item.path.name, {}) if item.path else {}
@@ -209,7 +308,8 @@ def listing(cfg: Config) -> list[dict]:
                         "file": item.path.name if item.path else "",
                         "size": item.path.stat().st_size if item.path else 0,
                         "licence": "builtin" if item.path is None else own.get("licence", "unknown"),
-                        "credit": own.get("credit", "")})
+                        "credit": own.get("credit", ""),
+                        "banned": banned(cfg, kind, item.path.name) if item.path else ""})
     return out
 
 
@@ -218,7 +318,7 @@ def save_upload(cfg: Config, kind: str, filename: str, data: bytes, licence: str
     if kind not in KINDS:
         raise ValueError("Unknown library folder")
     ext = Path(filename).suffix.lower()
-    if ext not in (MODEL_TYPES if kind == "models3d" else AUDIO_TYPES):
+    if ext not in _types(kind) and not (kind == "memes" and ext in (".gif", ".mov")):
         raise ValueError(f"Can't use a {ext or 'file without an extension'} here")
     if len(data) > 60 * 1024 * 1024:
         raise ValueError("That file is over 60 MB")
@@ -226,8 +326,28 @@ def save_upload(cfg: Config, kind: str, filename: str, data: bytes, licence: str
     root.mkdir(parents=True, exist_ok=True)
     path = root / (slug(filename) + ext)
     path.write_bytes(data)
+    if kind == "memes" and ext in (".gif", ".mov"):  # the editor plays .mp4: an animated GIF or an iPhone .mov becomes one
+        path = _to_mp4(path)
     set_licence(cfg, kind, path.name, licence if licence in LICENCES else "unknown", credit)
     return path
+
+
+def _to_mp4(src: Path) -> Path:
+    """H.264 .mp4 of a GIF or .mov (even sizes, no sound for a GIF); the original is removed."""
+    import subprocess
+
+    import imageio_ffmpeg
+
+    out = src.with_suffix(".mp4")
+    run = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-v", "error", "-i", str(src), "-movflags", "+faststart",
+                          "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-crf", "20",
+                          *(["-an"] if src.suffix.lower() == ".gif" else ["-c:a", "aac"]), str(out)],
+                         capture_output=True, text=True, timeout=300)
+    src.unlink(missing_ok=True)
+    if run.returncode != 0 or not out.exists():
+        out.unlink(missing_ok=True)
+        raise ValueError("Couldn't turn that file into a video: " + (run.stderr.strip().splitlines() or ["?"])[-1][:200])
+    return out
 
 
 def remove(cfg: Config, kind: str, filename: str) -> None:
@@ -461,6 +581,7 @@ BEDS = {
 
 # ---------- sound-effect levels, measured against the voice ----------
 
+DEEP_UNDER_VOICE = 1.0  # the hook's sub booms: up to the narrator's own level (their energy is below speech)
 SFX_UNDER_VOICE = 0.5  # every effect's loudness is at most half the narrator's (about -6 dB) ...
 # ... and Cues in the editor lower it again while someone speaks (SPEECH_DUCK in Sound.tsx).
 
@@ -486,6 +607,69 @@ def _loudness(path: Path) -> float | None:
     return float(np.sqrt((loud ** 2).mean())) if loud.size else None
 
 
+# Where each composition plays music and at which levels (the editor's <Music full duck>: between lines, while the
+# narrator speaks). Each music file is levelled so that it sits at least FULL_GAP_DB under the voice between lines and
+# at least SPEECH_GAP_DB under it while the narrator speaks (in practice 13-17 dB). Keep in step with the editor.
+MUSIC_SLOTS = {
+    "Reel": [("music", 0.2, 0.07)],
+    "Long": [("hook.music", 0.62, 0.3), ("music", 0.18, 0.065), ("musicParts", 0.16, 0.06)],
+    "Anim": [("hookMusic", 0.55, 0.2), ("musicParts", 0.26, 0.13)],
+    "Toon": [("hookMusic", 0.6, 0.2), ("music", 0.26, 0.13)],
+    "StickStory": [("music", 0.16, 0.06)],
+}
+FULL_GAP_DB = 7.0  # between lines: clearly music, still under the voice
+SPEECH_GAP_DB = 10.0  # at least this far under while the narrator speaks (13 dB under was "inaudible" to the user once)
+
+
+def level_music(props: dict, root: Path, voice_files: list[str], composition: str) -> dict:
+    """Every music track of a video levelled against its narration (a composed track, an AI-made one and an
+    upload all arrive at their own loudness). Each is written again as <name>-mx.wav with the gain that keeps it
+    FULL_GAP_DB under the voice between lines and SPEECH_GAP_DB under it while the narrator speaks; props point at
+    the copy. Returns {file: gain dB}."""
+    voices = [v for v in (_loudness(root / f) for f in voice_files[:12] if f) if v]
+    if not voices:
+        return {}
+    voice = float(np.median(voices))
+    slots: list[tuple[dict, str, float, float]] = []  # (holder, key, full level, duck level)
+    for path, full, duck in MUSIC_SLOTS.get(composition, []):
+        if path == "musicParts":
+            slots += [(m, "src", full, duck) for m in props.get("musicParts") or []]
+        elif "." in path:
+            head, key = path.split(".")
+            if isinstance(props.get(head), dict):
+                slots.append((props[head], key, full, duck))
+        else:
+            slots.append((props, path, full, duck))
+    gains: dict[str, float] = {}
+    from .audio import gain_file
+
+    for holder, key, full, duck in slots:
+        src = holder.get(key)
+        if not src or not (root / src).exists() or Path(src).stem.endswith("-mx"):
+            continue
+        level = _loudness(root / src)
+        if not level:
+            continue
+        gain = min(voice * 10 ** (-FULL_GAP_DB / 20) / (level * full), voice * 10 ** (-SPEECH_GAP_DB / 20) / (level * duck))
+        gain_db = float(np.clip(20 * np.log10(gain), -24, 15))
+        if abs(gain_db) < 0.5:
+            continue
+        out = (root / src).with_name((root / src).stem + "-mx.wav")
+        if not out.exists():
+            import subprocess
+
+            from .video import FFMPEG
+
+            proc = subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(root / src), "-ac", "2", "-ar", "48000",
+                                   "-c:a", "pcm_s16le", str(out)], capture_output=True)
+            if proc.returncode != 0 or not gain_file(out, gain_db, limit=gain_db > 0):
+                out.unlink(missing_ok=True)
+                continue
+        holder[key] = out.relative_to(root).as_posix()
+        gains[src] = round(gain_db, 1)
+    return gains
+
+
 def level_sounds(props: dict, root: Path, voice_files: list[str]) -> dict:
     """Make every sound effect quieter than the voice, whatever its source: built-in, uploaded or
     synthesised. Each effect file louder than SFX_UNDER_VOICE x the narration is written again
@@ -497,12 +681,16 @@ def level_sounds(props: dict, root: Path, voice_files: list[str]) -> dict:
         return {}
     target = float(np.median(voices)) * SFX_UNDER_VOICE
     srcs = {c["src"] for c in props.get("cues") or []} | set((props.get("sfx") or {}).values())
+    # The hook's sub booms (cues marked `full`) may reach the voice's own level: their energy sits below speech, and
+    # at half the voice they were felt by nobody.
+    deep = {c["src"] for c in props.get("cues") or [] if c.get("full")}
     gains, moved = {}, {}
     for src in sorted(srcs):
         level = _loudness(root / src)
-        if not level or level <= target:
+        limit = target / SFX_UNDER_VOICE * DEEP_UNDER_VOICE if src in deep else target
+        if not level or level <= limit:
             continue
-        gain = target / level
+        gain = limit / level
         import subprocess
 
         from .video import FFMPEG

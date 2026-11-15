@@ -15,9 +15,10 @@ import re
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from pydantic import BaseModel, Field
 
-from . import media, variety
+from . import briefing, cinehook, media, memes, memeweb, variety
 from .config import Config
 from .llm import ask
 from .longform import (LLM_TIMEOUT, WORDS_PER_SECOND, HookShot, LBeat, LChapter, LongScript, LVisual, Progress,
@@ -32,7 +33,7 @@ Mood = LongScript.model_fields["mood"].annotation
 HookMusic = LongScript.model_fields["hook_music"].annotation
 Ambience = LChapter.model_fields["ambience"].annotation
 TrailerBeat = HookShot.model_fields["beat"].annotation
-MAX_SILENT = 3  # picture-and-sound-only shots Claude may add to the hook
+MAX_SILENT = 3  # picture-and-sound-only shots Claude may add to the hook (besides the flash montage)
 
 
 @dataclass
@@ -41,11 +42,12 @@ class ScriptInput:
     description: str
     hook: str
     script: str
+    screen_text: str = "english"  # words on screen: 'english' whatever the narration's language, or 'script' (its own)
 
 
 # ---------- cutting the text into lines (code, so the words never change) ----------
 
-_SENTENCE = re.compile(r"(?<=[.!?…])[\"'”’)\]]*\s+")
+_SENTENCE = re.compile(r"(?<=[.!?…।])[\"'”’)\]]*\s+")
 _HEADING = re.compile(r"^\s*(#+\s*|(chapter|part)\s+\w+\s*[:.\-–—]?\s*)", re.I)
 
 
@@ -87,7 +89,7 @@ def _is_heading(line: str) -> bool:
     line = line.strip()
     if _HEADING.match(line):
         return True
-    return 0 < _words(line) <= 8 and not re.search(r"[.!?,;\"”…]$", line)
+    return 0 < _words(line) <= 8 and not re.search(r"[.!?,;\"”…।]$", line)
 
 
 def parse_script(text: str) -> tuple[list[str], list[tuple[int, str]]]:
@@ -96,13 +98,21 @@ def parse_script(text: str) -> tuple[list[str], list[tuple[int, str]]]:
     lines: list[str] = []
     chapters: list[tuple[int, str]] = []
     for block in re.split(r"\n\s*\n", text.replace("\r\n", "\n").strip()):
-        rows = [r for r in block.split("\n") if r.strip()]
-        while rows and _is_heading(rows[0]):
-            title = _HEADING.sub("", rows[0]).strip(" #:-–—") or rows[0].strip(" #")
-            chapters.append((len(lines), title))
-            rows = rows[1:]
-        if rows:
-            lines += _beats(" ".join(rows))
+        # A heading anywhere in a paragraph starts a chapter there: '## Why it spread' typed straight above its
+        # lines (no blank line between) used to be read out as part of the narration. Only a paragraph's first row
+        # may be an unmarked heading (a short line without end punctuation); further in, only a marked one
+        # ('## ...', 'Chapter 3: ...') counts, so a hard-wrapped line of a few words stays narration.
+        rows: list[str] = []
+        for k, row in enumerate([r for r in block.split("\n") if r.strip()] + [""]):
+            heading = bool(row) and (_is_heading(row) if k == 0 else bool(_HEADING.match(row.strip())))
+            if row and not heading:
+                rows.append(row)
+                continue
+            if rows:
+                lines += _beats(" ".join(rows))
+                rows = []
+            if row:
+                chapters.append((len(lines), _HEADING.sub("", row).strip(" #:-–—") or row.strip(" #")))
     # A heading with no lines after it (or two in a row) marks nothing.
     chapters = [c for i, c in enumerate(chapters) if c[0] < len(lines) and (i + 1 == len(chapters) or chapters[i + 1][0] > c[0])]
     if chapters and chapters[0][0] != 0:
@@ -118,11 +128,19 @@ def parse_hook(text: str) -> list[str]:
 # ---------- the storyboard (one Claude call, no web search) ----------
 
 class BoardShot(BaseModel):
-    line: int = Field(description="The hook line spoken over this shot (H3 = 3), or 0 for a silent shot carried by picture and sound alone.")
-    beat: TrailerBeat = Field(description="Which part of the trailer this shot is: curiosity, unexpected, tension, problem or gap, in that order across the shots.")
-    text: str = Field(default="", description="On-screen text slammed in: 1-3 words taken from the line (or, for a silent shot, from the hook), or empty. Most shots have none.")
-    visual: LVisual = Field(description="What we see: exactly what the line says, dramatic camera. Prefer motion: scene, model3d, footage, icons, stat.")
-    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects: on a word of the line, or word '*' to land on the slammed text.")
+    line: int = Field(description="The hook line spoken over this shot (H3 = 3), or 0 for a silent shot carried by picture and sound alone (every flash shot).")
+    beat: TrailerBeat = Field(description="Which part of the escalation this shot is: curiosity, unexpected, tension, problem or gap, in that order across the shots.")
+    text: str = Field(default="", description="A typed label for this shot, 1-5 words, in the on-screen language: a place and year, a name, a number or a status, taken only from the hook or the script (never a fact they don't state), or empty. About half the shots have one.")
+    visual: LVisual = Field(description="What we see when there is no picture, and the evidence for a number or a date: exactly what the line says, dramatic camera. Prefer motion: footage, model3d, scene, stat, timeline.")
+    picture: str = HookShot.model_fields["picture"]
+    grade: cinehook.Grade = HookShot.model_fields["grade"]
+    transition: cinehook.Transition = HookShot.model_fields["transition"]
+    boom: bool = HookShot.model_fields["boom"]
+    flash: bool = HookShot.model_fields["flash"]
+    stamp: str = HookShot.model_fields["stamp"]
+    rewind: bool = HookShot.model_fields["rewind"]
+    kicker: str = HookShot.model_fields["kicker"]
+    sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects of the story itself, on a word of the line or word '*' on its label (booms, whips, glitches and typing are added for the hook automatically).")
 
 
 class BoardChapter(BaseModel):
@@ -134,6 +152,8 @@ class BoardChapter(BaseModel):
     ambience: Ambience = LChapter.model_fields["ambience"]
     backdrop: str = LChapter.model_fields["backdrop"]
     break_sound: str = LChapter.model_fields["break_sound"]
+    source: str = LChapter.model_fields["source"]
+    card_title: str = Field(default="", description="Only when the words on screen must be English: the chapter's title as its card shows it, in English (the title exactly when it already is English, else a faithful short translation). Otherwise empty.")
 
 
 class BoardBeat(BaseModel):
@@ -151,15 +171,50 @@ class Storyboard(BaseModel):
     hook_track: str = LongScript.model_fields["hook_track"]
     hook_backdrop: str = LongScript.model_fields["hook_backdrop"]
     music: str = LongScript.model_fields["music"]
+    music_prompt: str = LongScript.model_fields["music_prompt"]
     hook: list[BoardShot] = Field(description="The hook's shots in order: every hook line exactly once, in order, plus at most 3 silent shots.")
     chapters: list[BoardChapter] = Field(description="The chapters in order, by their first line.")
     beats: list[BoardBeat] = Field(description="One entry per script line, in order, every line.")
 
 
-def _board_system(cfg: Config) -> str:
+SCREEN_ENGLISH = """On-screen language: every word the viewer reads is English, whatever language the narration \
+is in (it may be Hinglish or Hindi, and it is spoken exactly as written): headlines, subs, item labels and texts, actor \
+labels, footage labels, the hook's typed labels, the chapter titles you write yourself and every card_title. Say \
+what the line means in short, natural English; never put a Hindi or Hinglish word on screen, and never Devanagari. \
+Names, brands, places and units stay as they are (Starlink, Elon Musk, ISRO, GB, crore), numbers in digits \
+(do sau crore -> ₹200 crore). "Taken from the line" above means its meaning, written in English. A quote visual \
+shows the quote in English, a faithful translation when the line quotes it in Hindi. Searches for footage, 3D models \
+and backdrops are English as always."""
+
+
+CINE_BOARD = """The hook is a cinematic cold open before the video, cut like a documentary trailer, built from the \
+user's hook lines H1, H2... Give every hook line exactly one shot, in order. Where a picture or a sound lands \
+harder without words, add a silent shot (line 0) between or after them, at most 3, and before the last hook \
+line a montage of 3-6 flash shots (line 0, flash: true): split-second striking images that build to the peak. \
+Spread the escalation across the shots in order: curiosity (a strong image and an instant question), unexpected \
+(the surprising situation), tension (build the stakes), problem (part of the problem), gap (the question left \
+hanging). Give every shot a grade and a transition that follow the emotion (the colour changes as the stakes \
+rise), mark boom on the 2-4 biggest moments, give about half the shots a typed label taken from the hook or the \
+script, and most shots a picture (a film-still prompt for an image model: no text, no real person's face), \
+keeping a visual for every shot. Use dramatic camera moves (push, dutch, orbit, pan). The pictures and visuals \
+must match the hook's words exactly, and never show the answer the script keeps for the end. After the hook the \
+music stops for a breath of silence and the script starts.
+
+Shot grades: """ + cinehook.GRADE_HELP + " Transitions: " + cinehook.TRANSITION_HELP
+
+
+def _hook_paragraph(cfg: Config) -> str:
+    """How the storyboard builds the hook: the template's own rules (cinehook.board_rules) or the cinematic cold open."""
+    template = cinehook.pick_template(cfg)
+    return cinehook.board_rules(template) if cinehook.energetic(template) else CINE_BOARD
+
+
+def _board_system(cfg: Config, english: bool = True) -> str:
     """The long writer's own rules for visuals, sound and music (the same pipeline, the same look),
-    with the writing, research and accuracy parts left out: the words are final."""
-    full = _system(cfg.video_style, cfg.long_language)
+    with the writing, research and accuracy parts left out: the words are final. `english`: the words on
+    screen are English even when the narration is Hinglish or Hindi."""
+    full = _system(cfg.video_style, cfg.long_language, meme=memes.level(cfg), meme_files=memes.own_files(cfg),
+                   meme_web=memeweb.prompt_block(cfg) if memes.level(cfg) != "off" else "", visual_template=briefing.chosen(cfg))
     rules = full[full.index("Show, don't write"):full.index("Accuracy:")].strip()
     return f"""You storyboard a finished YouTube video script for an animated motion-graphics video. The \
 script, its hook, title and description are written, fact-checked and approved by the user. Never change, \
@@ -170,20 +225,13 @@ effects. Numbers, dates, names and quotes on screen come only from the script's 
 line says them; never add a figure, date or quote the line doesn't state, never round one. A 'quote' visual \
 only for words the script itself quotes; a 'chart' or 'compare' only with figures the script gives.
 
-The hook is a cinematic trailer before the video, built from the user's hook lines H1, H2... Give every \
-hook line exactly one shot, in order. Where a picture or a sound lands harder without words, add a silent \
-shot (line 0) between or after them, at most 3. Spread the trailer beats across the shots in order: \
-curiosity (a strong visual and an instant question), unexpected (the surprising situation), tension \
-(build the stakes), problem (part of the problem), gap (the question left hanging). Slam 1-3 words on \
-screen on the biggest moments only (most shots have none), taken from the hook. Use dramatic camera moves \
-(push, dutch, orbit, pan), quick visual changes and the hook's own trailer music. The visuals must match \
-the hook's words exactly, and never show the answer the script keeps for the end.
+{_hook_paragraph(cfg)}
 
 Chapters: when the user marked chapters, keep them exactly (same first lines and titles) and set their \
 music. Otherwise group the lines into chapters at the story's natural turns: a cold open titled 'Intro', \
 then chapters of roughly 6-14 lines, each with a clear 2-5 word searchable title.
 
-{rules}"""
+{rules}""" + ("\n\n" + SCREEN_ENGLISH if english else "")
 
 
 def _numbered(hook: list[str], lines: list[str], marked: list[tuple[int, str]]) -> str:
@@ -197,15 +245,19 @@ def _numbered(hook: list[str], lines: list[str], marked: list[tuple[int, str]]) 
 
 
 def storyboard(cfg: Config, given: ScriptInput, hook: list[str], lines: list[str],
-               marked: list[tuple[int, str]]) -> Storyboard:
+               marked: list[tuple[int, str]], schema: type[Storyboard] = Storyboard, extra: str = "") -> Storyboard:
+    """`schema`, `extra`: a storyboard with more to decide (the Shoot tab's on-camera lines) and its own rules."""
+    english = given.screen_text != "script"
     prompt = (f"Title: {given.title}\nDescription (context only): {given.description}\n\n"
               + _numbered(hook, lines, marked)
               + ("\n\nThe user marked the chapters (## lines): keep them." if marked else
                  "\n\nNo chapters are marked: group the lines into chapters.")
               + variety.recent_block(cfg) + "\n\n" + media.prompt_block(cfg, long=True) + media.models_block(cfg)
               + f"\n\nReturn {len(hook)} hook line shot(s) (plus up to {MAX_SILENT} silent ones) and exactly "
-                f"{len(lines)} beats, one per script line.")
-    return ask(cfg.ai_backend, cfg.claude_model, _board_system(cfg), prompt, Storyboard, allow_web=False,
+                f"{len(lines)} beats, one per script line."
+              + (" Every word on screen in English, every chapter with its English card_title; the narration stays "
+                 "as written." if english else ""))
+    return ask(cfg.ai_backend, cfg.claude_model, _board_system(cfg, english) + extra, prompt, schema, allow_web=False,
                effort=cfg.claude_effort, timeout=LLM_TIMEOUT)
 
 
@@ -223,15 +275,24 @@ def _hook_shots(board: Storyboard, hook: list[str]) -> list[HookShot]:
         return HookShot(beat=order[min(4, (n - 1) * 5 // max(1, len(hook)))], line=hook[n - 1],
                         visual=_fallback_visual(hook[n - 1]))
 
+    def shot(s: BoardShot, line: str) -> HookShot:
+        return HookShot(beat=s.beat, line=line, text=s.text, visual=s.visual, sounds=s.sounds, picture=s.picture,
+                        grade=s.grade, transition=s.transition, boom=s.boom, flash=s.flash and not line,
+                        stamp=s.stamp, rewind=s.rewind, kicker=s.kicker)
+
+    flashes = 0
     for s in board.hook:
-        if s.line == 0 and silent < MAX_SILENT and shots:
-            shots.append(HookShot(beat=s.beat, line="", text=s.text, visual=s.visual, sounds=s.sounds))
+        if s.line == 0 and s.flash and flashes < cinehook.MAX_FLASH and shots:
+            shots.append(shot(s, ""))
+            flashes += 1
+        elif s.line == 0 and silent < MAX_SILENT and shots:
+            shots.append(shot(s, ""))
             silent += 1
         elif nxt <= s.line <= len(hook):
             while nxt < s.line:
                 shots.append(missing(nxt))
                 nxt += 1
-            shots.append(HookShot(beat=s.beat, line=hook[s.line - 1], text=s.text, visual=s.visual, sounds=s.sounds))
+            shots.append(shot(s, hook[s.line - 1]))
             nxt += 1
     while nxt <= len(hook):
         shots.append(missing(nxt))
@@ -261,19 +322,51 @@ def assemble(given: ScriptInput, board: Storyboard, hook: list[str], lines: list
         beats = [LBeat(narration=lines[i], visual=visuals[i + 1].visual if i + 1 in visuals else _fallback_visual(lines[i]),
                        sounds=visuals[i + 1].sounds if i + 1 in visuals else []) for i in range(first, last)]
         extra = ({"music": c.music, "intensity": c.intensity, "drop": c.drop, "ambience": c.ambience, "backdrop": c.backdrop,
-                  "break_sound": c.break_sound}
+                  "break_sound": c.break_sound, "source": c.source}
                  if c else {})
+        if c and given.screen_text != "script" and c.card_title.strip():
+            extra["card_text"] = c.card_title.strip()  # the card in English; your heading stays in the YouTube chapters
         chapters.append(LChapter(title=title, beats=beats, **extra))
     script = LongScript(topic=given.title, why_chosen="Your own script.", facts_checked="Checked and approved by you.",
                         category=board.category, subject=board.subject, hook_question=board.hook_question, answer="",
                         youtube_title=given.title, hook=_hook_shots(board, hook) if hook else [], mood=board.mood,
                         hook_music=board.hook_music, hook_track=board.hook_track, hook_backdrop=board.hook_backdrop,
-                        chapters=chapters, music=board.music)
+                        chapters=chapters, music=board.music, music_prompt=board.music_prompt)
     return repair_long_script(script)  # the long pipeline's own free visual fixes; never the words
 
 
 def spoken_text(script: LongScript) -> str:
     return " ".join(b.narration for c in script.chapters for b in c.beats)
+
+
+# ---------- a finished video's own text and settings (the video page's "Script & hook") ----------
+
+def script_input_of(folder: Path) -> dict:
+    """The title, description, hook and script a Script Video was made from, and the settings it was made with, so
+    the video page can show them, let you edit them and make the video again. Videos made before the text was kept
+    get it back from script.json: the spoken lines (every word as you wrote it) under their chapter headings."""
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    given = report.get("script_input")
+    if not given:
+        data = json.loads((folder / "script.json").read_text(encoding="utf-8")) if (folder / "script.json").exists() else {}
+        hook = " ".join((h.get("line") or "").strip() for h in data.get("hook") or [] if (h.get("line") or "").strip())
+        parts = []
+        for ch in data.get("chapters") or []:
+            body = " ".join((b.get("narration") or "").strip() for b in ch.get("beats") or [] if (b.get("narration") or "").strip())
+            if body:
+                parts.append((f"## {ch['title']}\n" if ch.get("title") else "") + body)
+        given = {"title": report.get("youtube_title") or report.get("title", ""), "description": report.get("youtube_description", ""),
+                 "hook": hook, "script": "\n\n".join(parts), "screen_text": "english", "rebuilt": True}
+    look = {}
+    try:
+        look = json.loads((folder / "props.json").read_text(encoding="utf-8")).get("look") or {}
+    except (OSError, ValueError):
+        pass
+    settings = {"voice": report.get("voice") or "", "voice_rate": report.get("voice_rate") or "",
+                "captions": bool(report.get("captions")), "hook_template": report.get("hook_template") or look.get("hookTemplate") or "",
+                "visual_template": look.get("template") or "classic", "memes": report.get("memes") or "",
+                "screen_text": given.get("screen_text") or "english"}
+    return {"input": given, "settings": settings}
 
 
 # ---------- the run ----------
@@ -293,14 +386,18 @@ def run_script_video(cfg: Config, given: ScriptInput, progress: Progress = log.i
     work = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-script-working"
     work.mkdir(parents=True, exist_ok=True)
     progress(f"Saving progress in {work.name}")
-    progress("Claude is storyboarding your script and hook (visuals, sounds, music)")
+    template = cinehook.pick_template(cfg)  # how the hook opens (cinehook.TEMPLATES), decided once
+    cfg = replace(cfg, hook_template=template)
+    progress(f"Claude is storyboarding your script and hook (visuals, sounds, music; hook: {cinehook.TEMPLATES[template][0]})")
     board = storyboard(cfg, given, hook, lines, marked)
     script = assemble(given, board, hook, lines, marked)
     assert spoken_text(script) == " ".join(lines)  # not one spoken word changed
-    manual = {"title": given.title, "description": given.description, "hook": given.hook, "script": given.script}
+    manual = {"title": given.title, "description": given.description, "hook": given.hook, "script": given.script,
+              "screen_text": given.screen_text}
     state = {"length": "long", "minutes": minutes, "topic": given.title, "stamp": stamp, "style": cfg.video_style,
              "candidates": [{"title": given.title, "source": "your script"}], "attempt": 1, "stage": "scripted",
-             "script": script.model_dump(), "manual": manual}  # usage: the loop's own saves record it
+             "script": script.model_dump(), "manual": manual, "hook_template": template,
+             "visual_template": briefing.chosen(cfg)}  # usage: the loop's own saves
     (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     return _long_loop(replace(cfg, long_minutes=minutes), work, [Trend(title=given.title, source="your script")],
                       given.title, stamp, progress, resume=state)

@@ -32,6 +32,7 @@ class Automation(BaseModel):
     length: str = "short"  # short | medium | long
     topic: str = ""  # empty = trending
     captions: bool = False  # subtitles burned into the videos (off by default)
+    ai: dict = Field(default_factory=dict)  # its own Claude model/effort (config.ai_pick keys); empty = Settings
     last_run: str = ""  # ISO date of the last run, so a restart doesn't run it twice
 
     def clean(self) -> "Automation":

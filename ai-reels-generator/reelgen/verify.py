@@ -67,6 +67,10 @@ def check_script(script: ReelScript, cfg: Config) -> VerifyResult:
         if len(hook.split()) > 14:
             result.fail(f"The hook sentence is {len(hook.split())} words ('{hook}'). Make it 12 words or "
                         "fewer, so it lands in the first 2 seconds.")
+        from .hooks import weak
+        if weak(hook):
+            result.fail(f"The hook opens with a generic phrase ('{weak(hook)}'). Open on the most surprising concrete "
+                        "thing itself (a number, a moment, a contradiction) in the first words, with energy.")
     if re.search(r"https?://|www\.|[#@*_]", narration):
         result.fail("Narration contains URLs or symbols that text-to-speech will read out loud.")
 

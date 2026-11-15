@@ -7,6 +7,7 @@ import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {COLORS, FONT, clamp, exitProgress} from '../theme';
 import {Layer} from '../Layer';
 import type {Part, Visual} from './types';
+import {BOX} from './box';
 
 // Full-screen beats: a real stock clip of a place or scene, or a 3D model in its own world
 // (a plane flying through clouds, a satellite in space, an object on a turntable).
@@ -41,7 +42,7 @@ const LowerThird: React.FC<{v: Visual; accent: string}> = ({v, accent}) => {
   const e = spring({frame: frame - 10, fps, config: {damping: 14, mass: 0.7}});
   const bar = interpolate(frame, [8, 22], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   return (
-    <div style={{position: 'absolute', left: 110, top: 90, fontFamily: FONT, color: COLORS.text, opacity: Math.min(1, e), transform: `translateX(${(1 - e) * -40}px)`}}>
+    <div style={{position: 'absolute', left: BOX.V ? 60 : 110, top: BOX.V ? BOX.TOP : 90, fontFamily: FONT, color: COLORS.text, opacity: Math.min(1, e), transform: `translateX(${(1 - e) * -40}px)`}}>
       <div style={{width: 120 * bar, height: 7, background: accent, borderRadius: 4, marginBottom: 16, boxShadow: `0 0 18px ${accent}`}} />
       <div style={{fontSize: 64, fontWeight: 900, textShadow: '0 4px 24px rgba(0,0,0,0.7)'}}>{v.headline}</div>
       {v.sub ? <div style={{fontSize: 36, fontWeight: 600, opacity: 0.9, marginTop: 6, textShadow: '0 3px 16px rgba(0,0,0,0.7)'}}>{v.sub}</div> : null}

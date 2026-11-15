@@ -17,6 +17,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -28,9 +29,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import tunnel
+from . import briefing, cinehook, growth, tunnel
 from .categories import CATEGORIES, categorize
-from .config import EDITABLE, PROJECT_ROOT, Config, load_settings, save_settings
+from .config import EDITABLE, PROJECT_ROOT, Config, ai_pick, apply_ai, load_settings, save_settings
 from .llm import INSTALL_HELP, describe_backend
 from .pipeline import run
 from .script_writer import ReelScript
@@ -45,20 +46,95 @@ THUMB_FILES = {"frames.jpg", "picture.jpg", "with-words.jpg"}
 
 # ---------- background jobs ----------
 
+# A video (or a whole job) that failed: also sent on Telegram, so it's seen away from the computer.
+FAIL_LINE = re.compile(r"(?:^|\]\s*)(Video \d+ failed: |Error: )")
+
+
+class PowerBody(BaseModel):
+    on: bool
+
+
+class UpdateBody(BaseModel):
+    force: bool = False  # stop running videos too
+
+
+def job_label(job: dict) -> str:
+    inp = (job.get("anim_input") or job.get("toon_input") or job.get("stick_input") or job.get("script_input") or job.get("sticky_input")
+           or job.get("lowpoly_input") or job.get("story_input") or job.get("shoot_input") or job.get("journey_input") or {})
+    what = job.get("title") or inp.get("title") or inp.get("topic") or inp.get("idea") or job.get("topic") or "automatic topic"
+    if job.get("lowpoly_boards"):
+        return f"{job.get('topic') or 'Claude picks'} · Low-poly storyboards"
+    if job.get("yt_upload"):
+        return f"{job.get('topic')} · Upload to YouTube"
+    if job.get("yt_audit"):
+        return f"{job.get('channel_title') or 'Your channel'} · YouTube audit"
+    kind = ("Journey" if job.get("journey_input") else "Sticky film" if job.get("sticky_input") else "Low-poly" if job.get("lowpoly_input") else "Animated" if job.get("anim_input") else "Toon" if job.get("toon_input") else "Stick" if job.get("stick_input") else "Script Video" if job.get("script_input")
+            else "Shorts Studio" if job.get("story_input") else "Shoot" if job.get("shoot_input")
+            else "New hook" if job.get("rehook") else "New music" if job.get("music_replace") else "Short from video" if job.get("clip_short") else "Re-make" if job.get("rerender") or job.get("stick_remake") else "My voice" if job.get("myvoice") else str(job.get("length") or "short").title())
+    return f"{what} · {kind}"
+
+
+def alert(text: str) -> None:
+    """Send a Telegram message in the background (no-op without a bot token)."""
+    from .notifier import send_text
+
+    current = load_settings(Config())
+    if current.telegram_bot_token and current.telegram_chat_id:
+        threading.Thread(target=send_text, args=(current.telegram_bot_token, current.telegram_chat_id, text), daemon=True).start()
+
+
 class JobManager:
     """Runs generation jobs one at a time on a worker thread."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.jobs: deque[dict] = deque(maxlen=20)
+        self.jobs: deque[dict] = deque(self._load(), maxlen=20)
         self.lock = threading.Lock()
         self.wake = threading.Event()
         threading.Thread(target=self._worker, daemon=True).start()
+        threading.Thread(target=self._keep, daemon=True).start()
+
+    # The list survives a restart (the user: "i close and restart, why already running stick not visible on create
+    # tab?"): saved to <output>/jobs.json every few seconds; a job that was running when the app closed comes back
+    # as stopped, with Resume when its videos saved their progress.
+    def _file(self) -> Path:
+        return self.cfg.output_dir / "jobs.json"
+
+    def _load(self) -> list[dict]:
+        try:
+            saved = json.loads(self._file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        for j in saved:
+            if j.get("status") in ("queued", "running"):
+                j["log"] = (j.get("log") or []) + [{"t": time.time(), "msg": "Stopped: the app was closed while this was running."}]
+                j.update(status="stopped", finished=time.time(), started=True)
+            j.pop("pause", None), j.pop("cancel", None), j.pop("live", None)
+        return saved
+
+    def _keep(self) -> None:
+        last = ""
+        while True:
+            time.sleep(3)
+            try:
+                with self.lock:
+                    text = json.dumps(list(self.jobs), ensure_ascii=False, default=str)
+                if text != last:
+                    tmp = self._file().with_suffix(".tmp")
+                    tmp.write_text(text, encoding="utf-8")
+                    tmp.replace(self._file())
+                    last = text
+            except (OSError, RuntimeError, ValueError) as exc:  # a list changed mid-save: next round
+                log.debug("Couldn't save the job list: %s", exc)
 
     def submit(self, topic: str | None, count: int, trigger: str, style: str | None = None,
                length: str = "short", resume: list[str] | None = None, **extra) -> dict:
+        current = load_settings(Config())
+        # Every job keeps the Claude models and efforts it runs with (shown on its card, applied in _run_job).
+        ai = ai_pick(current, _ai(extra.pop("ai", None)))
+        _local_ready(ai)
         job = {"id": uuid.uuid4().hex[:8], "topic": topic, "count": count, "trigger": trigger, "resume": resume or [],
-               "style": style or load_settings(Config()).video_style, "length": length,
+               "style": style or current.video_style, "length": length, "ai": ai,
                "status": "queued", "log": [], "created": time.time(), "results": [], **extra}
         with self.lock:
             self.jobs.appendleft(job)
@@ -88,6 +164,9 @@ class JobManager:
     def _run_job(self, job: dict) -> None:
         def progress(msg: str, job=job) -> None:
             job["status"] = "running"
+            if "§live " in msg:  # what the current step is doing right now: shown, never logged
+                job["live"] = {"msg": msg.replace("§live ", ""), "t": time.time()}
+                return
             if "§usage " in msg or "§done " in msg or "§skip " in msg:  # token counts / finished video: data, not a log line
                 tag, _, rest = msg.partition("§")
                 kind, _, payload = rest.partition(" ")
@@ -105,12 +184,17 @@ class JobManager:
                 job.setdefault("folders", []).append(msg.rsplit("Saving progress in ", 1)[1].strip())
             job["log"].append({"t": time.time(), "msg": msg})
             log.info("[job %s] %s", job["id"], msg)
+            if FAIL_LINE.search(msg) and not job.get("cancel") and msg not in job.setdefault("alerted", []):
+                job["alerted"].append(msg)
+                alert(f"⚠️ Reel Studio: a video failed\n{job_label(job)}\n\n{msg[:1500]}\n\n"
+                      + ("Open the app and press 'Resume from where it stopped' (nothing done so far is redone)."
+                         if job.get("folders") else "Open the app to see the full log."))
 
         progress.should_pause = lambda job=job: bool(job.get("pause"))  # checked at every step boundary
         # Stop and remove: kills the Claude call or render running now (reelgen/stopper.py).
         progress.should_pause.stop = lambda job=job: bool(job.get("cancel"))
         try:
-            cfg = load_settings(Config())
+            cfg = apply_ai(load_settings(Config()), job.get("ai"))
             cfg.video_style = job["style"]
             if job.get("captions") is not None:
                 cfg.captions = bool(job["captions"])
@@ -118,14 +202,97 @@ class JobManager:
                 cfg.long_voice = job["voice"]
             if job.get("story_form"):
                 cfg.story_form = job["story_form"]
-            if job.get("myvoice"):
+            if job.get("memes") in ("off", "some", "lots"):  # memes.LEVELS: this video's own choice
+                cfg.memes = job["memes"]
+            if job.get("hook_template") in ("auto", *cinehook.TEMPLATES):  # cinehook.TEMPLATES: how this video opens
+                cfg.hook_template = job["hook_template"]
+            if job.get("visual_template") in briefing.TEMPLATES:  # how its beats are drawn (classic, briefing)
+                cfg.visual_template = job["visual_template"]
+            if re.fullmatch(r"[+-]\d{1,2}%", str(job.get("voice_rate") or "")):  # a Script Video's own speaking pace
+                cfg.long_voice_rate = job["voice_rate"]
+            boards = None
+            no_video = False
+            if job.get("yt_upload"):  # ▶ a finished video up to your YouTube channel (reelgen/youtube.py)
+                from .youtube import upload, use
+                r = job["yt_upload"]
+                with use(job.get("channel")):
+                    report = upload(cfg, video_dir(cfg, r["id"]), r["opts"], progress)
+                reports = [{**report, "id": r["id"]}]
+            elif job.get("yt_audit"):  # 📊 Claude audits one channel from its analytics (reelgen/youtube.py)
+                from .youtube import audit, use
+                with use(job.get("channel")):
+                    audit(cfg, progress)
+                reports, no_video = [], True
+            elif job.get("lowpoly_boards"):  # ✍ low-poly storyboards to read first (reelgen/lowpoly/boards.py)
+                from .lowpoly.boards import write_round
+                b = job["lowpoly_boards"]
+                if b.get("change"):  # ✏ Change it: one storyboard written again with the user's instructions
+                    from .lowpoly.boards import change_round
+                    change_round(cfg, b["id"], b["change"]["n"], b["change"]["instruction"], progress)
+                    boards = 1
+                else:
+                    boards = write_round(cfg, b["id"], b["count"], progress)
+                reports = []
+            elif job.get("myvoice"):
                 from .myvoice import finish
                 r = job["myvoice"]
                 reports = [finish(cfg, video_dir(cfg, r["id"]), r["mode"], r["fit"], progress)]
+            elif job.get("anim_hd"):  # a finished animated video, its clips upscaled and re-edited
+                from .animated import sharpen_video
+                reports = [sharpen_video(cfg, video_dir(cfg, job["anim_hd"]["id"]), progress)]
+            elif job.get("music_replace"):  # a claimed track swapped for a composed one (reelgen/remix.py)
+                from .remix import replace_music
+                r = job["music_replace"]
+                reports = [replace_music(cfg, video_dir(cfg, r["id"]), r["src"], progress)]
+            elif job.get("sound_remove"):  # a sound taken out of a finished video (reelgen/remix.py)
+                from .remix import remove_sound
+                r = job["sound_remove"]
+                reports = [remove_sound(cfg, video_dir(cfg, r["id"]), r["name"], progress)]
+            elif job.get("lowpoly_remix"):  # a low-poly video's sound mixed again (reelgen/lowpoly/run.py)
+                from .lowpoly.run import remix_sound
+                reports = [remix_sound(cfg, video_dir(cfg, job["lowpoly_remix"]["id"]), progress)]
+            elif job.get("anim_music"):  # a finished video, its music made by ACE-Step again
+                folder = video_dir(cfg, job["anim_music"]["id"])
+                if json.loads((folder / "report.json").read_text(encoding="utf-8")).get("source") == "anim":
+                    from .animated import redo_music
+                    reports = [redo_music(cfg, folder, progress)]
+                else:  # long, medium, Script or Shoot (reelgen/remix.py)
+                    from .remix import redo_ai_music
+                    reports = [redo_ai_music(cfg, folder, progress)]
+            elif job.get("clip_short"):  # a Short from part of a finished video, ending on it (reelgen/clipshort.py)
+                from .clipshort import make
+                r = job["clip_short"]
+                reports = [make(cfg, video_dir(cfg, r["id"]), r["first"], r["last"], r["mode"], r["seconds"],
+                                r["hook"], r["link"], progress)]
+            elif job.get("rehook"):  # a finished video copied to a new one with a new hook (reelgen/rehook.py)
+                from .rehook import save_as_new
+                reports = [save_as_new(cfg, video_dir(cfg, job["rehook"]["id"]), job["rehook"]["key"], progress)]
+            elif job.get("stick_remake"):  # a Stick video at another speed / subtitles (stickstory.remake)
+                from .stickstory import remake
+                r = job["stick_remake"]
+                reports = [remake(cfg, video_dir(cfg, r["id"]), r.get("speed"), r.get("subtitles"), progress)]
             elif job.get("rerender"):
                 from .rerender import rerender
                 r = job["rerender"]
-                reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress)]
+                reports = [rerender(cfg, video_dir(cfg, r["id"]), r.get("voice"), r.get("captions"), progress, r.get("pace"))]
+            elif job.get("anim_input"):  # Animated videos (reelgen/animated.py), new or resumed
+                from .animated import AnimRequest, run_anim_job
+                reports = run_anim_job(cfg, AnimRequest(**job["anim_input"]), job["count"], progress, job.get("anim_resume"))
+            elif job.get("story_input"):  # Story Shorts (reelgen/storyshorts.py), new or resumed
+                from .storyshorts import StoryRequest, run_story_job
+                reports = run_story_job(cfg, StoryRequest(**job["story_input"]), progress, job.get("story_resume"))
+            elif job.get("sticky_input"):  # Sticky Films (reelgen/sticky/), new or resumed: a pipeline of its own
+                from .sticky.run import StickyRequest, run_sticky_job
+                reports = run_sticky_job(cfg, StickyRequest(**job["sticky_input"]), job["count"], progress, job.get("sticky_resume"))
+            elif job.get("journey_input"):  # 🌱 Journey Shorts (reelgen/journey/), new or resumed
+                from .journey.run import JourneyRequest, run_journey_job
+                reports = run_journey_job(cfg, JourneyRequest(**job["journey_input"]), job["count"], progress, job.get("journey_resume"))
+            elif job.get("lowpoly_input"):  # Low-poly films (reelgen/lowpoly/), new or resumed
+                from .lowpoly.run import LowPolyRequest, run_lowpoly_job
+                reports = run_lowpoly_job(cfg, LowPolyRequest(**job["lowpoly_input"]), job["count"], progress, job.get("lowpoly_resume"))
+            elif job.get("toon_input"):  # Toon Explainers (reelgen/toon.py), new or resumed
+                from .toon import ToonRequest, run_toon_job
+                reports = run_toon_job(cfg, ToonRequest(**job["toon_input"]), job["count"], progress, job.get("toon_resume"))
             elif job.get("resume"):
                 from .pipeline import resume_batch
                 reports = resume_batch(cfg, job["resume"], progress)
@@ -137,17 +304,23 @@ class JobManager:
                     elif job.get("script_input"):  # stopped before its storyboard was saved: start it again
                         from .scriptvideo import ScriptInput, run_script_job
                         reports += run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
+                    elif job.get("shoot_input"):  # stopped before its folder was made: start it again
+                        from .shoot import run_shoot_job
+                        reports += run_shoot_job(cfg, job["shoot_input"]["id"], progress)
                     elif job.get("length") in ("long", "medium"):
                         from .longform import run_long_batch
                         reports += run_long_batch(_long_cfg(cfg, job), fresh, job["topic"], progress)
                     else:
                         reports += run(cfg, fresh, job["topic"], progress)
-            elif job.get("stick_input"):  # Stick Stories: stick-figure comedy episodes and Shorts
+            elif job.get("stick_input"):  # Stick Stories: stick-figure episodes and Shorts, new or resumed
                 from .stickstory import StickRequest, run_stick_job
-                reports = run_stick_job(cfg, StickRequest(**job["stick_input"]), job["count"], progress)
+                reports = run_stick_job(cfg, StickRequest(**job["stick_input"]), job["count"], progress, job.get("stick_resume"))
             elif job.get("script_input"):  # Script Video: the user's own script through the long pipeline
                 from .scriptvideo import ScriptInput, run_script_job
                 reports = run_script_job(cfg, ScriptInput(**job["script_input"]), progress)
+            elif job.get("shoot_input"):  # Shoot: the user's own filmed takes through the long pipeline
+                from .shoot import run_shoot_job
+                reports = run_shoot_job(cfg, job["shoot_input"]["id"], progress)
             elif job.get("length") in ("long", "medium"):
                 from .longform import run_long_batch
                 reports = run_long_batch(_long_cfg(cfg, job), job["count"], job["topic"], progress)
@@ -157,6 +330,11 @@ class JobManager:
             made = len(reports)
             job["status"] = ("done" if made == job["count"] else "paused" if job.get("pause")
                              else "partial" if made else "failed")
+            if boards is not None:  # a storyboard round makes no video: done when any storyboard was written
+                job["boards_made"] = boards
+                job["status"] = "done" if boards else "failed"
+            if no_video:  # the audit makes no video: done when it finished
+                job["status"] = "done"
         except Exception as exc:  # never kill the worker thread
             progress(f"Error: {exc}")
             job["status"] = "failed"
@@ -184,7 +362,7 @@ def scheduler(jobs: JobManager) -> None:
         try:
             cfg = load_settings(Config())
             for a in automations.due(cfg, datetime.now()):
-                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
+                jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions, ai=a.ai or None)
         except Exception:  # a bad file must not stop the scheduler for good
             log.exception("Automation check failed")
         time.sleep(20)
@@ -233,6 +411,19 @@ def lan_ips() -> list[str]:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
+def _true_shape(report: dict) -> dict:
+    """The player is shaped by `format`; a 9:16 low-poly film or cast intro used to be filed as 'long', so the page put
+    the tall video in a 16:9 box (the user: "why it generated this frame even choose 9:16"). The file's own size wins."""
+    probe = (report.get("checks") or {}).get("probe") or {}
+    try:
+        w, h = int(probe.get("width") or 0), int(probe.get("height") or 0)
+    except (TypeError, ValueError):
+        return report
+    if w and h:
+        report["format"] = "short" if h > w else "long" if report.get("format") == "short" and w > h else report.get("format")
+    return report
+
+
 def list_videos(cfg: Config) -> list[dict]:
     videos = []
     if cfg.output_dir.exists():
@@ -242,6 +433,7 @@ def list_videos(cfg: Config) -> list[dict]:
             except (OSError, json.JSONDecodeError):
                 continue
             data["id"] = report.parent.name
+            _true_shape(data)
             data.pop("checks", None)
             data["category"] = categorize(data)  # saved one, or a keyword guess for older videos
             videos.append(data)
@@ -308,6 +500,20 @@ def script_view(d: dict) -> dict:
                  + (f": {(b.get('visual') or {}).get('headline')}" if (b.get("visual") or {}).get("headline") else "")}
                 for b in c.get("beats") or []]})
         title = d.get("youtube_title") or d.get("topic", "")
+    elif "cold_open" in d and "chapters" in d:  # Animated video (reelgen/animated.py)
+        for name, shots in [("Cold open", d.get("cold_open") or [])] + [
+                (f"{i}. {c.get('title', '')}", c.get("shots") or []) for i, c in enumerate(d.get("chapters") or [], 1)]:
+            sections.append({"heading": name, "lines": [
+                {"text": sh.get("line", ""), "note": sh.get("scene", "")[:140]} for sh in shots]})
+        title = d.get("title", "")
+    elif "segments" in d:  # Toon Explainer (reelgen/toon.py)
+        for i, seg in enumerate(d.get("segments") or [], 1):
+            head = (f"#{seg['number']} " if seg.get("number") else f"{i}. ") + (seg.get("heading") or "")
+            sections.append({"heading": head.strip(), "lines": [
+                {"text": sh.get("line", ""), "note": " · ".join(x for x in (sh.get("action", ""), sh.get("backdrop", ""),
+                                                                            sh.get("slam") and f"slam: {sh['slam']}") if x)}
+                for sh in seg.get("shots") or []]})
+        title = d.get("title", "")
     elif d.get("scenes") and "lines" in (d["scenes"][0] or {}):  # stick story
         for i, sc in enumerate(d["scenes"], 1):
             sections.append({"heading": f"Scene {i} · {sc.get('setting', '')}", "lines": [
@@ -340,6 +546,29 @@ def video_dir(cfg: Config, video_id: str) -> Path:
 
 # ---------- app ----------
 
+class AIPick(BaseModel):
+    """A job's own Claude choice (every tab's "Claude" picker); blank = the Settings value (config.ai_pick)."""
+    model: str = ""  # writes: scripts, storyboards, hooks, fixes, reviews
+    effort: str = ""
+    check_model: str = ""  # checks: fact-checks, picture checks
+    check_effort: str = ""
+
+
+def _local_ready(ai: dict) -> None:
+    """A job that picked a model on this computer that isn't installed yet is refused before it starts."""
+    from . import localllm
+    for m in {ai.get("model", ""), ai.get("check_model", "")}:
+        if m.startswith("local:") and not localllm.installed(localllm.key_of(m)):
+            raise HTTPException(400, f"{localllm.name_of(m)} isn't installed yet: Settings > 🖥 Local AI, or pick a Claude model")
+
+
+def _ai(pick) -> dict | None:
+    """AIPick or a plain dict from a route that takes `body: dict`."""
+    if isinstance(pick, AIPick):
+        return pick.model_dump()
+    return pick if isinstance(pick, dict) else None
+
+
 class GenerateRequest(BaseModel):
     topic: str | None = None
     count: int = 1
@@ -347,6 +576,10 @@ class GenerateRequest(BaseModel):
     length: str = "short"  # "short" (30s, 9:16), "medium" (5-6 min) or "long" (8-10 min), both 16:9 animated
     captions: bool | None = None  # subtitles; empty = the Settings value
     story_form: str = "auto"  # long/medium: longform.STORY_FORMS key, or auto
+    memes: str = ""  # long/medium: off | some | lots (reelgen/memes.py); empty = the Settings value
+    hook_template: str = ""  # long/medium: cinehook.TEMPLATES key or auto; empty = the Settings value
+    visual_template: str = ""  # long/medium: briefing.TEMPLATES key; empty = the Settings value
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class LicenceEdit(BaseModel):
@@ -359,6 +592,86 @@ class LicenceAll(BaseModel):
     only_unknown: bool = True
 
 
+class StickyBody(BaseModel):
+    """Sticky Films (reelgen/sticky/): a voiceless animated short film about an everyday struggle."""
+    topic: str = ""
+    minutes: float = 3.0
+    count: int = 1
+    whispers: bool = True
+    movie: str = ""  # 🎬 Movie: the movie's title (this film is its next part)
+    shots: str = ""  # Movie: this part's shots, one per line
+    format: str = "film"  # film (16:9) | short (9:16)
+    seconds: int = 45  # Short: 20-60
+    hero: str = ""  # Short: '' = the recurring Shorts hero, 'new', or a Sticky movie's title (its cast)
+    ai: AIPick | None = None
+
+
+class JourneyBody(BaseModel):
+    """🌱 Journey (reelgen/journey/): one real thing's journey through time as a photoreal time-lapse Short."""
+    idea: str = ""  # e.g. 'a tomato that falls off a truck'; empty = Claude picks
+    seconds: int = 60
+    top: str = ""
+    bottom: str = ""
+    words: bool = True
+    labels: bool = False
+    engine: str = "auto"  # auto | cloud | local
+    count: int = 1
+    ai: AIPick | None = None
+
+
+class LowPolyBody(BaseModel):
+    """Low-poly films (reelgen/lowpoly/): the user's faceted 3D man, narrated; a Short (9:16) or a 3-4 min film."""
+    topic: str = ""  # life: the struggle; fiction: the whole brief (any length)
+    kind: str = "life"  # life | fiction
+    format: str = "short"  # short | film
+    seconds: int = 35
+    minutes: float = 3.5
+    vertical: bool = False  # film in 9:16
+    voice: str = ""
+    pace: int = 0
+    watermark: str = ""
+    words: str = "on"  # on (subtitles + time stamps) | stamps (time stamps only) | off
+    count: int = 1
+    people: list[str] = []  # 🎭 cast intro: who ('hero' for him); empty = everyone
+    hero_name: str = "Ethan"  # 🎭 his name on his card
+    film_title: str = "The Unwritten"  # 🎭 the film's name on the closing poster
+    drafts: int = 3  # ✍ storyboards to read first (POST /api/lowpoly/boards): how many to choose from
+    growth: bool = True  # 📈 the channel rules (reelgen/growth.py)
+    end_tag: str = "Subscribe for the next one"  # 📈 the small tag over a Short's last seconds ('' = none)
+    renderer: str = "browser"  # browser | blender (🧊 reelgen/lowpoly/blend.py)
+    blender_quality: str = "good"  # draft | good | best
+    blender_engine: str = "cycles"  # cycles | eevee
+    ai: AIPick | None = None
+
+
+class LowPolyChangeBody(BaseModel):
+    """✏ What to change in a storyboard (Claude rewrites it with these changes, keeping the rest)."""
+    instruction: str
+
+
+class LowPolyRejectBody(BaseModel):
+    """✍ A storyboard turned down, and what was wrong with it (optional; the next ones are told)."""
+    note: str = ""
+
+
+class LowPolyMoreBody(BaseModel):
+    count: int = 2
+
+
+class LowPolyRestageBody(BaseModel):
+    """🎬 New angles for a finished low-poly video: 'storyboard' (Claude stages every shot again) or 'angles'."""
+    mode: str = "storyboard"
+    ai: AIPick | None = None
+
+
+class LowPolyPerson(BaseModel):
+    """A person for the low-poly films' recurring cast, designed in the tab."""
+    name: str
+    who: str = ""
+    voice: str = "man"
+    design: dict = {}
+
+
 class StickRequestBody(BaseModel):
     """Stick Stories: a stick-figure comedy episode (16:9) or Short (9:16)."""
     idea: str = ""
@@ -367,9 +680,105 @@ class StickRequestBody(BaseModel):
     seconds: int = 0  # Short length: 15, 30, 45 (0 = 25-50 s)
     language: str = "english"
     speed: float = 1.5
-    style: str = "comedy"  # comedy | fiction | facts
+    style: str = "comedy"  # comedy | fiction | facts | documentary
     cast: str = ""
+    subtitles: str = "auto"  # auto | on | off
+    narrator: str = ""  # the narrator's voice (e.g. your cloned Sarvam voice); empty = one nobody in the cast has
+    opening: str = "auto"  # stickstory.OPENINGS key or auto
+    script: str = ""  # your own script (stickstory.from_script); empty = Claude writes the story
+    title: str = ""
     count: int = 1
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
+
+
+class ToonRequestBody(BaseModel):
+    """Toon Explainers: a flat-animated explainer (16:9) with cartoon people and a mascot."""
+    topic: str = ""
+    minutes: float = 3
+    form: str = "auto"
+    voice: str = "en-US-AndrewMultilingualNeural"
+    speed: int = 12
+    captions: bool = True
+    watermark: str = ""
+    count: int = 1
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
+
+
+class MusicTestBody(BaseModel):
+    """Anim tab, "Try the music model": one track from ACE-Step, described in words."""
+    caption: str
+    seconds: float = 30
+    bpm: int | None = None
+
+
+class StoryBody(BaseModel):
+    """Shorts Studio: 9:16 Shorts (one or a series), any mix of source, kind, voice language and look."""
+    source: str = "ai"  # ai | script
+    topic: str = ""
+    kind: str = "story"  # story | facts | explainer | news | comedy
+    script: str = ""
+    title: str = ""
+    parts: int = 3
+    split: str = "auto"  # your script: auto (natural length, parts at 'Part 2') | length | one
+    seconds: int = 30
+    language: str = "english"  # english | hinglish | hindi
+    screen_text: str = "english"  # english | voice
+    visuals: str = "anim"  # anim | key | pictures | footage | graphics
+    memes: str = ""  # the graphics look: off | some | lots (reelgen/memes.py); empty = the Settings value
+    style: str = "auto"
+    quality: str = "auto"
+    upscale: bool = True
+    voice: str = ""
+    speed: int = 8
+    captions: bool = False
+    watermark: str = ""
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
+
+
+class AnimRequestBody(BaseModel):
+    """Animated videos: every shot an AI picture and clip, made on this computer (reelgen/animated.py)."""
+    topic: str = ""
+    minutes: float = 7
+    style: str = "auto"
+    motion: str = "full"  # full | key | stills
+    form: str = "story"  # story | whatif | movie
+    engine: str = "auto"  # auto | cloud | local
+    series: str = ""
+    quality: str = "auto"  # auto | fast | standard | high (animated.CLIP_SIZES)
+    upscale: bool = True  # sharpen clips and pictures to full HD (AI upscaler)
+    voice: str = "en-US-AndrewMultilingualNeural"
+    speed: int = 8
+    captions: bool = False
+    watermark: str = ""
+    count: int = 1
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
+
+
+class SoundRemoveBody(BaseModel):
+    name: str  # the sound as the Effects & media used panel names it
+
+
+class ShootBody(BaseModel):
+    """A Shoot project (reelgen/shoot.py): your script, filmed by you shot by shot."""
+    title: str
+    description: str = ""
+    hook: str = ""
+    script: str
+    language: str = "english"  # english | hinglish | hindi (speech following and transcription)
+    format: str = "long"  # long (16:9) | short (9:16)
+    screen_text: str = "english"
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
+
+
+class ShootMakeBody(BaseModel):
+    captions: bool | None = None
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
+
+
+class ShootVoiceBody(BaseModel):
+    clean: bool | None = None  # noise, hum and room taken out of your takes
+    fix: bool | None = None  # words you skipped rebuilt in your voice
+    choices: dict[str, bool] | None = None  # 'Rebuild in my voice' ticks on take cards ("shot|line:word": on/off)
 
 
 class ScriptVideoRequest(BaseModel):
@@ -380,6 +789,12 @@ class ScriptVideoRequest(BaseModel):
     script: str
     voice: str | None = None  # empty = the long-video voice in Settings
     captions: bool | None = None
+    screen_text: str = "english"  # words on screen: English (a Hinglish script still speaks Hinglish) or 'script'
+    memes: str = ""  # off | some | lots (reelgen/memes.py); empty = the Settings value
+    hook_template: str = ""  # cinehook.TEMPLATES key or auto; empty = the Settings value
+    visual_template: str = ""  # briefing.TEMPLATES key; empty = the Settings value
+    voice_rate: str = ""  # speaking pace, e.g. '-5%'; empty = Settings > Speaking pace (long and Script videos)
+    ai: AIPick | None = None  # this job's Claude model and effort (blank: Settings)
 
 
 class PostEdit(BaseModel):
@@ -393,6 +808,47 @@ class PostEdit(BaseModel):
 
 class ReviewBody(BaseModel):
     decision: str  # accept | reject
+
+
+class YouTubeClientBody(BaseModel):
+    """Settings > YouTube: the OAuth client's JSON file from Google Cloud, or its id and secret typed in."""
+    json_text: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+
+
+class YouTubeUploadBody(BaseModel):
+    """▶ Upload to YouTube from a video's page (youtube.plan_for gives the starting values)."""
+    title: str
+    description: str = ""
+    tags: list[str] = []
+    category: str = "22"
+    privacy: str = "private"  # private / unlisted / public
+    publish_at: str = ""  # a scheduled time (ISO, with the page's time zone); makes it private until then
+    made_for_kids: bool = False
+    synthetic: bool = False  # altered or synthetic content that looks real
+    language: str = ""
+    file: str = "reel.mp4"
+    thumbnail: str = ""  # a picture in the video's folder: thumbnail-youtube.jpg or youtube-thumb.jpg/png
+    channel: str = ""  # which connected channel it goes to ('' = the one the YouTube tab shows)
+
+
+class YouTubeEditBody(BaseModel):
+    """Changes to one video on the channel; only the fields sent are changed."""
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    category: str | None = None
+    privacy: str | None = None
+    publish_at: str | None = None  # '' takes a schedule off
+    made_for_kids: bool | None = None
+    synthetic: bool | None = None
+
+
+class PostedBody(BaseModel):
+    """📤 Posted: saving a video from its page marks it posted (every pipeline's videos); `posted: false` undoes it."""
+    posted: bool = True
+    file: str = "reel.mp4"  # which version was saved (reel.mp4, reel-myvoice.mp4)
 
 
 class LoginRequest(BaseModel):
@@ -443,6 +899,9 @@ def create_app(cfg: Config) -> FastAPI:
     app = FastAPI(title="Reel Studio", docs_url=None, redoc_url=None)
     jobs = JobManager(cfg)
     import_samples(cfg)
+    from .media import forget_removed, mark_claimed
+    forget_removed(cfg)  # sounds you asked to have deleted from your library
+    mark_claimed(cfg)  # tracks YouTube claims (media.CLAIMED): never used again
     # Which code this server is running (shown in Settings), so a git pull without a
     # restart is easy to spot: the running app keeps the code it started with.
     try:
@@ -452,7 +911,19 @@ def create_app(cfg: Config) -> FastAPI:
     except Exception:
         running_version = "unknown"
     started_code = _code_stamp()  # outside the try: always set
+    # The result of an update made from the app (reelgen/updater.py), told once on Telegram.
+    from .updater import RESULT, last_result
+    last_update = last_result(cfg.output_dir)
+    if last_update and not last_update.get("notified"):
+        alert(("✅ Reel Studio updated and restarted: " if last_update.get("ok") else "⚠️ Reel Studio restarted, update failed: ")
+              + str(last_update.get("message", "")) + f" (branch {last_update.get('branch')}, now {running_version})")
+        try:
+            (cfg.output_dir / RESULT).write_text(json.dumps({**last_update, "notified": True}), encoding="utf-8")
+        except OSError:
+            pass
     threading.Thread(target=scheduler, args=(jobs,), daemon=True).start()
+    from . import poweroff
+    threading.Thread(target=poweroff.watch, args=(jobs.busy, alert), daemon=True).start()
     # Cookie value is a random session secret, so the PIN itself is never stored in the browser.
     session_token = secrets.token_urlsafe(24)
 
@@ -516,8 +987,56 @@ def create_app(cfg: Config) -> FastAPI:
             # The page is read from disk on every load, the Python code only when the app starts: after a
             # pull the page can show buttons the running app doesn't know yet ('Not Found').
             "restart_needed": _code_stamp() > started_code,
+            # The page itself: a tab left open across an update keeps running the old page's code against the
+            # new app (the audit showed '[object Object]'), so the page compares this with the one it loaded.
+            "page": int((WEB_DIR / "index.html").stat().st_mtime),
             "renderer": _renderer(),
+            "last_update": last_update,
+            "poweroff": poweroff.view(),
         }
+
+    @app.post("/api/poweroff")
+    def power_when_done(body: PowerBody):
+        """Shut the computer down once no job is queued or running (reelgen/poweroff.py); off cancels."""
+        return poweroff.arm(body.on)
+
+    # ---------- update and restart (reelgen/updater.py) ----------
+
+    @app.get("/api/update/check")
+    def update_check():
+        from . import updater
+        return updater.check()
+
+    @app.post("/api/update")
+    def update_now(body: UpdateBody):
+        """Stop running videos (they resume later), hand over to the updater, quit; it pulls and starts the app again."""
+        from . import updater
+
+        active = [j for j in jobs.jobs if j["status"] in ("queued", "running")]
+        if active and not body.force:
+            raise HTTPException(409, {"jobs": [job_label(j) for j in active]})
+        for j in active:
+            j.update(pause=True, cancel=True)  # stopper.py kills the Claude call / render now; checkpoints stay
+            j["log"].append({"t": time.time(), "msg": "Stopped for the app update; resume it after the restart"})
+        deadline = time.time() + 25
+        while any(j.get("started") and not j.get("finished") for j in active) and time.time() < deadline:
+            time.sleep(0.5)
+        argv = sys.argv[1:]
+        serve_args = argv[1:] if argv[:1] == ["serve"] else []
+        updater.start(cfg.output_dir, cfg.port, serve_args)
+
+        from . import anim_engine
+        anim_engine.music_test["stop"] = True  # a music test's worker is killed like a video's
+
+        def quit_soon() -> None:
+            time.sleep(1.5)  # let this answer reach the page first
+            try:
+                tunnel.stop()
+            finally:
+                updater.hard_exit(75)  # start.bat closes its window on 75 instead of waiting for a key
+
+        threading.Thread(target=quit_soon, daemon=True).start()
+        return {"ok": True, "stopped": len(active)}
 
     @app.get("/api/videos")
     def videos():
@@ -528,10 +1047,10 @@ def create_app(cfg: Config) -> FastAPI:
     def video(video_id: str):
         report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
         report["category"] = categorize(report)
-        return report
+        return _true_shape(report)
 
     @app.post("/api/videos/{video_id}/post-text")
-    def write_post_text(video_id: str):
+    def write_post_text(video_id: str, body: dict | None = None):
         """(Re)write the Instagram/YouTube text for a video, e.g. one made before this existed."""
         from .post_copy import apply_post_copy, save_post_text
 
@@ -542,7 +1061,7 @@ def create_app(cfg: Config) -> FastAPI:
 
             long_script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
             try:
-                report.update(write_long_post(long_script, {"chapters": report.get("chapters", [])}, load_settings(Config())))
+                report.update(write_long_post(long_script, {"chapters": report.get("chapters", [])}, apply_ai(load_settings(Config()), (body or {}).get("ai"))))
             except Exception as exc:
                 raise HTTPException(502, f"Couldn't write the post text: {exc}")
             report.pop("post_text_error", None)
@@ -557,7 +1076,7 @@ def create_app(cfg: Config) -> FastAPI:
         script = ReelScript.model_validate(data)
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
         try:
-            apply_post_copy(report, script, load_settings(Config()), folder)
+            apply_post_copy(report, script, apply_ai(load_settings(Config()), (body or {}).get("ai")), folder)
         except Exception as exc:
             raise HTTPException(502, f"Couldn't write the post text: {exc}")
         (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -573,12 +1092,362 @@ def create_app(cfg: Config) -> FastAPI:
     def rerender_video(video_id: str, body: dict):
         """New voice and/or subtitles on or off: same script and footage, no Claude tokens."""
         report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
-        if any(j.get("rerender", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+        if any((j.get("rerender") or j.get("stick_remake") or {}).get("id") == video_id
+               for j in jobs.jobs if j["status"] in ("queued", "running")):
             raise HTTPException(409, "This video is already being re-made")
+        if report.get("source") == "stick":  # same story, pictures and music; voices at another speed (stickstory.remake)
+            try:
+                speed = min(2.0, max(0.8, float(body.get("speed")))) if body.get("speed") else None
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Speed should be a number like 1.25")
+            return jobs.submit(f"Re-make: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
+                               report.get("length", "stick"), stick_remake={
+                                   "id": video_id, "speed": speed,
+                                   "subtitles": body.get("subtitles") if body.get("subtitles") in ("auto", "on", "off") else None})
         return jobs.submit(f"Re-make: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
                            report.get("format", "short"),
                            rerender={"id": video_id, "voice": body.get("voice") or None,
-                                     "captions": None if body.get("captions") is None else bool(body.get("captions"))})
+                                     "captions": None if body.get("captions") is None else bool(body.get("captions")),
+                                     "pace": body.get("pace") if re.fullmatch(r"[+-]\d{1,2}%", str(body.get("pace") or "")) else None})
+
+    # ---- A 15-20 s demo of a re-make before making it (rerender.demo): one at a time, kept per video ----
+    demo_state: dict[str, dict] = {}  # "<video id>/<key>" -> {state: waiting/running/failed, line, error}
+    demo_lock = threading.Lock()
+
+    def remaking(video_id: str) -> bool:
+        return any(j.get("rerender", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running"))
+
+    @app.get("/api/videos/{video_id}/demos")
+    def list_demos(video_id: str):
+        from . import rerender
+        from .longform import LongScript
+
+        folder = video_dir(cfg, video_id)
+        original, script, old = None, None, {}
+        try:
+            script = LongScript.model_validate_json((folder / "script.json").read_text(encoding="utf-8"))
+            old = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+            window = rerender.demo_window(script, old)
+            original = list(window[1:]) if window else None
+        except (OSError, ValueError):
+            pass
+        made = rerender.demos(folder)
+        if script is not None and original is not None:
+            made = [rerender.fill_wpm(d, script, old) for d in made]
+        keys = {d["key"] for d in made}
+        busy = [{"key": k.split("/", 1)[1], **e} for k, e in list(demo_state.items())
+                if k.startswith(video_id + "/") and k.split("/", 1)[1] not in keys]
+        return {"original": original, "demos": made, "busy": busy}
+
+    @app.post("/api/videos/{video_id}/demo")
+    def make_demo(video_id: str, body: dict):
+        """The re-make's settings tried on the story's first 15-20 s (nothing generated, no Claude)."""
+        from . import rerender
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("format") != "long":
+            raise HTTPException(400, "Demos are made for long, medium and Script videos")
+        if remaking(video_id):
+            raise HTTPException(409, "This video is being re-made; try a demo when it's done")
+        pace = body.get("pace") if re.fullmatch(r"[+-]\d{1,2}%", str(body.get("pace") or "")) else None
+        voice = str(body.get("voice") or "") or None
+        captions = None if body.get("captions") is None else bool(body.get("captions"))
+        settings, pace_used, _, _ = rerender._settings(load_settings(Config()), report, voice, pace, captions)
+        key = rerender.demo_key(settings.long_voice, pace_used, settings.captions)
+        if (folder / rerender.DEMOS / f"{key}.mp4").exists():
+            return {"key": key, "state": "done"}
+        entry = demo_state.get(f"{video_id}/{key}")
+        if entry and entry["state"] in ("waiting", "running"):
+            return {"key": key, **entry}
+        entry = {"state": "waiting", "line": "Waiting for the demo before it", "error": "", "pace": pace_used}
+        demo_state[f"{video_id}/{key}"] = entry
+
+        def work():
+            with demo_lock:
+                entry.update(state="running", line="Starting")
+                try:
+                    if remaking(video_id):
+                        raise RuntimeError("This video is being re-made; try a demo when it's done")
+                    rerender.demo(load_settings(Config()), folder, voice, pace, captions,
+                                  progress=lambda m: entry.update(line=str(m)))
+                    demo_state.pop(f"{video_id}/{key}", None)
+                except Exception as exc:  # noqa: BLE001 - shown on the video page
+                    log.warning("Demo of %s failed: %s", video_id, exc)
+                    entry.update(state="failed", error=str(exc)[:300])
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"key": key, **entry}
+
+    # ---- Re-create only the hook, as a new separate video (reelgen/rehook.py) ----
+    hook_state: dict[str, dict] = {}  # "<video id>/<template>" -> {state, line, error, template}
+
+    @app.get("/api/videos/{video_id}/hooks")
+    def list_hooks(video_id: str):
+        from . import cinehook, rehook
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        hook = {}
+        try:
+            hook = json.loads((folder / "props.json").read_text(encoding="utf-8")).get("hook") or {}
+        except (OSError, ValueError):
+            pass
+        return {"why_not": rehook.why_not(folder), "yours": report.get("source") == "script",
+                "current": hook.get("template") or ("cinematic" if hook.get("cine") else "trailer"),
+                "seconds": round(float(hook.get("duration") or 0), 2),
+                "templates": [{"key": k, "name": n, "desc": d} for k, (n, d) in cinehook.TEMPLATES.items()],
+                "made": rehook.hooks(folder),
+                "busy": [{"template": k.split("/", 1)[1], **e} for k, e in list(hook_state.items()) if k.startswith(video_id + "/")],
+                "saving": [j["id"] for j in jobs.jobs if j.get("rehook", {}).get("id") == video_id and j["status"] in ("queued", "running")]}
+
+    @app.post("/api/videos/{video_id}/hooks")
+    def make_hook_route(video_id: str, body: dict):
+        """A new hook for this video in the template asked for, rendered on its own (a preview, ~2-5 min)."""
+        from . import cinehook, rehook
+
+        folder = video_dir(cfg, video_id)
+        reason = rehook.why_not(folder)
+        if reason:
+            raise HTTPException(400, reason)
+        template = str(body.get("template") or "")
+        if template not in cinehook.TEMPLATES:
+            raise HTTPException(400, "Pick a hook template")
+        k = f"{video_id}/{template}"
+        if hook_state.get(k, {}).get("state") in ("waiting", "running"):
+            return hook_state[k]
+        entry = {"state": "waiting", "line": "Waiting for the edit before it", "error": "", "template": template}
+        hook_state[k] = entry
+
+        def work():
+            with demo_lock:  # one preview edit at a time (demos and hooks)
+                entry.update(state="running", line="Starting")
+                try:
+                    pace = str(body.get("pace") or "")
+                    rehook.make_hook(apply_ai(load_settings(Config()), body.get("ai")), folder, template, bool(body.get("rewrite", True)),
+                                     progress=lambda m: entry.update(line=str(m)),
+                                     pace=pace if re.fullmatch(r"[+-]\d{1,2}%", pace) else None)
+                    hook_state.pop(k, None)
+                except Exception as exc:  # noqa: BLE001 - shown on the video page
+                    log.warning("New hook for %s failed: %s", video_id, exc)
+                    entry.update(state="failed", error=str(exc)[:300])
+
+        threading.Thread(target=work, daemon=True).start()
+        return entry
+
+    @app.post("/api/videos/{video_id}/hooks/{key}/save")
+    def save_hook_route(video_id: str, key: str):
+        """A new, separate video: this one copied with that hook in place of its own (the original stays as it is)."""
+        folder = video_dir(cfg, video_id)
+        if not re.fullmatch(r"[a-z]+-[0-9a-f]{6}", key) or not (folder / "hooks" / f"{key}.mp4").exists():
+            raise HTTPException(404, "That hook isn't there any more")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"New hook: {report.get('title', video_id)}", 1, "rerender", report.get("style"),
+                           report.get("format", "long"), rehook={"id": video_id, "key": key})
+
+    @app.get("/api/videos/{video_id}/short-lines")
+    def short_lines(video_id: str):
+        """The script's lines for making a Short from part of this video (reelgen/clipshort.py)."""
+        from . import clipshort
+
+        folder = video_dir(cfg, video_id)
+        try:
+            out = clipshort.lines(folder)
+        except (OSError, ValueError) as exc:
+            out = {"why_not": str(exc), "lines": []}
+        out["making"] = [j["id"] for j in jobs.jobs if j.get("clip_short", {}).get("id") == video_id
+                         and j["status"] in ("queued", "running")]
+        return out
+
+    @app.post("/api/videos/{video_id}/short")
+    def make_short(video_id: str, body: dict):
+        """A new Short from lines first..last of this video (a new script, or the lines as they are), ending on it."""
+        from . import clipshort
+
+        folder = video_dir(cfg, video_id)
+        reason = clipshort.why_not(folder)
+        if reason:
+            raise HTTPException(400, reason)
+        try:
+            first, last = int(body.get("first", -1)), int(body.get("last", -1))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Pick the first and the last line")
+        if first < 0 or last < first:
+            raise HTTPException(400, "Pick the first and the last line")
+        mode = "exact" if body.get("mode") == "exact" else "new"
+        seconds = int(body.get("seconds") or 60)
+        link = str(body.get("link") or "").strip()[:300]
+        if link and not re.match(r"https?://", link):
+            raise HTTPException(400, "The link should start with https://")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"Short: {report.get('title', video_id)}", 1, "rerender", report.get("style"), "short",
+                           clip_short={"id": video_id, "first": first, "last": last, "mode": mode,
+                                       "seconds": seconds if seconds in clipshort.LENGTHS else 60,
+                                       "hook": body.get("hook", True) is not False, "link": link}, ai=body.get("ai"))
+
+    sample_state: dict[str, dict] = {}  # template -> {state, line, error}
+
+    @app.get("/api/hook-samples/{template}")
+    def hook_sample(template: str):
+        """An example of a hook template (rehook.make_sample): made once on first ask (1-3 min), then kept."""
+        from . import cinehook, rehook
+
+        if template not in cinehook.TEMPLATES:
+            raise HTTPException(404)
+        settings = load_settings(Config())
+        if rehook.sample_path(settings, template).exists():
+            return {"ready": True, "url": f"/api/hook-samples/{template}/video?v={rehook.SAMPLE_VERSION}"}
+        entry = sample_state.get(template)
+        if entry and entry["state"] in ("waiting", "running"):
+            return entry
+        entry = {"state": "waiting", "line": "Waiting for the edit before it", "error": ""}
+        sample_state[template] = entry
+
+        def work():
+            with demo_lock:
+                entry.update(state="running", line="Making the example")
+                try:
+                    rehook.make_sample(load_settings(Config()), template, progress=lambda m: entry.update(line=str(m)))
+                    sample_state.pop(template, None)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Hook example %s failed: %s", template, exc)
+                    entry.update(state="failed", error=str(exc)[:300])
+
+        threading.Thread(target=work, daemon=True).start()
+        return entry
+
+    @app.get("/api/hook-samples/{template}/video")
+    def hook_sample_video(template: str):
+        from . import cinehook, rehook
+
+        path = rehook.sample_path(load_settings(Config()), template)
+        if template not in cinehook.TEMPLATES or not path.exists():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.get("/media/{video_id}/hook/{name}")
+    def hook_media(video_id: str, name: str):
+        path = video_dir(cfg, video_id) / "hooks" / name
+        if not re.fullmatch(r"[a-z]+-[0-9a-f]{6}\.mp4", name) or not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.get("/media/{video_id}/demo/{name}")
+    def demo_media(video_id: str, name: str):
+        from .rerender import DEMOS
+
+        path = video_dir(cfg, video_id) / DEMOS / name
+        if not re.fullmatch(r"[0-9a-f]{10}\.mp4", name) or not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path)
+
+    @app.post("/api/videos/{video_id}/sharpen")
+    def sharpen_video_route(video_id: str):
+        """An animated video re-edited with its clips and pictures upscaled to full HD (animated.sharpen_video)."""
+        from . import anim_engine
+        report = json.loads((video_dir(cfg, video_id) / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "anim":
+            raise HTTPException(400, "Only animated videos can be sharpened this way")
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (Anim tab).")
+        if any(j.get("anim_hd", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being sharpened")
+        return jobs.submit(f"Full HD: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
+                           anim_hd={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/music")
+    def redo_music_route(video_id: str):
+        """A video whose music was composed (or partly so) gets ACE-Step's tracks: the ones already made are kept,
+        the missing ones generated, the soundtrack mixed under the same picture. Animated videos:
+        animated.redo_music; long, medium, Script and Shoot videos: remix.redo_ai_music."""
+        from . import anim_engine
+        from .animated import music_redoable
+        from .remix import ai_music_redoable, why_not
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "anim":
+            props = json.loads((folder / "props.json").read_text(encoding="utf-8")) if (folder / "props.json").exists() else {}
+            if not ai_music_redoable(report, props):
+                raise HTTPException(400, "This video's music is already generated (or your own track)")
+            if reason := why_not(folder):
+                raise HTTPException(400, reason)
+        elif not music_redoable(report):
+            raise HTTPException(400, "This video's music is already generated (or your own track)")
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (Anim tab).")
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("anim_music", "anim_hd")
+               if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being worked on")
+        return jobs.submit(f"New music: {report.get('title', video_id)}", 1, "rerender", "facts", "anim",
+                           anim_music={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/lowpoly-sound")
+    def lowpoly_sound_route(video_id: str):
+        """A low-poly video's sound mixed again with the current levels (voices first, music and beds well under
+        them), under the same picture. No Claude, nothing rendered again."""
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "lowpoly" or not (folder / "props.json").exists():
+            raise HTTPException(400, "Only low-poly videos with their saved timeline can be re-mixed here")
+        if any(j.get("lowpoly_remix", {}).get("id") == video_id for j in jobs.jobs if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video's sound is already being mixed")
+        return jobs.submit(f"New sound mix: {report.get('title', video_id)}", 1, "rerender", "story", "lowpoly",
+                           lowpoly_remix={"id": video_id})
+
+    @app.post("/api/videos/{video_id}/lowpoly-restage")
+    def lowpoly_restage_route(video_id: str, body: LowPolyRestageBody):
+        """🎬 New angles: the same low-poly video (words, voices, music, timing) shot again as a new video: a new
+        storyboard by Claude, or new camera angles only (no Claude). It runs like a resumed low-poly video."""
+        from .lowpoly.run import RESTAGE_MODES, prepare_restage
+
+        folder = video_dir(cfg, video_id)
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        if report.get("source") != "lowpoly" or not (folder / "story.json").exists():
+            raise HTTPException(400, "Only low-poly videos with their saved story can be shot again")
+        mode = body.mode if body.mode in RESTAGE_MODES else "storyboard"
+        try:
+            work = prepare_restage(cfg, folder, mode)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(400, f"Couldn't start it: {exc}")
+        req = json.loads((cfg.output_dir / work / "lowpoly-checkpoint.json").read_text(encoding="utf-8"))["request"]
+        label = f"{ {'storyboard': 'New storyboard', 'angles': 'New angles', 'same': 'Made again'}[mode]}: {report.get('title', video_id)}"
+        return jobs.submit(label, 1, "rerender", "story", "lowpoly", lowpoly_input=req, lowpoly_resume=[work],
+                           captions=req.get("words", "on") == "on", ai=body.ai)
+
+    @app.post("/api/videos/{video_id}/sounds/remove")
+    def remove_sound_route(video_id: str, body: SoundRemoveBody):
+        """Take one sound effect out of a finished video: its cues dropped, the sound mixed again under the same
+        picture (a Short is edited again). reelgen/remix.py."""
+        folder = video_dir(cfg, video_id)
+        if not (folder / "props.json").exists():
+            raise HTTPException(400, "This video was made before its sounds were saved, so they can't be changed")
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("sound_remove", "music_replace", "anim_music", "anim_hd")
+               if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being worked on: try again when that's done")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"Without '{body.name}': {report.get('title', video_id)}", 1, "rerender", "facts",
+                           report.get("length") or report.get("format") or "short", sound_remove={"id": video_id, "name": body.name})
+
+    @app.post("/api/videos/{video_id}/music/replace")
+    def replace_music_route(video_id: str, body: dict):
+        """A music track YouTube claimed: a composed one in its place, the sound mixed again (reelgen/remix.py)."""
+        from .remix import why_not
+
+        folder = video_dir(cfg, video_id)
+        reason = why_not(folder)
+        if reason:
+            raise HTTPException(400, reason)
+        if any(j.get(k, {}).get("id") == video_id for j in jobs.jobs for k in ("sound_remove", "music_replace", "anim_music", "anim_hd")
+               if j["status"] in ("queued", "running")):
+            raise HTTPException(409, "This video is already being worked on: try again when that's done")
+        src = str(body.get("src") or "")
+        from .remix import _music_slots
+
+        if not _music_slots(json.loads((folder / "props.json").read_text(encoding="utf-8")), src):
+            raise HTTPException(400, "That track isn't in this video")
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        return jobs.submit(f"New music for: {report.get('title', video_id)}", 1, "rerender", "facts",
+                           report.get("length") or report.get("format") or "short", music_replace={"id": video_id, "src": src})
 
     # ---- your own voiceover ----
     @app.get("/api/videos/{video_id}/myvoice")
@@ -669,6 +1538,22 @@ def create_app(cfg: Config) -> FastAPI:
         path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         return {"ok": True, "review": report["review"]}
 
+    @app.post("/api/videos/{video_id}/posted")
+    def posted_video(video_id: str, body: PostedBody):
+        """The user saved this video to post it (the ⬇ Save buttons call this): marked posted, with when and which file;
+        saving it again keeps the first time and counts the saves. `posted: false` takes the mark off."""
+        path = video_dir(cfg, video_id) / "report.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        now = datetime.now().isoformat(timespec="seconds")
+        if body.posted:
+            old = report.get("posted") or {}
+            report["posted"] = {"at": old.get("at", now), "last": now, "file": body.file if body.file in MEDIA_FILES else "reel.mp4",
+                                "times": int(old.get("times", 0)) + 1}
+        else:
+            report.pop("posted", None)
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "posted": report.get("posted")}
+
     @app.delete("/api/videos/{video_id}")
     def delete_video(video_id: str):
         shutil.rmtree(video_dir(cfg, video_id))
@@ -682,6 +1567,17 @@ def create_app(cfg: Config) -> FastAPI:
         if not path.exists():
             raise HTTPException(404)
         return FileResponse(path)  # supports Range requests, which iPhone video playback needs
+
+    @app.get("/api/videos/{video_id}/script-input")
+    def video_script_input(video_id: str):
+        """A Script Video's own title, description, hook and script, and its settings (to edit and make it again)."""
+        from .scriptvideo import script_input_of
+
+        folder = video_dir(cfg, video_id)
+        try:
+            return script_input_of(folder)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(404, f"No script saved with this video ({exc})")
 
     @app.get("/api/videos/{video_id}/used")
     def video_media_used(video_id: str):
@@ -711,11 +1607,11 @@ def create_app(cfg: Config) -> FastAPI:
 
     # ---- YouTube thumbnail (reelgen/thumbnail.py): Claude plans, Gemini draws, Claude checks ----
     @app.post("/api/videos/{video_id}/thumbnail/plan")
-    def plan_thumbnail(video_id: str):
+    def plan_thumbnail(video_id: str, body: dict | None = None):
         from . import thumbnail
 
         try:
-            return thumbnail.plan(load_settings(Config()), video_dir(cfg, video_id))
+            return thumbnail.plan(apply_ai(load_settings(Config()), (body or {}).get("ai")), video_dir(cfg, video_id))
         except Exception as exc:
             raise HTTPException(502, f"Couldn't design the thumbnail: {exc}")
 
@@ -739,14 +1635,104 @@ def create_app(cfg: Config) -> FastAPI:
         style = body.style if body.style in ("facts", "news", "story", "comedy", "mix") else None
         length = body.length if body.length in ("long", "medium") else "short"
         return jobs.submit((body.topic or "").strip() or None, max(1, min(body.count, MAX_BATCH if length == "short" else MAX_LONG_BATCH)),
-                           "manual", style, length, captions=body.captions,
-                           story_form=body.story_form if length != "short" else None)
+                           "manual", style, length, captions=body.captions, ai=body.ai,
+                           story_form=body.story_form if length != "short" else None,
+                           memes=body.memes if length != "short" and body.memes in ("off", "some", "lots") else None,
+                           hook_template=body.hook_template if length != "short" and body.hook_template in ("auto", *cinehook.TEMPLATES) else None,
+                           visual_template=body.visual_template if length != "short" and body.visual_template in briefing.TEMPLATES else None)
 
     @app.get("/api/stick/voices")
     def stick_voices():
         from .stickstory import VOICE_NAMES, VOICE_POOLS
 
         return {"names": VOICE_NAMES, "pools": VOICE_POOLS}
+
+    @app.post("/api/voice-test")
+    def voice_test(body: dict):
+        """One line spoken by a voice, as the video would say it (Roman Hinglish in mixed script for the Hindi and
+        multilingual voices when `mix`), so voices can be compared by ear before a video is made."""
+        import asyncio
+        import hashlib
+
+        from . import hinglish
+        from .voice import _edge_synthesize
+
+        voice, text = str(body.get("voice") or ""), str(body.get("text") or "").strip()[:2000]  # Sarvam takes 2500
+        if not (re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural", voice) or re.fullmatch(r"sarvam:([a-z_]{2,40}|svc-[0-9a-f-]{8,64})", voice)) or not text:
+            raise HTTPException(400, "Pick a voice and type a line")
+        from . import sarvam
+
+        mix = bool(body.get("mix", True))
+        from .numbers import speakable
+
+        mixed = mix and hinglish.needs_mixing(voice, [text], least=0)
+        # as the video will say it: an English line's numbers in English words (a Multilingual voice reads digits in Hindi)
+        if sarvam.is_sarvam(voice):  # as the video's takes do: numbers in the written line's language, then mixed
+            from .numbers import speakable_for
+            worded = speakable_for(text)
+            spoken = hinglish.to_speech([worded])[0] if mixed else worded
+        else:
+            spoken = (hinglish.to_speech([text])[0] if mixed else text if hinglish.is_hindi_voice(voice) else speakable(text))
+        rate = str(body.get("rate") or "")  # the Script tab's pace; else the long videos' pace setting
+        pct = int(re.sub(r"[^\d-]", "", rate if re.fullmatch(r"[+-]\d{1,2}%", rate) else cfg.long_voice_rate) or 0)
+        level = str(body.get("delivery") or "normal")
+        temperature, factor = sarvam.delivery(level if level in sarvam.DELIVERY else "normal")
+        key = hashlib.sha1(f"{voice}|{pct}|{sarvam.pace_for(sarvam.speaker_of(voice)) if sarvam.is_sarvam(voice) else ''}|{level}|lv1|{spoken}".encode()).hexdigest()[:16]
+        path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if sarvam.is_sarvam(voice):  # levelled like the video's takes, so the sample sounds like the video
+                    raw = path.with_suffix(".wav")
+                    raw.write_bytes(sarvam.say(spoken, sarvam.speaker_of(voice), min(2.0, sarvam.pace_for(sarvam.speaker_of(voice)) * factor * (1 + pct / 100)),
+                                               temperature=temperature))
+                    sarvam.level_file(raw, path)
+                    raw.unlink(missing_ok=True)
+                else:
+                    asyncio.run(_edge_synthesize(spoken, voice, f"{pct:+d}%", "+0Hz", path))
+            except Exception as exc:  # noqa: BLE001
+                path.unlink(missing_ok=True)
+                raise HTTPException(502, f"The voice didn't answer: {exc}")
+        return {"audio": f"/api/voice-test/{key}.mp3", "spoken": spoken, "mixed": spoken != text}
+
+    @app.get("/api/keys")
+    def keys_state():
+        """Which voice keys are saved (never the keys themselves)."""
+        from . import sarvam
+        st = sarvam.key_status()
+        return {"sarvam": st["count"] > 0, "sarvam_count": st["count"], "sarvam_spent": st["spent"]}
+
+    @app.put("/api/keys/sarvam")
+    def save_sarvam_key(body: dict):
+        """Settings > Long videos: Sarvam keys go into .env on this computer (and the running app), several separated by
+        commas (one per account: when one runs out of credits the next takes over, sarvam._post). `add` (default)
+        adds the pasted key(s) to the saved ones; `add: false` with an empty key removes them all."""
+        from . import sarvam
+        from .config import PROJECT_ROOT
+
+        pasted = [k for k in re.split(r"[\s,;]+", str(body.get("key") or "")) if k]
+        if any(not re.fullmatch(r"[A-Za-z0-9_\-.]{8,200}", k) for k in pasted):
+            raise HTTPException(400, "That doesn't look like a Sarvam API key")
+        current = sarvam.keys() if body.get("add", True) else []
+        value = ",".join(dict.fromkeys(current + pasted))
+        sarvam.forget_spent()  # saved again: every key gets another try (a recharged account comes back)
+        env = PROJECT_ROOT / ".env"
+        lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
+        lines = [x for x in lines if not re.match(r"\s*SARVAM_API_KEY\s*=", x)]
+        if value:
+            lines.append(f"SARVAM_API_KEY={value}")
+            os.environ["SARVAM_API_KEY"] = value
+        else:
+            os.environ.pop("SARVAM_API_KEY", None)
+        env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return {"sarvam": bool(value), "sarvam_count": len(sarvam.keys())}
+
+    @app.get("/api/voice-test/{key}.mp3")
+    def voice_test_audio(key: str):
+        path = cfg.output_dir / "voice-tests" / f"{key}.mp3"
+        if not re.fullmatch(r"[0-9a-f]{16}", key) or not path.exists():
+            raise HTTPException(404, "no such sample")
+        return FileResponse(path, media_type="audio/mpeg")
 
     @app.get("/api/stick/voice-preview")
     def stick_voice_preview(voice: str, speed: float = 1.5, name: str = ""):
@@ -759,18 +1745,772 @@ def create_app(cfg: Config) -> FastAPI:
         except Exception as exc:
             raise HTTPException(502, f"Couldn't make the sample: {exc}")
 
+    @app.post("/api/sticky")
+    def sticky(body: StickyBody):
+        given = {"topic": body.topic.strip()[:400], "minutes": min(4.0, max(2.5, float(body.minutes))), "whispers": bool(body.whispers)}
+        if body.format == "short":  # a 9:16 Short with the recurring hero (or a movie's cast)
+            given.update({"format": "short", "seconds": max(20, min(60, int(body.seconds))), "hero": body.hero.strip()[:80]})
+            return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
+                               sticky_input=given, captions=False, ai=body.ai)
+        if body.movie.strip():  # a movie part: one film from your shot list, continuing the movie's earlier parts
+            shots = [x for x in body.shots.splitlines() if x.strip()]
+            if len(shots) < 2:
+                raise HTTPException(400, "Write this part's shots, one per line (at least 2).")
+            given.update({"movie": body.movie.strip()[:80], "shots": "\n".join(shots[:80]), "topic": ""})
+            return jobs.submit(f"{given['movie']} (movie part)", 1, "sticky", "story", "sticky", sticky_input=given, captions=False, ai=body.ai)
+        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "sticky", "story", "sticky",
+                           sticky_input=given, captions=False, ai=body.ai)
+
+    @app.get("/api/journey/status")
+    def journey_status():
+        from . import anim_engine, hfcloud
+        return {"cloud": hfcloud.ready(), "engine": anim_engine.installed()}
+
+    @app.post("/api/journey")
+    def journey(body: JourneyBody):
+        from .journey.run import ENGINES, can_make
+        engine = body.engine if body.engine in ENGINES else "auto"
+        why = can_make(engine)
+        if why:
+            raise HTTPException(400, why)
+        given = {"idea": body.idea.strip()[:600], "seconds": max(30, min(90, int(body.seconds))), "top": body.top.strip()[:80],
+                 "bottom": body.bottom.strip()[:80], "words": bool(body.words), "labels": bool(body.labels), "engine": engine}
+        return jobs.submit(given["idea"][:80] or None, max(1, min(body.count, 5)), "journey", "facts", "journey",
+                           journey_input=given, captions=False, ai=body.ai)
+
+    def lowpoly_given(body: LowPolyBody) -> dict:
+        intro = body.kind == "intro"  # 🎭 the cast introduced one by one (lowpoly/intro.py): a film of 30-120 s
+        film = body.format == "film" or intro
+        silent = body.kind == "silent"  # 🤫 a wordless emotional scene: no voice, no words on screen
+        given = {"topic": body.topic.strip(), "kind": body.kind if body.kind in ("fiction", "intro", "silent") else "life",
+                "format": "film" if film else "short", "seconds": max(8 if silent else 20, min(120 if intro else 60, int(body.seconds))),
+                "minutes": max(2.5, min(15.0, float(body.minutes))), "vertical": bool(body.vertical) and film,
+                "voice": body.voice.strip()[:120], "pace": max(-30, min(30, int(body.pace))), "watermark": body.watermark.strip()[:40],
+                "words": "off" if silent else body.words if body.words in ("on", "stamps", "off") else "on",
+                "growth": bool(body.growth) and not intro, "end_tag": growth.end_tag(body.end_tag),
+                "hero_name": body.hero_name.strip()[:40] or "Ethan",
+                "renderer": "blender" if body.renderer == "blender" else "browser",
+                "blender_quality": body.blender_quality if body.blender_quality in ("draft", "good", "best") else "good",
+                "blender_engine": "eevee" if body.blender_engine == "eevee" else "cycles"}
+        if given["renderer"] == "blender":
+            from . import blender
+            if not blender.binary():
+                raise HTTPException(400, "Blender isn't installed yet: press 'Install Blender' under Renderer (free, about 400 MB)")
+        if intro:
+            given.update({"topic": "", "people": [p.strip()[:60] for p in body.people if p.strip()][:30],
+                          "hero_name": body.hero_name.strip()[:40] or "Ethan", "film_title": body.film_title.strip()[:40]})
+        return given
+
+    @app.post("/api/lowpoly")
+    def lowpoly(body: LowPolyBody):
+        given = lowpoly_given(body)
+        label = given["topic"].splitlines()[0][:80] if given["topic"] else "Cast intro" if given["kind"] == "intro" else None
+        return jobs.submit(label, max(1, min(body.count, 5)), "lowpoly", "story", "lowpoly",
+                           lowpoly_input=given, captions=given["words"] == "on", ai=body.ai)
+
+    # ✍ Read the storyboard first (reelgen/lowpoly/boards.py): 2-3 different storyboards from one prompt, read in the
+    # Low-poly tab; approve one to build it, reject them for new ones, or approve one turned down before.
+    def boards_busy() -> set[str]:
+        return {j["lowpoly_boards"]["id"] for j in jobs.jobs if j.get("lowpoly_boards") and j["status"] in ("queued", "running")}
+
+    def boards_round(s: dict, count: int) -> dict:
+        req = s["request"]
+        label = (req.get("topic") or "").splitlines()[0][:80] if (req.get("topic") or "").strip() else None
+        return jobs.submit(label, count, "lowpoly", "story", "lowpoly", lowpoly_boards={"id": s["id"], "count": count},
+                           lowpoly_kind={"format": req.get("format"), "kind": req.get("kind")}, captions=False, ai=s.get("ai"))
+
+    @app.post("/api/lowpoly/boards")
+    def lowpoly_boards_new(body: LowPolyBody):
+        from .lowpoly import boards
+
+        if body.kind == "intro":
+            raise HTTPException(400, "A cast intro is staged in one go: make it straight away, no storyboards to read.")
+        count = body.drafts if body.drafts in boards.COUNTS else boards.COUNTS[-1]
+        s = boards.new_set(cfg, lowpoly_given(body), count, body.ai.model_dump() if body.ai else None)
+        boards_round(s, count)
+        return {"id": s["id"], "count": count}
+
+    @app.get("/api/lowpoly/boards")
+    def lowpoly_boards_list():
+        from .lowpoly import boards
+
+        return boards.listing(cfg, boards_busy())
+
+    def board_or_404(sid: str):
+        from .lowpoly import boards
+
+        try:
+            return boards.load(cfg, sid)
+        except KeyError:
+            raise HTTPException(404, "No such storyboards") from None
+
+    @app.get("/api/lowpoly/boards/{sid}/{n}")
+    def lowpoly_board_view(sid: str, n: int):
+        from .lowpoly import boards
+
+        board_or_404(sid)
+        try:
+            return boards.view(cfg, sid, n)
+        except KeyError:
+            raise HTTPException(404, "No such storyboard") from None
+        except ValueError as exc:
+            raise HTTPException(400, f"Couldn't read it: {exc}") from exc
+
+    @app.post("/api/lowpoly/boards/{sid}/{n}/approve")
+    def lowpoly_board_approve(sid: str, n: int):
+        """Build it: an unfinished low-poly video made from this storyboard, carried on like a resume (its story is
+        never written again)."""
+        from .lowpoly import boards
+
+        s = board_or_404(sid)
+        try:
+            work, req = boards.prepare_build(cfg, sid, n)
+        except KeyError:
+            raise HTTPException(404, "No such storyboard") from None
+        except (OSError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        title = next((d.get("title") for d in s["drafts"] if d["n"] == n), "") or None
+        job = jobs.submit(title, 1, "lowpoly", "story", "lowpoly", lowpoly_input=req, lowpoly_resume=[work],
+                          captions=req.get("words", "on") == "on", ai=s.get("ai"))
+        boards.built(cfg, sid, n, job["id"])
+        return {"job": job["id"], "work": work}
+
+    @app.post("/api/lowpoly/boards/{sid}/{n}/reject")
+    def lowpoly_board_reject(sid: str, n: int, body: LowPolyRejectBody):
+        """Turn it down. When none is left to read, new ones are written with the same prompt (told which were turned
+        down and why)."""
+        from .lowpoly import boards
+
+        s = board_or_404(sid)
+        try:
+            empty = boards.reject(cfg, sid, n, body.note)
+        except KeyError:
+            raise HTTPException(404, "No such storyboard") from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        more = empty and sid not in boards_busy()
+        if more:
+            boards_round(s, s.get("count", 3))
+        return {"ok": True, "writing_more": more}
+
+    @app.post("/api/lowpoly/boards/{sid}/{n}/change")
+    def lowpoly_board_change(sid: str, n: int, body: LowPolyChangeBody):
+        """✏ Change it: Claude writes storyboard `n` again with your instructions, as a new storyboard beside it (the
+        original stays, to approve or reject)."""
+        s = board_or_404(sid)
+        text = body.instruction.strip()
+        if not text:
+            raise HTTPException(400, "Say what to change")
+        d = next((d for d in s["drafts"] if d["n"] == n), None)
+        if d is None:
+            raise HTTPException(404, "No such storyboard")
+        if d.get("state") not in ("ready", "rejected", "approved"):
+            raise HTTPException(400, "That storyboard isn't written yet")
+        if sid in boards_busy():
+            raise HTTPException(409, "Storyboards for this prompt are being written right now: wait for them first")
+        req = s["request"]
+        label = (req.get("topic") or "").splitlines()[0][:80] if (req.get("topic") or "").strip() else None
+        job = jobs.submit(label, 1, "lowpoly", "story", "lowpoly",
+                          lowpoly_boards={"id": sid, "count": 1, "change": {"n": n, "instruction": text[:2000]}},
+                          lowpoly_kind={"format": req.get("format"), "kind": req.get("kind")}, captions=False, ai=s.get("ai"))
+        return {"ok": True, "job": job["id"]}
+
+    @app.post("/api/lowpoly/boards/{sid}/more")
+    def lowpoly_board_more(sid: str, body: LowPolyMoreBody):
+        from .lowpoly import boards
+
+        s = board_or_404(sid)
+        if sid in boards_busy():
+            raise HTTPException(409, "Storyboards for this prompt are being written right now")
+        count = body.count if body.count in (1, *boards.COUNTS) else 2
+        boards_round(s, count)
+        return {"ok": True, "count": count}
+
+    @app.delete("/api/lowpoly/boards/{sid}")
+    def lowpoly_board_remove(sid: str):
+        """Forget these storyboards (videos already built from one are not touched)."""
+        from .lowpoly import boards
+
+        board_or_404(sid)
+        if sid in boards_busy():
+            raise HTTPException(409, "Storyboards for this prompt are being written right now: stop that job first")
+        boards.remove(cfg, sid)
+        return {"ok": True}
+
+    @app.get("/api/lowpoly/cast")
+    def lowpoly_cast():
+        """The recurring cast of the low-poly films (the library's people, yours, and everyone met in a film; the hero
+        is always the same man), with each one's look in the editor's colours for the tab's cards."""
+        from .lowpoly.story import LPDesign, editor_design, seed_library
+
+        out = []
+        for v in seed_library(cfg).values():
+            try:
+                look = editor_design(LPDesign(**v.get("design", {})))
+            except Exception:  # noqa: BLE001 - an entry edited by hand
+                continue
+            out.append({"name": v["name"], "who": v.get("who", ""), "voice": v.get("voice", "man"), "look": look,
+                        "design": v.get("design", {}), "from": "yours" if v.get("mine") else "library" if v.get("library") else "film"})
+        return out
+
+    @app.post("/api/lowpoly/cast")
+    def lowpoly_cast_add(body: LowPolyPerson):
+        """Add (or redesign) a recurring person: Claude uses them by name in the next films."""
+        from .lowpoly.story import add_person
+
+        if not body.name.strip():
+            raise HTTPException(400, "Give the person a name.")
+        try:
+            return add_person(cfg, body.name, body.who, body.design, body.voice)
+        except ValueError as exc:
+            raise HTTPException(400, f"That look isn't one the editor can draw: {exc}") from exc
+
+    @app.delete("/api/lowpoly/cast/{name}")
+    def lowpoly_cast_remove(name: str):
+        from .lowpoly.story import remove_person
+
+        if not remove_person(cfg, name):
+            raise HTTPException(404, "No one by that name.")
+        return {"ok": True}
+
+    @app.get("/api/sticky/hero")
+    def sticky_hero():
+        """The recurring hero of the Sticky Shorts (none before the first Short)."""
+        from .sticky.film import shorts_hero
+
+        return [{"name": c["name"], "wear": c["wear"], "color": c["color"]} for c in shorts_hero(cfg)]
+
+    @app.get("/api/sticky/movies")
+    def sticky_movies():
+        """The movies made so far: title, parts (with the story so far) and cast names, for the Sticky tab."""
+        from .sticky.film import movies
+
+        return [{"title": m["title"], "parts": len(m.get("parts") or []), "cast": [c["name"] for c in m.get("cast") or []],
+                 "story": (m.get("parts") or [{}])[-1].get("summary", ""), "genre": m.get("genre", "")} for m in movies(cfg).values()]
+
     @app.post("/api/stick")
     def stick(body: StickRequestBody):
-        from .stickstory import DEFAULT_CAST
+        from .stickstory import DEFAULT_CAST, OPENINGS, parse_stick_script
 
         fmt = "short" if body.format == "short" else "long"
-        given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))), "seconds": body.seconds if body.seconds in (15, 30, 45) else 0,
+        given = {"idea": body.idea.strip()[:1000], "format": fmt, "minutes": min(8.0, max(2.0, float(body.minutes))), "seconds": body.seconds if body.seconds in (15, 30, 45, 60) else 0,
                  "language": body.language if body.language in ("english", "hindi") else "english",
                  "speed": min(2.0, max(0.8, float(body.speed))), "cast": body.cast.strip() or DEFAULT_CAST,
-                 "style": body.style if body.style in ("comedy", "fiction", "facts") else "comedy"}
-        return jobs.submit(body.idea.strip()[:80] or None, max(1, min(body.count, 5)), "stick",
-                           {"facts": "facts", "fiction": "story"}.get(given["style"], "comedy"),
-                           "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False)
+                 "style": body.style if body.style in ("comedy", "fiction", "facts", "documentary") else "comedy",
+                 "subtitles": body.subtitles if body.subtitles in ("on", "off") else "auto",
+                 "opening": body.opening if body.opening in OPENINGS else "auto",
+                 "script": body.script.strip()[:20000], "title": body.title.strip()[:100],
+                 "narrator": body.narrator if re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+Neural|sarvam:([a-z_]{2,40}|svc-[0-9a-f-]{8,64})",
+                                                           body.narrator or "") else ""}
+        if given["narrator"].startswith("sarvam:") and not os.environ.get("SARVAM_API_KEY"):
+            raise HTTPException(400, "Sarvam voices need your Sarvam AI key (Settings > Long videos).")
+        if given["script"] and not any(b["line"] for b in parse_stick_script(given["script"])):
+            raise HTTPException(400, "The script has no lines to say.")
+        return jobs.submit((given["title"] or body.idea.strip())[:80] or None, 1 if given["script"] else max(1, min(body.count, 5)), "stick",
+                           {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given["style"], "comedy"),
+                           "stick-short" if fmt == "short" else "stick", stick_input=given, captions=False, ai=body.ai)
+
+    def _with_my_voice(voices: dict) -> dict:
+        """A pipeline's own voice list with your Sarvam cloned voice first, when Settings has one and the key is set."""
+        from . import sarvam
+        name, label = sarvam.my_voice()
+        return {name: f"🎙 {label} (your cloned voice)", **voices} if name and sarvam.key() else voices
+
+    def _anim_voices() -> dict:
+        """The Anim tab's narrators: the English voices, Microsoft's Hindi ones, and every Sarvam voice when a key is saved
+        (the user: "add option of all voice sarvam", for a Hindi Ramayan series)."""
+        from . import sarvam
+        from .toon import VOICES
+
+        out = {**VOICES, "hi-IN-MadhurNeural": "Madhur (Hindi, male)", "hi-IN-SwaraNeural": "Swara (Hindi, female)"}
+        if sarvam.key():
+            out.update({f"sarvam:{k}": f"Sarvam – {v}" for k, v in sarvam.V4_VOICES.items()})
+            out.update({f"sarvam:{k}": f"Sarvam – {k.title()} ({g}, Hindi/English)" for k, g in sarvam.SPEAKERS.items()})
+        return _with_my_voice(out)
+
+    @app.get("/api/toon/options")
+    def toon_options():
+        from .toon import FORMS, VOICES
+
+        return {"forms": FORMS, "voices": _with_my_voice(VOICES)}
+
+    @app.post("/api/toon")
+    def toon(body: ToonRequestBody):
+        from .toon import FORMS, VOICES
+
+        given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
+                 "form": body.form if body.form in FORMS else "auto",
+                 "voice": body.voice if body.voice in _with_my_voice(VOICES) else "en-US-AndrewMultilingualNeural",
+                 "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
+                 "watermark": body.watermark.strip()[:40]}
+        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 5)), "toon", "facts", "toon",
+                           toon_input=given, captions=given["captions"], ai=body.ai)
+
+    @app.get("/api/anim/cloud")
+    def anim_cloud():
+        from . import hfcloud
+        from .animated import series_list
+        img, vid = hfcloud.spaces()
+        return {"ready": hfcloud.ready(), "image_space": img, "video_space": vid, "series": series_list(cfg)}
+
+    @app.put("/api/anim/cloud")
+    def anim_cloud_save(body: dict):
+        """The Hugging Face token (and optionally your own Space names) go into .env on this computer and the running
+        app; the token is never sent back to the page."""
+        from .config import PROJECT_ROOT
+
+        values = {}
+        tok = str(body.get("token") or "").strip()
+        if tok:
+            if not re.fullmatch(r"hf_[A-Za-z0-9]{20,80}", tok):
+                raise HTTPException(400, "That doesn't look like a Hugging Face token (it starts with hf_)")
+            values["HF_TOKEN"] = tok
+        for key, env_name in (("image_space", "REEL_HF_IMAGE_SPACE"), ("video_space", "REEL_HF_VIDEO_SPACE")):
+            v = str(body.get(key) or "").strip()
+            if v:
+                if not re.fullmatch(r"[\w.\-]+/[\w.\-]+", v):
+                    raise HTTPException(400, f"{v} isn't a Space name like owner/name")
+                values[env_name] = v
+        if body.get("forget"):
+            values["HF_TOKEN"] = ""
+        env = PROJECT_ROOT / ".env"
+        lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
+        lines = [x for x in lines if not any(re.match(rf"\s*{k}\s*=", x) for k in values)]
+        for k, v in values.items():
+            if v:
+                lines.append(f"{k}={v}")
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return anim_cloud()
+
+    # ---------- ▶ YouTube: your channel (reelgen/youtube.py) ----------
+
+    def _yt(fn, *a, **k):
+        from .youtube import YouTubeError
+        try:
+            return fn(*a, **k)
+        except YouTubeError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.get("/api/youtube/status")
+    def yt_status():
+        from . import youtube
+        cid, _secret = youtube.client()
+        tok = youtube.connected(cfg) or {}
+        last = (youtube.audits(cfg) or [{}])[0] if tok else {}
+        return {"client": bool(cid), "client_hint": ("…" + cid.split(".")[0][-6:]) if cid else "", "connected": bool(tok),
+                "channel": tok.get("channel"), "connected_at": tok.get("connected_at", ""), "has_data": bool(youtube.cached(cfg)),
+                "audit_made": last.get("made", ""), "channels": youtube.channels(cfg), "active": youtube.active(cfg)}
+
+    @app.post("/api/youtube/active")
+    def yt_active(body: dict):
+        """Which connected channel the YouTube tab shows (each has its own numbers and audits)."""
+        from . import youtube
+        _yt(youtube.set_active, cfg, str(body.get("id") or ""))
+        return yt_status()
+
+    @app.get("/api/youtube/avatar/{cid}")
+    def yt_avatar(cid: str):
+        from . import youtube
+        path = _yt(youtube.avatar_path, cfg, cid)
+        if not path:
+            raise HTTPException(404, "no picture saved for this channel")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+    @app.get("/api/youtube/audits")
+    def yt_audits():
+        from . import youtube
+        return {"audits": youtube.audits(cfg)}
+
+    @app.get("/api/youtube/audits/{key}")
+    def yt_audit_one(key: str):
+        from . import youtube
+        a = _yt(youtube.audit_at, cfg, key)
+        if not a:
+            raise HTTPException(404, "No such audit")
+        return a
+
+    @app.put("/api/youtube/client")
+    def yt_client(body: YouTubeClientBody):
+        from . import youtube
+        _yt(youtube.save_client, body.json_text, body.client_id, body.client_secret)
+        return yt_status()
+
+    @app.delete("/api/youtube/client")
+    def yt_client_forget():
+        from . import youtube
+        youtube.disconnect(cfg)
+        youtube.set_env({"YOUTUBE_CLIENT_ID": "", "YOUTUBE_CLIENT_SECRET": ""})
+        return yt_status()
+
+    @app.post("/api/youtube/connect")
+    def yt_connect(request: Request):
+        """Google's sign-in opens in this computer's browser and comes back to a one-time listener on 127.0.0.1, so it
+        has to be started from the computer the app runs on (not a phone through the tunnel)."""
+        from . import youtube
+        try:
+            local = ipaddress.ip_address(client_ip(request) or "0.0.0.0").is_loopback
+        except ValueError:
+            local = False
+        if not local:
+            raise HTTPException(400, "Connect from the computer the app runs on: Google sends its browser back to the app there.")
+        back = f"http://localhost:{cfg.port}/"
+        return {"url": _yt(youtube.start_connect, cfg, back)}
+
+    @app.post("/api/youtube/disconnect")
+    def yt_disconnect():
+        from . import youtube
+        youtube.disconnect(cfg)
+        return yt_status()
+
+    @app.get("/api/youtube/videos")
+    def yt_videos():
+        from . import youtube
+        data = youtube.cached(cfg) or {}
+        made = {}
+        for rep in cfg.output_dir.glob("*/report.json"):  # which library video each YouTube video came from
+            try:
+                yid = (json.loads(rep.read_text(encoding="utf-8")).get("youtube") or {}).get("id")
+            except (OSError, ValueError):
+                continue
+            if yid:
+                made[yid] = rep.parent.name
+        return {**data, "library": made, "audit": youtube.audit_at(cfg) if youtube.active(cfg) else None}
+
+    @app.post("/api/youtube/refresh")
+    def yt_refresh():
+        from . import youtube
+        _yt(youtube.refresh, cfg)
+        return yt_videos()
+
+    @app.get("/api/youtube/videos.csv")
+    def yt_csv():
+        from fastapi.responses import Response
+
+        from . import youtube
+        data = youtube.cached(cfg)
+        if not data:
+            raise HTTPException(404, "Refresh the YouTube tab first")
+        return Response(youtube.table_csv(data), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="youtube-videos-{data["fetched_at"][:10]}.csv"'})
+
+    @app.get("/api/youtube/export.{kind}")
+    def yt_export(kind: str, channel: str = ""):
+        """Everything about the channel for another AI: one Markdown file, or a ZIP with it, the tables, the raw data,
+        the audits and chart pictures (reelgen/ytexport.py)."""
+        from fastapi.responses import Response
+
+        from . import youtube, ytexport
+        if kind not in ("md", "zip"):
+            raise HTTPException(404, "md or zip")
+        with youtube.use(channel):
+            if not youtube.connected(cfg):
+                raise HTTPException(400, "Connect YouTube first")
+            b = _yt(ytexport.gather, cfg)
+        name = ytexport.file_stem(b)
+        if kind == "md":
+            return Response(ytexport.markdown(b), media_type="text/markdown; charset=utf-8",
+                            headers={"Content-Disposition": f'attachment; filename="{name}.md"'})
+        return Response(ytexport.zip_bytes(b), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
+    @app.get("/api/youtube/video/{vid}")
+    def yt_video(vid: str, channel: str = ""):
+        from . import youtube
+        vid = _yt(youtube.youtube_id, vid)
+        with youtube.use(channel):
+            out = _yt(youtube.video, cfg, vid)
+            out["details"] = youtube._read(_yt(youtube.home, cfg) / "details" / f"{vid}.json")
+        return out
+
+    @app.get("/api/youtube/video/{vid}/details")
+    def yt_details(vid: str, channel: str = ""):
+        from . import youtube
+        with youtube.use(channel):
+            return _yt(youtube.details, cfg, _yt(youtube.youtube_id, vid))
+
+    @app.put("/api/youtube/video/{vid}")
+    def yt_edit(vid: str, body: YouTubeEditBody, channel: str = ""):
+        from . import youtube
+        changes = {k: v for k, v in body.model_dump().items() if v is not None}
+        if changes.get("privacy") and changes["privacy"] not in ("private", "unlisted", "public"):
+            raise HTTPException(400, "privacy is private, unlisted or public")
+        with youtube.use(channel):
+            row = _yt(youtube.update, cfg, _yt(youtube.youtube_id, vid), changes)
+        for rep in cfg.output_dir.glob("*/report.json"):  # keep a library video's record in step
+            try:
+                report = json.loads(rep.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (report.get("youtube") or {}).get("id") == row["id"]:
+                report["youtube"].update(title=row["title"], privacy=row["privacy"], publish_at=row["publish_at"])
+                rep.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return row
+
+    @app.post("/api/youtube/video/{vid}/thumbnail")
+    async def yt_thumb(vid: str, request: Request, channel: str = ""):
+        from . import youtube
+        data = await request.body()
+        if not data or len(data) > youtube.THUMB_MAX:
+            raise HTTPException(400, "Send a JPG or PNG picture under 50 MB")
+        from starlette.concurrency import run_in_threadpool
+
+        tmp = youtube.folder(cfg) / ("thumb-" + secrets.token_hex(4))
+        tmp.write_bytes(data)
+        def put():
+            with youtube.use(channel):
+                _yt(youtube.set_thumbnail, cfg, _yt(youtube.youtube_id, vid), tmp)
+        try:
+            await run_in_threadpool(put)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"ok": True}
+
+    @app.post("/api/youtube/audit")
+    def yt_audit_start(body: dict | None = None):
+        from . import youtube
+        if not youtube.connected(cfg):
+            raise HTTPException(400, "Connect YouTube first (Settings > YouTube)")
+        cid = youtube.active(cfg)
+        if any(j.get("yt_audit") and j.get("channel", cid) == cid and j["status"] in ("queued", "running") for j in jobs.jobs):
+            raise HTTPException(409, "This channel's audit is already running")
+        title = ((youtube.connected(cfg) or {}).get("channel") or {}).get("title", "")
+        return jobs.submit("YouTube audit", 1, "manual", length="short", yt_audit=True, channel=cid, channel_title=title,
+                           ai=(body or {}).get("ai"))
+
+    @app.get("/api/videos/{video_id}/youtube")
+    def yt_for_video(video_id: str):
+        from . import youtube
+        folder_path = video_dir(cfg, video_id)
+        report = json.loads((folder_path / "report.json").read_text(encoding="utf-8"))
+        running = next((j for j in jobs.jobs if (j.get("yt_upload") or {}).get("id") == video_id
+                        and j["status"] in ("queued", "running")), None)
+        custom = next((n for n in ("youtube-thumb.jpg", "youtube-thumb.png") if (folder_path / n).exists()), "")
+        plan = youtube.plan_for(report, folder_path)
+        if custom:
+            plan["thumbnail"] = custom
+        return {"plan": plan, "youtube": report.get("youtube"), "connected": bool(youtube.connected(cfg)),
+                "channels": youtube.channels(cfg),
+                "uploading": running["id"] if running else "", "custom_thumb": custom,
+                "partial": (folder_path / "youtube-upload.json").exists(), "categories": youtube.YT_CATEGORIES}
+
+    @app.post("/api/videos/{video_id}/youtube/upload")
+    def yt_upload_start(video_id: str, body: YouTubeUploadBody):
+        from . import youtube
+        folder_path = video_dir(cfg, video_id)
+        if not youtube.connected(cfg):
+            raise HTTPException(400, "Connect YouTube first (Settings > YouTube)")
+        if body.privacy not in ("private", "unlisted", "public"):
+            raise HTTPException(400, "privacy is private, unlisted or public")
+        if body.publish_at:
+            _yt(youtube.publish_time, body.publish_at)  # a bad time is said now, not after the upload
+        if body.thumbnail and body.thumbnail not in ("thumbnail-youtube.jpg", "youtube-thumb.jpg", "youtube-thumb.png"):
+            raise HTTPException(400, "unknown thumbnail")
+        if any((j.get("yt_upload") or {}).get("id") == video_id and j["status"] in ("queued", "running") for j in jobs.jobs):
+            raise HTTPException(409, "This video is already uploading")
+        report = json.loads((folder_path / "report.json").read_text(encoding="utf-8"))
+        if (report.get("youtube") or {}).get("id"):
+            raise HTTPException(409, "This video is already on YouTube")
+        cid = body.channel or youtube.active(cfg)
+        if not any(c["id"] == cid for c in youtube.channels(cfg)):
+            raise HTTPException(400, "That channel isn't connected")
+        title = next(c["title"] for c in youtube.channels(cfg) if c["id"] == cid)
+        return jobs.submit((body.title or video_id)[:80], 1, "manual", length=report.get("length") or report.get("format") or "short",
+                           yt_upload={"id": video_id, "opts": body.model_dump()}, channel=cid, channel_title=title)
+
+    @app.post("/api/videos/{video_id}/youtube/thumbnail")
+    async def yt_video_thumb(video_id: str, request: Request):
+        """A picture for this video's YouTube upload (kept in its folder as youtube-thumb.jpg/png)."""
+        folder_path = video_dir(cfg, video_id)
+        data = await request.body()
+        kind = "png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "jpg" if data[:2] == b"\xff\xd8" else ""
+        if not kind or len(data) > 50 * 1024 * 1024:
+            raise HTTPException(400, "Send a JPG or PNG picture under 50 MB")
+        for n in ("youtube-thumb.jpg", "youtube-thumb.png"):
+            (folder_path / n).unlink(missing_ok=True)
+        (folder_path / f"youtube-thumb.{kind}").write_bytes(data)
+        return {"ok": True, "thumbnail": f"youtube-thumb.{kind}"}
+
+    @app.post("/api/videos/{video_id}/youtube/link")
+    def yt_link(video_id: str, body: dict):
+        """A video you uploaded yourself, linked to this library video (its analytics show on this page)."""
+        from . import youtube
+        folder_path = video_dir(cfg, video_id)
+        path = folder_path / "report.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        if body.get("unlink"):
+            report.pop("youtube", None)
+        else:
+            with youtube.use(str(body.get("channel") or "")):
+                row = _yt(youtube.video, cfg, _yt(youtube.youtube_id, str(body.get("url") or "")))
+                cid = youtube.active(cfg)
+            report["youtube"] = {"id": row["id"], "url": f"https://youtu.be/{row['id']}", "channel": cid,
+                                 "studio": f"https://studio.youtube.com/video/{row['id']}/edit", "linked": True,
+                                 "title": row["title"], "privacy": row["privacy"], "publish_at": row["publish_at"]}
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "youtube": report.get("youtube")}
+
+    @app.get("/api/anim/options")
+    def anim_options():
+        from .animated import ART_STYLES
+        from .toon import VOICES
+
+        return {"styles": {k: v[0] for k, v in ART_STYLES.items()}, "voices": _anim_voices()}
+
+    @app.get("/api/anim/setup")
+    def anim_setup():
+        from . import anim_engine
+        return anim_engine.status()
+
+    @app.post("/api/anim/setup")
+    def anim_install():
+        from . import anim_engine
+        if not anim_engine.install():
+            raise HTTPException(409, "Already installing")
+        return {"ok": True}
+
+    @app.get("/api/anim/music-test")
+    def music_test_state():
+        from . import anim_engine
+        st = {k: v for k, v in anim_engine.music_test.items() if k != "stop"}
+        st["elapsed"] = round(time.time() - st["started"]) if st["running"] else 0
+        return {**st, "tests": anim_engine.music_tests(cfg.output_dir)}
+
+    @app.post("/api/anim/music-test")
+    def music_test_start(body: MusicTestBody):
+        from . import anim_engine
+        if not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (the panel above).")
+        caption = body.caption.strip()[:500]
+        if not caption:
+            raise HTTPException(400, "Describe the music first.")
+        bpm = body.bpm if body.bpm and 40 <= body.bpm <= 220 else None
+        if not anim_engine.start_music_test(cfg.output_dir, caption, min(240.0, max(10.0, float(body.seconds))), bpm):
+            raise HTTPException(409, "A track is being made already.")
+        return {"ok": True}
+
+    @app.delete("/api/anim/music-test")
+    def music_test_stop():
+        from . import anim_engine
+        anim_engine.music_test["stop"] = True
+        return {"ok": True}
+
+    @app.get("/api/anim/music-test/{name}/track.wav")
+    def music_test_file(name: str):
+        from . import anim_engine
+        path = cfg.output_dir / anim_engine.TEST_DIR / name / "track.wav"
+        if not re.fullmatch(r"\d{8}-\d{6}", name) or not path.exists():
+            raise HTTPException(404, "No such track")
+        return FileResponse(path, media_type="audio/wav")
+
+    @app.post("/api/anim")
+    def anim(body: AnimRequestBody):
+        from . import anim_engine
+        from .animated import ART_STYLES, QUALITIES
+        from .toon import VOICES
+
+        from . import hfcloud
+
+        engine = body.engine if body.engine in ("auto", "cloud", "local") else "auto"
+        cloud = engine == "cloud" or (engine == "auto" and hfcloud.ready())
+        if cloud and not hfcloud.ready():
+            raise HTTPException(400, "Paste your Hugging Face token in the Hugging Face box first.")
+        if not cloud and not anim_engine.installed():
+            raise HTTPException(400, "Connect Hugging Face (token box above) or install the AI engine (More options).")
+        given = {"topic": body.topic.strip()[:300], "minutes": min(10.0, max(1.0, float(body.minutes))),
+                 "style": body.style if body.style in ART_STYLES else "auto",
+                 "motion": body.motion if body.motion in ("full", "key", "stills") else "full",
+                 "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
+                 "voice": body.voice if body.voice in _anim_voices() else "en-US-AndrewMultilingualNeural",
+                 "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
+                 "watermark": body.watermark.strip()[:40], "form": body.form if body.form in ("story", "whatif", "movie") else "story",
+                 "engine": engine, "series": re.sub(r"[^\w \-'&!?.]", "", body.series).strip()[:60]}
+        from .animated import _series_all
+        if given["form"] in ("whatif", "movie") and given["style"] == "auto" and given["series"] not in _series_all(cfg):
+            given["style"] = "whatif-3d"
+        return jobs.submit(given["topic"][:80] or None, max(1, min(body.count, 3)), "anim", "facts", "anim",
+                           anim_input=given, captions=given["captions"], ai=body.ai)
+
+    @app.post("/api/story")
+    def story(body: StoryBody):
+        from . import anim_engine
+        from .animated import ART_STYLES, QUALITIES
+        from .storyshorts import KINDS, LANGUAGES, MAX_PARTS, VISUALS, split_parts
+
+        visuals = body.visuals if body.visuals in VISUALS else "anim"
+        if visuals in ("anim", "key", "pictures") and not anim_engine.installed():
+            raise HTTPException(400, "AI pictures need the AI engine: install it on the Anim tab, or pick stock footage.")
+        if visuals == "footage" and not load_settings(Config()).pexels_api_key:
+            raise HTTPException(400, "Stock footage needs a Pexels key (Settings), or pick AI pictures.")
+        voice = body.voice.strip()
+        if voice and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural|sarvam:([a-z_]{2,40}|svc-[0-9a-f-]{8,64})", voice):
+            raise HTTPException(400, "Unknown voice")
+        if voice.startswith("sarvam:") and not os.environ.get("SARVAM_API_KEY"):
+            raise HTTPException(400, "Sarvam voices need your Sarvam AI key (Settings > Long videos).")
+        language = body.language if body.language in LANGUAGES else "english"
+        seconds = max(15, min(180, int(body.seconds)))  # YouTube Shorts run up to 3 minutes
+        given = {"source": "script" if body.source == "script" else "ai", "topic": body.topic.strip()[:300],
+                 "kind": body.kind if body.kind in KINDS else "story", "script": body.script.strip()[:20000],
+                 "title": body.title.strip()[:100], "seconds": seconds, "language": language,
+                 "split": body.split if body.split in ("one", "length") else "auto",
+                 "screen_text": "voice" if body.screen_text == "voice" else "english", "visuals": visuals,
+                 "style": body.style if body.style in ART_STYLES else "auto",
+                 "quality": body.quality if body.quality in QUALITIES else "auto", "upscale": bool(body.upscale),
+                 "voice": voice, "speed": max(0, min(40, int(body.speed))), "captions": bool(body.captions),
+                 "watermark": body.watermark.strip()[:40],
+                 "memes": body.memes if body.memes in ("off", "some", "lots") else load_settings(Config()).memes}
+        if given["source"] == "script":
+            parts = split_parts(given["script"], language, seconds, given["split"])
+            if not parts:
+                raise HTTPException(400, "Paste your story first.")
+            if len(parts) > 12:
+                raise HTTPException(400, f"That story makes {len(parts)} Shorts; keep it to 12 or fewer (or split it).")
+            given["parts"] = len(parts)
+        else:
+            given["parts"] = max(1, min(MAX_PARTS, int(body.parts)))
+        title = given["title"] or given["topic"][:80] or None
+        return jobs.submit(title, given["parts"], "story", given["kind"], "storyshorts", story_input=given,
+                           captions=given["captions"], ai=body.ai)
+
+    @app.post("/api/divine")
+    def divine(body: dict):
+        """🔱 Divine tab: epic mythological Shorts (the user's reference: a photoreal Shiva-and-Vasuki reel). The Shorts
+        Studio pipeline with kind 'divine', the photoreal 'divine-epic' style, every shot animated, and the pictures and
+        clips made on Hugging Face (reelgen/hfcloud.py)."""
+        from . import anim_engine, hfcloud, sarvam
+
+        # Pictures on this computer (photoreal model), the key shots animated on Hugging Face while a saved token's
+        # free daily minutes last, every other shot a camera move in depth. 'cloud' = pictures there too (PRO).
+        engine = "cloud" if hfcloud.ready() and body.get("engine") == "cloud" else "vfx"
+        if engine == "vfx" and not anim_engine.installed():
+            raise HTTPException(400, "Install the AI engine first (Anim tab > More options), or connect Hugging Face.")
+        topic = str(body.get("topic") or "").strip()[:300]
+        if not topic:
+            raise HTTPException(400, "Write which moment, e.g. 'Shiva drinks the Halahala poison'.")
+        language = body.get("language") if body.get("language") in ("english", "hinglish", "hindi") else "hindi"
+        voice = str(body.get("voice") or "")
+        if voice not in _anim_voices():
+            voice = ""
+        if voice.startswith("sarvam:") and not sarvam.key():
+            raise HTTPException(400, "Sarvam voices need your Sarvam AI key (Settings > Long videos).")
+        seconds = max(20, min(90, int(body.get("seconds") or 30)))
+        given = {"source": "ai", "topic": topic, "kind": "divine", "script": "", "title": "", "parts": 1, "split": "one",
+                 "seconds": seconds, "language": language, "screen_text": "english", "visuals": "anim",
+                 "style": "divine-epic", "quality": "auto", "upscale": engine == "vfx", "voice": voice,
+                 "speed": max(0, min(40, int(body.get("speed") or 0))), "captions": bool(body.get("captions")),
+                 "watermark": str(body.get("watermark") or "").strip()[:40], "memes": "off", "engine": engine}
+        return jobs.submit(topic[:80], 1, "story", "divine", "storyshorts", story_input=given,
+                           captions=given["captions"], ai=AIPick(**body["ai"]) if body.get("ai") else None)
+
+    @app.get("/api/story/estimate")
+    def story_estimate(language: str = "english", seconds: int = 30, text: str = "", split: str = "auto"):
+        """How the user's story would be cut: parts and their lengths (the Story tab shows it while typing)."""
+        from .storyshorts import WPS, split_parts
+
+        parts = split_parts(text[:20000], language, max(15, min(180, seconds)), split if split in ("one", "length") else "auto")
+        return {"parts": [round(sum(len(x.split()) for x in p) / WPS.get(language, 2.6) + 1) for p in parts]}
 
     @app.post("/api/script-video")
     def script_video(body: ScriptVideoRequest):
@@ -781,9 +2521,192 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "The title and the script are needed.")
         if not parse_script(script)[0]:
             raise HTTPException(400, "The script has no lines to read.")
-        given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script}
+        given = {"title": title, "description": body.description.strip(), "hook": body.hook.strip(), "script": script,
+                 "screen_text": "script" if body.screen_text == "script" else "english"}
         return jobs.submit(title, 1, "script", None, "script", script_input=given, voice=body.voice or None,
-                           captions=body.captions)
+                           captions=body.captions, memes=body.memes if body.memes in ("off", "some", "lots") else None,
+                           hook_template=body.hook_template if body.hook_template in ("auto", *cinehook.TEMPLATES) else None,
+                           visual_template=body.visual_template if body.visual_template in briefing.TEMPLATES else None,
+                           voice_rate=body.voice_rate if re.fullmatch(r"[+-]\d{1,2}%", body.voice_rate or "") else None,
+                           ai=body.ai)
+
+    # ---------- Shoot: your script filmed by you (reelgen/shoot.py) ----------
+
+    def _shoot(pid: str) -> dict:
+        from . import shoot
+
+        try:
+            return shoot.load(cfg, pid)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(404, "Shoot not found")
+
+    @app.get("/api/shoot")
+    def shoot_list():
+        from . import shoot
+
+        return shoot.projects(cfg)
+
+    @app.post("/api/shoot")
+    def shoot_new(body: ShootBody):
+        from . import shoot
+
+        try:
+            proj = shoot.new_project(cfg, body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        shoot.plan_in_background(apply_ai(load_settings(Config()), _ai(body.ai)), proj["id"])
+        return shoot.load(cfg, proj["id"])
+
+    @app.get("/api/shoot/{pid}")
+    def shoot_get(pid: str):
+        from . import shoot
+
+        return shoot.recheck_old(cfg, _shoot(pid))  # takes checked an older way get checked again
+
+    @app.post("/api/shoot/{pid}/plan")
+    def shoot_plan(pid: str, body: dict | None = None):
+        from . import shoot
+
+        if _shoot(pid)["plan"]["status"] == "running":
+            raise HTTPException(409, "Claude is planning it already")
+        shoot.update(cfg, pid, lambda p: p["plan"].update(status="running", error=""))
+        shoot.plan_in_background(apply_ai(load_settings(Config()), (body or {}).get("ai")), pid)
+        return shoot.load(cfg, pid)
+
+    @app.post("/api/shoot/{pid}/lines/{k}/camera")
+    def shoot_camera(pid: str, k: int, on: bool = True):
+        """You decide a line yourself: on camera or B-roll."""
+        from . import shoot
+
+        proj = _shoot(pid)
+        if not 0 <= k < len(proj["lines"]):
+            raise HTTPException(404, "No such line")
+        return shoot.update(cfg, pid, lambda p: p["lines"][k].update(camera=bool(on)))
+
+    @app.post("/api/shoot/{pid}/voice")
+    def shoot_voice(pid: str, body: ShootVoiceBody):
+        """Your voice in this shoot: cleaned, and missing words rebuilt in it (voice engine)."""
+        from . import shoot
+
+        proj = _shoot(pid)
+        given = body.model_dump(exclude_none=True)
+        voice = shoot.voice_options(proj)
+        voice.update({k: v for k, v in given.items() if k != "choices"})
+        voice["choices"] = {**voice["choices"], **given.get("choices", {})}
+        return shoot.update(cfg, pid, lambda p: p.update(voice=voice))
+
+    # 🖥 Local AI (reelgen/localllm.py): a language model on this computer, for when Claude can't answer or when a
+    # video is made with it on purpose
+    @app.get("/api/localllm")
+    def localllm_status():
+        from . import localllm
+        return localllm.status()
+
+    @app.post("/api/localllm")
+    def localllm_install(body: dict):
+        from . import localllm
+        keys = [k for k in (body.get("models") or []) if k in localllm.MODELS]
+        if not keys and not body.get("server_only"):
+            raise HTTPException(400, "Pick a model to download")
+        if not localllm.status()["supported"] and not localllm.external():
+            raise HTTPException(400, "No llama.cpp build for this computer: install llama-server yourself and set REEL_LLAMA_SERVER")
+        if not localllm.install(keys):
+            raise HTTPException(409, "Already downloading")
+        return {"ok": True}
+
+    @app.post("/api/localllm/stop")
+    def localllm_stop():
+        from . import localllm
+        localllm.stop_server()
+        return {"ok": True}
+
+    # 🧊 Blender (reelgen/blender.py): free, portable, for the low-poly films' best look
+    @app.get("/api/blender")
+    def blender_status():
+        from . import blender
+        return blender.status()
+
+    @app.post("/api/blender")
+    def blender_install():
+        from . import blender
+        if not blender.status()["supported"]:
+            raise HTTPException(400, "Blender can be set up here on Windows and Linux; on a Mac, install it and set REEL_BLENDER in .env")
+        if not blender.install():
+            raise HTTPException(409, "Already installing or installed")
+        return {"ok": True}
+
+    @app.get("/api/voice-engine")
+    def voice_engine_status():
+        from . import voice_engine
+        return voice_engine.status()
+
+    @app.post("/api/voice-engine")
+    def voice_engine_install():
+        from . import voice_engine
+        if not voice_engine.install():
+            raise HTTPException(409, "Already installing")
+        return {"ok": True}
+
+    @app.delete("/api/shoot/{pid}")
+    def shoot_delete(pid: str):
+        from . import shoot
+
+        _shoot(pid)
+        shoot.delete(cfg, pid)
+        return {"ok": True}
+
+    @app.post("/api/shoot/{pid}/shots/{n}/take")
+    async def shoot_take(pid: str, n: int, request: Request, name: str = "take.mov"):
+        """The best take of a shot, as the raw request body (streamed to disk: phone videos are big)."""
+        from . import shoot
+
+        _shoot(pid)
+        try:
+            target = shoot.take_target(cfg, pid, n, name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        size = 0
+        with open(target, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                size += len(chunk)
+        if size < 10_000:
+            target.unlink(missing_ok=True)
+            raise HTTPException(400, "The file is empty or didn't finish uploading")
+        shoot.process_in_background(load_settings(Config()), pid, n, target)
+        return {"ok": True, "size": size}
+
+    @app.delete("/api/shoot/{pid}/shots/{n}/take")
+    def shoot_take_delete(pid: str, n: int):
+        from . import shoot
+
+        _shoot(pid)
+        shoot.remove_take(cfg, pid, n)
+        return shoot.load(cfg, pid)
+
+    @app.get("/api/shoot/{pid}/shots/{n}/take.mp4")
+    def shoot_take_file(pid: str, n: int):
+        from . import shoot
+
+        _shoot(pid)
+        path = shoot.take_paths(cfg, pid, n)["proxy"]
+        if not path.is_file():
+            raise HTTPException(404, "Not ready yet")
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.post("/api/shoot/{pid}/make")
+    def shoot_make(pid: str, body: ShootMakeBody):
+        from . import shoot
+
+        proj = _shoot(pid)
+        missing = shoot.missing_takes(proj)
+        if missing:
+            raise HTTPException(400, f"Upload a take of shot{'s' if len(missing) > 1 else ''} {', '.join(map(str, missing))} first.")
+        if proj["plan"]["status"] == "running":
+            raise HTTPException(409, "Claude is still planning which lines show you: a minute more")
+        job = jobs.submit(proj["title"], 1, "shoot", None, "shoot", shoot_input={"id": pid}, captions=body.captions, ai=body.ai)
+        shoot.update(cfg, pid, lambda p: p.update(video={"status": "queued", "job": job["id"]}))
+        return job
 
     @app.get("/api/jobs")
     def list_jobs():
@@ -804,7 +2727,8 @@ def create_app(cfg: Config) -> FastAPI:
         raise HTTPException(404, "No script yet: Claude is still writing it.")
 
     def busy_folders() -> set[str]:
-        return {f for j in jobs.jobs if j["status"] in ("queued", "running") for f in j.get("folders", []) + j.get("resume", [])}
+        return {f for j in jobs.jobs if j["status"] in ("queued", "running")
+                for f in j.get("folders", []) + j.get("resume", []) + (j.get("stick_resume") or [])}
 
     @app.delete("/api/jobs/{job_id}")
     def remove_job(job_id: str, discard: bool = False):
@@ -837,11 +2761,14 @@ def create_app(cfg: Config) -> FastAPI:
             _discard(job)
 
     def _discard(job: dict) -> None:
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT
         from .pipeline import CHECKPOINT
+        from .storyshorts import CHECKPOINT as STORY_CHECKPOINT
+        from .toon import CHECKPOINT as TOON_CHECKPOINT
         busy = busy_folders()
         for f in set(job.get("folders", []) + job.get("resume", [])) - busy:
             path = (cfg.output_dir / f).resolve()
-            if path.parent == cfg.output_dir.resolve() and (path / CHECKPOINT).exists():
+            if path.parent == cfg.output_dir.resolve() and any((path / c).exists() for c in (CHECKPOINT, ANIM_CHECKPOINT, TOON_CHECKPOINT, STORY_CHECKPOINT)):
                 shutil.rmtree(path, ignore_errors=True)
 
     @app.post("/api/jobs/clear")
@@ -856,8 +2783,12 @@ def create_app(cfg: Config) -> FastAPI:
     @app.delete("/api/unfinished/{folder_id}")
     def discard_unfinished(folder_id: str):
         from .pipeline import CHECKPOINT
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT
+        from .storyshorts import CHECKPOINT as STORY_CHECKPOINT
+        from .stickstory import CHECKPOINT as STICK_CHECKPOINT
+        from .toon import CHECKPOINT as TOON_CHECKPOINT
         path = (cfg.output_dir / folder_id).resolve()
-        if path.parent != cfg.output_dir.resolve() or not (path / CHECKPOINT).exists():
+        if path.parent != cfg.output_dir.resolve() or not any((path / c).exists() for c in (CHECKPOINT, TOON_CHECKPOINT, ANIM_CHECKPOINT, STORY_CHECKPOINT, STICK_CHECKPOINT)):
             raise HTTPException(404, "Not an unfinished video")
         if folder_id in busy_folders():
             raise HTTPException(409, "It's being made right now")
@@ -869,13 +2800,62 @@ def create_app(cfg: Config) -> FastAPI:
         """Videos that stopped part-way (failed, or the app was closed) and can be resumed."""
         from .pipeline import unfinished
 
+        from .animated import anim_unfinished
+        from .storyshorts import story_unfinished
+        from .stickstory import stick_unfinished
+        from .toon import toon_unfinished
+
         busy = busy_folders()
-        return [u for u in unfinished(cfg) if u["id"] not in busy]
+        return [u for u in unfinished(cfg) + toon_unfinished(cfg) + anim_unfinished(cfg) + story_unfinished(cfg) + stick_unfinished(cfg)
+                if u["id"] not in busy]
 
     @app.post("/api/resume")
     def resume(body: dict):
         from .pipeline import unfinished
+        from .toon import CHECKPOINT as TOON_CHECKPOINT, unfinished_toons
 
+        from .animated import CHECKPOINT as ANIM_CHECKPOINT, QUALITIES, forget_music, music_failed, unfinished_anims
+
+        from .storyshorts import CHECKPOINT as STORY_CHECKPOINT, unfinished_stories
+
+        stories = [f for f in body.get("folders", []) if f in unfinished_stories(cfg) and f not in busy_folders()]
+        if stories:  # Story Shorts resume through their own pipeline, one series at a time
+            saved = json.loads((cfg.output_dir / stories[0] / STORY_CHECKPOINT).read_text(encoding="utf-8"))
+            given = saved.get("request") or {}
+            return jobs.submit((saved.get("series") or {}).get("title") or given.get("topic") or None,
+                               len((saved.get("series") or {}).get("parts") or []) or given.get("parts", 1), "resume",
+                               given.get("kind", "story"), "storyshorts", story_input=given, story_resume=stories[:1],
+                               captions=given.get("captions"), ai=body.get("ai"))
+        anims = [f for f in body.get("folders", []) if f in unfinished_anims(cfg) and f not in busy_folders()]
+        if anims:  # Animated videos resume through their own pipeline too
+            if body.get("music") == "redo":  # "Resume with AI music": the failed music step runs again
+                for f in anims:
+                    if music_failed(json.loads((cfg.output_dir / f / ANIM_CHECKPOINT).read_text(encoding="utf-8"))):
+                        forget_music(cfg.output_dir / f)
+            saved = json.loads((cfg.output_dir / anims[0] / ANIM_CHECKPOINT).read_text(encoding="utf-8"))
+            given = saved.get("request") or {}
+            if body.get("quality") in QUALITIES:  # "Resume with fast clips": the clips still to make use it
+                given = {**given, "quality": body["quality"]}
+            if body.get("motion") in ("key", "stills"):  # "Resume, key shots only": fewer clips from here on
+                given = {**given, "motion": body["motion"]}
+            return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(anims), "resume",
+                               "facts", "anim", anim_input=given, anim_resume=anims, captions=given.get("captions"), ai=body.get("ai"))
+        from .stickstory import CHECKPOINT as STICK_CHECKPOINT, unfinished_sticks
+
+        sticks = [f for f in body.get("folders", []) if f in unfinished_sticks(cfg) and f not in busy_folders()]
+        if sticks:  # Stick videos resume through their own pipeline (stick-checkpoint.json)
+            saved = json.loads((cfg.output_dir / sticks[0] / STICK_CHECKPOINT).read_text(encoding="utf-8"))
+            given = saved.get("request") or {}
+            return jobs.submit((saved.get("ep") or {}).get("title") or given.get("idea", "")[:80] or None, len(sticks), "resume",
+                               {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(given.get("style"), "comedy"),
+                               "stick-short" if given.get("format") == "short" else "stick", stick_input=given,
+                               stick_resume=sticks, captions=False, ai=body.get("ai"))
+        toons = [f for f in body.get("folders", []) if f in unfinished_toons(cfg) and f not in busy_folders()]
+        if toons:  # Toon videos resume through their own pipeline, never the Shorts/long one
+            saved = json.loads((cfg.output_dir / toons[0] / TOON_CHECKPOINT).read_text(encoding="utf-8"))
+            given = saved.get("request") or {}
+            return jobs.submit((saved.get("script") or {}).get("title") or given.get("topic") or None, len(toons), "resume",
+                               "facts", "toon", toon_input=given, toon_resume=toons, captions=given.get("captions"), ai=body.get("ai"))
         available = {u["id"] for u in unfinished(cfg)} - busy_folders()
         folders = [f for f in body.get("folders", []) if f in available]
         if not folders:
@@ -885,7 +2865,7 @@ def create_app(cfg: Config) -> FastAPI:
         first = next(u for u in unfinished(cfg) if u["id"] == folders[0])
         title = first.get("title") or (first.get("topic") if first.get("topic") != "Trending topic" else None)
         return jobs.submit(title, len(folders), "resume", first.get("style"), first.get("length", "short"),
-                           resume=folders)
+                           resume=folders, ai=body.get("ai"))
 
     @app.post("/api/jobs/{job_id}/pause")
     def pause_job(job_id: str):
@@ -905,6 +2885,59 @@ def create_app(cfg: Config) -> FastAPI:
         job = next((j for j in jobs.jobs if j["id"] == job_id), None)
         if job is None:
             raise HTTPException(404, "No such job")
+        if job.get("anim_input"):  # an Animated job resumes its own saved videos (anim-checkpoint.json)
+            from .animated import unfinished_anims
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_anims(cfg) and f not in busy_folders()]
+            if not saved:
+                raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
+            return jobs.submit(job["topic"], len(saved), "resume", "facts", "anim", anim_input=job["anim_input"],
+                               anim_resume=saved, captions=job.get("captions"), ai=job.get("ai"))
+        if job.get("story_input"):  # a Story Shorts job resumes its own saved series (story-checkpoint.json)
+            from .storyshorts import unfinished_stories
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_stories(cfg) and f not in busy_folders()]
+            if not saved:
+                raise HTTPException(400, "Nothing saved to resume for this story; make it again.")
+            return jobs.submit(job["topic"], job["count"], "resume", job.get("style"), "storyshorts",
+                               story_input=job["story_input"], story_resume=saved[:1], captions=job.get("captions"), ai=job.get("ai"))
+        if job.get("sticky_input"):  # a Sticky job resumes its own saved films (sticky-checkpoint.json)
+            from .sticky.run import unfinished as unfinished_sticky
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_sticky(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these films; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", "story", "sticky",
+                               sticky_input=job["sticky_input"], sticky_resume=saved or None, captions=False, ai=job.get("ai"))
+        if job.get("journey_input"):  # a Journey job resumes its own saved videos (journey-checkpoint.json)
+            from .journey.run import unfinished as unfinished_journeys
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_journeys(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these videos; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", "facts", "journey",
+                               journey_input=job["journey_input"], journey_resume=saved or None, captions=False, ai=job.get("ai"))
+        if job.get("lowpoly_input"):  # a low-poly job resumes its own saved videos (lowpoly-checkpoint.json)
+            from .lowpoly.run import unfinished as unfinished_lowpoly
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_lowpoly(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these videos; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", "story", "lowpoly",
+                               lowpoly_input=job["lowpoly_input"], lowpoly_resume=saved or None, captions=True, ai=job.get("ai"))
+        if job.get("stick_input"):  # a Stick job resumes its own saved videos (stick-checkpoint.json)
+            from .stickstory import unfinished_sticks
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_sticks(cfg) and f not in busy_folders()]
+            fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
+            if not saved and not fresh:
+                raise HTTPException(400, "Nothing saved to resume for these videos; make them again.")
+            return jobs.submit(job["topic"], len(saved) or fresh, "resume", job.get("style"), job.get("length", "stick"),
+                               stick_input=job["stick_input"], stick_resume=saved or None, captions=False, ai=job.get("ai"))
+        if job.get("toon_input"):  # a Toon job resumes its own saved videos (toon-checkpoint.json)
+            from .toon import unfinished_toons
+            saved = [f for f in dict.fromkeys(job.get("folders", [])) if f in unfinished_toons(cfg) and f not in busy_folders()]
+            if not saved:
+                raise HTTPException(400, "Nothing saved to resume for these videos; generate them again.")
+            return jobs.submit(job["topic"], len(saved), "resume", "facts", "toon", toon_input=job["toon_input"],
+                               toon_resume=saved, captions=job.get("captions"), ai=job.get("ai"))
         available = {u["id"] for u in unfinished(cfg)} - busy_folders()
         folders = list(dict.fromkeys(f for f in job.get("folders", []) if f in available))
         fresh = job.get("skipped", 0) + (job["count"] if job["status"] == "paused" and not job.get("started") else 0)
@@ -913,7 +2946,9 @@ def create_app(cfg: Config) -> FastAPI:
         return jobs.submit(job["topic"], len(folders) + fresh, "resume", job.get("style"), job.get("length", "short"),
                            resume=folders, script_input=job.get("script_input"), stick_input=job.get("stick_input"),
                            voice=job.get("voice"),
-                           captions=job.get("captions"), story_form=job.get("story_form"))
+                           captions=job.get("captions"), story_form=job.get("story_form"), ai=job.get("ai"),
+                           memes=job.get("memes"), hook_template=job.get("hook_template"), voice_rate=job.get("voice_rate"),
+                           visual_template=job.get("visual_template"))
 
     @app.get("/api/automations")
     def list_automations():
@@ -945,7 +2980,7 @@ def create_app(cfg: Config) -> FastAPI:
         a = next((x for x in automations.load(cfg) if x.id == automation_id), None)
         if a is None:
             raise HTTPException(404, "No such automation")
-        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions)
+        return jobs.submit(a.topic or None, a.count, f"automation: {a.name}", a.style, a.length, captions=a.captions, ai=a.ai or None)
 
     @app.get("/api/library")
     def library():
@@ -999,6 +3034,17 @@ def create_app(cfg: Config) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         return {"ok": True}
+
+    @app.put("/api/library/{kind}/{name}/ban")
+    def ban_library_file(kind: str, name: str, on: bool = True):
+        """Never use this file again (or allow it back)."""
+        from . import media
+
+        try:
+            media.set_banned(cfg, kind, name, on)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True, "banned": media.banned(cfg, kind, name)}
 
     @app.delete("/api/library/{kind}/{name}")
     def delete_from_library(kind: str, name: str):
@@ -1063,8 +3109,18 @@ def print_banner(cfg: Config) -> None:
 def serve(cfg: Config) -> None:
     import uvicorn
 
+    from . import updater
+
     cfg = load_settings(cfg)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    wait = float(os.environ.pop("REEL_WAIT_PORT", "0") or 0)  # set by the updater: the old app may still be closing
+    if not updater.port_bindable(cfg.port, wait):
+        owner = updater.port_owner(cfg.port)
+        print(f"\n  Port {cfg.port} is already in use" + (f" by {owner}" if owner else "") + ", so Reel Studio can't start.\n"
+              "  Another Reel Studio may still be open: close its window"
+              + (f", or end PID {owner.split('PID ')[-1].rstrip(')')} in Task Manager (Details tab)" if "PID" in owner else "")
+              + ", then start again.\n")
+        sys.exit(1)
     print_banner(cfg)
     tunnel.start(cfg)
     uvicorn.run(create_app(cfg), host="0.0.0.0", port=cfg.port, log_level="warning")

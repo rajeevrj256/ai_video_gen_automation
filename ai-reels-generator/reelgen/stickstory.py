@@ -9,25 +9,26 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, get_args
 
 from pydantic import BaseModel, Field
 
-from . import media
+from . import aimusic, media, music, stopper
 from .config import Config
 from .llm import ask
 from .categories import CATEGORIES
 from .longform import LSource, verify_sources, with_sources
 from .script_writer import AI_CLICHES, SoundCue
-from .sfx import write_sfx
+from .sfx import write_cue_sounds, write_sfx
 from .verify import probe
 from .video import FFMPEG, REMOTION_DIR, _remotion_cli, _render_remotion, media_seconds
 from .voice import Word as _Word, synthesize_scenes
@@ -43,10 +44,11 @@ Face = Literal["neutral", "happy", "laugh", "shock", "angry", "sad", "smirk", "c
 Emote = Literal["none", "!", "?", "!?", "sweat", "anger", "hearts", "zzz", "sparkle", "lines"]
 Prop = Literal["none", "phone", "book", "paper", "cup", "bag", "laptop", "ball", "plate", "remote", "thing"]
 Setting = Literal["living-room", "classroom", "kitchen", "bedroom", "street", "office", "bathroom", "park", "shop",
-                  "exam-hall", "blank"]
-Camera = Literal["wide", "close", "punch", "shake"]
-Action = Literal["none", "jump", "shake", "fall", "spin", "walk-in-left", "walk-in-right", "walk-out-left",
-                 "walk-out-right"]
+                  "exam-hall", "blank", "mine", "tunnel", "garage", "warehouse"]
+Camera = Literal["wide", "close", "punch", "push", "pan"]  # no "shake": the user wants no vibration; push = a very slow push-in
+Action = Literal["none", "jump", "fall", "spin", "step", "walk-across", "turn", "look-up", "walk-in-left", "walk-in-right", "walk-out-left",
+                 "walk-out-right", "kick", "juggle", "throw", "type", "write", "handshake", "count-money", "film", "phone-call",
+                 "carry", "cheer", "nod", "watch"]  # the line acted out (remotion/src/story/acts.tsx)
 # The sets' furniture and the spots, shared with the editor (remotion/src/story/sets.json): a new kind of
 # furniture goes there (and gets a drawing in furniture.tsx); the writer's schema and prompt follow it.
 SETS = json.loads((REMOTION_DIR / "src" / "story" / "sets.json").read_text(encoding="utf-8"))
@@ -63,9 +65,13 @@ EMOTIONS = {
 Emotion = Literal[tuple(EMOTIONS)]
 StickMood = Literal["playful", "quirky", "curious", "uplifting", "emotional", "mystery", "suspense", "energetic", "calm"]
 Effect = Literal["none", "erupt", "smoke", "fire", "sparkle", "shake"]
-THING_HELP = ("'volcano' (a science-project volcano, drawn by hand) or a lucide icon name in kebab-case for anything "
-              "else: trophy, cake, pizza, tv, gift, rocket, dog, cat, guitar, gamepad-2, lamp, plant, alarm-clock, "
-              "microscope, flask-conical, bomb, crown, car, bike, briefcase...")
+THING_HELP = ("drawn by hand: 'goal' (a football goal; a kicked ball hits its crossbar), 'football', 'screen' (a "
+              "monitor showing its label, e.g. '1,000,000 views', or a play button), 'board' (a whiteboard on a stand "
+              "with its label written on it), 'calendar' (a page: label 'FEB 14'), 'money' (stacked bills with a "
+              "label like '$3.5 million'), 'camera' (a film camera on a tripod), 'crowd' (rows of people), 'volcano' "
+              "(a science-project volcano), 'dog', 'cat', 'bird', 'car', 'bus', 'bike', 'truck' (vehicles stand on the "
+              "ground); or a lucide icon name in kebab-case for anything else: trophy, cake, pizza, "
+              "tv, gift, rocket, guitar, gamepad-2, lamp, plant, alarm-clock, microscope, flask-conical, crown, briefcase...")
 
 
 class SThing(BaseModel):
@@ -74,6 +80,11 @@ class SThing(BaseModel):
     on_table: bool = Field(default=True, description="On a small table (true) or on the floor (false).")
     big: bool = False
     effect: Effect = Field(default="none", description="What it does during this line: erupt (a volcano's lava), smoke, fire, sparkle, shake.")
+    svg: str = Field(default="", description="Only when nothing built in shows it: your own drawing of it (see Drawings).")
+    photo: str = Field(default="", description="A real picture as proof (see Proof pictures): Wikimedia Commons search "
+                       "words, e.g. 'Google logo 2010', 'YouTube logo 2005', 'San Diego Zoo elephants'.")
+    label: str = Field(default="", description="Words written on it, 1-5 (a screen, board, calendar, money, sign): the "
+                       "line's own number, date or name, exactly as the narration says it; a number counts up.")
 
 class SPiece(BaseModel):
     kind: FurnitureKind
@@ -117,6 +128,63 @@ VOICE_NAMES = {  # for the tab's voice picker
     "en-US-MichelleNeural": "Michelle (woman, soft)",
 }
 WORDS_PER_SECOND = 2.2  # dialogue with comic pauses
+# Types written from researched facts (web search, every claim checked, sources in the description).
+TRUE_STYLES = ("facts", "documentary")
+# The documentary type follows the user's "Stickman Explainer Engine" prompt: a narration beat of about 9-10 words
+# for every ~4-second shot, so the number of shots follows the length (15 s = 4, 30 s = 8, 60 s = 15).
+BEAT_SECONDS = 4
+DOC_LEAD, DOC_TAIL = 0.15, 0.2  # a documentary beat's pause before and after its line (seconds)
+
+
+def beats_for(seconds: float) -> int:
+    return max(3, math.ceil(seconds / BEAT_SECONDS))
+
+
+# What may be drawn (the engine's visual safety rule): the narration can carry real names and facts, the picture never
+# needs them. For every type; the documentary type leans on it most.
+VISUAL_SAFETY = ("What is drawn (signs, captions, objects, props) never names a real person and never draws a real brand, "
+                 "logo, military insignia or a flag in a conflict (a real logo or photo only as a proof picture, below); a place tied to a tragedy stays generic ('a city', 'a "
+                 "coastal road'). Never show violence, injury, death, blood, a weapon being used or anyone being harmed: "
+                 "show the moment before, the aftermath far away, or an object standing in for it (an empty chair, a "
+                 "closed door, a stopped clock, smoke on the horizon). Disaster only as a distant silhouette or "
+                 "aftermath. Keep it restrained: understatement carries more weight than spectacle.")
+
+# Places and objects the app has no drawing for are drawn by Claude at runtime (like Toon's custom drawings), as SVG
+# that toon.clean_svg reduces to plain shapes before it reaches the editor.
+DRAWINGS = ("Drawings: use a built-in setting only when it IS the place the line is in. When the story is somewhere "
+            "none of them is (a pizzeria with an office above it, a football stadium, a courtroom, a ship's deck, a "
+            "2005 bedroom office, an investor's boardroom), set the scene's setting to 'blank' and draw that place in "
+            "'backdrop_svg' so a viewer knows where they are at a glance: an SVG fragment (no <svg> wrapper) for a "
+            "1920x900 box whose floor line is y=900. Layers: a far background (sky, skyline, hills or the back wall), "
+            "the place's identifying landmarks in the middle (a pizzeria's striped awning and oven, a stadium's stands "
+            "and floodlights, a boardroom's long window and table, the era's computers), and its sign as the scene's "
+            "`sign` (drawn by the app in marker; your drawing has no text). People stand in front of it, so keep the "
+            "lower 300 px plain (wall or ground) and put the detail higher up. When the story returns to a place, give "
+            "the same drawing again. For an object nothing shows, draw it in the thing's 'svg': a 200x200 box, standing "
+            "on its bottom edge. Style: hand-inked and flat, thick dark outlines (stroke #1E1B18, width 4-6), solid fills "
+            "in muted earthy colours (tan #C8B893, sage #A9AE8A, dusty grey #B9B5AA, cream #E6DCC2, brick #9C4A3C, navy "
+            "#34435E, olive #6E6F45, brown #7E5E3E), simple geometric shapes; only path, circle, ellipse, rect, polygon, "
+            "polyline, line and g; no text, logos, images or gradients; a background under 10000 characters, an object "
+            "under 1500. Never draw a real person, brand or logo.")
+
+# Real pictures as proof (evidence.py): Wikimedia Commons files with a free licence, credited in the description.
+PROOF = ("Proof pictures: when a real image proves or names what the line says better than a drawing (a company buying "
+         "another: both companies' logos of that time; the real building or place; a document, a newspaper front page, "
+         "the product as it looked), add a thing with `photo` = Wikimedia Commons search words, the era included ('YouTube "
+         "logo 2005', 'Google logo 2010', 'Googleplex building'). It appears as a pinned photo card in the scene, and its "
+         "credit goes in the description. Use it where it adds proof (a few per video), not for every line; logos, places, "
+         "objects and documents, never violence; a real person only when the narration names them.")
+
+DOC_SHOTS = ("Every beat is one shot with ONE clear, plain action, never several: a character's step forward ('step'), "
+             "walking across the frame ('walk-across'), a head turn ('turn'), looking up ('look-up'), sitting down, "
+             "picking up or putting down an object, or the scene itself moving (dust, smoke or rain drifting, the light "
+             "turning to dusk). Vary the shots across the video and never repeat one twice in a row: a very wide "
+             "establishing shot (people 'far', often 'from_behind' facing the place), a wide shot, a close-up ('close' "
+             "on a face), a profile (facing across the frame), someone seen from behind, a very slow push-in ('push'). "
+             "Give every scene its weather, light and ambience (wind, rain, room tone, city, night...) from its place "
+             "and time. The main character is designed for the story's era and work (clothes by garment and colour) "
+             "and keeps that look; others are generic people ('a man in a dark suit'), never a real person's likeness. "
+             "No captions; a sign only with a generic word.")
 
 
 @dataclass
@@ -127,16 +195,75 @@ class StickRequest:
     language: str = "english"
     speed: float = 1.5  # how fast everyone talks: 1.5 = 50% faster than normal (snappy comedy timing)
     seconds: int = 0  # a Short's length: 15, 30 or 45 s (0 = 25-50 s)
-    style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked)
+    style: str = "comedy"  # comedy | fiction (a story with a twist) | facts (true, researched, fact-checked) | documentary (narrated true story)
     cast: str = DEFAULT_CAST
+    subtitles: str = "auto"  # auto (on, off for documentaries) | on | off
+    script: str = ""  # your own script: every word spoken as written (`from_script`); empty = Claude writes it
+    title: str = ""  # your script's title (empty: Claude names it)
+    narrator: str = ""  # the narrator's voice (the tab's pick, e.g. your cloned Sarvam voice); empty = one nobody has
+    opening: str = "auto"  # how the first line hooks: a key of OPENINGS, or auto (the writer picks one the last videos didn't use)
+
+
+# The Stick tab's opening (hook) choice: the kinds of first line hooks.RULES describes, one asked for by name.
+OPENINGS = {
+    "shock": "a shocking number or fact, said in the first words",
+    "claim": "a bold claim the video then proves",
+    "action": "a cold open: the most dramatic moment already happening, explained after",
+    "contradiction": "a contradiction or paradox the viewer needs resolved",
+    "question": "a stakes question the viewer can't leave without the answer to",
+    "countdown": "a countdown or a deadline: time running out",
+    "you": "'you' in the situation: the viewer put inside the moment",
+    "ending": "the ending first, then how it got there",
+}
 
 
 # ---------- the episode Claude writes ----------
+
+# ---------- how each character looks (the ink look: remotion/src/story/ink.tsx) ----------
+# Muted, desaturated cloth colours (the hand-inked explainer style the user chose), by name for Claude.
+INK_COLOURS = {
+    "navy": "#34435E", "brick": "#9C4A3C", "olive": "#6E6F45", "mustard": "#B8914A", "teal": "#3E6B6A",
+    "plum": "#6B4A5E", "rust": "#A0613A", "slate": "#5B6670", "sand": "#C9B48E", "forest": "#3F5A45",
+    "charcoal": "#3A3A3D", "cream": "#E6DCC6", "denim": "#4C5D74", "maroon": "#6E3434", "khaki": "#A29470",
+    "grey": "#8C8C88", "tan": "#A08458", "brown": "#5A4232", "black": "#1E1B18", "white": "#EDE6D6",
+}
+HAIR_COLOURS = {"black": "#1E1B18", "dark-brown": "#3B2E24", "brown": "#5A3E2B", "auburn": "#7A3E2A",
+                "blonde": "#B89A5E", "grey": "#8E8A84", "white": "#D8D2C4"}
+Colour = Literal[tuple(INK_COLOURS)]
+
+
+class SDesign(BaseModel):
+    hair: Literal["messy", "spiky", "side-part", "curly", "short", "long", "ponytail", "bun", "braids", "bald"]
+    hair_colour: Literal[tuple(HAIR_COLOURS)] = "black"
+    top: Literal["hoodie", "tshirt", "shirt", "jacket", "suit", "sweater", "coat", "dress", "coveralls", "kurta"] = Field(
+        description="What they wear on top (coveralls and a dress cover the legs too).")
+    top_colour: Colour
+    bottom: Literal["trousers", "jeans", "shorts", "skirt", "none"] = Field(description="'none' under a dress.")
+    bottom_colour: Colour = "charcoal"
+    shoes: Literal["shoes", "boots", "sneakers", "sandals"] = "shoes"
+    shoes_colour: Colour = "brown"
+    headwear: Literal["none", "cap", "hard-hat", "beanie", "fedora", "cowboy", "helmet", "chef-hat", "headscarf", "beret",
+                      "bow", "headband"] = "none"
+    headwear_colour: Colour = "mustard"
+    extras: list[Literal["glasses", "sunglasses", "beard", "stubble", "mustache", "earrings", "tie", "scarf", "satchel",
+                         "backpack", "apron", "lanyard", "stethoscope", "watch", "headlamp"]] = Field(
+        default_factory=list, description="0-3 things that make them recognisable at a glance (a miner: satchel, headlamp).")
+    extra_colour: Colour = Field(default="tan", description="The tie, scarf, bag or apron's colour.")
+
+
+DESIGN_RULES = ("Design every character's look for this story ('design'): what this person would really wear here "
+                "(job, age, era, weather, place): a miner in navy coveralls with a hard hat, a headlamp, a satchel and "
+                "boots; a teacher in a sweater with glasses; a chef in a chef hat and an apron. Muted colours only, every "
+                "character's top a different colour so they're told apart at a glance, and one or two details that make "
+                "each recognisable. A character listed with a fixed look keeps it exactly (copy it); a description the "
+                "user gave is followed.")
+
 
 class SCast(BaseModel):
     id: str = Field(description="Short lowercase id, e.g. 'raju'.")
     name: str
     look: Look
+    design: SDesign | None = Field(default=None, description="How they look (always give it).")
 
 
 class SActor(BaseModel):
@@ -149,7 +276,16 @@ class SActor(BaseModel):
     prop: Prop = "none"
     prop_text: str = Field(default="", description="1-4 characters on a paper or phone screen (e.g. 'F', '$3'), or empty.")
     prop_thing: str = Field(default="", description="With prop 'thing': what they hold, " + THING_HELP)
-    action: Action = Field(default="none", description="Movement during this line: enter or leave the scene, jump, shake, fall, spin.")
+    action: Action = Field(default="none", description="What they do during this line (act the line out): enter or leave "
+                           "the scene, jump, fall, spin, 'step' (one step forward: into the picture when seen from behind), "
+                           "'walk-across' (across the frame the way they face), 'turn', 'look-up', 'kick' (kicks a ball at "
+                           "the first object ahead: a goal's crossbar, then keeps it up), 'juggle' (keeps a ball up), "
+                           "'throw' (at the object or person ahead), 'type' (at a computer), 'write', 'handshake' (two "
+                           "people facing each other), 'count-money', 'film' (holds a camera up), 'phone-call', 'carry' "
+                           "(a box), 'cheer', 'nod', 'watch' (a screen or something happening).")
+    from_behind: bool = Field(default=False, description="Seen from behind (no face): someone facing a place or walking into it.")
+    far: bool = Field(default=False, description="Small and far away, for a very wide establishing shot (the 'mine' setting puts "
+                      "them at the mine's mouth).")
 
 
 class SLine(BaseModel):
@@ -159,13 +295,15 @@ class SLine(BaseModel):
     emotion: Emotion = Field(default="neutral", description="How it's said (the voice changes pace, pitch and loudness); "
                              "match the speaker's face.")
     pause_before: float = Field(default=0.2, ge=0, le=1.5, description="Seconds of silence before it: 0.6-1.2 before a punchline or a reaction.")
-    camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a punchline, 'shake' on a shock.")
+    camera: Camera = Field(default="wide", description="'wide' most of the time, 'close' on a reaction, 'punch' on a "
+                           "punchline or a shock, 'push' for a very slow push-in on a quiet, weighty moment.")
     focus: str = Field(default="", description="Cast id the camera frames on 'close' (default: the speaker).")
     caption: str = Field(default="", description="A meme caption at the top ('POV: ...', 'Meanwhile...', '5 minutes later'), usually empty.")
     actors: list[SActor] = Field(description="Everyone on screen during this line, with their pose, face and position now.")
     things: list[SThing] = Field(default_factory=list, description="Objects standing in the scene during this line (not "
                                  "held); repeat them on every line of the scene while they're there.")
     sounds: list[SoundCue] = Field(default_factory=list, description="0-2 sound effects on a word of the line (or word '*' for a silent beat).")
+    note: str = Field(default="", description="Not for you to write: a stage direction from the user's own script.")
 
 
 class SScene(BaseModel):
@@ -178,6 +316,17 @@ class SScene(BaseModel):
                           "dishes at the sink (draws running water and soap foam in front of them). Otherwise false.")
     intensity: float = Field(default=0.5, ge=0, le=1, description="How full the music is in this scene: 0.2 quiet, "
                              "0.5 normal, 0.9 chaos or the climax.")
+    backdrop_svg: str = Field(default="", description="Only when no setting shows the place: setting 'blank' and your own "
+                              "drawing of its background (see Drawings).")
+    weather: Literal["none", "rain", "snow", "dust", "smoke"] = Field(default="none", description="What drifts through "
+                                                                       "the scene (outdoors, or smoke anywhere).")
+    light: Literal["day", "dawn", "dusk", "night"] = "day"
+    ambience: Literal[tuple(music.AMBIENCES)] = Field(default="none", description="A quiet background sound for the "
+                                                       "place: wind outdoors, rain, room tone, city, night, crowd...")
+    hook: bool = Field(default=False, description="Part of the cold open (see The hook): the first scenes only.")
+    place: str = Field(default="", description="Where this is, when the story names it: 'San Mateo, California · 2005', "
+                       "'Barcelona training ground'; shown as a small tag when the place first appears. Empty for an "
+                       "unnamed everyday place.")
     lines: list[SLine]
 
 
@@ -190,6 +339,7 @@ class Episode(BaseModel):
     music: str = Field(default="compose", description="'compose' (a new track made for this video in your mood: the "
                        "usual choice), one of the user's own tracks from the music list only when it truly fits, or 'none'.")
     mood: StickMood = Field(default="playful", description="The composed track's mood; not the same as the recent videos'.")
+    music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
     cast: list[SCast] = Field(description="The characters in this episode (from the given cast; add a minor one only if needed).")
     category: str = Field(default="", description="The library shelf: one of " + ", ".join(CATEGORIES) + ".")
     sources: list[LSource] = Field(default_factory=list, description="Facts only: 2-6 pages you opened with web search "
@@ -197,13 +347,46 @@ class Episode(BaseModel):
     scenes: list[SScene]
 
 
-def _system(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0) -> str:
+def hook_rules(short: bool, minutes: float, style: str, speed: float, seconds: int = 0) -> str:
+    """The cold open (the user: "there is no hooks to tell the video in 30-40 sec about what i can tell entire video
+    with suspense/questions"): a Short hooks in its first lines; an episode or documentary opens with 30-40 s that
+    sell the whole video before the story starts from the beginning."""
+    if short:
+        n = 2 if (seconds or 40) <= 30 else 3
+        return (f"The hook (scenes marked hook=true): the first {n} lines, under 6 seconds together: the most striking "
+                "moment of the story already happening, then the question the Short answers at its end. Mark those "
+                "scenes hook=true.")
+    wps = 2.5 * max(0.8, speed)
+    lo, hi = round(30 * wps), round(40 * wps)
+    turn = {"comedy": "the funniest, most chaotic moment of the episode (shown, mid-disaster), then 'how did we get here?'",
+            "fiction": "the most dangerous or emotional moment of the story, cut before it resolves",
+            "facts": "the most surprising thing the video proves, shown happening",
+            "documentary": "the most dramatic true moment, shown happening (in the past tense or present, as it fits)"}.get(style, "")
+    return f"""The hook: the episode opens with a COLD OPEN of 30-40 seconds (about {lo}-{hi} spoken words), in its own scenes marked hook=true, before the story starts from its beginning. It sells the whole video and leaves the viewer unable to leave:
+1. First line: {turn}. No setup, no 'In 2005...', no greeting.
+2. The stakes: why this matters, what was at risk, what nobody expected (a number, a contradiction).
+3. Two or three quick teases of what's coming, each raising a question and never answering it ('But one detail didn't add up.', 'And the people who paid for it...'). Each in a different place, short lines, the picture acting it out.
+4. The last hook line asks the video's central question; only the ending answers it.
+Then the story begins (hook=false) from the start, and the ending answers the question and calls back to the first hook picture. The cold open counts toward the total length."""
+
+
+def _system(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0, speed: float = 1.5) -> str:
+    return _system_body(short, minutes, language, style, seconds) + "\n\n" + hook_rules(short, minutes, style, speed, seconds) \
+        + "\n\n" + ACTING
+
+
+# Every line is acted out: the people DO the thing the line says, with the objects it names (acts.tsx).
+ACTING = """Act every line out: the people do what the line says (kick the ball at the goal, type at the computer, film with a camera, shake hands on the deal, count the money, write on the board, watch the screen, carry the boxes) with the objects it names right there, never standing still beside an icon. Put the line's own number, date or name on an object as its label (a screen '1,000,000 views', money '$3.5 million', a calendar 'FEB 14', a board '20,000 videos a day'), exactly as the narration says it. Name a real place in the scene's 'place' when the story names it."""
+
+
+def _system_body(short: bool, minutes: float, language: str, style: str = "comedy", seconds: int = 0) -> str:
     lang = ("natural, casual American English, the way kids, teens and parents really talk (no Indian or British "
             "words, no rupees: dollars, US schools, US homes)" if language == "english"
             else "everyday Hindi in Devanagari script, as families really talk")
-    payoff = {"comedy": "punchline", "fiction": "twist", "facts": "answer"}.get(style, "punchline")
+    payoff = {"comedy": "punchline", "fiction": "twist", "facts": "answer", "documentary": "closing line"}.get(style, "punchline")
     hook = {"comedy": "with a 'POV:' caption", "fiction": "with someone already in trouble",
-            "facts": "with a surprising question or a wrong belief someone holds"}.get(style, "")
+            "facts": "with a surprising question or a wrong belief someone holds",
+            "documentary": "with the most striking true detail, in plain words"}.get(style, "")
     if short:
         span = (f"{seconds} seconds (at most {seconds + 3}): ONE situation, {max(3, seconds // 4)}-{max(4, seconds // 3)} "
                 "short lines" if seconds else "25-50 seconds: ONE situation, 5-12 lines")
@@ -215,7 +398,31 @@ At most 3 characters, standing close together (spots left, center, right)."""
         form = f"""a {minutes:g}-minute YouTube episode (16:9), about {words} words of dialogue in 4-8 scenes. One \
 story: a setup that pulls the viewer in ({hook}), a problem that grows with two or three complications, a turn, \
 and a {payoff} that pays off the start."""
-    if style == "facts":
+    if style == "documentary":
+        secs = (seconds or 45) if short else minutes * 60
+        n = beats_for(secs)
+        rest = secs - (n - 1) * BEAT_SECONDS
+        form = (f"a YouTube Short (9:16) of {secs:g} seconds: exactly {n} beats" if short
+                else f"a {minutes:g}-minute YouTube documentary (16:9): about {n} beats in 4-8 scenes") + (
+            f", each beat one line of about 9-10 spoken words (one ~4-second shot)"
+            + (f"; the last beat shorter, about {max(3, round(rest * 2.4))} words" if short and rest < BEAT_SECONDS else "")
+            + (". At most 3 characters on screen." if short else "."))
+        brief = f"""You make narrated, hand-inked stick-figure documentaries for the channel Stickcident: one real, \
+researchable story from history, documentary, true crime or remarkable true events (no invented events, no \
+conspiracy premises), chosen for strong visual beats that can be shown without depicting violence. You write {form}
+
+Research first: search the web and open the pages. Every name, date, figure and cause the narrator says must be on a \
+page you opened, and those pages go in 'sources'; where something is genuinely disputed, say so rather than \
+flattening it. Stories with real victims stay factual and restrained: no gore, no dramatised suffering.
+
+The narration carries the story: every line's speaker is 'narrator' (the cast never speaks; they act it out \
+silently), one beat per line, written plainly and conversationally in short sentences. The first beat hooks the \
+viewer ({hook}); the middle beats carry the story forward one idea at a time; the last beat lands the closing line. \
+No sponsor copy, no subscribe prompts, no sign-offs. The tone is restrained and slightly melancholy (music mood calm, \
+emotional or mystery).
+
+{DOC_SHOTS}"""
+    elif style == "facts":
         brief = f"""You make stick-figure explainers of TRUE facts for the channel Stickcident: one real, surprising, \
 checkable fact (science, the human body, animals, history, money, how everyday things work) that the small \
 recurring cast acts out. You write {form}
@@ -246,6 +453,25 @@ misunderstandings, a confident character being wrong, deadpan replies, sarcasm, 
 that recontextualises everything, visual gags (a prop, a sign, a phone screen), reaction shots, running gags \
 and a callback for the final punchline. Cut every line that isn't a setup or a punchline. Sounds help the joke: \
 a pop on a reveal, the sad trombone ('sad') on a fail, a click or ding on a phone, a whoosh on a fast exit."""
+    if style == "documentary":  # a calm narrator, quiet acting, real people named only in the narration
+        return f"""{brief}
+
+The narration is in {"clear, natural American English" if language == "english" else "clear, natural Hindi in Devanagari script"}, \
+read at a calm pace (emotion 'neutral', 'sad' or 'whisper' where it fits). The cast acts quietly: faces and poses \
+show the feeling (concerned, surprised, weary, resolved), no comic emotes, jumps or falls for laughs.
+
+No politics, religion, rumours or insults. Real people can be named in the narration when the sources do; the \
+drawings stay generic. {VISUAL_SAFETY} Never use these phrases: {", ".join(AI_CLICHES)}.
+
+Pick the setting each shot needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
+bathroom, kitchen, 'mine': a desert mountainside with a mine entrance, 'tunnel': underground, a mine tunnel or shelter with timber supports and lamps, 'garage': a suburban garage with shelves of boxes (where a business starts), 'warehouse': tall racks of boxes and a moving conveyor (a business at scale)) only when it IS the place; any other place (a pizzeria, a stadium, an investor's office, a 2005 bedroom office) is 'blank' with your own backdrop drawing of it, see Drawings) and its furniture. {_furniture_help()} \
+Keep spots steady within a scene; use walk-in/walk-out for entrances and exits and change the setting for a new \
+place. Show the real object, never a paper with its name; things stand on a table or the floor, held ones as prop \
+'thing' with prop_thing. {DESIGN_RULES}
+
+{DRAWINGS}
+
+{PROOF}"""
     return f"""{brief}
 
 The dialogue is in {lang}. The cast talks fast (about 1.5x normal speed), so write snappy lines; let silence and reactions do work (silent beats with \
@@ -256,11 +482,11 @@ speaker's face: angry and shouting lines with '!', sad ones slower with '...', l
 whispering. Vary it: a scene where everyone is neutral is flat.
 
 Clean and family-friendly, something anyone can relate to. No politics, religion, real people, brands, insults \
-about groups, or anything mean-spirited. Never use these phrases: {", ".join(AI_CLICHES)}.
+about groups, or anything mean-spirited. {VISUAL_SAFETY} Never use these phrases: {", ".join(AI_CLICHES)}.
 
 The lines appear as small subtitles under the scene, so keep each one short (a few words to one sentence). \
 Pick the setting each scene needs (living room, classroom, exam hall, office, street, park, shop, bedroom, \
-bathroom, kitchen) and vary it between episodes: don't open in the same place as the recent episodes listed. \
+bathroom, kitchen, or 'mine': a desert mountainside with a mine entrance, for a very wide opening with far-away figures) and vary it between episodes: don't open in the same place as the recent episodes listed. \
 Washing dishes at the sink is one situation among many, only when the story is about it (set 'washing').
 
 Staging: every line lists everyone on screen with their spot, pose, face and facing (toward who they talk \
@@ -269,8 +495,12 @@ until they stand up, on a spot covered by a seat (or a stool is drawn under them
 
 Show the real object, never a paper with its name: a science project is a 'volcano' thing (effect 'erupt' when it \
 goes off), a birthday has a cake, a prize a trophy. Use things for objects in the scene and prop 'thing' with \
-prop_thing for something held. Paper is only for a test, a note or a report card. Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
-setting for a new scene."""
+prop_thing for something held. Paper is only for a test, a note or a report card. {DESIGN_RULES} Keep spots steady within a scene. Use walk-in/walk-out actions for entrances and exits, and change the \
+setting for a new scene.
+
+{DRAWINGS}
+
+{PROOF}"""
 
 
 def _furniture_help() -> str:
@@ -342,8 +572,74 @@ def _rate(speed: float, extra: int = 0) -> str:
     return f"{round((min(2.0, max(0.8, speed)) - 1) * 100) + extra:+d}%"
 
 
+# Each character's design is kept by name (<output>/stick_cast.json), so a recurring character looks the
+# same in every episode; a new description typed in the tab gives them a new look.
+def _cast_file(cfg: Config) -> Path:
+    return cfg.output_dir / "stick_cast.json"
+
+
+def _saved_cast(cfg: Config) -> dict:
+    try:
+        return json.loads(_cast_file(cfg).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+def kept_designs(cfg: Config, cast: list[dict]) -> dict[str, SDesign]:
+    """The saved design of every cast member whose description hasn't changed since it was made."""
+    saved, out = _saved_cast(cfg), {}
+    for c in cast:
+        row = saved.get(_key(c["name"]))
+        if row and row.get("look") == c["look"] and row.get("about", "") == c.get("about", ""):
+            try:
+                out[c["id"]] = SDesign(**row["design"])
+            except Exception:  # a design from an older schema: made again
+                pass
+    return out
+
+
+def lock_designs(cfg: Config, ep: "Episode", cast: list[dict]) -> None:
+    """Fixed looks win over what Claude wrote; new ones are saved for the next episodes."""
+    kept = kept_designs(cfg, cast)
+    about = {c["id"]: c.get("about", "") for c in cast}
+    with _history_lock:
+        saved = _saved_cast(cfg)
+        for c in ep.cast:
+            if c.id in kept:
+                c.design = kept[c.id]
+                continue
+            row = saved.get(_key(c.name))
+            if c.id not in about and row and row.get("look") == c.look:  # a minor character met before
+                try:
+                    c.design = SDesign(**row["design"])
+                    continue
+                except Exception:
+                    pass
+            if c.design is not None:
+                saved[_key(c.name)] = {"name": c.name, "look": c.look, "about": about.get(c.id, ""),
+                                       "design": c.design.model_dump()}
+        _cast_file(cfg).write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def ink_design(d: "SDesign | None", look: str, i: int) -> dict | None:
+    """The editor's design (types.ts Design): colours as hex. None = the editor's default for the look."""
+    if d is None:
+        return None
+    c = INK_COLOURS
+    return {"hair": d.hair, "hairColour": HAIR_COLOURS.get(d.hair_colour, "#1E1B18"), "top": d.top,
+            "topColour": c[d.top_colour], "bottom": "none" if d.top == "dress" else d.bottom,
+            "bottomColour": c[d.bottom_colour], "shoes": d.shoes, "shoesColour": c[d.shoes_colour],
+            "headwear": d.headwear, "headwearColour": c[d.headwear_colour], "extras": list(dict.fromkeys(d.extras)),
+            "extraColour": c[d.extra_colour]}
+
+
 def parse_cast(text: str) -> list[dict]:
-    """'Name - look' or 'Name - look - voice' per line (a voice id from VOICE_NAMES; empty = automatic)."""
+    """'Name - look', then optionally a voice id (from VOICE_NAMES; empty = automatic) and how they look in
+    words ('Ben - boy - navy hoodie, messy hair'), one character per line."""
     out = []
     for row in (text or DEFAULT_CAST).splitlines():
         if not row.strip():
@@ -352,9 +648,10 @@ def parse_cast(text: str) -> list[dict]:
         if len(parts) == 1 and "-" in row:  # 'Ben-boy' written without spaces
             parts = [p.strip() for p in row.split("-", 1)]
         name, look = parts[0], (parts[1].lower() if len(parts) > 1 else "boy")
-        voice = parts[2] if len(parts) > 2 and parts[2] in VOICE_NAMES else ""
+        voice = next((x for x in parts[2:] if x in VOICE_NAMES), "")
+        about = ", ".join(x for x in parts[2:] if x and x not in VOICE_NAMES)  # how they look, in the user's words
         out.append({"id": re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or f"c{len(out)}",
-                    "name": name, "look": look if look in get_args(Look) else "boy", "voice": voice})
+                    "name": name, "look": look if look in get_args(Look) else "boy", "voice": voice, "about": about})
     return out
 
 
@@ -446,7 +743,17 @@ def remember(cfg: Config, entry: dict) -> None:
 def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "") -> Episode:
     short = req.format == "short"
     cast = parse_cast(req.cast)
-    prompt = ("The cast (use these ids and looks):\n" + "\n".join(f"- {c['id']}: {c['name']} ({c['look']})" for c in cast)
+    kept = kept_designs(cfg, cast)
+    if req.style == "documentary":  # a true story has its own people, dressed for its time and place
+        roster = ("The cast: design the people this true story needs, 1-3 (the main character first), ids like 'miner' "
+                  "or 'officer', names as roles ('The miner'), each with a design for the era and the work; generic "
+                  "people, never a real person's likeness. The channel's recurring cast doesn't appear.")
+    else:
+        roster = "The cast (use these ids and looks):\n" + "\n".join(
+            f"- {c['id']}: {c['name']} ({c['look']})"
+            + (f", fixed look: {kept[c['id']].model_dump_json()}" if c["id"] in kept
+               else f", looks like: {c['about']}" if c.get("about") else "") for c in cast)
+    prompt = (roster
               + (f"\n\nThe idea: {req.idea}" if req.idea.strip() else "\n\nPick a fresh, relatable situation yourself.")
               + ("\n\nAlready made (never repeat one of these stories, not even with a new title or another "
                  "character; also avoid their opening place and music mood):\n"
@@ -454,8 +761,17 @@ def write_episode(cfg: Config, req: StickRequest, recent: list, avoid: str = "")
               + (f"\n\nYour first draft repeated an earlier video ({avoid}). Write a completely different situation."
                  if avoid else "")
               + "\n\n" + media.prompt_block(cfg))
-    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds), prompt, Episode,
-               allow_web=req.style == "facts", effort=cfg.claude_effort, timeout=1800)
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)
+    if req.style in TRUE_STYLES:  # every search result stays in the context and is re-read on every later turn
+        prompt += ("\n\nResearch budget: at most 5 web searches and 4 opened pages in all. Find 2-4 solid sources "
+                   "early, take every figure, date and name from them, and stop searching (a 3-minute video's writing "
+                   "once cost 1.2M tokens with open-ended research).")
+    if req.opening in OPENINGS:  # chosen on the Stick tab: this kind of opening, whatever the last videos used
+        prompt += f"\n\nOpen with this kind of hook: {OPENINGS[req.opening]}. Only facts the video states."
+    return ask(cfg.ai_backend, cfg.claude_model, _system(short, req.minutes, req.language, req.style, req.seconds, req.speed), prompt, Episode,
+               allow_web=req.style in TRUE_STYLES, effort=cfg.claude_effort, timeout=1800)
 
 
 # ---------- facts: checked before anything is recorded ----------
@@ -476,7 +792,7 @@ def _refs(ep: Episode) -> dict[str, SLine]:
     return {f"S{si + 1}L{li + 1}": ln for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines)}
 
 
-def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None) -> EpisodeCheck:
+def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None, notes: list[dict] | None = None) -> EpisodeCheck:
     """Every factual line checked against the web on the fact-check model (`only`: just these refs)."""
     rows = [f"{r}{' >>' if only and r in only else ''} [{ln.speaker}] {ln.line}"
             + (f" (caption: {ln.caption})" if ln.caption else "")
@@ -485,11 +801,20 @@ def fact_check_episode(cfg: Config, ep: Episode, only: set[str] | None = None) -
     signs = [f"Scene {i + 1} sign: {sc.sign}" for i, sc in enumerate(ep.scenes) if sc.sign]
     system = ("You fact-check a short educational stick-figure video. Search the web and open reliable pages. A line "
               "is confirmed only if a source you opened says the same; a figure must match (rounding is fine if the "
-              "line says 'about'). Jokes, reactions and obvious fiction about the characters aren't claims.")
+              "line says 'about'). Jokes, reactions and obvious fiction about the characters aren't claims. Budget: "
+              "open the writer's sources first and confirm what they cover; search only for claims they don't, at most "
+              "6 searches and 6 pages in all (open-ended research made one 3-minute video's check cost 1.2M tokens).")
     prompt = (f"Title: {ep.title}\nThe writer's sources: " + "; ".join(f"{x.title} {x.url}" for x in ep.sources)
               + ("\n\nCheck only the lines marked >> (the rest was checked before)." if only else "")
+              + ("\n\nWhat the first check found (your evidence: the corrected lines were rewritten from it):\n"
+                 + "\n".join(f"{n['ref']}: {n['verdict']}: {n.get('note', '')}" for n in notes) if notes else "")
               + "\n\n" + "\n".join(rows + signs))
-    return ask(cfg.ai_backend, cfg.fact_model, system, prompt, EpisodeCheck, allow_web=True,
+    if notes:
+        system += (" This is a re-check without web search: the first check's findings below are your sources. Confirm a "
+                   "rewritten line when they support it; mark it unsupported only when they don't.")
+    # A re-check of lines rewritten from the first check's findings needs no new search: those findings are the
+    # evidence (the user's 3-minute Facts video re-checked 7 lines with web search: the check cost 903k tokens).
+    return ask(cfg.ai_backend, cfg.fact_model, system, prompt, EpisodeCheck, allow_web=not notes,
                effort=cfg.fact_effort, timeout=1200)
 
 
@@ -512,7 +837,8 @@ def check_facts(cfg: Config, ep: Episode, progress: Progress) -> tuple[Episode, 
     rewritten = {r for r in changed if refs[r].line}
     if rewritten:
         progress(f"Re-checking the {len(rewritten)} corrected line(s)")
-        for c in fact_check_episode(cfg, ep, only=rewritten).lines:
+        notes = [f for f in findings if f.get("ref") in rewritten]
+        for c in fact_check_episode(cfg, ep, only=rewritten, notes=notes).lines:
             if c.ref not in rewritten:
                 continue
             findings.append({**c.model_dump(), "round": 2})
@@ -526,9 +852,284 @@ def check_facts(cfg: Config, ep: Episode, progress: Progress) -> tuple[Episode, 
     return ep, issues, findings
 
 
+def board_rules(short: bool, style: str = "documentary") -> str:
+    """What the storyboard pass (stickboard.storyboard) may use: the sets, furniture, objects, drawings and rules."""
+    return (f"Settings: living-room, classroom, exam-hall, office, street, park, shop, bedroom, bathroom, kitchen, "
+            f"'mine' (a desert mountainside with a mine entrance), 'tunnel' (underground), 'garage' (shelves of boxes), "
+            f"'warehouse' (racks and a conveyor), 'blank' (with backdrop_svg: your own drawing). {_furniture_help()}\n"
+            f"Spots: far-left, left, center, right, far-right" + (" (a Short: at most 3 people, left/center/right)" if short else "")
+            + f". Objects ('things'): {THING_HELP}\n" + (DOC_SHOTS + "\n" if style == "documentary" else "")
+            + f"{VISUAL_SAFETY}\n{DRAWINGS}\n{PROOF}")
+
+
+# ---------- your own script (the user: "add script option for sticky as well") ----------
+
+SPEAKER = re.compile(r"^\s*([A-Za-z\u0900-\u097F][A-Za-z .'()\u0900-\u097F-]{0,30}?)\s*[:：]\s*(.+)$")  # no digits: 'In 2005: ...' is narration
+HOOK_HEAD = re.compile(r"^\s*(#+\s*)?(hook|cold open|intro)\s*:?\s*$", re.I)
+STORY_HEAD = re.compile(r"^\s*(#+\s*)?(story|main|---+)\s*:?\s*$", re.I)
+# 'Narrator:' (or 'BEN:', '**Ben:**') on a line of its own: the lines under it are that speaker's, until the next
+# label or heading. The user's script had 'Narrator:' alone above each paragraph, and every one became a line of its
+# own, spoken as 'Narrator' and shown as a subtitle, with its own shot.
+LABEL = re.compile(r"^\s*([A-Za-z\u0900-\u097F][A-Za-z .'()\u0900-\u097F-]{0,30}?)\s*[:：]\s*$")
+NARRATOR_NAMES = {"narrator", "narration", "voiceover", "voice over", "voice-over", "vo", "v.o", "narrator vo"}
+
+
+def _who(name: str) -> str:
+    """A speaker label as the script wrote it: 'Narrator', 'VO', 'Narrator (V.O.)' are the narrator."""
+    name = re.sub(r"\s*\((v\.?\s*o\.?|o\.?\s*s\.?|cont'?d)\)\s*$", "", name.strip(), flags=re.I).strip()
+    return "narrator" if name.lower().strip(". ") in NARRATOR_NAMES else name
+
+
+def _label(row: str) -> str | None:
+    """'Ben:' alone on its line -> 'Ben'. Up to 3 words, each capitalised (or Devanagari), so 'Here is what
+    happened:' stays narration."""
+    m = LABEL.match(row)
+    if not m:
+        return None
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", m[1]).strip()
+    words = name.split()
+    if not 1 <= len(words) <= 3 or not all(w[0].isupper() or not w[0].isascii() for w in words):
+        return None
+    return _who(m[1])
+
+
+def parse_stick_script(text: str) -> list[dict]:
+    """Your script, cut into beats without changing a word: 'Ben: line' is Ben speaking; any other paragraph is the
+    narrator, cut at sentence ends into lines of at most ~22 words; '(Ben facepalms)' alone is a silent beat with that
+    stage direction; a 'Hook' heading (or 'Cold open') marks the lines up to a 'Story' heading or '---' as the hook."""
+    beats, hook, who, used = [], False, "narrator", False
+
+    def say(speaker: str, text: str) -> None:
+        if speaker != "narrator":
+            beats.append({"speaker": speaker, "line": text, "note": "", "hook": hook})
+            return
+        cur: list[str] = []
+        for sent in re.split(r"(?<=[.!?…।])\s+", text):  # the narrator in lines of at most ~22 words
+            if cur and len(" ".join(cur + [sent]).split()) > 22:
+                beats.append({"speaker": "narrator", "line": " ".join(cur), "note": "", "hook": hook})
+                cur = []
+            cur.append(sent)
+        if cur:
+            beats.append({"speaker": "narrator", "line": " ".join(cur), "note": "", "hook": hook})
+
+    for raw in (text or "").splitlines():
+        row = re.sub(r"^[*_]+([^*_:：]{1,30}?)[*_]*\s*([:：])[*_]*", r"\1\2", raw.strip())  # '**Ben:**' -> 'Ben:'
+        if not row:
+            if used:  # a blank line after a speaker's lines ends them ('Ben:' then a blank line still waits)
+                who, used = "narrator", False
+            continue
+        if HOOK_HEAD.match(row):
+            hook, who = True, "narrator"
+            continue
+        if STORY_HEAD.match(row):
+            hook, who = False, "narrator"
+            continue
+        if row.startswith("(") and row.endswith(")"):
+            beats.append({"speaker": "none", "line": "", "note": row[1:-1].strip(), "hook": hook})
+            continue
+        if (label := _label(row)) is not None:
+            who, used = label, False
+            continue
+        m = SPEAKER.match(row)
+        if m and m[1].strip().lower() not in ("note", "http", "https"):
+            say(_who(m[1]), m[2].strip())
+            continue
+        say(who, row)
+        used = True
+    return beats
+
+
+def from_script(cfg: Config, req: StickRequest, progress: Progress) -> "Episode":
+    """An Episode from your own script: your words exactly as written, in your order. One Claude call (no web) gives
+    the title (unless you did), the description, tags, music mood and each speaker's look; the storyboard then
+    stages every beat like an AI-written one. No fact-check: the script is yours."""
+    beats = parse_stick_script(req.script)
+    if not any(b["line"] for b in beats):
+        raise ValueError("The script has no lines to say.")
+    given = {c["name"].lower(): c for c in parse_cast(req.cast)}
+    names = list(dict.fromkeys(b["speaker"] for b in beats if b["speaker"] not in ("narrator", "none")))
+    slug = lambda n: re.sub(r"[^a-z0-9]+", "-", n.lower()).strip("-") or "c"  # noqa: E731
+
+    class Meta(BaseModel):
+        title: str = Field(description="A short YouTube title for this story.")
+        logline: str
+        youtube_description: str = Field(description="2-3 natural sentences, then one line inviting viewers to subscribe. No hashtags.")
+        tags: list[str]
+        hashtags: list[str]
+        mood: StickMood = "curious"
+        music_prompt: str = Field(default="", description=aimusic.PROMPT_FIELD)
+        category: str = Field(default="", description="One of " + ", ".join(CATEGORIES) + ".")
+        cast: list[SCast] = Field(description="Every character who speaks or acts: id, the name as written, look and design.")
+
+    lines = "\n".join(f"{b['speaker']}: {b['line'] or '(' + b['note'] + ')'}" for b in beats)
+    known = "; ".join(f"{c['name']} ({c['look']}{', ' + c['about'] if c.get('about') else ''})" for c in given.values())
+    progress("Reading your script: title, cast and music")
+    meta = ask(cfg.ai_backend, cfg.claude_model,
+               "You prepare a stick-figure video made from the user's own finished script. Never rewrite it. "
+               + DESIGN_RULES,
+               f"Characters who speak: {', '.join(names) or 'only the narrator'}. Known cast: {known or 'none'}. "
+               "Each id: the name in lowercase with '-' for spaces.\n"
+               + (f"The title is fixed: {req.title}\n" if req.title.strip() else "")
+               + f"The script:\n{lines[:15000]}", Meta, effort="low", timeout=600)
+    cast = {c.id: c for c in meta.cast}
+    for n in names:  # every speaker is in the cast, whatever the call returned
+        cid = slug(n)
+        if cid not in cast:
+            g = given.get(n.lower(), {})
+            cast[cid] = SCast(id=cid, name=n, look=g.get("look", "man"))
+        elif cast[cid].name.lower() != n.lower():
+            cast[cid].name = n
+    lead = next(iter(cast), "")
+    scenes, cur = [], None
+    for b in beats:
+        sid = slug(b["speaker"]) if b["speaker"] not in ("narrator", "none") else b["speaker"]
+        on = [sid] if sid in cast else ([lead] if lead else [])
+        ln = SLine(speaker=sid, line=b["line"], note=b["note"],
+                   actors=[SActor(id=a, spot="center", pose="stand", face="neutral", facing="right") for a in on])
+        if cur is None or cur.hook != b["hook"]:
+            cur = SScene(setting="living-room", hook=b["hook"], lines=[])  # the storyboard picks every beat's place
+            scenes.append(cur)
+        cur.lines.append(ln)
+    ep = Episode(title=(req.title.strip() or meta.title)[:100], logline=meta.logline,
+                 youtube_description=meta.youtube_description, tags=meta.tags[:15], hashtags=meta.hashtags[:3],
+                 mood=meta.mood, music_prompt=meta.music_prompt, category=meta.category, cast=list(cast.values()),
+                 scenes=scenes)
+    said = [b["line"] for b in beats if b["line"]]
+    assert [ln.line for sc in ep.scenes for ln in sc.lines if ln.line] == said  # your words, unchanged
+    return ep
+
+
+def ensure_hook(cfg: Config, ep: "Episode", req: StickRequest, progress: Progress) -> "Episode":
+    """Every Stick video opens with its hook (the user: "still there is no hook i see"). A Short: its first scene is
+    the hook. An episode or documentary whose writer left the cold open out, or made it under 20 s, gets one: a
+    single call (writer model, no web) writes 30-40 s of cold-open lines from the episode's own facts and they go in
+    front as hook scenes; the storyboard stages them like every line and a true story's fact-check checks them."""
+    if req.format == "short":
+        if ep.scenes and not any(sc.hook for sc in ep.scenes):
+            ep.scenes[0].hook = True
+        return ep
+    wps = 2.5 * max(0.8, req.speed)
+    said = sum(len(ln.line.split()) for sc in ep.scenes if sc.hook for ln in sc.lines)
+    if said >= 20 * wps:
+        return ep
+    ids = [c.id for c in ep.cast]
+    narrated = req.style in ("documentary", "facts")
+
+    class OpenLine(BaseModel):
+        speaker: str = Field(description="'narrator'" + ("" if narrated else " or a cast id: " + ", ".join(ids)))
+        line: str = Field(description="One short spoken line.")
+        emotion: Emotion = "neutral"
+        shows: str = Field(description="What the picture shows on this line: the moment of the story it teases.")
+
+    class ColdOpen(BaseModel):
+        lines: list[OpenLine]
+
+    story = "\n".join(f"[{ln.speaker}] {ln.line}" for sc in ep.scenes for ln in sc.lines if ln.line.strip())
+    progress("Writing the cold open (the writer left it out)")
+    try:
+        got = ask(cfg.ai_backend, cfg.claude_model,
+                  hook_rules(False, req.minutes, req.style, req.speed) + "\nUse ONLY what the story below says: no new "
+                  "fact, figure or name. The story itself is not changed; these lines go in front of it.",
+                  f"Title: {ep.title}\nThe story:\n{story[:12000]}\n\nWrite the cold open: about {round(30 * wps)}-"
+                  f"{round(40 * wps)} spoken words in 5-9 short lines, the central question last.", ColdOpen,
+                  effort="medium", timeout=600)
+    except Exception as exc:  # noqa: BLE001 - the video still opens on its first line
+        if isinstance(exc, stopper.Paused):
+            raise
+        log.warning("Couldn't write the cold open: %s", exc)
+        return ep
+    lead = ep.cast[0].id if ep.cast else ""
+    lines = [SLine(speaker=o.speaker if o.speaker in ids or o.speaker == "narrator" else "narrator", line=o.line.strip(),
+                   emotion=o.emotion, camera="punch" if k == 0 else "wide",
+                   actors=[SActor(id=lead, spot="center", pose="stand", face="shock" if k == 0 else "neutral", facing="right")] if lead else [])
+             for k, o in enumerate(got.lines) if o.line.strip()]
+    if not lines:
+        return ep
+    first = ep.scenes[0]
+    opener = SScene(setting=first.setting, backdrop_svg=first.backdrop_svg, sign=first.sign, weather=first.weather,
+                    light=first.light, intensity=0.8, hook=True, lines=lines)
+    for sc in ep.scenes:
+        sc.hook = False
+    progress(f"Cold open: {len(lines)} lines, about {sum(len(ln.line.split()) for ln in lines) / wps:.0f} s")
+    return ep.model_copy(update={"scenes": [opener, *ep.scenes]})
+
+
+def close_gaps(cfg: Config, ep: "Episode", hook_at: tuple[int, int] | None, progress: Progress, issues: list[str]) -> "Episode":
+    """A documentary is narrated beat by beat, so a line the fact-check cut leaves a dead, silent shot: those are
+    dropped (and a scene left empty with them). When the cut line was the hook, the new first line is rewritten as
+    a hook from the facts that passed (one small call, no new facts) and checked once more; if that new hook can't
+    be confirmed, the first line stays as it was. (The Amazon test opened on a silent shot after its hook was cut.)"""
+    hook_cut = hook_at is not None and not ep.scenes[hook_at[0]].lines[hook_at[1]].line.strip()
+    for sc in ep.scenes:
+        sc.lines = [ln for ln in sc.lines if ln.line.strip()]
+    ep.scenes = [sc for sc in ep.scenes if sc.lines]
+    if not hook_cut or not ep.scenes:
+        return ep
+    first = ep.scenes[0].lines[0]
+    beats = [(si, ln) for si, sc in enumerate(ep.scenes) for ln in sc.lines]
+    numbered = "\n".join(f"{k}. {ln.line}" for k, (_, ln) in enumerate(beats))
+    from .hooks import RULES
+
+    class NewHook(BaseModel):
+        line: str = Field(description="The new first line.")
+        picture: int = Field(description="The number of the beat whose picture best shows what the hook says.")
+
+    system = ("You write the first narration beat of a short narrated documentary so it hooks in under 3 seconds. " + RULES
+              + "\nUse ONLY facts stated in the numbered narration you are given (they are checked); add nothing. About "
+              "9-12 words. Also pick the beat whose picture shows what your hook is about.")
+    try:
+        got = ask(cfg.ai_backend, cfg.claude_model, system, f"Title: {ep.title}\nThe narration:\n{numbered[:3000]}\n"
+                  f"Write a hook line to open it, placed before beat 0.", NewHook, effort="low", timeout=300)
+        new = got.line.strip()
+    except Exception as exc:  # noqa: BLE001 - the video still opens on its first confirmed line
+        from .stopper import Paused
+        if isinstance(exc, Paused):
+            raise
+        log.warning("Couldn't write a new hook: %s", exc)
+        return ep
+    if not new:
+        return ep
+    # The hook opens on the picture of the beat it's about, in that beat's place, held still (no walk that starts
+    # off screen: the first Amazon fix opened on an empty office).
+    si, like = beats[got.picture] if 0 <= got.picture < len(beats) else (0, first)
+    still = [a.model_copy(update={"action": "none" if a.action.startswith("walk") else a.action}) for a in like.actors]
+    hook = like.model_copy(update={"line": new, "actors": still, "pause_before": 0.1, "sounds": []})
+    ep.scenes.insert(0, ep.scenes[si].model_copy(update={"lines": [hook]}))
+    check = fact_check_episode(cfg, ep, only={"S1L1"})
+    if any(c.ref == "S1L1" and c.verdict != "confirmed" for c in check.lines):
+        ep.scenes.pop(0)
+        issues.append("The hook was cut by the fact-check and a new one couldn't be confirmed: the video opens on its first confirmed line.")
+    else:
+        progress(f"The hook was cut by the fact-check; new hook from the confirmed facts: \"{new}\"")
+    return ep
+
+
 # ---------- from the episode to the editor's props ----------
 
-def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress) -> dict:
+def _second_framing(ln: "SLine", words: list[dict], lead: float, duration: float, actors: list[dict],
+                    things: list[dict]) -> dict | None:
+    """A line longer than ~3.4 s gets a second framing at a word break near its middle (the user: shots held 4-6 s
+    with nothing moving): from a wide shot to a close-up of the object the line names (else of the speaker), or
+    from a close-up back to wide. Silent beats and walks keep one framing."""
+    if duration < 3.4 or not words or not actors or any(a["action"].startswith("walk") for a in actors):
+        return None
+    mid = duration / 2
+    gaps = [lead + w["start"] for w in words[1:]]
+    at = min(gaps, key=lambda g: abs(g - mid)) if gaps else mid
+    if not (1.4 <= at <= duration - 1.2):
+        return None
+    if ln.camera in ("close", "punch"):
+        return {"at": round(at, 2), "camera": "wide"}
+    shown = [th for th in things if not th.get("photo")]
+    if shown and not any(th["name"] == "goal" for th in shown):
+        return {"at": round(at, 2), "camera": "close", "x": shown[0]["x"]}
+    who = next((a["id"] for a in actors if a["id"] == ln.speaker), actors[0]["id"])
+    return {"at": round(at, 2), "camera": "close", "focus": who}
+
+
+def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Progress,
+          keep_music: tuple[Path, str] | None = None) -> dict:
+    """`keep_music` (a re-make): this track and its label instead of a new one (it loops when the video grows)."""
     short = req.format == "short"
     looks = {c.id: c.look for c in ep.cast}
     voices = VOICES.get(req.language, VOICES["english"])  # fallback for a character nobody assigned
@@ -541,47 +1142,118 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
     cast = [{"id": c.id, "look": c.look, "voice": given.get(c.id, {}).get("voice", "")} for c in ep.cast]
     voice_of = assign_voices(cast, req.language)
     # The narrator: a voice none of the cast has.
-    voice_of["narrator"] = next((v for v in NARRATORS.get(req.language, NARRATORS["english"]) if v not in voice_of.values()),
-                                NARRATORS.get(req.language, NARRATORS["english"])[0])
+    voice_of["narrator"] = getattr(req, "narrator", "") or next(
+        (v for v in NARRATORS.get(req.language, NARRATORS["english"]) if v not in voice_of.values()),
+        NARRATORS.get(req.language, NARRATORS["english"])[0])
     speakers = set(looks) | {"narrator"}
-    # One take per character and emotion, cut per line: a character keeps one voice, and an angry line
-    # is louder and lower while a sad one is slower and quieter.
-    for cid, emo in sorted({(ln.speaker, ln.emotion) for _, _, ln in lines if ln.speaker in speakers and ln.line.strip()}):
-        mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.emotion == emo and ln.line.strip()]
-        pace, pitch, loud = EMOTIONS.get(emo, (0, 0, 0))
-        takes = synthesize_scenes([ln.line for _, _, ln in mine], voice_of.get(cid, voices["man"]),
-                                  work / "audio" / cid / emo, cfg.tts_engine, cfg.kokoro_voice,
-                                  _rate(req.speed, pace), f"{pitch:+d}Hz", f"{loud:+d}%")
-        for (si, li, _), sa in zip(mine, takes):
-            audio[(si, li)] = sa
+    doc = req.style == "documentary"
+
+    def record(speed: float, folder: str) -> None:
+        # One take per character and emotion, cut per line: a character keeps one voice, and an angry line
+        # is louder and lower while a sad one is slower and quieter.
+        for cid, emo in sorted({(ln.speaker, ln.emotion) for _, _, ln in lines if ln.speaker in speakers and ln.line.strip()}):
+            mine = [(si, li, ln) for si, li, ln in lines if ln.speaker == cid and ln.emotion == emo and ln.line.strip()]
+            pace, pitch, loud = EMOTIONS.get(emo, (0, 0, 0))
+            takes = synthesize_scenes([ln.line for _, _, ln in mine], voice_of.get(cid, voices["man"]),
+                                      work / folder / cid / emo, cfg.tts_engine, cfg.kokoro_voice,
+                                      _rate(speed, pace), f"{pitch:+d}Hz", f"{loud:+d}%")
+            for (si, li, _), sa in zip(mine, takes):
+                audio[(si, li)] = sa
+
+    record(req.speed, "audio")
+    # A documentary Short keeps to its length (the engine's 4-second beats): narration that runs over by more than
+    # 8% is recorded once more, faster by the overshoot (at most 1.3x), with the shots' pauses trimmed below.
+    if doc and short:
+        target = req.seconds or 45
+        spoken_s = sum(min(ln.pause_before, DOC_LEAD) + media_seconds(audio[(si, li)].path) + DOC_TAIL
+                       for si, li, ln in lines if (si, li) in audio)
+        if spoken_s > target * 1.08:
+            faster = min(req.speed * 1.3, req.speed * spoken_s / target)
+            progress(f"The narration ran {spoken_s:.0f} s for a {target} s Short: recording it again at {faster:.2f}x")
+            record(faster, "audio-fit")
 
     sfx = write_sfx(work / "sfx")
     sfx.update(media.uploaded_for(cfg, list(sfx), work / "sfx"))
     rel = lambda p: Path(p).relative_to(work).as_posix()  # noqa: E731
     shots, cues, spoken, used = [], [], [], {}
+    steps = None  # the footsteps sound, written the first time a documentary needs it
     place = [_scene_x(sc, short) for sc in ep.scenes]
     spacing = SHORT_GAP if short else SETS["spacing"]
     furniture = [[{"kind": p.kind, "x": round(place[si][p.spot]), "width": _piece_width(p.kind, p.seats, spacing)}
                   for p in (sc.furniture or _default_pieces(sc.setting))] for si, sc in enumerate(ep.scenes)]
+    # Claude's own drawings, reduced to plain shapes (no scripts, links, images, styles or text).
+    from .toon import clean_svg
+
+    def art(svg: str, uid: str, limit: int, shapes: int) -> str | None:
+        return clean_svg(svg, uid, limit, shapes) or None if (svg or "").strip() else None
+
+    backdrops = [art(sc.backdrop_svg, f"b{si}", 12000, 500) for si, sc in enumerate(ep.scenes)]  # a place that says where it is
+    # Proof pictures from Wikimedia Commons, one download per search, credited in the description.
+    from . import evidence
+
+    # What was found is kept in evidence/index.json: a second build (after the picture check, or a re-make at
+    # another speed) uses the same pictures without searching again.
+    index_file = work / "evidence" / "index.json"
+    try:
+        cache = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    found: dict[str, dict | None] = {}
+    credits: list[str] = []
+
+    def proof(words: str) -> dict | None:
+        key = (words or "").strip().lower()
+        if not key:
+            return None
+        if key not in found:
+            hit = cache.get(key)
+            if hit and (work / hit["src"]).exists():
+                found[key] = {k: hit[k] for k in ("src", "w", "h")}
+                credits.append(hit["credit"])
+                return found[key]
+            pic = evidence.find(key, work / "evidence", f"e{len(cache):02d}")
+            found[key] = {"src": rel(pic.path), "w": pic.width, "h": pic.height} if pic else None
+            if pic:
+                credits.append(pic.credit())
+                cache[key] = {**found[key], "credit": pic.credit()}
+                index_file.write_text(json.dumps(cache, indent=1, ensure_ascii=False), encoding="utf-8")
+                progress(f"Proof picture: {pic.title.removeprefix('File:')} ({pic.licence})")
+        return found[key]
+
     t = 0.0
     for si, li, ln in lines:
         scene = ep.scenes[si]
         sa = audio.get((si, li))
-        lead = round(ln.pause_before, 2)
+        lead = round(min(ln.pause_before, DOC_LEAD) if doc else ln.pause_before, 2)
         talk = media_seconds(sa.path) if sa else 0.0
-        duration = round(lead + (talk + 0.3 if sa else max(1.1, 0.9)), 3)
+        duration = round(lead + (talk + (DOC_TAIL if doc else 0.3) if sa else max(1.1, 0.9)), 3)
         words = [{"text": w.text, "start": round(w.start, 3), "end": round(w.end, 3)} for w in (sa.words if sa else [])]
         xs = place[si]
         things = [{"name": th.name.strip().lower()[:40] or "box", "x": round(xs[th.spot]), "table": th.on_table,
-                   "big": th.big, "effect": th.effect} for th in ln.things]
+                   "big": th.big, "effect": th.effect, "svg": art(th.svg, f"t{si}-{k}", 1500, 80),
+                   "photo": proof(th.photo), "label": th.label.strip()[:40]} for k, th in enumerate(ln.things)]
         actors = [{"id": a.id, "x": round(xs[a.spot]), "pose": a.pose, "face": a.face,
                    "facing": 1 if a.facing == "right" else -1, "emote": a.emote, "prop": a.prop,
                    "propText": a.prop_text[:6],
-                   "propThing": a.prop_thing.strip().lower()[:40], "action": a.action} for a in ln.actors if a.id in looks]
+                   "propThing": a.prop_thing.strip().lower()[:40], "action": a.action,
+                   "back": a.from_behind, "far": a.far} for a in ln.actors if a.id in looks]
+        # The cold open hands over to the story with a tape rewind (and a beat of quiet before the first line).
+        rewind = not scene.hook and bool(shots) and shots[-1].get("hook")
+        if rewind:
+            lead = round(lead + 0.5, 2)
+            duration = round(duration + 0.5, 3)
+            if "glitch" in sfx:
+                cues.append({"src": rel(sfx["glitch"]), "at": round(t + 0.05, 3), "volume": 0.5, "name": "glitch"})
+        # A new place says where it is (its first shot), once per place name.
+        new_place = scene.place.strip() and (not shots or shots[-1].get("placeName") != scene.place.strip())
         shots.append({"start": round(t, 3), "duration": duration, "scene": si, "setting": scene.setting,
+                      "hook": scene.hook, "rewind": rewind, "placeName": scene.place.strip() or None,
+                      "placeLabel": scene.place.strip()[:60] if new_place else None,
+                      "cut2": _second_framing(ln, words, lead, duration, actors, things),
                       "sign": scene.sign or None,
                       "washing": scene.setting == "kitchen" and scene.washing, "furniture": furniture[si], "things": things, "caption": ln.caption or None, "camera": ln.camera,
-                      "focus": ln.focus or None, "actors": actors,
+                      "focus": ln.focus or None, "actors": actors, "weather": scene.weather, "light": scene.light,
+                      "backdropSvg": backdrops[si],
                       "speaker": ln.speaker if sa else None, "emotion": ln.emotion, "text": ln.line if sa else None, "words": words,
                       "audio": rel(sa.path) if sa else None, "lead": lead})
         if sa:
@@ -591,15 +1263,46 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         for c in [c for c in ln.sounds if c.word.strip() == "*"][:1]:
             cues += media.resolve_cues([c.model_copy(update={"word": "beat"})], [_Word("beat", lead, lead + 0.3)], t, cfg,
                                        work / "sfx", rel, 1, used)
-        if li == 0 and si > 0 and "whoosh" in sfx:  # a new place: a whoosh on the cut
+        # Footsteps under a step or a walk (documentaries, whose sound is the place's own).
+        if req.style == "documentary" and any(a["action"] in ("step", "walk-across") for a in actors):
+            steps = steps or write_cue_sounds(work / "sfx", {"footsteps"}).get("footsteps")
+            walk = next(a["action"] for a in actors if a["action"] in ("step", "walk-across"))
+            if steps:
+                cues.append({"src": rel(steps), "at": round(t + (0.8 if walk == "step" else 0.1), 3),
+                             "volume": 0.35, "name": "footsteps"})
+        if li == 0 and si > 0 and "whoosh" in sfx and req.style != "documentary":  # a new place: a whoosh on the cut
             cues.append({"src": rel(sfx["whoosh"]), "at": round(max(0.0, t - 0.1), 3), "volume": 0.4, "name": "whoosh"})
         t += duration
     t += 0.6
+    # Each scene's ambience (wind, rain, room tone...) as a quiet bed under it.
+    ambience = []
+    for si, sc_ in enumerate(ep.scenes):
+        span = [s_ for s_ in shots if s_["scene"] == si]
+        if sc_.ambience != "none" and span:
+            a, b = span[0]["start"], span[-1]["start"] + span[-1]["duration"] + (0.6 if si == len(ep.scenes) - 1 else 0)
+            bed = music.ambience(sc_.ambience, b - a, int(uuid.uuid4().int % 2**31), work / "music" / f"ambience{si:02d}.wav")
+            if bed:
+                ambience.append({"src": rel(bed), "from": round(a, 3), "to": round(b, 3)})
     # A track of its own for every video: composed in the mood Claude picked, from a fresh seed (key,
     # tempo, chords), following each scene's intensity; one of the user's tracks only when Claude picked it.
     choice = (ep.music or "compose").strip()
     mine = {m.name for m in media.music(cfg) if m.path is not None}
-    if choice in mine and media.fresh_track(cfg, choice):  # never the upload a recent video used
+    ai = {}
+    if keep_music:  # a re-make keeps the video's own track
+        ai["main"], kept_label = keep_music
+    elif choice not in mine and choice != "none" and aimusic.available(cfg):  # new music from the AI music model
+        seed = int(uuid.uuid4().int % 2**31)
+        genre = aimusic.pick_genre(cfg, ep.mood, seed)
+        energy = sum(sc_.intensity for sc_ in ep.scenes) / max(1, len(ep.scenes))
+        ai = aimusic.make(cfg, [aimusic.track("main", work / "music" / "ai-main.wav", t + 1, genre, ep.mood, energy,
+                                              ep.music_prompt, seed)], work, progress, "Music (AI)")
+        if ai:
+            aimusic.remember(cfg, genre)
+    if keep_music:
+        track, choice = ai["main"], kept_label
+    elif "main" in ai:
+        track, choice = ai["main"], f"generated (ACE-Step, {genre})"
+    elif choice in mine and media.fresh_track(cfg, choice):  # never the upload a recent video used
         track = media.pick_music(cfg, choice, work / "music", t)
     elif choice == "none":
         track = None
@@ -614,11 +1317,18 @@ def build(ep: Episode, req: StickRequest, cfg: Config, work: Path, progress: Pro
         choice = f"composed ({ep.mood})"
     props = {
         "fps": cfg.fps, "duration": round(t, 3), "title": ep.title, "vertical": short,
-        "cast": [{"id": c.id, "name": c.name, "look": c.look, "outfit": _outfits(ep.cast)[c.id]} for c in ep.cast],
+        "art": "ink",
+        "cast": [{"id": c.id, "name": c.name, "look": c.look, "outfit": _outfits(ep.cast)[c.id],
+                  "design": ink_design(c.design, c.look, i)} for i, c in enumerate(ep.cast)],
         "shots": shots, "music": rel(track) if track else None, "musicChoice": choice, "cues": cues,
-        "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()},
+        "speech": media.speech_spans(spoken), "sfx": {k: rel(p) for k, p in sfx.items()}, "ambience": ambience,
+        "credits": credits,
     }
+    # Subtitles (the Stick tab's choice): auto = on, but off for a documentary (the narration is heard, not shown).
+    if req.subtitles == "off" or (req.subtitles != "on" and req.style == "documentary" and not cfg.captions):
+        props["dialogue"] = "none"
     props["sfxLevels"] = media.level_sounds(props, work, [s["audio"] for s in shots if s.get("audio")])
+    props["musicLevels"] = media.level_music(props, work, [s["audio"] for s in shots if s.get("audio")], "StickStory")  # the music under the voice
     return props
 
 
@@ -628,19 +1338,52 @@ def _history(cfg: Config) -> Path:
     return cfg.output_dir / "stick_history.json"
 
 
-def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> dict:
+CHECKPOINT = "stick-checkpoint.json"  # its own name: the Shorts/long resume never picks a Stick video up
+
+
+def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info, resume: str | None = None) -> dict:
+    """One Stick video. Progress is saved after every step (`CHECKPOINT`: written, checked, boarded, built,
+    rendered), so a closed app, a Pause or a failure continues from the last step on Resume: the writing and
+    fact-check (the Claude tokens) are never paid twice."""
     from .fsutil import move
-    from .llm import meter_records, summarize_usage
-    from .pipeline import _render_slot, slugify
+    from .llm import meter_add_earlier, meter_records, summarize_usage
+    from .pipeline import _render_slot, pause_point, slugify
 
     short = req.format == "short"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    work = cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-stick-working"
+    work = cfg.output_dir / resume if resume else cfg.output_dir / f"{stamp}-{uuid.uuid4().hex[:4]}-stick-working"
     work.mkdir(parents=True, exist_ok=True)
     progress(f"Saving progress in {work.name}")
-    try:
+    state = json.loads((work / CHECKPOINT).read_text(encoding="utf-8")) if (work / CHECKPOINT).exists() else {}
+    stamp = state.get("stamp", stamp)
+    if state.get("usage"):
+        meter_add_earlier(state["usage"])  # the tokens spent before the stop still count for this video
+
+    def save(stage: str, **changes) -> None:
+        state.update(changes, stage=stage, stamp=stamp, request=asdict(req), usage=meter_records())
+        if "ep" in changes:
+            state["ep"] = changes["ep"].model_dump()
+        (work / CHECKPOINT).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        pause_point()
+
+    stage = state.get("stage", "")
+    order = ["written", "checked", "boarded", "built", "rendered"]
+    done = lambda st: stage in order and order.index(stage) >= order.index(st)  # noqa: E731
+    if stage:
+        progress(f"Resuming after: {stage}")
+    ep = Episode.model_validate(state["ep"]) if state.get("ep") else None
+    from . import stickboard
+
+    if not done("written") and req.script.strip():  # your own script: your words, staged; no writing or fact-check
+        ep = from_script(cfg, req, progress)
+        remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
+                       "places": [], "music": ep.mood})
+        save("written", ep=ep)
+        save("checked", ep=ep, fact_issues=[], findings=[], sources=[], dropped=[])
+        stage = "checked"  # `done` reads it: the writing and fact-check below are skipped
+    if not done("written"):
         recent = made_before(cfg)
-        progress(("Claude is researching and writing" if req.style == "facts" else "Claude is writing")
+        progress(("Claude is researching and writing" if req.style in TRUE_STYLES else "Claude is writing")
                  + (" the Short" if short else " the episode"))
         ep = write_episode(cfg, req, recent)
         # A story too close to one already made is written again once (not when you gave the idea).
@@ -648,72 +1391,173 @@ def run_stick(cfg: Config, req: StickRequest, progress: Progress = log.info) -> 
         if twin:
             progress(f"That story was already made (\"{twin.get('title')}\"); Claude is writing a different one")
             ep = write_episode(cfg, req, recent, avoid=f"\"{twin.get('title')}\": {twin.get('logline', '')}")
+        if req.style != "documentary":  # a documentary's people are dressed for their own story, never kept
+            lock_designs(cfg, ep, parse_cast(req.cast))  # a recurring character keeps their look
+        ep = ensure_hook(cfg, ep, req, progress)  # the cold open, written by code's request when the writer left it out
+        from .hooks import sharpen
+        sharpen(cfg, [next((ln for s in ep.scenes for ln in s.lines if ln.line.strip()), None)], ep.logline, progress)
         # Remembered now, before voices and render: a video made at the same time sees it.
         remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
                        "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": ep.mood})
+        save("written", ep=ep)
+    if not done("checked"):
         fact_issues, findings, sources, dropped = [], [], [], []
-        if req.style == "facts":
+        if req.style in TRUE_STYLES:
+            hook_at = next(((si, li) for si, sc in enumerate(ep.scenes) for li, ln in enumerate(sc.lines) if ln.line.strip()), None)
             ep, fact_issues, findings = check_facts(cfg, ep, progress)
+            if req.style == "documentary":
+                ep = close_gaps(cfg, ep, hook_at, progress, fact_issues)
             sources, dropped = verify_sources(ep.sources)
+        save("checked", ep=ep, fact_issues=fact_issues, findings=findings, sources=sources, dropped=dropped)
+    fact_issues, findings = state.get("fact_issues", []), state.get("findings", [])
+    sources, dropped = state.get("sources", []), state.get("dropped", [])
+    if not done("boarded"):
+        # Every line gets a picture of what it says, for every type (stickboard.py; the user: "not only changes for
+        # documentry do it for all stick video generation").
+        progress("Storyboarding: a picture of what every line says")
+        ep = stickboard.storyboard(cfg, ep, board_rules(short, req.style), progress, narrated=req.style == "documentary")
         (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
+        save("boarded", ep=ep)
+    if not done("built"):
         props = build(ep, req, cfg, work, progress)
+        bad = stickboard.check(cfg, props, ep, work, short, progress)  # every type: pictures checked against their lines
+        board_note = {"flagged": len(bad), "beats": {str(k): v for k, v in bad.items()}}
+        if bad:
+            progress(f"{len(bad)} picture(s) didn't show their line: staging them again")
+            ep = stickboard.storyboard(cfg, ep, board_rules(short, req.style), progress, only=bad,
+                                       narrated=req.style == "documentary")
+            (work / "episode.json").write_text(ep.model_dump_json(indent=2), encoding="utf-8")
+            props = build(ep, req, cfg, work, progress)
+        (work / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+        save("built", ep=ep, board_note=board_note)
+    props = json.loads((work / "props.json").read_text(encoding="utf-8"))
+    board_note = state.get("board_note")
+    out = work / "reel.mp4"
+    if not done("rendered") or not out.exists():
         progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
         cli = _remotion_cli()
         if cli is None:
             raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
-        out = work / "reel.mp4"
         with _render_slot(cfg):
             _render_remotion(cli, props, out, composition="StickStory", crf=18, progress=progress)
         subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "2", "-i", str(out), "-frames:v", "1", "-q:v", "3",
                         str(work / "thumbnail.jpg")], check=False)
-        progress("Verifying video quality")
-        info = probe(out)
-        want = (1080, 1920) if short else (1920, 1080)
-        issues = list(fact_issues)
-        if req.style == "facts" and not sources:
-            issues.append("No source link could be opened; check the facts before posting.")
-        if (info.get("width"), info.get("height")) != want:
-            issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
-        if not info.get("has_audio"):
-            issues.append("No audio track.")
-        final = cfg.output_dir / f"{stamp}-{slugify(ep.title)}-stick"
-        move(work, final)
-        report = {
-            "id": final.name, "format": "short" if short else "long", "length": "short" if short else "stick",
-            "source": "stick", "topic": ep.title, "topic_source": "stick story",
-            "style": {"facts": "facts", "fiction": "story"}.get(req.style, "comedy"),
-            "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
-            else {"fiction": "Stories", "facts": "Science & Space"}.get(req.style, "Comedy"),
-            "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
-            "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
-            "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
-            "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)", "captions": False,
-            "voice": req.language, "youtube_title": ep.title[:100],
-            "youtube_description": with_sources(ep.youtube_description.strip(), sources, []), "youtube_hashtags": ep.hashtags[:3],
-            "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
-        }
-        if req.style == "facts":
-            report.update({"fact_check": findings, "sources": sources, "sources_unreachable": dropped})
-        (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
-        report["usage"] = summarize_usage(meter_records())
-        (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
-                       "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": props.get("musicChoice", "")})
-        progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
+        save("rendered")
+    progress("Verifying video quality")
+    info = probe(out)
+    want = (1080, 1920) if short else (1920, 1080)
+    issues = list(fact_issues)
+    if req.style in TRUE_STYLES and not sources:
+        issues.append("No source link could be opened; check the facts before posting.")
+    if (info.get("width"), info.get("height")) != want:
+        issues.append(f"Resolution is {info.get('width')}x{info.get('height')}, expected {want[0]}x{want[1]}.")
+    if not info.get("has_audio"):
+        issues.append("No audio track.")
+    (work / CHECKPOINT).unlink(missing_ok=True)
+    final = cfg.output_dir / f"{stamp}-{slugify(ep.title)}-stick"
+    move(work, final)
+    report = {
+        "id": final.name, "format": "short" if short else "long", "length": "short" if short else "stick",
+        "source": "stick", "topic": ep.title, "topic_source": "stick story",
+        "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.style, "comedy"),
+        "stick_type": req.style,
+        **({"picture_check": board_note} if board_note is not None else {}),
+        "category": ep.category if ep.category in CATEGORIES and req.style != "comedy"
+        else {"fiction": "Stories", "facts": "Science & Space", "documentary": "History"}.get(req.style, "Comedy"),
+        "title": ep.title, "why_chosen": ep.logline, "narration": " ".join(l.line for s in ep.scenes for l in s.lines if l.line),
+        "created_at": stamp, "verified": not issues, "score": None, "issues": issues, "checks": {"probe": info},
+        "attempts": 1, "video": str(final / "reel.mp4"), "thumbnail": str(final / "thumbnail.jpg"),
+        "duration_seconds": round(props["duration"], 1), "editor": "remotion (StickStory)",
+        "captions": props.get("dialogue") != "none", "stick_request": asdict(req),  # for a re-make (remake)
+        "music": props.get("musicChoice", ""),
+        "hook_seconds": round(sum(sh["duration"] for sh in props["shots"] if sh.get("hook")), 1),
+        "voice": req.language, "youtube_title": ep.title[:100],
+        "youtube_description": with_sources(ep.youtube_description.strip(), sources, props.get("credits") or []), "youtube_hashtags": ep.hashtags[:3],
+        "youtube_tags": ep.tags, "caption": ep.youtube_description.strip(), "hashtags": ep.hashtags,
+    }
+    if req.style in TRUE_STYLES:
+        report.update({"fact_check": findings, "sources": sources, "sources_unreachable": dropped})
+    (final / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+    report["usage"] = summarize_usage(meter_records())
+    (final / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    remember(cfg, {"title": ep.title, "logline": ep.logline, "style": req.style,
+                   "places": list(dict.fromkeys(sc.setting for sc in ep.scenes)), "music": props.get("musicChoice", "")})
+    progress("Done" if not issues else "Done, but it did not pass every check — review before posting")
+    return report
+
+
+def remake(cfg: Config, folder: Path, speed: float | None, subtitles: str | None, progress: Progress = log.info) -> dict:
+    """A finished Stick video again at another speaking speed and/or with subtitles on or off (the user: "why speed
+    slider changes ... not inside this stick create tab"): the same episode, pictures, proof photos and music, only
+    the voices recorded again and the edit re-timed. No Claude, nothing searched again. The video is replaced in place."""
+    from .fsutil import move
+    from .pipeline import _render_slot
+
+    report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    ep = Episode.model_validate_json((folder / "episode.json").read_text(encoding="utf-8"))
+    old = json.loads((folder / "props.json").read_text(encoding="utf-8"))
+    known = {k: v for k, v in (report.get("stick_request") or {}).items() if k in StickRequest.__dataclass_fields__}
+    req = StickRequest(**known) if known else StickRequest(  # videos made before the request was kept
+        format="short" if report.get("format") == "short" else "long", style=report.get("stick_type") or "comedy",
+        language=report.get("voice") if report.get("voice") in ("english", "hindi") else "english",
+        speed=1.0 if report.get("stick_type") == "documentary" else 1.5)
+    if speed:
+        req.speed = min(2.0, max(0.8, float(speed)))
+    if subtitles in ("auto", "on", "off"):
+        req.subtitles = subtitles
+    work = folder / "_remake"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
+    try:
+        if (folder / "evidence").is_dir():
+            shutil.copytree(folder / "evidence", work / "evidence")
+        keep = None
+        if old.get("music") and (folder / old["music"]).exists():
+            (work / "music").mkdir(exist_ok=True)
+            kept = work / "music" / ("kept-" + Path(old["music"]).name)
+            shutil.copy2(folder / old["music"], kept)
+            keep = (kept, old.get("musicChoice") or "kept")
+        progress(f"Speaking speed {req.speed:g}x, subtitles {req.subtitles}")
+        props = build(ep, req, cfg, work, progress, keep_music=keep)
+        progress(f"Editing the video ({props['duration'] / 60:.1f} min)")
+        cli = _remotion_cli()
+        if cli is None:
+            raise RuntimeError("Node.js or the Remotion packages are not installed (run start.bat / start.sh)")
+        with _render_slot(cfg):
+            _render_remotion(cli, props, work / "reel.mp4", composition="StickStory", crf=18, progress=progress)
+        info = probe(work / "reel.mp4")
+        if not info.get("has_audio") or not info.get("width"):
+            raise RuntimeError("The re-made video came out broken; the original is kept.")
+        progress("Replacing the video")
+        for sub in ("audio", "audio-fit", "sfx", "music", "evidence"):
+            shutil.rmtree(folder / sub, ignore_errors=True)
+            if (work / sub).is_dir():
+                move(work / sub, folder / sub)
+        move(work / "reel.mp4", folder / "reel.mp4.new")
+        (folder / "reel.mp4").unlink(missing_ok=True)
+        move(folder / "reel.mp4.new", folder / "reel.mp4")
+        (folder / "props.json").write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
+        subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-ss", "2", "-i", str(folder / "reel.mp4"), "-frames:v", "1",
+                        "-q:v", "3", str(folder / "thumbnail.jpg")], check=False)
+        report.update({"stick_request": asdict(req), "duration_seconds": round(props["duration"], 1),
+                       "captions": props.get("dialogue") != "none", "checks": {**(report.get("checks") or {}), "probe": info}})
+        (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        progress("Done")
         return report
-    except Exception:
+    finally:
         shutil.rmtree(work, ignore_errors=True)
-        raise
 
 
-def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress) -> list[dict]:
-    """The app's job: `count` episodes or Shorts, one after another, in the shared video slot."""
+def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress, resume: list[str] | None = None) -> list[dict]:
+    """The app's job: `count` episodes or Shorts, one after another, in the shared video slot (or resume saved ones)."""
     from .llm import set_limit_reporter, start_meter, usage_line
     from .pipeline import Paused, _video_slot, done_line, set_pause_check
 
     reports = []
     should_pause = getattr(progress, "should_pause", None)
-    for i in range(count):
+    todo = list(resume or []) or [None] * count
+    count = len(todo)
+    for i, folder in enumerate(todo):
         vp = (lambda m, n=i + 1: progress(f"[V{n}] {m}")) if count > 1 else progress
         with _video_slot(cfg):
             if should_pause and should_pause():
@@ -724,14 +1568,40 @@ def run_stick_job(cfg: Config, req: StickRequest, count: int, progress: Progress
             start_meter(lambda r, vp=vp: vp(usage_line(r)))
             vp(f"=== Video {i + 1}/{count} ===")
             try:
-                reports.append(run_stick(cfg, req, vp))
+                saved = folder and cfg.output_dir / folder / CHECKPOINT
+                mine = StickRequest(**(json.loads(saved.read_text(encoding="utf-8")).get("request") or asdict(req))) \
+                    if saved and saved.exists() else req
+                reports.append(run_stick(cfg, mine, vp, folder))
                 vp(done_line(reports[-1]))
             except Paused:
-                vp("Paused.")
+                vp("Paused: progress saved. Press Resume to carry on from here.")
             except Exception as exc:
                 log.exception("Stick video %d failed", i + 1)
                 vp(f"Video {i + 1} failed: {exc}")
     return reports
+
+
+def unfinished_sticks(cfg: Config) -> list[str]:
+    return sorted(p.parent.name for p in cfg.output_dir.glob(f"*-stick-working/{CHECKPOINT}"))
+
+
+def stick_unfinished(cfg: Config) -> list[dict]:
+    """Unfinished Stick videos for the app's "Unfinished videos" list (same shape as pipeline.unfinished)."""
+    done = {"written": "the script", "checked": "script and fact-check", "boarded": "script, fact-check and storyboard",
+            "built": "everything but the edit", "rendered": "everything but the checks"}
+    out = []
+    for folder in unfinished_sticks(cfg):
+        path = cfg.output_dir / folder / CHECKPOINT
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        req, ep = state.get("request") or {}, state.get("ep") or {}
+        out.append({"id": folder, "topic": ep.get("title") or req.get("idea") or "Stick video", "title": ep.get("title", ""),
+                    "style": {"facts": "facts", "documentary": "facts", "fiction": "story"}.get(req.get("style"), "comedy"),
+                    "length": "stick-short" if req.get("format") == "short" else "stick", "attempt": 1,
+                    "done": done.get(state.get("stage") or "", "nothing yet"), "updated": path.stat().st_mtime})
+    return out
 
 
 def voice_preview(cfg: Config, voice: str, speed: float, name: str = "") -> Path:

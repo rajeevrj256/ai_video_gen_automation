@@ -66,7 +66,7 @@ def _keep_running(cfg: Config, exe: str) -> None:
     while True:
         started = time.time()
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            proc = state["proc"] = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                     encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
             for line in proc.stdout:
                 if named and "Registered tunnel connection" in line and cfg.public_url and state["url"] != cfg.public_url:
@@ -83,6 +83,13 @@ def _keep_running(cfg: Config, exe: str) -> None:
         wait = 5 if time.time() - started > 300 else min(300, wait * 2)
         log.warning("The internet link dropped; reconnecting in %d s", wait)
         time.sleep(wait)
+
+
+def stop() -> None:
+    """End cloudflared before the app quits for an update (a new one starts with the app)."""
+    proc = state.get("proc")
+    if proc is not None and proc.poll() is None:
+        proc.kill()
 
 
 def _announce(cfg: Config, url: str) -> None:

@@ -1,0 +1,14 @@
+Recorded footsteps used by the low-poly films (reelgen/lowpoly/sounds.py recorded_steps). All are CC0 1.0
+(public domain dedication, https://creativecommons.org/publicdomain/zero/1.0/): no attribution is required; the
+authors are named here with thanks. Each file was trimmed to start 6 ms before its impact, made mono and levelled.
+
+stone-01..06  Fantozzi, "Fantozzi's Footsteps (Grass/Sand & Stone)", https://opengameart.org/content/fantozzis-footsteps-grasssand-stone
+              (Fantozzi-StoneL1-3, StoneR1-3)
+stone-07      TinyWorlds, "Different steps on wood, stone, leaves, gravel and mud",
+              https://opengameart.org/content/different-steps-on-wood-stone-leaves-gravel-and-mud (stone01)
+sand-01..06   Fantozzi, as above (Fantozzi-SandL1-3, SandR1-3)
+gravel-01..05 Corsica_S, extracted by Iwan Gabovitch, "42 snow and gravel footsteps",
+              https://opengameart.org/content/42-snow-and-gravel-footsteps (Walking_on_snow_covered_gravel_01/03/05/07/09);
+              released CC0 with the recordist's permission (from freesound.org sounds 28661 and 28662)
+floor-01..06  GboxMikeFozzy, "Footsteps", https://opengameart.org/content/footsteps-0 (01-06-footstep)
+mud-01        TinyWorlds, as above (mud02)

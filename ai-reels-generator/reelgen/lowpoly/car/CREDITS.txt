@@ -1,0 +1,5 @@
+engine-run.ogg: supplied by the user for the low-poly films' car sound (a dashboard video of a full-throttle run
+through five gears, 0 to about 210 km/h, then a lift-off; its watermark reads "NDS FX"). Trimmed to 27.6 s, mono.
+Used by reelgen/lowpoly/car.py: the engine of every car in a shot is played from it at the revs its speed needs.
+If it turns out not to be free to use in published videos, replace this file with another recording of the same
+kind (and update car.RPM to its tachometer) or delete it: without it the synthesised engine is used.

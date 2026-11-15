@@ -1,5 +1,5 @@
 import React from 'react';
-import {Easing, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Easing, Freeze, Img, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Audio} from '../Audio';
 import {COLORS, FONT, clamp, exitProgress, useFonts} from '../theme';
 import {Layer} from '../Layer';
@@ -8,10 +8,19 @@ import {VisualView} from './Visuals';
 import {Cues, Music} from '../Sound';
 import {Footage, Model3D} from './Media';
 import {SceneView} from './Scene';
+import {MemeView} from './Meme';
 import {setCurrency} from './icon';
 import {Backdrop, HookView, Shot, lookOf, worldFor} from './Cinematic';
 import {ChapterBreak} from './Breaks';
 import type {Chapter, Look, LongProps, Visual} from './types';
+import {BOX, setBox} from './box';
+import {NextTag, PartTag} from '../anim/Tags';
+import {EndCard} from './EndCard';
+import type {Face} from '../anim/type';
+import {useCineFonts} from '../cine/Cine';
+import {BRIEF_STILL, BriefBackdrop, BriefBreak, BriefHeader, BriefVisual, isBriefing, palFor, useBriefFonts} from './brief/Brief';
+
+const LONG_FACE: Face = {family: FONT, weight: 900, upper: false, tracking: '0', italic: 'italic', size: 1};
 
 // The whole long video: a cinematic trailer hook, then one motion visual per beat with its
 // own camera move, this video's backdrop and transition style, a title card before each
@@ -25,11 +34,27 @@ export const paletteFor = (chapter: number, look?: Look) => worldFor(lookOf(look
 const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean; look: Look; chapter: number; seed: number; plate?: string | null}> = ({v, frames, accent, roomy, look, chapter, seed, plate}) => {
   if (v.type === 'footage' && v.src) return <Footage v={v} frames={frames} accent={accent} />;
   if (v.type === 'model3d' && (v.src || v.parts?.length)) return <Model3D v={v} frames={frames} accent={accent} />;
+  if (v.type === 'camera' && v.src) return <CameraTake v={v} />;
+  const brief = isBriefing(look); // the Briefing template (brief/Brief.tsx): its own page and layouts
+  const back = brief ? <BriefBackdrop pal={palFor(look.seed)} /> : <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />;
+  if (v.type === 'meme') {
+    return (
+      <>
+        {back}
+        <MemeView v={v} frames={frames} roomy={roomy} seed={look.seed} />
+      </>
+    );
+  }
+  if (v.type === 'picture' && v.src) {
+    return <Img src={staticFile(v.src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'}} />;
+  }
   return (
     <>
-      <Backdrop look={look} chapter={chapter} seed={seed} plate={plate} />
+      {back}
       {v.type === 'scene' && v.actors?.length ? (
         <SceneView v={v} frames={frames} accent={accent} />
+      ) : brief ? (
+        <BriefVisual v={v} frames={frames} pal={palFor(look.seed)} />
       ) : (
         <VisualView v={v} frames={frames} accent={accent} roomy={roomy} />
       )}
@@ -37,13 +62,19 @@ const Body: React.FC<{v: Visual; frames: number; accent: string; roomy: boolean;
   );
 };
 
-export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false}) => {
+export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx, cues = [], speech = [], look: rawLook, hook, musicFrom = 0, ambience = [], musicParts = [], currency, soundOnly = false, vertical, partLabel, nextLabel, endCard, title, duration}) => {
   useFonts();
+  useCineFonts();
+  useBriefFonts();
   setCurrency(currency);
+  setBox(vertical); // 9:16 for the Shorts Studio's motion-graphics Shorts: every visual lays itself out for it
   const {fps} = useVideoConfig();
   const f = (s: number) => Math.round(s * fps);
   const look = lookOf(rawLook);
   const roomy = captions.length === 0;
+  const brief = isBriefing(look);
+  const pal = palFor(look.seed);
+  const cards = chapters.filter((x) => x.card > 0);
   return (
     <Layer name="long" style={{backgroundColor: COLORS.ink, fontFamily: FONT, overflow: 'hidden'}}>
       {soundOnly ? null : (<>
@@ -52,6 +83,7 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
           <HookView
             hook={hook}
             look={look}
+            subtitles={!roomy}
             render={(s, frames) => (
               <Body v={s.visual} frames={frames} accent={look.accents[0]} roomy={roomy} look={{...look, backdrop: 'rays'}} chapter={0} seed={7} plate={look.platesBaked?.hook ?? look.hookPlate} />
             )}
@@ -64,11 +96,22 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         const next = beats[i + 1];
         const frames = Math.max(1, (next && next.chapter === b.chapter ? f(next.start) : f(b.start + b.duration)) - from);
         const accent = paletteFor(b.chapter, look).accent;
+        // You on camera: always a hard cut (and none at all between two lines of the same take, which plays on).
+        const onCamera = b.visual.type === 'camera';
+        // Briefing: the page holds still (only full-frame media keep their camera) and every beat fades in.
+        const still = brief && BRIEF_STILL.has(b.visual.type);
+        const v = still ? {...b.visual, camera: 'still' as const} : b.visual;
+        const ch = chapters.find((c) => c.index === b.chapter);
         return (
-          <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${b.visual.camera ?? 'push'})`} from={from} durationInFrames={frames}>
-            <Shot v={b.visual} frames={frames} transition={look.transition}>
-              <Body v={b.visual} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
+          <Sequence key={i} name={`beat ${i + 1} (${b.visual.type}, ${v.camera ?? 'push'})`} from={from} durationInFrames={frames}>
+            <Shot v={v} frames={frames} transition={onCamera ? 'cut' : brief ? 'smooth' : look.transition}>
+              <Body v={v} frames={frames} accent={accent} roomy={roomy} look={look} chapter={b.chapter} seed={i} plate={look.platesBaked?.[String(b.chapter)] ?? look.plates?.[String(b.chapter)]} />
             </Shot>
+            {brief && !onCamera && b.visual.type !== 'footage' ? (
+              // no source on screen (the user: 'remove'): the right side always shows the video and where we are in it
+              <BriefHeader pal={pal} label={ch?.title ?? title} source={false}
+                right={`${title.length > 30 ? title.slice(0, 28).trim() + '…' : title} · ${i + 1} / ${beats.length}`} />
+            ) : null}
           </Sequence>
         );
       })}
@@ -77,9 +120,14 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         .filter((c) => c.card > 0)
         .map((c) => (
           <Sequence key={`c${c.index}`} name={`chapter card ${c.index}`} from={f(c.start)} durationInFrames={f(c.card)}>
-            {c.style ? (
+            {brief ? (
+              <>
+                <BriefBackdrop pal={pal} />
+                <BriefBreak chapter={c} chapters={chapters} frames={f(c.card)} pal={pal} />
+              </>
+            ) : c.style ? (
               <ChapterBreak style={c.style} chapter={c} frames={f(c.card)} accent={paletteFor(c.index, look).accent}
-                tint={paletteFor(c.index, look).a} plate={look.plates?.[String(c.index)]} count={chapters.filter((x) => x.card > 0).length} />
+                tint={paletteFor(c.index, look).a} plate={look.plates?.[String(c.index)]} count={cards.length} />
             ) : (
               <>
                 <Backdrop look={look} chapter={c.index} seed={100 + c.index} plate={look.platesBaked?.[String(c.index)] ?? look.plates?.[String(c.index)]} />
@@ -90,7 +138,22 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         ))}
 
       <Subtitles groups={captions} />
-      <Grain />
+      {partLabel ? (
+        <Sequence name="part label" durationInFrames={f(2.7)}>
+          <PartTag label={partLabel} title={title} accent={look.accents[0]} face={LONG_FACE} />
+        </Sequence>
+      ) : null}
+      {endCard ? (
+        <Sequence name="end card: the full video" from={f(endCard.from)}>
+          <EndCard card={endCard} accent={look.accents[0]} />
+        </Sequence>
+      ) : null}
+      {nextLabel ? (
+        <Sequence name="next part" from={Math.max(0, f(duration) - f(1.15))}>
+          <NextTag label={nextLabel} accent={look.accents[0]} face={LONG_FACE} />
+        </Sequence>
+      ) : null}
+      {brief ? null : <Grain />}
       </>)}
 
       {/* voice: the hook's lines, then every beat */}
@@ -109,9 +172,15 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         ) : null,
       )}
       {/* music: the hook's trailer track, then the main track from where the hook ends */}
+      {/* The cinematic hook's music and drone stop where its silence starts; the old trailer's ran on under the cut. */}
       {hook?.music ? (
-        <Sequence name="hook music" durationInFrames={f(hook.duration + 1.8)}>
-          <Music src={hook.music} speech={speech.filter(([a]) => a < hook.duration)} full={0.62} duck={0.3} loop={false} />
+        <Sequence name="hook music" durationInFrames={hook.cine ? f(hook.duration - (hook.drop ?? 0)) : f(hook.duration + 1.8)}>
+          <Music src={hook.music} speech={speech.filter(([a]) => a < hook.duration)} full={0.62} duck={0.3} loop={false} fadeOut={hook.cine ? HOOK_CUT : 45} />
+        </Sequence>
+      ) : null}
+      {hook?.drone ? (
+        <Sequence name="hook drone" durationInFrames={f(hook.duration - (hook.drop ?? 0))}>
+          <Drone src={hook.drone} />
         </Sequence>
       ) : null}
       {music ? (
@@ -143,6 +212,32 @@ export const Long: React.FC<LongProps> = ({chapters, beats, captions, music, sfx
         : null}
     </Layer>
   );
+};
+
+// You on camera (a Shoot video, reelgen/shoot.py): your take from where this line starts; past the line's own part
+// of the take (a hook shot holds a breath longer) its last frame holds. Takes are 30 fps copies made for the edit.
+const CameraTake: React.FC<{v: Visual}> = ({v}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const until = v.until ? Math.max(0, Math.round(v.until * fps) - 1) : Infinity;
+  return (
+    <div style={{position: 'absolute', inset: 0, background: '#000', overflow: 'hidden'}}>
+      <Freeze frame={Number.isFinite(until) ? until : 0} active={frame > until}>
+        <OffthreadVideo src={staticFile(v.src!)} muted trimBefore={Math.round((v.from ?? 0) * fps)}
+          style={{width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${v.zoom ?? 1})`}} />
+      </Freeze>
+    </div>
+  );
+};
+
+// The cinematic hook: its music and drone are cut this fast (frames) into the silence before the story.
+const HOOK_CUT = 5;
+const DRONE_VOLUME = 0.6; // keep in step with reelgen/soundtrack.py
+
+// The dark bed under the cinematic hook (it fades itself in), cut into the silence.
+const Drone: React.FC<{src: string}> = ({src}) => {
+  const {durationInFrames} = useVideoConfig();
+  return <Audio src={staticFile(src)} volume={(fr) => interpolate(fr, [durationInFrames - HOOK_CUT, durationInFrames], [DRONE_VOLUME, 0], clamp)} />;
 };
 
 // A quiet bed under a chapter, faded in and out.
@@ -197,13 +292,13 @@ const SubtitleLine: React.FC<{group: CaptionGroup}> = ({group}) => {
   const t = group.start + frame / fps;
   const e = interpolate(frame, [0, 5], [0, 1], clamp);
   return (
-    <div style={{position: 'absolute', left: 200, right: 200, bottom: 70, display: 'flex', justifyContent: 'center', opacity: e}}>
+    <div style={{position: 'absolute', left: BOX.V ? 60 : 200, right: BOX.V ? 60 : 200, bottom: BOX.V ? 470 : 70, display: 'flex', justifyContent: 'center', opacity: e}}>
       <div
         style={{
           padding: '14px 30px',
           borderRadius: 18,
           background: 'rgba(0,0,0,0.55)',
-          fontSize: 46,
+          fontSize: BOX.V ? 50 : 46,
           fontWeight: 800,
           lineHeight: 1.3,
           textAlign: 'center',

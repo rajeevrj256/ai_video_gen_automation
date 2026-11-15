@@ -1,0 +1,18 @@
+Natural sounds used by the Journey videos (reelgen/journey/sound.py). Each was trimmed and levelled; the whole file is
+listed with its author, page and licence. CC0 1.0 needs no attribution (named here with thanks); CC BY 3.0 needs the
+credit, which every video that uses that file puts in its description (sound.CREDITS).
+
+birds-morning  isaiah658, "Ambient Bird Sounds", https://opengameart.org/content/ambient-bird-sounds              CC0
+birds-forest   pauliuw, "Forest bird sounds", https://opengameart.org/content/forest-bird-sounds                    CC0
+birds-park     Thimras, "Park ambiences" (park_ambience_birds 40-90 s), https://opengameart.org/content/park-ambiences CC0
+stream         Thimras, "Park ambiences" (park_ambience_river 0-40 s), https://opengameart.org/content/park-ambiences CC0
+rain, storm    WuxiaScrub, "Rain + Long Thunder" (0-19.5 s / 19.5-44.5 s), https://opengameart.org/content/rain-long-thunder CC0
+thunder        rubberduck, "100 CC0 SFX #2" (sfx100v2_thunder_01), https://opengameart.org/content/100-cc0-sfx-2     CC0
+traffic        rubberduck, "100 CC0 SFX #2" (sfx100v2_loop_highway), https://opengameart.org/content/100-cc0-sfx-2    CC0
+crunch         rubberduck, "25 CC0 mud sfx" (mud_05), https://opengameart.org/content/25-cc0-mud-sfx                  CC0
+crickets       Wolfgang_, "Crickets Ambient Noise - loopable", https://opengameart.org/content/crickets-ambient-noise-loopable CC0
+squish-1..3    qubodup, "8 wet squish, slurp impacts" (the first three), https://opengameart.org/content/8-wet-squish-slurp-impacts CC0
+leaves         qubodup, "20 Rustles of dry leaves", https://opengameart.org/content/20-rustles-dry-leaves              CC0
+engine         Nayckron, "Engine-loop heavy vehicle/tank" (engine_heavy_loop), https://opengameart.org/content/engine-loop-heavy-vehicletank CC BY 3.0
+bee            made for this app (a synthesised wingbeat buzz: an AudioSet classifier hears 'Fly, housefly' 0.48,
+               'Buzz' 0.41, 'Insect' 0.36); no licence needed

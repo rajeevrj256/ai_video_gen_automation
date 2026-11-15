@@ -1,4 +1,4 @@
-import type {ActorState, Shot, StoryProps} from './types';
+import type {ActorState, Design, Shot, StoryProps} from './types';
 
 // Demo props for the Studio and stills: the two-character cast in a few sets, no audio.
 const a = (id: string, x: number, o: Partial<ActorState> = {}): ActorState => ({
@@ -9,11 +9,17 @@ const shot = (start: number, o: Partial<Shot>): Shot => ({
   start, duration: 3, scene: 1, setting: 'living-room', camera: 'wide', actors: [], words: [], lead: 0.1, ...o,
 });
 
+const BEN: Design = {hair: 'messy', hairColour: '#1E1B18', top: 'hoodie', topColour: '#34435E', bottom: 'jeans', bottomColour: '#4C5D74',
+  shoes: 'sneakers', shoesColour: '#5A4A3A', headwear: 'none', headwearColour: '', extras: ['satchel'], extraColour: '#A08458'};
+const MOM: Design = {hair: 'bun', hairColour: '#3B2E24', top: 'sweater', topColour: '#9C4A3C', bottom: 'skirt', bottomColour: '#6E6F45',
+  shoes: 'shoes', shoesColour: '#3B2E24', headwear: 'none', headwearColour: '', extras: ['earrings'], extraColour: '#8A6A44'};
+
 export const storyDemoProps: StoryProps = {
   fps: 30,
   duration: 18,
   title: 'Result day',
-  cast: [{id: 'raju', name: 'Ben', look: 'boy'}, {id: 'mom', name: 'Mom', look: 'woman'}],
+  art: 'ink',
+  cast: [{id: 'raju', name: 'Ben', look: 'boy', design: BEN}, {id: 'mom', name: 'Mom', look: 'woman', design: MOM}],
   shots: [
     shot(0, {caption: 'POV: result day', speaker: 'raju', text: 'Mom... I can explain.', words: words('Mom... I can explain.'),
       actors: [a('raju', 760, {face: 'nervous', emote: 'sweat', prop: 'paper', propText: 'F', pose: 'hold'}), a('mom', 1180, {facing: -1, pose: 'hands-on-hips', face: 'angry'})]}),

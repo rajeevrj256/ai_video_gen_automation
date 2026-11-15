@@ -51,7 +51,20 @@ def send_telegram(token: str, chat_id: str, report: dict) -> bool:
             requests.post(f"{base}/sendMessage", data={"chat_id": chat_id, "text": text}, timeout=30).raise_for_status()
         return True
     except requests.RequestException as exc:
-        log.error("Telegram delivery failed: %s", exc)
+        log.error("Telegram delivery failed: %s", str(exc).replace(token, "<bot token>"))
+        return False
+
+
+def send_text(token: str, chat_id: str, text: str) -> bool:
+    """A plain message (failures, updates). Never raises: an alert must not break what it reports on."""
+    if not (token and chat_id):
+        return False
+    try:
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                      data={"chat_id": chat_id, "text": text[:4000]}, timeout=20).raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        log.error("Telegram message failed: %s", str(exc).replace(token, "<bot token>"))
         return False
 
 

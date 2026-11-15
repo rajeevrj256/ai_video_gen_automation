@@ -65,6 +65,12 @@ class Config:
     # Long/medium videos: how the story is told (longform.STORY_FORMS), or "auto" to let the writer
     # pick the form that fits the material (avoiding the recent ones). Set per job on the Create page.
     story_form: str = "auto"
+    # Memes and a funnier way of explaining (reelgen/memes.py): off / some / lots. Long and medium videos, Script
+    # Videos, Shoot and the Shorts+ motion-graphics look; per video on the Create page, the Script tab and Shorts+.
+    memes: str = field(default_factory=lambda: _env("REEL_MEMES", "off"))
+    # Where meme pictures come from (reelgen/memeweb.py): 'drawn' by the editor, or 'web' = real meme templates (pictures
+    # and short clips) from imgflip.com, drawn where none fits.
+    meme_source: str = field(default_factory=lambda: _env("REEL_MEME_SOURCE", "drawn"))
 
     # Stock footage (free key from https://www.pexels.com/api/). Optional:
     # without it the video uses animated gradient backgrounds.
@@ -84,7 +90,50 @@ class Config:
     # Kokoro voice override, e.g. af_heart, am_michael, bm_george, hf_alpha. Empty = match REEL_VOICE.
     kokoro_voice: str = field(default_factory=lambda: _env("REEL_KOKORO_VOICE"))
     # Speaking pace for the whole voiceover, e.g. "+10%" (brisk but clear), "+0%" (normal).
-    voice_rate: str = field(default_factory=lambda: _env("REEL_VOICE_RATE", "+10%"))
+    voice_rate: str = field(default_factory=lambda: _env("REEL_VOICE_RATE", "+10%"))  # 30-second Shorts
+    # Long, medium and Script videos speak at their own pace: the Shorts' brisk +10% made a Script Video's narration
+    # too fast ("i use andrew now they speak too fast"). Per video on the Script tab; changed afterwards on the video's
+    # page (rerender.py `pace`).
+    long_voice_rate: str = field(default_factory=lambda: _env("REEL_LONG_VOICE_RATE", "+0%"))
+    # How long, medium, Script and Shoot videos open (cinehook.TEMPLATES): auto (an energetic template the last video
+    # didn't use), kinetic, rapid, stakes, myth, mirror, rewind, promise, teaser or cinematic. Per video on the Create page and the Script tab.
+    hook_template: str = field(default_factory=lambda: _env("REEL_HOOK_TEMPLATE", "auto"))
+    # How every beat of long, medium and Script videos is drawn (briefing.TEMPLATES): classic or briefing. Per video
+    # on the Create page and the Script tab.
+    visual_template: str = field(default_factory=lambda: _env("REEL_VISUAL_TEMPLATE", "classic"))
+    # Sarvam voices' own pace (0.5-2.0): 1.0 is what the user liked in Sarvam's playground (Bulbul v4 Flash, Shubh)
+    sarvam_pace: float = field(default_factory=lambda: float(_env("REEL_SARVAM_PACE", "1.0")))
+    # Roman Hinglish rewritten in mixed script for the Hindi, multilingual and Sarvam voices (hinglish.py); the Script
+    # tab's voice test checkbox sets it, so the video sounds like the sample the user chose
+    # How a Sarvam voice speaks the hook: normal (like the chapters), lively or very (more expressive, 5% faster);
+    # picked by ear in the Script tab's voice test
+    hook_delivery: str = field(default_factory=lambda: _env("REEL_HOOK_DELIVERY", "normal"))
+    # Your own voice cloned in Sarvam (`svc-<uuid>`): offered as 'sarvam:svc-...' in every voice list (sarvam.py).
+    my_voice_id: str = field(default_factory=lambda: _env("REEL_MY_VOICE_ID", ""))
+    my_voice_name: str = field(default_factory=lambda: _env("REEL_MY_VOICE_NAME", "My voice"))
+    my_voice_pace: float = field(default_factory=lambda: float(_env("REEL_MY_VOICE_PACE", "1.2")))
+    hinglish_mix: bool = field(default_factory=lambda: _env("REEL_HINGLISH_MIX", "1").lower() not in ("0", "false", "no", "off"))
+    # Every pipeline's music made by the local AI music model (ACE-Step, reelgen/aimusic.py) when the AI engine is
+    # installed; composed music otherwise, or when this is off.
+    ai_music: bool = field(default_factory=lambda: _env("REEL_AI_MUSIC", "1").lower() not in ("0", "false", "no", "off"))
+    # Your uploaded sound effects (Settings > Media library) in videos: off by default, the user found their uploads in
+    # a video ("if uploaded one used its bug"); videos then use only the built-in synthesised sounds.
+    use_my_sounds: bool = field(default_factory=lambda: _env("REEL_USE_MY_SOUNDS", "0").lower() in ("1", "true", "yes", "on"))
+    # Your uploaded music in videos (media.MY_MUSIC): 'safe' (default: only tracks marked as your own, CC0 or CC BY),
+    # 'all' (every licensed upload) or 'none'. A Pixabay track in the user's library ('Powerful Dramatic Trailer' by
+    # Artem Pedan) brought a YouTube Content ID claim (HAAWK for the artist): royalty-free sites' tracks can be
+    # registered with Content ID whatever the site's licence says.
+    my_music: str = field(default_factory=lambda: _env("REEL_MY_MUSIC", "safe"))
+    # The cinematic hook's shots as AI-drawn film stills (reelgen/cinehook.py) when the AI engine is installed.
+    hook_pictures: bool = field(default_factory=lambda: _env("REEL_HOOK_PICTURES", "1").lower() not in ("0", "false", "no", "off"))
+    # Channel rules (reelgen/growth.py): what every low-poly video does so viewers stay and subscribe. Per job in the
+    # Low-poly tab; `hero_name` is the man's name in every video.
+    growth_rules: bool = field(default_factory=lambda: _env("REEL_GROWTH_RULES", "1").lower() not in ("0", "false", "no", "off"))
+    hero_name: str = field(default_factory=lambda: _env("REEL_HERO_NAME", "Ethan"))
+    # When Claude can't answer (its usage limit, a block, Claude Code missing): 'local' = that step goes to the model on
+    # this computer when one is installed (reelgen/localllm.py), 'wait' = wait for Claude's reset as before.
+    llm_fallback: str = field(default_factory=lambda: _env("REEL_LLM_FALLBACK", "local"))
+    local_model: str = field(default_factory=lambda: _env("REEL_LOCAL_MODEL", ""))  # '' = the best one installed
     niche: str = field(default_factory=lambda: _env("REEL_NICHE"))
     target_seconds: int = field(default_factory=lambda: int(_env("REEL_SECONDS", str(MAX_SECONDS))))
 
@@ -128,7 +177,7 @@ class Config:
 
 
 # Settings a user can change from the app; saved next to the videos.
-EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions"]
+EDITABLE = ["geo", "language", "voice", "voice_rate", "tts_engine", "niche", "target_seconds", "schedule_time", "schedule_count", "parallel_videos", "ai_backend", "claude_model", "claude_effort", "fact_model", "fact_effort", "video_style", "long_minutes", "long_language", "long_voice", "captions", "sarvam_pace", "hinglish_mix", "hook_delivery", "ai_music", "hook_pictures", "use_my_sounds", "my_music", "memes", "meme_source", "long_voice_rate", "hook_template", "visual_template", "my_voice_id", "my_voice_name", "my_voice_pace", "llm_fallback", "local_model"]
 
 
 def settings_path(cfg: Config) -> Path:
@@ -165,6 +214,41 @@ def load_settings(cfg: Config) -> Config:
         for key, value in saved.items():
             if key in EDITABLE and not (key in ("claude_model", "claude_effort", "fact_model", "fact_effort") and value == ""):
                 setattr(cfg, key, _typed(cfg, key, value))  # blank model/effort = default
+    _share_llm(cfg)
+    return cfg
+
+
+def _share_llm(cfg: Config) -> None:
+    """llm.ask has no config: the fallback settings reach it through the environment (this process only)."""
+    os.environ["REEL_LLM_FALLBACK"] = cfg.llm_fallback if cfg.llm_fallback in ("local", "wait") else "local"
+    os.environ["REEL_LOCAL_MODEL"] = cfg.local_model
+
+
+# The models and efforts a job can pick (the Create page and every tab's "Claude" picker, Settings for the default).
+# Fable needs usage credits on some plans: Claude Code then answers "Fable 5.1 requires usage credits".
+MODELS = {"claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-haiku-5-5": "Haiku 5.5",
+          "claude-fable-5-1": "Fable 5.1",
+          # on this computer (reelgen/localllm.py, = localllm.MODELS): free, slower and simpler than Claude
+          "local:qwen3.5-9b": "Qwen 3.5 9B (this computer)", "local:qwen3.5-4b": "Qwen 3.5 4B (this computer)"}
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def ai_pick(cfg: Config, pick: dict | None = None) -> dict:
+    """A job's Claude choice, every blank or unknown value filled from Settings: `model`/`effort` write (scripts,
+    storyboards, hooks, fixes, reviews), `check_model`/`check_effort` check (fact-checks, picture checks)."""
+    pick = pick or {}
+    ok = lambda v, allowed, default: v if v in allowed else default  # noqa: E731
+    return {"model": ok(pick.get("model"), MODELS, cfg.claude_model), "effort": ok(pick.get("effort"), EFFORTS, cfg.claude_effort),
+            "check_model": ok(pick.get("check_model"), MODELS, cfg.fact_model),
+            "check_effort": ok(pick.get("check_effort"), EFFORTS, cfg.fact_effort)}
+
+
+def apply_ai(cfg: Config, pick: dict | None) -> Config:
+    """Put a job's Claude choice (`ai_pick`) on its config: every pipeline reads cfg.claude_model/fact_model."""
+    if pick:
+        got = ai_pick(cfg, pick)
+        cfg.claude_model, cfg.claude_effort = got["model"], got["effort"]
+        cfg.fact_model, cfg.fact_effort = got["check_model"], got["check_effort"]
     return cfg
 
 
@@ -185,4 +269,5 @@ def save_settings(cfg: Config, updates: dict) -> Config:
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     settings_path(cfg).write_text(json.dumps({**{k: getattr(cfg, k) for k in EDITABLE}, VOICE_MARK: True, CAPTIONS_MARK: True}, indent=2),
                                   encoding="utf-8")
+    _share_llm(cfg)
     return cfg

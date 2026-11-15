@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from . import media
+from .aimusic import PROMPT_FIELD as MUSIC_PROMPT
 from .config import Config
 from .llm import ask
 from .trends import Trend, trends_as_json
@@ -80,6 +81,7 @@ class ReelScript(BaseModel):
     hashtags: list[str] = Field(description="8-12 relevant hashtags without the # sign; mix broad and niche.")
     youtube_title: str = Field(description="YouTube Shorts title, max 90 characters, ends with #shorts.")
     music: str = Field(default="", description="Background track name from the music list, or 'none'.")
+    music_prompt: str = Field(default="", description=MUSIC_PROMPT)
 
 
 STYLES = ("facts", "story", "comedy")  # what "mix" rotates through
@@ -338,6 +340,9 @@ def write_script(cfg: Config, candidates: list[Trend], feedback: str = "",
         f"- {graphics}"
     )
     prompt += "\n\n" + media.prompt_block(cfg)
+    from .hooks import block as hook_block
+
+    prompt += hook_block(cfg)
     from .repeats import prompt_block as made_block
 
     prompt += made_block(cfg, ("short", "long"))

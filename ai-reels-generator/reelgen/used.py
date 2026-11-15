@@ -66,6 +66,8 @@ def media_used(cfg: Config, video: Path) -> dict:
         music.append({"name": f"Chapter music ({m['from'] // 60:.0f}:{m['from'] % 60:02.0f}–{m['to'] // 60:.0f}:{m['to'] % 60:02.0f})",
                       "file": m["src"], "source": f"Your library: {_library_file(cfg, 'music', m['name']) or m['name']}",
                       "times": [round(m["from"], 2)], "play": m["src"]})
+    for m in music:  # a claimed track can be swapped for a composed one (remix.replace_music)
+        m["replace"] = m["file"]
     for a in props.get("ambience") or []:
         music.append({"name": f"Ambience: {Path(a['src']).stem}", "file": a["src"], "source": "Composed ambience bed",
                       "times": [round(a["from"], 2)], "play": a["src"]})
@@ -74,12 +76,25 @@ def media_used(cfg: Config, video: Path) -> dict:
     by_name: dict[str, dict] = {}
     times = defaultdict(list)
     for c in props.get("cues") or []:
+        if not c.get("src"):  # a low-poly film's cue: a sound by name, made when the film is mixed (lowpoly/mix.py)
+            name = c.get("sound") or "sound"
+            times[name].append(c["at"])
+            if name not in by_name:
+                made = sorted((video / "sfx").glob(f"{name}*.wav")) if (video / "sfx").exists() else []
+                by_name[name] = {"name": name, "file": f"sfx/{made[0].name}" if made else "", "library": None,
+                                 "play": f"sfx/{made[0].name}" if made else None,
+                                 "source": ("Your car recording, played at each car's speed" if c.get("car") else
+                                            "Tyre squeal, made for each stop, drift or spin" if c.get("skid") else
+                                            "Recorded footsteps (CC0), where each foot lands" if c.get("steps") is not None else
+                                            "Your car recording (first gear pulling)" if name == "rev" else
+                                            "Built-in (synthesised)")}
+            continue
         name = c.get("name") or Path(c["src"]).stem
         times[name].append(c["at"])
         if name not in by_name:
             user = Path(c["src"]).name.startswith("u-")
             original = (_library_file(cfg, "sfx", name) or _library_file(cfg, "sfx", Path(c["src"]).stem[2:])) if user else None
-            by_name[name] = {"name": name, "file": c["src"],
+            by_name[name] = {"name": name, "file": c["src"], "library": original if user else None,
                              "source": f"Your library: {original or Path(c['src']).name}" if user else
                              f"Built-in (synthesised): {CUE_SOUNDS[name][3]}" if name in CUE_SOUNDS else "Built-in (synthesised)",
                              "play": c["src"]}
@@ -90,7 +105,10 @@ def media_used(cfg: Config, video: Path) -> dict:
     transition = look.get("transition") or ""
     for name, src in (props.get("sfx") or {}).items():
         if name not in by_name:
-            sounds.append({"name": name, "file": src, "source": "Built-in transition sound", "play": src,
+            user = Path(src).name.startswith("u-")
+            sounds.append({"name": name, "file": src, "play": src,
+                           "library": _library_file(cfg, "sfx", Path(src).stem[2:].removesuffix("-lv")) if user else None,
+                           "source": f"Your library ({Path(src).name})" if user else "Built-in transition sound",
                            "times": [], "count": 0, "note": f"on scene cuts ({transition or 'per scene'})"})
     sounds.sort(key=lambda s: -s["count"])
 
@@ -110,6 +128,12 @@ def media_used(cfg: Config, video: Path) -> dict:
                                "source": f"Poly Haven (CC0): {src.split('polyhaven/')[1].split('/')[0]}" if poly else
                                f"Your library: {Path(src).name}", "times": []}
             models[key]["times"].append(round(at, 2))
+        elif v.get("type") == "meme" and v.get("src") and v.get("webName"):  # a real template (memeweb.py)
+            footage.append({"name": f"Meme: {v['webName']}" + (" (clip)" if v.get("clipSeconds") else ""), "file": v["src"],
+                            "source": f"imgflip.com template ({v.get('webPage', '')})", "times": [round(at, 2)]})
+        elif v.get("type") == "meme" and v.get("src"):  # the user's own meme file
+            footage.append({"name": "Meme: " + (v.get("fileName") or Path(v["src"]).name), "file": v["src"],
+                            "source": f"Your library: {v.get('fileName') or Path(v['src']).name}", "times": [round(at, 2)]})
         elif v.get("type") == "footage" and v.get("src"):
             footage.append({"name": v.get("query") or Path(v["src"]).stem, "file": v["src"], "source": "Pexels",
                             "times": [round(at, 2)]})
@@ -137,7 +161,8 @@ def media_used(cfg: Config, video: Path) -> dict:
                         "times": _times([s["start"] for s in hook["shots"]])})
     group = defaultdict(list)
     for at, v in visuals:
-        group[f"Visual: {v.get('type', '?')}"].append(at)
+        group[f"Meme: {v.get('webName') or ('your file' if v.get('src') else v.get('meme') or '?')}" if v.get("type") == "meme"
+              else f"Visual: {v.get('type', '?')}"].append(at)
         if v.get("camera"):
             group[f"Camera: {v['camera']}"].append(at)
         if v.get("impact"):
@@ -153,7 +178,8 @@ def media_used(cfg: Config, video: Path) -> dict:
     effects += [{"name": k, "detail": "", "times": _times(ts), "count": len(ts)}
                 for k, ts in sorted(group.items(), key=lambda kv: -len(kv[1]))]
 
-    return {"available": True, "music": music, "sounds": sounds, "models": list(models.values()),
+    from .remix import why_not
+    return {"available": True, "fixed": why_not(video), "music": music, "sounds": sounds, "models": list(models.values()),
             "footage": footage, "effects": effects}
 
 
@@ -164,7 +190,7 @@ def library_files(cfg: Config, video: Path) -> list[tuple[str, str]]:
     except (OSError, ValueError, KeyError):
         return []
     out = []
-    for kind, key in (("music", "music"), ("sfx", "sounds"), ("models3d", "models")):
+    for kind, key in (("music", "music"), ("sfx", "sounds"), ("models3d", "models"), ("memes", "footage")):
         for item in used.get(key) or []:
             source = item.get("source", "")
             if source.startswith("Your library: "):

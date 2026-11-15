@@ -31,7 +31,8 @@ export type Transition = 'none' | 'flash' | 'zoom' | 'slide' | 'glitch' | 'fade'
 export type Scene = {start: number; duration: number; audio: string | null; graphic: Graphic; transition: Transition};
 
 // A sound effect placed on a word of the narration (reelgen/media.py resolve_cues).
-export type Cue = {src: string; at: number; trim?: number; volume: number; name: string}; // trim: seconds cut off the front
+// trim: seconds cut off the front; full: never halved under speech (the hook's sub booms sit below the voice's range)
+export type Cue = {src: string; at: number; trim?: number; volume: number; name: string; full?: boolean};
 
 // Where the voice is talking, [start, end] in seconds: the music dips under it.
 export type Span = [number, number];

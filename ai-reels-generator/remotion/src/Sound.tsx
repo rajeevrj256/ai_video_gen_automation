@@ -12,7 +12,8 @@ const DUCK_RAMP = 0.35; // seconds to dip or recover
 // `mute`: spans (seconds) where this track steps aside, e.g. the composed score under a chapter that
 // plays the user's own track; it fades out and back in over MUTE_RAMP.
 const MUTE_RAMP = 1.2;
-export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: number; loop?: boolean; mute?: Span[]}> = ({src, speech, full, duck, loop = true, mute = []}) => {
+// `fadeOut`: frames of the fade at the end of its Sequence (the cinematic hook's music stops short, into silence).
+export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: number; loop?: boolean; mute?: Span[]; fadeOut?: number}> = ({src, speech, full, duck, loop = true, mute = [], fadeOut = 45}) => {
   const {fps, durationInFrames} = useVideoConfig();
   const level = (frame: number) => {
     const t = frame / fps;
@@ -26,7 +27,7 @@ export const Music: React.FC<{src: string; speech: Span[]; full: number; duck: n
       if (a > t + DUCK_RAMP) break; // spans are sorted
     }
     const k = speech.length ? interpolate(distance, [0.05, DUCK_RAMP], [0, 1], clamp) : 1;
-    const fade = interpolate(frame, [0, 15, durationInFrames - 45, durationInFrames], [0, 1, 1, 0], clamp);
+    const fade = interpolate(frame, [0, 15, durationInFrames - fadeOut, durationInFrames], [0, 1, 1, 0], clamp);
     let away = 1;
     for (const [a, b] of mute) {
       away = Math.min(away, interpolate(t, [a - MUTE_RAMP, a, b, b + MUTE_RAMP], [1, 0, 0, 1], clamp));
@@ -48,7 +49,7 @@ export const Cues: React.FC<{cues: Cue[]; speech?: Span[]}> = ({cues, speech = [
       {cues.map((c, i) => (
         // No durationInFrames: every effect plays out its own tail.
         <Sequence key={i} name={`sound ${c.name}`} from={Math.round(c.at * fps)}>
-          <Audio src={staticFile(c.src)} volume={c.volume * (inSpeech(c.at, speech) ? SPEECH_DUCK : 1)}
+          <Audio src={staticFile(c.src)} volume={c.volume * (!c.full && inSpeech(c.at, speech) ? SPEECH_DUCK : 1)}
             trimBefore={Math.round((c.trim ?? 0) * fps) || undefined} />
         </Sequence>
       ))}

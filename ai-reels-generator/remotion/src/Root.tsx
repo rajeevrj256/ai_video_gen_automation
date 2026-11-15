@@ -13,12 +13,42 @@ import {Thumbnail, thumbSize, type ThumbProps} from './Thumbnail';
 import {StickStory} from './story/Story';
 import {storyDemoProps} from './story/demo';
 import type {StoryProps} from './story/types';
+import {Toon} from './toon/Toon';
+import {Anim} from './anim/Anim';
+import type {AnimProps} from './anim/types';
+import {toonDemoProps} from './toon/demo';
+import type {ToonProps} from './toon/types';
+import {Sticky} from './sticky/Sticky';
+import {stickyDemoProps} from './sticky/demo';
+import type {StickyProps} from './sticky/types';
+import {LowPoly} from './lowpoly/LowPoly';
+import {lowpolyDemoProps} from './lowpoly/demo';
+import type {LowPolyProps} from './lowpoly/types';
+import {Journey} from './journey/Journey';
+import {journeyDemoProps} from './journey/demo';
+import type {JourneyProps} from './journey/types';
 
 // The length comes from the props (seconds), so each video is exactly as long
 // as its voiceover. The Python pipeline passes real props with --props.
 const calculateMetadata: CalculateMetadataFunction<ReelProps> = ({props}) => ({
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+});
+const calculateStickyMetadata: CalculateMetadataFunction<StickyProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Sticky Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
+});
+const calculateLowPolyMetadata: CalculateMetadataFunction<LowPolyProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Shorts 9:16, films 16:9
+  height: props.vertical ? 1920 : 1080,
+});
+const calculateJourneyMetadata: CalculateMetadataFunction<JourneyProps> = ({props}) => ({
+  durationInFrames: Math.max(1, Math.round(props.duration * props.fps)),
+  fps: props.fps,
 });
 const calculateStickMetadata: CalculateMetadataFunction<StickProps> = ({props}) => ({
   fps: props.fps,
@@ -27,6 +57,8 @@ const calculateStickMetadata: CalculateMetadataFunction<StickProps> = ({props}) 
 const calculateLongMetadata: CalculateMetadataFunction<LongProps> = ({props}) => ({
   fps: props.fps,
   durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Shorts Studio motion-graphics Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
 });
 
 const calculateStoryMetadata: CalculateMetadataFunction<StoryProps> = ({props}) => ({
@@ -35,6 +67,19 @@ const calculateStoryMetadata: CalculateMetadataFunction<StoryProps> = ({props}) 
   width: props.vertical ? 1080 : 1920,
   height: props.vertical ? 1920 : 1080,
 });
+const calculateToonMetadata: CalculateMetadataFunction<ToonProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+});
+const calculateAnimMetadata: CalculateMetadataFunction<AnimProps> = ({props}) => ({
+  fps: props.fps,
+  durationInFrames: Math.max(1, Math.ceil(props.duration * props.fps)),
+  width: props.vertical ? 1080 : 1920, // Story Shorts are 9:16
+  height: props.vertical ? 1920 : 1080,
+});
+// Real props come from reelgen/animated.py (AI pictures and clips in the video's folder); the demo is empty.
+const animDemoProps: AnimProps = {fps: 30, duration: 3, title: 'Animated', style: 'flat-vector', accent: '#FFB703', shots: [],
+  captions: false, hookEnd: 0, musicParts: [], speech: [], cues: []};
 const calculateThumbMetadata: CalculateMetadataFunction<ThumbProps> = ({props}) => thumbSize(props.wide);
 const thumbDemo: ThumbProps = {src: 'thumb/frame.jpg', text: 'Why no tax cut', highlight: 'tax cut', side: 'left',
   focusX: 0.6, focusY: 0.5, zoom: 1.1, accent: '#ffd23f', accent2: '#ffd23f', wide: true};
@@ -83,6 +128,61 @@ export const RemotionRoot: React.FC = () => (
     durationInFrames={300}
     defaultProps={storyDemoProps}
     calculateMetadata={calculateStoryMetadata}
+  />
+  {/* 16:9 flat animated explainer: cartoon people, a mascot, objects and actions: reelgen/toon.py */}
+  <Composition
+    id="Toon"
+    component={Toon}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={toonDemoProps}
+    calculateMetadata={calculateToonMetadata}
+  />
+  {/* 16:9 fully AI-animated video: pictures, clips and music made on this computer: reelgen/animated.py */}
+  <Composition
+    id="Anim"
+    component={Anim}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={90}
+    defaultProps={animDemoProps}
+    calculateMetadata={calculateAnimMetadata}
+  />
+  {/* voiceless sticky-animation short film (2.5-4 min, 16:9) or Short (9:16, `vertical`): reelgen/sticky/ */}
+  <Composition
+    id="Sticky"
+    component={Sticky}
+    width={1920}
+    height={1080}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={stickyDemoProps}
+    calculateMetadata={calculateStickyMetadata}
+  />
+  {/* low-poly 3D man, narrated, Short (9:16) or film (16:9): reelgen/lowpoly/ */}
+  <Composition
+    id="LowPoly"
+    component={LowPoly}
+    width={1080}
+    height={1920}
+    fps={30}
+    durationInFrames={300}
+    defaultProps={lowpolyDemoProps}
+    calculateMetadata={calculateLowPolyMetadata}
+  />
+  {/* 🌱 Journey: a photoreal time-lapse in a 9:16 frame (reelgen/journey/) */}
+  <Composition
+    id="Journey"
+    component={Journey}
+    width={1080}
+    height={1920}
+    fps={30}
+    durationInFrames={180}
+    defaultProps={journeyDemoProps}
+    calculateMetadata={calculateJourneyMetadata}
   />
   {/* YouTube thumbnail from the video's own frame: reelgen/thumbnail.py (rendered as a still) */}
   <Composition
